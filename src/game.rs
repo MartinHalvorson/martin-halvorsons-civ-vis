@@ -474,7 +474,15 @@ impl Game {
         }
     }
 
+    pub fn is_embarked(&self, u: &Unit) -> bool {
+        self.rules.units[u.kind.as_str()].domain.as_deref() != Some("sea")
+            && self.map.get(u.pos).map(|t| self.rules.is_water(t)).unwrap_or(false)
+    }
+
     pub fn unit_strength(&self, u: &Unit, defending: bool) -> f64 {
+        if self.is_embarked(u) {
+            return 10.0; // embarked units are nearly defenseless
+        }
         let mut s = self.rules.units[u.kind.as_str()].strength.max(1.0)
             + 5.0 * (u.level - 1) as f64
             + self.gov_effects(u.owner).combat_strength;
@@ -493,16 +501,33 @@ impl Game {
     }
 
     pub fn city_housing(&self, city: &City) -> f64 {
-        let mut h = 2.0;
-        if hex::neighbors(city.pos).iter().any(|n| {
+        // fresh water (river/oasis) = 5, coastal = 3, otherwise 2 (Civ 6)
+        let center = &self.map.tiles[&city.pos];
+        let fresh = center.river || hex::neighbors(city.pos).iter().any(|n| {
+            self.map.get(*n).map(|t| {
+                t.river || t.feature.as_deref() == Some("oasis")
+            }).unwrap_or(false)
+        });
+        let coastal = hex::neighbors(city.pos).iter().any(|n| {
             self.map.get(*n).map(|t| self.rules.is_water(t)).unwrap_or(false)
-        }) {
-            h += 2.0;
-        }
+        });
+        let mut h = if fresh { 5.0 } else if coastal { 3.0 } else { 2.0 };
         for b in &city.buildings {
             h += self.rules.buildings[b.as_str()].housing;
         }
         h + self.gov_effects(city.owner).housing
+    }
+
+    pub fn wonder_built(&self, name: &str) -> bool {
+        self.cities.values().any(|c| c.buildings.iter().any(|b| b == name))
+    }
+
+    fn empire_building_sum(&self, pid: usize, f: impl Fn(&crate::rules::BuildingSpec) -> f64) -> f64 {
+        self.cities.values()
+            .filter(|c| c.owner == pid)
+            .flat_map(|c| c.buildings.iter())
+            .map(|b| f(&self.rules.buildings[b.as_str()]))
+            .sum()
     }
 
     pub fn empire_luxuries(&self, pid: usize) -> usize {
@@ -623,6 +648,10 @@ impl Game {
 
     fn spawn_unit(&mut self, kind: &str, owner: usize, pos: Pos) -> u32 {
         let spec = &self.rules.units[kind];
+        let mut charges = spec.charges;
+        if kind == "builder" {
+            charges += self.empire_building_sum(owner, |b| b.builder_charges as f64) as i32;
+        }
         let u = Unit {
             id: self.next_id,
             kind: kind.to_string(),
@@ -630,7 +659,7 @@ impl Game {
             pos,
             hp: 100,
             moves_left: spec.moves,
-            charges: spec.charges,
+            charges,
             xp: 0,
             level: 1,
             fortified: false,
@@ -702,8 +731,8 @@ impl Game {
             if !water {
                 return false;
             }
-        } else if water {
-            return false;
+        } else if water && !self.players[u.owner].techs.contains("shipbuilding") {
+            return false; // shipbuilding lets land units embark
         }
         for oid in self.units_at(pos) {
             let o = &self.units[&oid];
@@ -873,7 +902,10 @@ impl Game {
         let spec = &self.rules.districts[dname];
         let mut ys = spec.yields;
         if !spec.adjacency.is_empty() {
-            let (mut mountain, mut forest, mut district) = (0, 0, 0);
+            let (mut mountain, mut forest, mut district, mut river) = (0, 0, 0, 0);
+            if self.map.get(dpos).map(|t| t.river).unwrap_or(false) {
+                river = 1;
+            }
             for n in hex::neighbors(dpos) {
                 if let Some(t) = self.map.get(n) {
                     if t.terrain == "mountain" {
@@ -885,6 +917,9 @@ impl Game {
                     if t.district.is_some() {
                         district += 1;
                     }
+                    if t.river {
+                        river = 1; // flat bonus for river adjacency, Civ 6 style
+                    }
                 }
             }
             for (key, bonus) in &spec.adjacency {
@@ -892,6 +927,7 @@ impl Game {
                     "mountain" => mountain,
                     "forest" => forest,
                     "district" => district,
+                    "river" => river,
                     _ => 0,
                 } as f64;
                 ys.food += (n * bonus.food).trunc();
@@ -1065,6 +1101,17 @@ impl Game {
                 if city.buildings.contains(building) || !self.unlocked(pid, &spec.tech, &spec.civic) {
                     return false;
                 }
+                if spec.wonder && self.wonder_built(building) {
+                    return false; // one per world
+                }
+                if spec.coastal {
+                    let ok = hex::neighbors(city.pos).iter().any(|n| {
+                        self.map.get(*n).map(|t| self.rules.is_water(t)).unwrap_or(false)
+                    });
+                    if !ok {
+                        return false;
+                    }
+                }
                 match &spec.district {
                     None => true,
                     Some(d) => city.districts.contains_key(d),
@@ -1130,13 +1177,14 @@ impl Game {
         for uid in self.player_unit_ids(pid) {
             let u = self.units[&uid].clone();
             let spec = self.rules.units[u.kind.as_str()].clone();
+            let embarked = self.is_embarked(&u);
             if u.moves_left > 0.0 {
                 for n in hex::neighbors(u.pos) {
                     if self.can_move(uid, n) {
                         acts.push(Action::Move { unit: uid, to: n });
                     }
                 }
-                if spec.class == "military" {
+                if spec.class == "military" && !embarked {
                     if spec.ranged_strength > 0.0 {
                         for pos in hex::disk(u.pos, spec.range.max(1)) {
                             if pos == u.pos || !self.map.tiles.contains_key(&pos) {
@@ -1202,9 +1250,10 @@ impl Game {
             }
         }
         for uid in self.player_unit_ids(pid) {
-            let u = &self.units[&uid];
+            let u = self.units[&uid].clone();
             let spec = &self.rules.units[u.kind.as_str()];
-            if spec.class == "military" && u.moves_left > 0.0 && !u.fortified {
+            if spec.class == "military" && u.moves_left > 0.0 && !u.fortified
+                && !self.is_embarked(&u) {
                 acts.push(Action::Fortify { unit: uid });
             }
         }
@@ -1343,6 +1392,9 @@ impl Game {
         let spec = self.rules.units[u.kind.as_str()].clone();
         if spec.class != "military" || spec.ranged_strength > 0.0 {
             return Err("unit cannot melee attack".into());
+        }
+        if self.is_embarked(&u) {
+            return Err("cannot attack while embarked".into());
         }
         if u.moves_left <= 0.0 {
             return Err("no moves left".into());
@@ -1489,6 +1541,9 @@ impl Game {
         let spec = self.rules.units[u.kind.as_str()].clone();
         if spec.ranged_strength <= 0.0 {
             return Err("unit has no ranged attack".into());
+        }
+        if self.is_embarked(&u) {
+            return Err("cannot attack while embarked".into());
         }
         if u.moves_left <= 0.0 {
             return Err("no moves left".into());
@@ -2075,6 +2130,7 @@ impl Game {
         let ys = self.city_yields(cid);
         let housing = self.city_housing(&self.cities[&cid]);
         let am = self.city_amenity_surplus(&self.cities[&cid]);
+        let growth_bonus = self.empire_building_sum(pid, |b| b.growth_pct);
         {
             let city = self.cities.get_mut(&cid).unwrap();
             let mut surplus = ys.food - 2.0 * city.pop as f64;
@@ -2085,7 +2141,7 @@ impl Game {
                     else if headroom > -2.0 { 0.25 } else { 0.0 };
                 let af = if am >= 2 { 1.1 } else if am >= 0 { 1.0 }
                     else if am >= -2 { 0.75 } else { 0.5 };
-                surplus *= hf * af;
+                surplus *= hf * af * (1.0 + growth_bonus / 100.0);
             }
             city.food += surplus;
             let need = growth_threshold(city.pop);
@@ -2140,7 +2196,24 @@ impl Game {
                 true
             }
             Item::Building { building } => {
+                let spec = self.rules.buildings[building.as_str()].clone();
+                if spec.wonder && self.wonder_built(building) {
+                    // wonder race lost: drop the item, keep banked production
+                    let city = self.cities.get_mut(&cid).unwrap();
+                    city.queue.clear();
+                    return false;
+                }
                 self.cities.get_mut(&cid).unwrap().buildings.push(building.clone());
+                if spec.unit_levels > 0 {
+                    for uid in self.player_unit_ids(pid) {
+                        let mil = self.rules.units[self.units[&uid].kind.as_str()]
+                            .class == "military";
+                        if mil {
+                            let u = self.units.get_mut(&uid).unwrap();
+                            u.level = (u.level + spec.unit_levels).min(4);
+                        }
+                    }
+                }
                 true
             }
             Item::District { district, pos } => {

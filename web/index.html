@@ -307,6 +307,24 @@ function draw() {
     }
     if (!beau) { hexPath(x, y); cx.strokeStyle = "#00000038"; cx.lineWidth = 1; cx.stroke(); }
   }
+  // --- rivers (drawn tile-to-tile toward neighboring river/water)
+  cx.strokeStyle = "#4ba3d6"; cx.lineWidth = 4; cx.lineCap = "round";
+  cx.globalAlpha = 0.75;
+  for (const t of tiles) {
+    if (!t.river) continue;
+    const [x, y] = hexXY(t.pos[0], t.pos[1]);
+    let drew = false;
+    for (const d of DIRS) {
+      const n = TMAP.get(key([t.pos[0]+d[0], t.pos[1]+d[1]]));
+      if (!n || !(n.river || n.terrain === "coast" || n.terrain === "ocean")) continue;
+      const [nx, ny] = hexXY(n.pos[0], n.pos[1]);
+      cx.beginPath(); cx.moveTo(x, y);
+      cx.lineTo((x + nx) / 2, (y + ny) / 2); cx.stroke();
+      drew = true;
+    }
+    if (!drew) { cx.beginPath(); cx.arc(x, y, 3, 0, 7); cx.stroke(); }
+  }
+  cx.globalAlpha = 1; cx.lineCap = "butt";
   // --- territory borders (edges facing a different owner)
   for (const t of tiles) {
     if (t.owner === null || t.owner === undefined) continue;
@@ -914,6 +932,7 @@ cv.addEventListener("mousemove", ev => {
   const lines = [];
   let head = t.terrain + (t.hills ? " hills" : "");
   if (t.feature) head += " · " + t.feature;
+  if (t.river) head += " · 💧river";
   lines.push("<b>" + head + "</b>");
   if (t.resource)
     lines.push((RES_ICON[t.resource] || "●") + " " + t.resource +

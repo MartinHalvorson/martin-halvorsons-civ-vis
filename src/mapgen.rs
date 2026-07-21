@@ -105,6 +105,43 @@ pub fn generate(rules: &Rules, width: i32, height: i32, num_spawns: usize,
         wm.tiles.get_mut(&pos).unwrap().terrain = "coast".into();
     }
 
+    // --- rivers: flow across land toward the sea (tile-based simplification)
+    let water_tiles: Vec<Pos> = wm.tiles.iter()
+        .filter(|(_, t)| t.terrain == "ocean" || t.terrain == "coast")
+        .map(|(p, _)| *p)
+        .collect();
+    if !water_tiles.is_empty() {
+        let n_rivers = 2.max(land_list.len() / 45);
+        for _ in 0..n_rivers {
+            let mut cur = land_list[rng.below(land_list.len())];
+            let mut visited: BTreeSet<Pos> = BTreeSet::new();
+            for _ in 0..24 {
+                if visited.contains(&cur) {
+                    break;
+                }
+                visited.insert(cur);
+                {
+                    let t = wm.tiles.get_mut(&cur).unwrap();
+                    if t.terrain == "coast" || t.terrain == "ocean" {
+                        break;
+                    }
+                    if t.terrain != "mountain" {
+                        t.river = true;
+                    }
+                }
+                let nbs: Vec<Pos> = hex::neighbors(cur).into_iter()
+                    .filter(|n| wm.tiles.contains_key(n) && !visited.contains(n))
+                    .collect();
+                if nbs.is_empty() {
+                    break;
+                }
+                let dist_w = |p: Pos| water_tiles.iter()
+                    .map(|w| hex::distance(p, *w)).min().unwrap_or(99);
+                cur = *nbs.iter().min_by_key(|n| (dist_w(**n), **n)).unwrap();
+            }
+        }
+    }
+
     // --- features
     for pos in &land_list {
         let lat = latitude(*pos);

@@ -87,6 +87,38 @@ mod tests {
     }
 
     #[test]
+    fn rivers_freshwater_embark_wonders() {
+        let g = Game::new_full(2, 24, 16, 3, 60, 0, false);
+        // rivers generate
+        assert!(g.map.tiles.values().any(|t| t.river));
+        // embark gated on shipbuilding
+        let mut g2 = Game::new_full(2, 24, 16, 3, 60, 0, false);
+        let uid = g2.player_unit_ids(0)[0];
+        let coast = g2.map.tiles.values()
+            .find(|t| t.terrain == "coast"
+                && crate::hex::distance(t.pos, g2.units[&uid].pos) == 1)
+            .map(|t| t.pos);
+        if let Some(c) = coast {
+            assert!(!g2.can_move(uid, c));
+            g2.players[0].techs.insert("shipbuilding".to_string());
+            assert!(g2.can_move(uid, c));
+        }
+        // wonders are world-unique
+        assert!(g2.rules.buildings["pyramids"].wonder);
+        let cid = {
+            let s = g2.player_unit_ids(0).into_iter()
+                .find(|id| g2.units[id].kind == "settler").unwrap();
+            g2.apply(0, &Action::FoundCity { unit: s }).unwrap();
+            g2.player_city_ids(0)[0]
+        };
+        g2.cities.get_mut(&cid).unwrap().buildings.push("pyramids".to_string());
+        assert!(g2.wonder_built("pyramids"));
+        g2.players[0].techs.insert("masonry".to_string());
+        assert!(!g2.can_produce(0, cid,
+            &crate::game::Item::Building { building: "pyramids".to_string() }));
+    }
+
+    #[test]
     fn serialization_roundtrip() {
         let mut g = Game::new(2, 18, 12, 4, 25, 1);
         let mut ais = BasicAi::fleet(&g);

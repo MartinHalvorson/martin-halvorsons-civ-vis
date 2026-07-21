@@ -1,18 +1,203 @@
 {
-  "monument": {"cost": 60, "yields": {"culture": 2}},
-  "granary": {"cost": 65, "tech": "pottery", "yields": {"food": 2}, "housing": 2},
-  "walls": {"cost": 80, "tech": "masonry", "yields": {}},
-  "shrine": {"cost": 70, "tech": "astrology", "district": "holy_site", "yields": {"faith": 2}},
-  "library": {"cost": 90, "tech": "writing", "district": "campus", "yields": {"science": 2}},
-  "market": {"cost": 120, "tech": "currency", "district": "commercial_hub", "yields": {"gold": 3}},
-  "barracks": {"cost": 90, "tech": "bronze_working", "district": "encampment", "yields": {"production": 1}},
-  "lighthouse": {"cost": 120, "tech": "celestial_navigation", "district": "harbor", "yields": {"food": 1, "gold": 1}, "housing": 1},
-  "amphitheater": {"cost": 150, "civic": "drama_poetry", "district": "theater_square", "yields": {"culture": 2}},
-  "aqueduct": {"cost": 130, "tech": "engineering", "yields": {}, "housing": 2},
-  "arena": {"cost": 150, "civic": "games_recreation", "district": "entertainment_complex", "yields": {"culture": 1}, "amenity": 1},
-  "workshop": {"cost": 195, "tech": "apprenticeship", "district": "industrial_zone", "yields": {"production": 2}},
-  "armory": {"cost": 195, "tech": "military_tactics", "district": "encampment", "yields": {"production": 2}},
-  "medieval_walls": {"cost": 225, "tech": "castles", "yields": {}},
-  "bank": {"cost": 220, "tech": "banking", "district": "commercial_hub", "yields": {"gold": 4}},
-  "university": {"cost": 250, "tech": "education", "district": "campus", "yields": {"science": 4}, "housing": 1}
+  "monument": {
+    "cost": 60,
+    "yields": {
+      "culture": 2
+    }
+  },
+  "granary": {
+    "cost": 65,
+    "tech": "pottery",
+    "yields": {
+      "food": 2
+    },
+    "housing": 2
+  },
+  "walls": {
+    "cost": 80,
+    "tech": "masonry",
+    "yields": {}
+  },
+  "shrine": {
+    "cost": 70,
+    "tech": "astrology",
+    "district": "holy_site",
+    "yields": {
+      "faith": 2
+    }
+  },
+  "library": {
+    "cost": 90,
+    "tech": "writing",
+    "district": "campus",
+    "yields": {
+      "science": 2
+    }
+  },
+  "market": {
+    "cost": 120,
+    "tech": "currency",
+    "district": "commercial_hub",
+    "yields": {
+      "gold": 3
+    }
+  },
+  "barracks": {
+    "cost": 90,
+    "tech": "bronze_working",
+    "district": "encampment",
+    "yields": {
+      "production": 1
+    }
+  },
+  "lighthouse": {
+    "cost": 120,
+    "tech": "celestial_navigation",
+    "district": "harbor",
+    "yields": {
+      "food": 1,
+      "gold": 1
+    },
+    "housing": 1
+  },
+  "amphitheater": {
+    "cost": 150,
+    "civic": "drama_poetry",
+    "district": "theater_square",
+    "yields": {
+      "culture": 2
+    }
+  },
+  "aqueduct": {
+    "cost": 130,
+    "tech": "engineering",
+    "yields": {},
+    "housing": 2
+  },
+  "arena": {
+    "cost": 150,
+    "civic": "games_recreation",
+    "district": "entertainment_complex",
+    "yields": {
+      "culture": 1
+    },
+    "amenity": 1
+  },
+  "workshop": {
+    "cost": 195,
+    "tech": "apprenticeship",
+    "district": "industrial_zone",
+    "yields": {
+      "production": 2
+    }
+  },
+  "armory": {
+    "cost": 195,
+    "tech": "military_tactics",
+    "district": "encampment",
+    "yields": {
+      "production": 2
+    }
+  },
+  "medieval_walls": {
+    "cost": 225,
+    "tech": "castles",
+    "yields": {}
+  },
+  "bank": {
+    "cost": 220,
+    "tech": "banking",
+    "district": "commercial_hub",
+    "yields": {
+      "gold": 4
+    }
+  },
+  "university": {
+    "cost": 250,
+    "tech": "education",
+    "district": "campus",
+    "yields": {
+      "science": 4
+    },
+    "housing": 1
+  },
+  "great_bath": {
+    "cost": 180,
+    "tech": "pottery",
+    "yields": {
+      "faith": 1
+    },
+    "housing": 3,
+    "amenity": 1,
+    "wonder": true
+  },
+  "pyramids": {
+    "cost": 220,
+    "tech": "masonry",
+    "yields": {
+      "culture": 2
+    },
+    "builder_charges": 1,
+    "wonder": true
+  },
+  "stonehenge": {
+    "cost": 180,
+    "tech": "astrology",
+    "yields": {
+      "faith": 4
+    },
+    "wonder": true
+  },
+  "hanging_gardens": {
+    "cost": 180,
+    "tech": "irrigation",
+    "housing": 2,
+    "growth_pct": 15,
+    "wonder": true
+  },
+  "terracotta_army": {
+    "cost": 400,
+    "tech": "construction",
+    "yields": {
+      "culture": 2
+    },
+    "unit_levels": 1,
+    "wonder": true
+  },
+  "colosseum": {
+    "cost": 400,
+    "civic": "games_recreation",
+    "yields": {
+      "culture": 2
+    },
+    "amenity": 2,
+    "wonder": true
+  },
+  "great_library": {
+    "cost": 400,
+    "civic": "drama_poetry",
+    "yields": {
+      "science": 3,
+      "culture": 1
+    },
+    "wonder": true
+  },
+  "colossus": {
+    "cost": 400,
+    "tech": "shipbuilding",
+    "yields": {
+      "gold": 6
+    },
+    "coastal": true,
+    "wonder": true
+  },
+  "alhambra": {
+    "cost": 710,
+    "tech": "castles",
+    "yields": {
+      "culture": 2
+    },
+    "amenity": 2,
+    "wonder": true
+  }
 }

@@ -28,7 +28,7 @@ pub fn observation(g: &Game, pid: usize) -> Value {
             "pos": [pos.0, pos.1], "terrain": t.terrain, "feature": t.feature,
             "hills": t.hills, "resource": t.resource,
             "improvement": t.improvement, "district": t.district,
-            "owner": owner,
+            "owner": owner, "river": t.river,
         }))
     }).collect();
     let units: Vec<Value> = g.units.values()

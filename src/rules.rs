@@ -147,6 +147,16 @@ pub struct BuildingSpec {
     pub housing: f64,
     #[serde(default)]
     pub amenity: f64,
+    #[serde(default)]
+    pub wonder: bool,
+    #[serde(default)]
+    pub coastal: bool,
+    #[serde(default)]
+    pub growth_pct: f64,
+    #[serde(default)]
+    pub builder_charges: i32,
+    #[serde(default)]
+    pub unit_levels: i32,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

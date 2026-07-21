@@ -299,14 +299,27 @@ impl BasicAi {
             .rules
             .buildings
             .iter()
-            .filter(|(b, _)| {
-                g.can_produce(pid, cid, &Item::Building { building: (*b).clone() })
+            .filter(|(b, s)| {
+                !s.wonder && g.can_produce(pid, cid, &Item::Building { building: (*b).clone() })
             })
             .map(|(b, s)| (s.cost as i64, b.clone()))
             .collect();
         if !buildable.is_empty() {
             buildable.sort();
             return Some(Item::Building { building: buildable[0].1.clone() });
+        }
+        // developed cities turn to wonders
+        if g.cities[&cid].buildings.len() >= 3 {
+            let mut wonders: Vec<(i64, String)> = g.rules.buildings.iter()
+                .filter(|(b, s)| {
+                    s.wonder && g.can_produce(pid, cid, &Item::Building { building: (*b).clone() })
+                })
+                .map(|(b, s)| (s.cost as i64, b.clone()))
+                .collect();
+            if !wonders.is_empty() {
+                wonders.sort();
+                return Some(Item::Building { building: wonders[0].1.clone() });
+            }
         }
         self.best_military(g, pid, cid).map(|m| Item::Unit { unit: m })
     }

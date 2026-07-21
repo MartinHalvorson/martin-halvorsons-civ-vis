@@ -14,6 +14,8 @@ pub struct Tile {
     pub improvement: Option<String>,
     pub district: Option<String>,
     pub owner_city: Option<u32>,
+    #[serde(default)]
+    pub river: bool,
 }
 
 impl Tile {
@@ -27,6 +29,7 @@ impl Tile {
             improvement: None,
             district: None,
             owner_city: None,
+            river: false,
         }
     }
 }
