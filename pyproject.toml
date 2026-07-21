@@ -20,7 +20,7 @@ classifiers = [
 civ65 = "civ65.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/MartinHalvorson/martin-halvorsons-civ-6.5"
+Homepage = "https://github.com/MartinHalvorson/martin-halvorsons-civ-vis"
 
 [tool.setuptools.packages.find]
 include = ["civ65*"]

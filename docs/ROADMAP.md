@@ -13,12 +13,17 @@ City-states (pre-founded defensive minors, conquerable, excluded from
 victory); `soak` command playing many full AI games across seeds with anomaly
 flags — end-to-end games verified at 2-8 players, 100-200 turns.
 
-## Rust core port (next major milestone)
+## v0.3 (shipped) — Rust performance core
 
-Once rules stabilize, port the engine core to Rust for AI-training throughput
-(target 50-100x), keeping the identical JSON action/observation protocol and
-PyO3 bindings so this Python engine remains the executable spec and all
-agents/tests/saves transfer.
+`rust/` crate ports the full engine (map/cities/districts/tech/combat/
+city-states/AI/CLI) with the same embedded ruleset JSONs and action protocol.
+~16x single-core over Python (36k vs 2.3k turns/sec), parallel across cores
+with no GIL. Python engine remains the reference spec.
+
+Next for the Rust core:
+- PyO3 bindings (maturin) so Python agents/env drive the Rust engine
+- Ruleset ID interning + yield caching (est. several-fold further speedup)
+- Observation builder + fog in Rust for RL feature extraction
 
 ## v0.2 — rules depth
 

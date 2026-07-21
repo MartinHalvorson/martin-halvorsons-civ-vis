@@ -1,4 +1,4 @@
-# Martin Halvorson's Civ 6.5
+# Martin Halvorson's Civ VIS
 
 An open-source, **headless-first** 4X strategy engine inspired by the mechanics
 of Civilization VI — aiming to be to Civ 6 what [Unciv](https://github.com/yairm210/Unciv)
@@ -28,6 +28,25 @@ mechanics.
 - Moddable ruleset: all content lives in `civ65/data/*.json` (Unciv-style)
 - Scripted AIs (`basic`, `random`) and a gym-style `CivEnv` for agents
 - Zero runtime dependencies; pure Python
+
+## Two engines, one game
+
+- **`civ65/` (Python)** — the reference implementation and executable spec.
+  Zero deps, easiest to iterate on rules, powers the gym-style env today.
+- **`rust/` (Rust)** — the performance core for AI training. Same ruleset
+  JSONs (embedded at compile time), same JSON action protocol, same
+  mechanics; **~16x faster single-core (36k turns/sec) and parallelizes
+  across cores with no GIL** (~100k+ games/hour on a workstation). PyO3
+  bindings are the next step so Python agents drive the Rust core directly.
+
+```bash
+cd rust && cargo build --release
+./target/release/civ65r simulate --players 4 --seed 17
+./target/release/civ65r soak --games 10 --players 4 --turns 120
+./target/release/civ65r benchmark --games 100
+```
+
+Each engine is deterministic per seed (RNG formats differ between the two).
 
 ## Quickstart
 

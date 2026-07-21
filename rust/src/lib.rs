@@ -1,0 +1,93 @@
+//! Martin Halvorson's Civ VIS — Rust performance core.
+//! Same ruleset JSON, action protocol, and mechanics as the Python
+//! reference engine (`civ65/`); deterministic per seed within this engine.
+
+pub mod ai;
+pub mod game;
+pub mod hex;
+pub mod mapgen;
+pub mod rng;
+pub mod rules;
+pub mod world;
+
+pub type Pos = (i32, i32);
+
+#[cfg(test)]
+mod tests {
+    use crate::ai::{run_game, BasicAi};
+    use crate::game::{Action, Game};
+    use crate::hex;
+
+    #[test]
+    fn hex_math() {
+        assert_eq!(hex::distance((0, 0), (3, -2)), 3);
+        assert_eq!(hex::disk((0, 0), 1).len(), 7);
+        assert_eq!(hex::disk((4, -1), 2).len(), 19);
+        for n in hex::neighbors((2, 5)) {
+            assert_eq!(hex::distance((2, 5), n), 1);
+        }
+    }
+
+    #[test]
+    fn determinism_same_seed() {
+        let mut a = Game::new(2, 20, 14, 42, 30, 2);
+        let mut b = Game::new(2, 20, 14, 42, 30, 2);
+        let mut ais_a = BasicAi::fleet(&a);
+        let mut ais_b = BasicAi::fleet(&b);
+        run_game(&mut a, &mut ais_a);
+        run_game(&mut b, &mut ais_b);
+        let ja = serde_json::to_value(&a).unwrap();
+        let jb = serde_json::to_value(&b).unwrap();
+        assert_eq!(ja, jb);
+    }
+
+    #[test]
+    fn selfplay_completes() {
+        let mut g = Game::new(2, 20, 14, 11, 60, 2);
+        let mut ais = BasicAi::fleet(&g);
+        run_game(&mut g, &mut ais);
+        assert!(g.winner.is_some());
+        assert!(g.cities.len() >= 2);
+        for p in &g.players {
+            assert!(p.techs.len() > 1);
+        }
+    }
+
+    #[test]
+    fn city_states_stay_single() {
+        let mut g = Game::new(2, 28, 18, 2, 50, 3);
+        let minors: Vec<usize> = g.players.iter().filter(|p| p.is_minor).map(|p| p.id).collect();
+        assert!(!minors.is_empty());
+        let mut ais = BasicAi::fleet(&g);
+        run_game(&mut g, &mut ais);
+        for pid in minors {
+            let founded = g.cities.values().filter(|c| c.original_owner == pid).count();
+            assert_eq!(founded, 1);
+        }
+    }
+
+    #[test]
+    fn serialization_roundtrip() {
+        let mut g = Game::new(2, 18, 12, 4, 25, 1);
+        let mut ais = BasicAi::fleet(&g);
+        run_game(&mut g, &mut ais);
+        let j = serde_json::to_value(&g).unwrap();
+        let g2: Game = serde_json::from_value(j.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&g2).unwrap(), j);
+    }
+
+    #[test]
+    fn action_protocol_json() {
+        let a: Action = serde_json::from_str(
+            r#"{"type": "move", "unit": 3, "to": [1, -2]}"#).unwrap();
+        match a {
+            Action::Move { unit, to } => {
+                assert_eq!(unit, 3);
+                assert_eq!(to, (1, -2));
+            }
+            _ => panic!("wrong variant"),
+        }
+        let e = serde_json::to_string(&Action::EndTurn).unwrap();
+        assert_eq!(e, r#"{"type":"end_turn"}"#);
+    }
+}

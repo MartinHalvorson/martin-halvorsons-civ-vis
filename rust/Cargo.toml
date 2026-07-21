@@ -1,0 +1,22 @@
+[package]
+name = "civ65"
+version = "0.3.0"
+edition = "2021"
+description = "Martin Halvorson's Civ VIS - Rust performance core (headless Civ 6-style engine)"
+license = "MIT"
+
+[lib]
+name = "civ65"
+path = "src/lib.rs"
+
+[[bin]]
+name = "civ65r"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
