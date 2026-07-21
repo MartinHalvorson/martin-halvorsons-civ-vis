@@ -71,6 +71,8 @@ pub struct Unit {
     pub level: i32,
     #[serde(default)]
     pub fortified: bool,
+    #[serde(default)]
+    pub zoc_stopped: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
@@ -100,6 +102,15 @@ pub struct City {
     pub is_capital: bool,
     #[serde(default)]
     pub struck: bool,
+    /// Outer-defense pool from walls (Civ 6); -1 in old saves = derive on load.
+    #[serde(default = "wall_unset")]
+    pub wall_hp: i32,
+    #[serde(default)]
+    pub last_attacked: u32,
+}
+
+fn wall_unset() -> i32 {
+    -1
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -260,6 +271,12 @@ impl From<GameSer> for Game {
         }
         for c in g.cities.values() {
             g.city_by_pos.insert(c.pos, c.id);
+        }
+        let legacy: Vec<u32> = g.cities.values()
+            .filter(|c| c.wall_hp < 0).map(|c| c.id).collect();
+        for cid in legacy {
+            let max = g.city_max_wall_hp(&g.cities[&cid]);
+            g.cities.get_mut(&cid).unwrap().wall_hp = max;
         }
         g
     }
@@ -570,8 +587,34 @@ impl Game {
     }
 
     pub fn city_can_strike(&self, city: &City) -> bool {
-        !city.struck && city.buildings.iter()
-            .any(|b| b == "walls" || b == "medieval_walls")
+        !city.struck && city.wall_hp > 0 // ranged strike needs standing walls
+    }
+
+    /// Route an attack roll into a walled city: walls absorb it (melee does
+    /// 15%, ranged 50%, siege 100% of the roll to walls), while the city
+    /// itself takes 1 damage behind healthy walls (>=80%), half through
+    /// damaged walls, and full damage once breached (<20%) or bare (Civ 6).
+    fn city_take_damage(&mut self, cid: u32, dmg: i32, wall_mult: f64) {
+        let (wall, max) = {
+            let c = &self.cities[&cid];
+            (c.wall_hp, self.city_max_wall_hp(c))
+        };
+        let c = self.cities.get_mut(&cid).unwrap();
+        c.last_attacked = self.turn;
+        if wall > 0 && max > 0 {
+            let frac = wall as f64 / max as f64;
+            let through = if frac >= 0.8 {
+                1
+            } else if frac >= 0.2 {
+                dmg / 2
+            } else {
+                dmg
+            };
+            c.wall_hp = (wall - ((dmg as f64 * wall_mult).round() as i32).max(1)).max(0);
+            c.hp -= through.max(1);
+        } else {
+            c.hp -= dmg;
+        }
     }
 
     pub fn available_techs(&self, pid: usize) -> Vec<String> {
@@ -663,6 +706,7 @@ impl Game {
             xp: 0,
             level: 1,
             fortified: false,
+            zoc_stopped: false,
         };
         self.next_id += 1;
         let id = u.id;
@@ -709,7 +753,80 @@ impl Game {
         }
     }
 
+    /// MP to step from `from` onto adjacent `to`. Entering a land river tile
+    /// from off-river adds the Civ 6 crossing surcharge (+2 MP).
+    pub fn step_cost(&self, from: Pos, to: Pos) -> f64 {
+        let t = &self.map.tiles[&to];
+        let mut c = self.rules.move_cost(t);
+        if t.river && !self.rules.is_water(t)
+            && self.map.get(from).map(|f| !f.river).unwrap_or(true) {
+            c += 2.0;
+        }
+        c
+    }
+
+    fn exerts_zoc(&self, u: &Unit) -> bool {
+        let spec = &self.rules.units[u.kind.as_str()];
+        spec.class == "military" && spec.ranged_strength <= 0.0 && !spec.cavalry
+            && !self.is_embarked(u)
+    }
+
+    /// Is `pos` inside an enemy zone of control for player `pid`? Melee-capable
+    /// units project ZOC into adjacent tiles of their own domain (blocked by a
+    /// river bank in the tile model); cities and encampments project into all
+    /// adjacent tiles. Cavalry ignore ZOC when moving (Civ 6).
+    pub fn in_enemy_zoc(&self, pid: usize, pos: Pos) -> bool {
+        let t = match self.map.get(pos) {
+            Some(t) => t,
+            None => return false,
+        };
+        let water = self.rules.is_water(t);
+        for n in hex::neighbors(pos) {
+            let nt = match self.map.get(n) {
+                Some(nt) => nt,
+                None => continue,
+            };
+            for oid in self.units_at(n) {
+                let o = &self.units[&oid];
+                if o.owner == pid || !self.is_at_war(pid, o.owner)
+                    || !self.exerts_zoc(o) {
+                    continue;
+                }
+                let o_water = self.rules.units[o.kind.as_str()]
+                    .domain.as_deref() == Some("sea");
+                if o_water != water || (!water && nt.river != t.river) {
+                    continue;
+                }
+                return true;
+            }
+            let hostile_city = self.city_at(n).map(|cid| {
+                let c = &self.cities[&cid];
+                c.owner != pid && self.is_at_war(pid, c.owner)
+            }).unwrap_or(false);
+            let hostile_camp = nt.district.as_deref() == Some("encampment")
+                && nt.owner_city.map(|oc| {
+                    let owner = self.cities[&oc].owner;
+                    owner != pid && self.is_at_war(pid, owner)
+                }).unwrap_or(false);
+            if hostile_city || hostile_camp {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn can_move(&self, uid: u32, pos: Pos) -> bool {
+        let u = &self.units[&uid];
+        if u.zoc_stopped {
+            return false;
+        }
+        // MP is paid before entering (Civ 6): need the full step cost, but a
+        // unit with untouched movement may always take one step.
+        let full = u.moves_left >= self.rules.units[u.kind.as_str()].moves;
+        if !full && self.map.tiles.contains_key(&pos)
+            && u.moves_left < self.step_cost(u.pos, pos) {
+            return false;
+        }
         self.can_enter(uid, self.units[&uid].pos, pos)
     }
 
@@ -769,6 +886,14 @@ impl Game {
     }
 
     fn flow(&self, uid: u32, start: Pos, moves: f64) -> BTreeMap<Pos, f64> {
+        let (pid, cavalry, max_moves) = {
+            let u = &self.units[&uid];
+            let spec = &self.rules.units[u.kind.as_str()];
+            (u.owner, spec.cavalry, spec.moves)
+        };
+        if self.units[&uid].zoc_stopped {
+            return BTreeMap::new();
+        }
         let mut best: BTreeMap<Pos, f64> = BTreeMap::new();
         best.insert(start, moves);
         let mut queue = vec![start];
@@ -781,8 +906,15 @@ impl Game {
                 if !self.map.tiles.contains_key(&n) || !self.can_enter(uid, cur, n) {
                     continue;
                 }
-                let cost = self.rules.move_cost(&self.map.tiles[&n]);
-                let new_rem = (rem - cost).max(0.0);
+                let cost = self.step_cost(cur, n);
+                let fresh = cur == start && rem >= max_moves;
+                if rem < cost && !fresh {
+                    continue; // MP paid up front (Civ 6)
+                }
+                let mut new_rem = (rem - cost).max(0.0);
+                if !cavalry && self.in_enemy_zoc(pid, n) {
+                    new_rem = 0.0; // entering enemy ZOC ends movement
+                }
                 if best.get(&n).map(|b| new_rem > *b).unwrap_or(true) {
                     best.insert(n, new_rem);
                     queue.push(n);
@@ -800,6 +932,14 @@ impl Game {
         if start == to {
             return Some(vec![]);
         }
+        let (pid, cavalry, max_moves) = {
+            let u = &self.units[&uid];
+            let spec = &self.rules.units[u.kind.as_str()];
+            (u.owner, spec.cavalry, spec.moves)
+        };
+        if self.units[&uid].zoc_stopped {
+            return None;
+        }
         let mut best: BTreeMap<Pos, f64> = BTreeMap::new();
         let mut parent: BTreeMap<Pos, Pos> = BTreeMap::new();
         best.insert(start, moves);
@@ -813,8 +953,15 @@ impl Game {
                 if !self.map.tiles.contains_key(&n) || !self.can_enter(uid, cur, n) {
                     continue;
                 }
-                let cost = self.rules.move_cost(&self.map.tiles[&n]);
-                let new_rem = (rem - cost).max(0.0);
+                let cost = self.step_cost(cur, n);
+                let fresh = cur == start && rem >= max_moves;
+                if rem < cost && !fresh {
+                    continue;
+                }
+                let mut new_rem = (rem - cost).max(0.0);
+                if !cavalry && self.in_enemy_zoc(pid, n) {
+                    new_rem = 0.0;
+                }
                 if best.get(&n).map(|b| new_rem > *b).unwrap_or(true) {
                     best.insert(n, new_rem);
                     parent.insert(n, cur);
@@ -849,7 +996,9 @@ impl Game {
             if self.units.get(&uid).map(|x| x.moves_left <= 0.0).unwrap_or(true) {
                 break;
             }
-            self.do_move(pid, uid, step)?;
+            if self.do_move(pid, uid, step).is_err() {
+                break; // out of MP or stopped by ZOC mid-path
+            }
         }
         Ok(())
     }
@@ -875,14 +1024,29 @@ impl Game {
         true
     }
 
+    /// 50 HP of outer defenses per level of walls built (Civ 6).
+    pub fn city_max_wall_hp(&self, city: &City) -> i32 {
+        50 * city.buildings.iter()
+            .filter(|b| *b == "walls" || *b == "medieval_walls").count() as i32
+    }
+
+    /// City ranged strike strength: the strongest ranged unit the owner
+    /// fields, or 3 if none (Civ 6 rule).
+    pub fn city_ranged_strength(&self, cid: u32) -> f64 {
+        let owner = self.cities[&cid].owner;
+        self.units.values()
+            .filter(|u| u.owner == owner)
+            .map(|u| self.rules.units[u.kind.as_str()].ranged_strength)
+            .fold(3.0, f64::max)
+    }
+
     pub fn city_strength(&self, cid: u32) -> f64 {
         let city = &self.cities[&cid];
         let mut s = 10.0 + 2.0 * city.pop as f64;
-        if city.buildings.iter().any(|b| b == "walls") {
-            s += 10.0;
-        }
-        if city.buildings.iter().any(|b| b == "medieval_walls") {
-            s += 15.0;
+        if city.wall_hp > 0 {
+            // +3 combat strength per standing wall level (Civ 6)
+            s += 3.0 * city.buildings.iter()
+                .filter(|b| *b == "walls" || *b == "medieval_walls").count() as f64;
         }
         if city.districts.contains_key("encampment") {
             let d = self.rules.districts["encampment"].defense;
@@ -1352,6 +1516,9 @@ impl Game {
         if u.moves_left <= 0.0 {
             return Err("no moves left".into());
         }
+        if u.zoc_stopped {
+            return Err("stopped by zone of control".into());
+        }
         if !self.can_move(uid, to) {
             return Err("invalid move".into());
         }
@@ -1360,11 +1527,20 @@ impl Game {
                 self.units.get_mut(&oid).unwrap().owner = pid; // capture civilian
             }
         }
-        let cost = self.rules.move_cost(&self.map.tiles[&to]);
+        let cost = self.step_cost(u.pos, to);
+        let spec = self.rules.units[u.kind.as_str()].clone();
         self.units.get_mut(&uid).unwrap().fortified = false;
         self.relocate(uid, to);
         let mu = self.units.get_mut(&uid).unwrap();
         mu.moves_left = (mu.moves_left - cost).max(0.0);
+        if !spec.cavalry && self.in_enemy_zoc(pid, to) {
+            let mu = self.units.get_mut(&uid).unwrap();
+            if spec.class == "civilian" {
+                mu.moves_left = 0.0; // civilians lose all movement in ZOC
+            } else {
+                mu.zoc_stopped = true; // may still attack, not move
+            }
+        }
         self.maybe_clear_camp(uid);
         Ok(())
     }
@@ -1497,7 +1673,8 @@ impl Game {
                 let cs = self.city_strength(cid);
                 let dmg_out = damage(att, cs, &mut self.rng);
                 let dmg_in = damage(cs, att, &mut self.rng);
-                self.cities.get_mut(&cid).unwrap().hp -= dmg_out;
+                let mult = if spec.siege { 1.0 } else { 0.15 };
+                self.city_take_damage(cid, dmg_out, mult);
                 {
                     let mu = self.units.get_mut(&uid).unwrap();
                     mu.hp -= dmg_in;
@@ -1623,8 +1800,10 @@ impl Game {
         } else if let Some(cid) = city_id {
             let cs = self.city_strength(cid);
             let dmg = damage(att, cs, &mut self.rng);
+            let mult = if spec.siege { 1.0 } else { 0.5 };
+            self.city_take_damage(cid, dmg, mult);
             let c = self.cities.get_mut(&cid).unwrap();
-            c.hp = (c.hp - dmg).max(1);
+            c.hp = c.hp.max(1); // ranged fire cannot capture (Civ 6)
         }
         Ok(())
     }
@@ -1685,6 +1864,8 @@ impl Game {
             original_owner: pid,
             is_capital,
             struck: false,
+            wall_hp: 0,
+            last_attacked: 0,
         };
         {
             let center = self.map.tiles.get_mut(&pos).unwrap();
@@ -1880,7 +2061,7 @@ impl Game {
         let d = self.units[&did].clone();
         let ds = effective_strength(self.unit_strength(&d, true), d.hp)
             + self.tile_defense_bonus(target);
-        let att = self.city_strength(cid);
+        let att = self.city_ranged_strength(cid);
         let dmg = damage(att, ds, &mut self.rng);
         self.units.get_mut(&did).unwrap().hp -= dmg;
         if self.units[&did].hp <= 0 {
@@ -1979,6 +2160,7 @@ impl Game {
             }
             let u = self.units.get_mut(&uid).unwrap();
             u.moves_left = moves;
+            u.zoc_stopped = false;
             u.hp = (u.hp + heal).min(100);
             while u.level < 4
                 && u.xp >= (15 * u.level as i64 * (u.level as i64 + 1)) / 2 {
@@ -2178,8 +2360,14 @@ impl Game {
                 self.expand_borders(cid);
             }
         }
+        let max_wall = self.city_max_wall_hp(&self.cities[&cid]);
+        let turn = self.turn;
         let city = self.cities.get_mut(&cid).unwrap();
-        city.hp = (city.hp + 10).min(200);
+        city.hp = (city.hp + 20).min(200); // Civ 6 heal rate
+        if city.wall_hp < max_wall && turn.saturating_sub(city.last_attacked) >= 3 {
+            // stand-in for the Civ 6 "repair outer defenses" project
+            city.wall_hp = (city.wall_hp + 20).min(max_wall);
+        }
         ys
     }
 
@@ -2204,6 +2392,9 @@ impl Game {
                     return false;
                 }
                 self.cities.get_mut(&cid).unwrap().buildings.push(building.clone());
+                if building == "walls" || building == "medieval_walls" {
+                    self.cities.get_mut(&cid).unwrap().wall_hp += 50;
+                }
                 if spec.unit_levels > 0 {
                     for uid in self.player_unit_ids(pid) {
                         let mil = self.rules.units[self.units[&uid].kind.as_str()]
@@ -2309,7 +2500,9 @@ impl Game {
             city.pop = (city.pop - 1).max(1);
             city.hp = 100;
             city.queue.clear();
-            city.buildings.retain(|b| b != "walls");
+            // Civ 6: walls are destroyed outright when a city falls
+            city.buildings.retain(|b| b != "walls" && b != "medieval_walls");
+            city.wall_hp = 0;
         }
         let pos = self.cities[&cid].pos;
         for oid in self.units_at(pos) {

@@ -111,6 +111,10 @@ pub struct UnitSpec {
     pub requires_resource: Option<String>,
     #[serde(default)]
     pub domain: Option<String>,
+    #[serde(default)]
+    pub cavalry: bool, // ignores zone of control
+    #[serde(default)]
+    pub siege: bool, // full damage vs city walls
 }
 
 #[derive(Clone, Serialize, Deserialize)]

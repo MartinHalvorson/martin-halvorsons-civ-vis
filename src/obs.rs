@@ -52,6 +52,7 @@ pub fn observation(g: &Game, pid: usize) -> Value {
             "id": c.id, "name": c.name, "owner": c.owner,
             "pos": [c.pos.0, c.pos.1], "pop": c.pop, "hp": c.hp,
             "is_capital": c.is_capital,
+            "wall_hp": c.wall_hp, "wall_max": g.city_max_wall_hp(c),
         });
         if c.owner == pid {
             let ys = g.city_yields(c.id);

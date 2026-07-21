@@ -4,8 +4,7 @@ Tracked against the [Civilization Wiki](https://civilization.fandom.com/wiki/Civ
 Status: ✅ implemented · 🟡 simplified · ❌ not yet.
 
 > **In progress** (claimed by parallel sessions — check before starting a batch):
-> - Session B: zone of control, exact movement (min-1-tile, river crossing +2 MP),
->   wall HP pool, city ranged strength. Do not touch these.
+> - (none currently claimed by session B)
 
 | System | Status | Notes |
 |---|---|---|
@@ -18,7 +17,7 @@ Status: ✅ implemented · 🟡 simplified · ❌ not yet.
 | Tech + civics trees, Eureka/Inspiration | ✅ | 29 techs / 14 civics, through renaissance |
 | Governments | 🟡 | flat effects; policy cards ❌ (next up) |
 | Combat math (Civ 6 formula), XP/promotions | 🟡 | flat +5/level vs promotion trees |
-| Fortify, city ranged strikes, walls | ✅ | wall HP not a separate pool |
+| Fortify, city ranged strikes, walls | ✅ | wall HP pool (50/level), melee 15% / ranged 50% / siege 100% vs walls, strike = best ranged unit, walls razed on capture |
 | Embarkation (Shipbuilding) | ✅ | embarked strength 10, cannot attack |
 | Barbarians (camps, raiders, rewards) | ✅ | no scout-alert mechanic |
 | City-states | 🟡 | defensive minors; envoys/suzerain ❌ |
@@ -28,7 +27,9 @@ Status: ✅ implemented · 🟡 simplified · ❌ not yet.
 | Diplomacy (deals, alliances, grievances) | 🟡 | war/peace only |
 | Loyalty, governors (R&F/GS) | ❌ | |
 | Natural wonders, goody huts | ❌ | |
-| Zone of control, formations/corps | ❌ | |
+| Zone of control | ✅ | melee exerts (same domain, not over river banks), cities/encampments exert all-adjacent, cavalry ignores, civilians drop all MP |
+| Movement: MP paid up front, min-1-tile, river +2 MP | ✅ | river surcharge on entering channel tile (tile-model 🟡) |
+| Formations/corps, support units | ❌ | |
 | Victory: domination, science, score | ✅ | culture/religious/diplomatic ❌ |
 | Eras, era score, golden ages | ❌ | |
 
