@@ -45,7 +45,15 @@ fn pair(a: usize, b: usize) -> (usize, usize) {
     (a.min(b), a.max(b))
 }
 
+fn bump(p: &mut Player, key: &str) {
+    *p.counters.entry(key.to_string()).or_insert(0) += 1;
+}
+
 // ------------------------------------------------------------------ entities
+
+fn lvl1() -> i32 {
+    1
+}
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct Unit {
@@ -57,6 +65,12 @@ pub struct Unit {
     pub hp: i32,
     pub moves_left: f64,
     pub charges: i32,
+    #[serde(default)]
+    pub xp: i64,
+    #[serde(default = "lvl1")]
+    pub level: i32,
+    #[serde(default)]
+    pub fortified: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
@@ -84,6 +98,8 @@ pub struct City {
     pub queue: Vec<Item>,
     pub original_owner: usize,
     pub is_capital: bool,
+    #[serde(default)]
+    pub struck: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -103,6 +119,16 @@ pub struct Player {
     pub explored: BTreeSet<Pos>,
     pub alive: bool,
     pub is_minor: bool,
+    #[serde(default)]
+    pub is_barbarian: bool,
+    #[serde(default)]
+    pub government: Option<String>,
+    #[serde(default)]
+    pub counters: BTreeMap<String, i64>,
+    #[serde(default)]
+    pub boosted_techs: BTreeSet<String>,
+    #[serde(default)]
+    pub boosted_civics: BTreeSet<String>,
 }
 
 impl Player {
@@ -125,6 +151,11 @@ impl Player {
             explored: BTreeSet::new(),
             alive: true,
             is_minor,
+            is_barbarian: false,
+            government: None,
+            counters: BTreeMap::new(),
+            boosted_techs: BTreeSet::new(),
+            boosted_civics: BTreeSet::new(),
         }
     }
 }
@@ -145,6 +176,9 @@ pub enum Action {
     Civic { civic: String },
     DeclareWar { player: usize },
     MakePeace { player: usize },
+    Fortify { unit: u32 },
+    Government { government: String },
+    CityStrike { city: u32, target: Pos },
     EndTurn,
 }
 
@@ -171,6 +205,8 @@ pub struct Game {
     pub units: BTreeMap<u32, Unit>,
     pub cities: BTreeMap<u32, City>,
     pub at_war: BTreeSet<(usize, usize)>,
+    pub barb_pid: Option<usize>,
+    pub barb_camps: BTreeMap<Pos, u32>,
     occ: BTreeMap<Pos, Vec<u32>>,
     city_by_pos: BTreeMap<Pos, u32>,
 }
@@ -186,6 +222,10 @@ struct GameSer {
     next_id: u32,
     rng: Rng,
     at_war: Vec<(usize, usize)>,
+    #[serde(default)]
+    barb_pid: Option<usize>,
+    #[serde(default)]
+    barb_camps: Vec<(Pos, u32)>,
     map: WorldMap,
     players: Vec<Player>,
     units: Vec<Unit>,
@@ -209,6 +249,8 @@ impl From<GameSer> for Game {
             units: s.units.into_iter().map(|u| (u.id, u)).collect(),
             cities: s.cities.into_iter().map(|c| (c.id, c)).collect(),
             at_war: s.at_war.into_iter().collect(),
+            barb_pid: s.barb_pid,
+            barb_camps: s.barb_camps.into_iter().collect(),
             occ: BTreeMap::new(),
             city_by_pos: BTreeMap::new(),
         };
@@ -234,6 +276,8 @@ impl From<Game> for GameSer {
             next_id: g.next_id,
             rng: g.rng,
             at_war: g.at_war.into_iter().collect(),
+            barb_pid: g.barb_pid,
+            barb_camps: g.barb_camps.into_iter().collect(),
             map: g.map,
             players: g.players,
             units: g.units.into_values().collect(),
@@ -245,6 +289,13 @@ impl From<Game> for GameSer {
 impl Game {
     pub fn new(num_players: usize, width: i32, height: i32, seed: u64,
                max_turns: u32, num_city_states: usize) -> Game {
+        Game::new_full(num_players, width, height, seed, max_turns,
+                       num_city_states, true)
+    }
+
+    pub fn new_full(num_players: usize, width: i32, height: i32, seed: u64,
+                    max_turns: u32, num_city_states: usize,
+                    barbarians: bool) -> Game {
         let rules = Rules::embedded();
         let mut rng = Rng::new(seed);
         let total = num_players + num_city_states;
@@ -264,6 +315,8 @@ impl Game {
             units: BTreeMap::new(),
             cities: BTreeMap::new(),
             at_war: BTreeSet::new(),
+            barb_pid: None,
+            barb_camps: BTreeMap::new(),
             occ: BTreeMap::new(),
             city_by_pos: BTreeMap::new(),
         };
@@ -289,7 +342,97 @@ impl Game {
             g.place_new_unit("warrior", pid, *pos);
             g.place_new_unit("slinger", pid, *pos);
         }
+        if barbarians {
+            let pid = g.players.len();
+            let mut barb = Player::new(pid, "Barbarians", true);
+            barb.is_barbarian = true;
+            g.players.push(barb);
+            g.barb_pid = Some(pid);
+            for _ in 0..2 {
+                g.spawn_camp();
+            }
+        }
         g
+    }
+
+    fn spawn_camp(&mut self) {
+        let mut cands: Vec<Pos> = Vec::new();
+        for (pos, t) in &self.map.tiles {
+            if self.rules.is_water(t) || !self.rules.is_passable(t) {
+                continue;
+            }
+            if t.owner_city.is_some() || t.improvement.is_some()
+                || self.city_by_pos.contains_key(pos) {
+                continue;
+            }
+            if self.cities.values().any(|c| hex::distance(*pos, c.pos) < 4) {
+                continue;
+            }
+            if self.barb_camps.keys().any(|cp| hex::distance(*pos, *cp) < 4) {
+                continue;
+            }
+            cands.push(*pos);
+        }
+        if cands.is_empty() {
+            return;
+        }
+        let pos = cands[self.rng.below(cands.len())];
+        self.map.tiles.get_mut(&pos).unwrap().improvement =
+            Some("barbarian_camp".to_string());
+        self.barb_camps.insert(pos, self.turn + 2);
+    }
+
+    fn barbarian_phase(&mut self) {
+        let bpid = match self.barb_pid {
+            Some(p) => p,
+            None => return,
+        };
+        let n_majors = self.players.iter().filter(|p| !p.is_minor).count();
+        if self.turn % 10 == 0 && self.barb_camps.len() < n_majors + 1 {
+            self.spawn_camp();
+        }
+        let cap = 2 + 2 * self.barb_camps.len();
+        let mut n_barb = self.player_unit_ids(bpid).len();
+        let era = self.players.iter().filter(|p| !p.is_minor)
+            .map(|p| p.techs.len()).max().unwrap_or(1);
+        let pool: &[&str] = if era < 8 {
+            &["warrior"]
+        } else if era < 14 {
+            &["warrior", "spearman", "archer"]
+        } else if era < 22 {
+            &["swordsman", "spearman", "archer"]
+        } else {
+            &["swordsman", "crossbowman", "pikeman"]
+        };
+        let camps: Vec<(Pos, u32)> = self.barb_camps.iter()
+            .map(|(p, n)| (*p, *n)).collect();
+        for (pos, nxt) in camps {
+            if self.turn < nxt || n_barb >= cap {
+                continue;
+            }
+            let utype = pool[self.rng.below(pool.len())];
+            if self.place_new_unit(utype, bpid, pos).is_some() {
+                n_barb += 1;
+                self.barb_camps.insert(pos, self.turn + 6);
+            }
+        }
+    }
+
+    fn maybe_clear_camp(&mut self, uid: u32) {
+        let (pos, owner, kind) = {
+            let u = &self.units[&uid];
+            (u.pos, u.owner, u.kind.clone())
+        };
+        if self.barb_camps.contains_key(&pos) && Some(owner) != self.barb_pid
+            && self.rules.units[kind.as_str()].class == "military" {
+            self.barb_camps.remove(&pos);
+            let t = self.map.tiles.get_mut(&pos).unwrap();
+            if t.improvement.as_deref() == Some("barbarian_camp") {
+                t.improvement = None;
+            }
+            self.players[owner].gold += 50.0;
+            bump(&mut self.players[owner], "camps");
+        }
     }
 
     // ------------------------------------------------------------- queries
@@ -311,7 +454,98 @@ impl Game {
     }
 
     pub fn is_at_war(&self, a: usize, b: usize) -> bool {
+        if a == b {
+            return false;
+        }
+        if let Some(bp) = self.barb_pid {
+            if bp == a || bp == b {
+                return true;
+            }
+        }
         self.at_war.contains(&pair(a, b))
+    }
+
+    pub fn gov_effects(&self, pid: usize) -> crate::rules::GovEffects {
+        match &self.players[pid].government {
+            Some(g) => self.rules.governments.get(g)
+                .map(|s| s.effects).unwrap_or_default(),
+            None => Default::default(),
+        }
+    }
+
+    pub fn unit_strength(&self, u: &Unit, defending: bool) -> f64 {
+        let mut s = self.rules.units[u.kind.as_str()].strength.max(1.0)
+            + 5.0 * (u.level - 1) as f64
+            + self.gov_effects(u.owner).combat_strength;
+        if defending && u.fortified {
+            s += 6.0;
+        }
+        s
+    }
+
+    pub fn unit_ranged_strength(&self, u: &Unit) -> f64 {
+        let rs = self.rules.units[u.kind.as_str()].ranged_strength;
+        if rs <= 0.0 {
+            return 0.0;
+        }
+        rs + 5.0 * (u.level - 1) as f64 + self.gov_effects(u.owner).combat_strength
+    }
+
+    pub fn city_housing(&self, city: &City) -> f64 {
+        let mut h = 2.0;
+        if hex::neighbors(city.pos).iter().any(|n| {
+            self.map.get(*n).map(|t| self.rules.is_water(t)).unwrap_or(false)
+        }) {
+            h += 2.0;
+        }
+        for b in &city.buildings {
+            h += self.rules.buildings[b.as_str()].housing;
+        }
+        h + self.gov_effects(city.owner).housing
+    }
+
+    pub fn empire_luxuries(&self, pid: usize) -> usize {
+        let mut lux: BTreeSet<&str> = BTreeSet::new();
+        for c in self.cities.values().filter(|c| c.owner == pid) {
+            for pos in &c.owned_tiles {
+                if let Some(r) = &self.map.tiles[pos].resource {
+                    if self.rules.resources[r.as_str()].class == "luxury" {
+                        lux.insert(r);
+                    }
+                }
+            }
+        }
+        lux.len()
+    }
+
+    pub fn city_amenity_surplus(&self, city: &City) -> i64 {
+        let mut supply = self.empire_luxuries(city.owner) as f64;
+        for dname in city.districts.keys() {
+            supply += self.rules.districts[dname.as_str()].amenity;
+        }
+        for b in &city.buildings {
+            supply += self.rules.buildings[b.as_str()].amenity;
+        }
+        supply += self.gov_effects(city.owner).amenity;
+        supply as i64 - 0.max((city.pop - 1) / 2) as i64
+    }
+
+    fn amenity_yield_mult(&self, city: &City) -> f64 {
+        let s = self.city_amenity_surplus(city);
+        if s >= 2 {
+            1.05
+        } else if s >= 0 {
+            1.0
+        } else if s >= -2 {
+            0.93
+        } else {
+            0.85
+        }
+    }
+
+    pub fn city_can_strike(&self, city: &City) -> bool {
+        !city.struck && city.buildings.iter()
+            .any(|b| b == "walls" || b == "medieval_walls")
     }
 
     pub fn available_techs(&self, pid: usize) -> Vec<String> {
@@ -396,12 +630,16 @@ impl Game {
             hp: 100,
             moves_left: spec.moves,
             charges: spec.charges,
+            xp: 0,
+            level: 1,
+            fortified: false,
         };
         self.next_id += 1;
         let id = u.id;
+        let sight = spec.sight;
         self.occ.entry(pos).or_default().push(id);
         self.units.insert(id, u);
-        self.reveal(owner, pos, 2);
+        self.reveal(owner, pos, sight);
         id
     }
 
@@ -429,7 +667,8 @@ impl Game {
         }
         self.units.get_mut(&uid).unwrap().pos = pos;
         self.occ.entry(pos).or_default().push(uid);
-        self.reveal(owner, pos, 2);
+        let sight = self.rules.units[self.units[&uid].kind.as_str()].sight;
+        self.reveal(owner, pos, sight);
     }
 
     fn reveal(&mut self, pid: usize, pos: Pos, radius: i32) {
@@ -509,6 +748,9 @@ impl Game {
         let mut s = 10.0 + 2.0 * city.pop as f64;
         if city.buildings.iter().any(|b| b == "walls") {
             s += 10.0;
+        }
+        if city.buildings.iter().any(|b| b == "medieval_walls") {
+            s += 15.0;
         }
         if city.districts.contains_key("encampment") {
             let d = self.rules.districts["encampment"].defense;
@@ -598,6 +840,16 @@ impl Game {
             ys.science += 1.0;
             ys.culture += 1.0;
         }
+        let eff = self.gov_effects(city.owner);
+        ys.production *= 1.0 + eff.production_pct / 100.0;
+        ys.science *= 1.0 + eff.science_pct / 100.0;
+        ys.gold *= 1.0 + eff.gold_pct / 100.0;
+        let m = self.amenity_yield_mult(city);
+        ys.production *= m;
+        ys.gold *= m;
+        ys.science *= m;
+        ys.culture *= m;
+        ys.faith *= m;
         ys
     }
 
@@ -846,12 +1098,47 @@ impl Game {
                 acts.push(Action::Civic { civic: c });
             }
         }
-        for o in &self.players {
-            if o.id != pid && o.alive {
-                if self.is_at_war(pid, o.id) {
-                    acts.push(Action::MakePeace { player: o.id });
-                } else {
-                    acts.push(Action::DeclareWar { player: o.id });
+        for uid in self.player_unit_ids(pid) {
+            let u = &self.units[&uid];
+            let spec = &self.rules.units[u.kind.as_str()];
+            if spec.class == "military" && u.moves_left > 0.0 && !u.fortified {
+                acts.push(Action::Fortify { unit: uid });
+            }
+        }
+        for cid in self.player_city_ids(pid) {
+            if self.city_can_strike(&self.cities[&cid]) {
+                let cpos = self.cities[&cid].pos;
+                for pos in hex::disk(cpos, 2) {
+                    if !self.map.tiles.contains_key(&pos) {
+                        continue;
+                    }
+                    let hit = self.units_at(pos).into_iter().any(|oid| {
+                        let o = &self.units[&oid];
+                        o.owner != pid && self.is_at_war(pid, o.owner)
+                    });
+                    if hit {
+                        acts.push(Action::CityStrike { city: cid, target: pos });
+                    }
+                }
+            }
+        }
+        if !p.is_minor {
+            for (g, spec) in &self.rules.governments {
+                let ok = spec.civic.as_ref()
+                    .map(|c| p.civics.contains(c)).unwrap_or(true);
+                if ok && p.government.as_deref() != Some(g.as_str()) {
+                    acts.push(Action::Government { government: g.clone() });
+                }
+            }
+        }
+        if !p.is_barbarian {
+            for o in &self.players {
+                if o.id != pid && o.alive && !o.is_barbarian {
+                    if self.is_at_war(pid, o.id) {
+                        acts.push(Action::MakePeace { player: o.id });
+                    } else {
+                        acts.push(Action::DeclareWar { player: o.id });
+                    }
                 }
             }
         }
@@ -890,6 +1177,9 @@ impl Game {
             Action::Civic { civic } => self.do_civic(pid, civic),
             Action::DeclareWar { player } => self.do_declare_war(pid, *player),
             Action::MakePeace { player } => self.do_make_peace(pid, *player),
+            Action::Fortify { unit } => self.do_fortify(pid, *unit),
+            Action::Government { government } => self.do_government(pid, government),
+            Action::CityStrike { city, target } => self.do_city_strike(pid, *city, *target),
             Action::EndTurn => {
                 self.do_end_turn();
                 Ok(())
@@ -918,9 +1208,11 @@ impl Game {
             }
         }
         let cost = self.rules.move_cost(&self.map.tiles[&to]);
+        self.units.get_mut(&uid).unwrap().fortified = false;
         self.relocate(uid, to);
         let mu = self.units.get_mut(&uid).unwrap();
         mu.moves_left = (mu.moves_left - cost).max(0.0);
+        self.maybe_clear_camp(uid);
         Ok(())
     }
 
@@ -981,40 +1273,49 @@ impl Game {
             .cloned()
             .filter(|id| self.rules.units[self.units[id].kind.as_str()].class == "military")
             .collect();
-        let att = effective_strength(spec.strength, u.hp);
-        self.units.get_mut(&uid).unwrap().moves_left = 0.0;
+        let att = {
+            let u2 = &self.units[&uid];
+            effective_strength(self.unit_strength(u2, false), u2.hp)
+        };
+        {
+            let mu = self.units.get_mut(&uid).unwrap();
+            mu.moves_left = 0.0;
+            mu.fortified = false;
+        }
         if !military.is_empty() {
             let did = *military
                 .iter()
                 .max_by(|a, b| {
                     let ea = effective_strength(
-                        self.rules.units[self.units[*a].kind.as_str()].strength.max(1.0),
-                        self.units[*a].hp,
-                    );
+                        self.unit_strength(&self.units[*a], true), self.units[*a].hp);
                     let eb = effective_strength(
-                        self.rules.units[self.units[*b].kind.as_str()].strength.max(1.0),
-                        self.units[*b].hp,
-                    );
+                        self.unit_strength(&self.units[*b], true), self.units[*b].hp);
                     ea.partial_cmp(&eb).unwrap()
                 })
                 .unwrap();
             let d = self.units[&did].clone();
-            let ds = effective_strength(
-                self.rules.units[d.kind.as_str()].strength.max(1.0),
-                d.hp,
-            ) + self.tile_defense_bonus(target);
+            let ds = effective_strength(self.unit_strength(&d, true), d.hp)
+                + self.tile_defense_bonus(target);
             let dmg_out = damage(att, ds, &mut self.rng);
             let dmg_in = damage(ds, att, &mut self.rng);
             self.units.get_mut(&did).unwrap().hp -= dmg_out;
-            self.units.get_mut(&uid).unwrap().hp -= dmg_in;
+            {
+                let mu = self.units.get_mut(&uid).unwrap();
+                mu.hp -= dmg_in;
+                mu.xp += 5;
+            }
+            self.units.get_mut(&did).unwrap().xp += 4;
             let d_dead = self.units[&did].hp <= 0;
+            let downer = self.units[&did].owner;
             if d_dead {
-                let downer = self.units[&did].owner;
+                self.units.get_mut(&uid).unwrap().xp += 3;
+                bump(&mut self.players[pid], "kills");
                 self.remove_unit(did);
                 self.on_unit_lost(downer);
             }
             if self.units.get(&uid).map(|x| x.hp <= 0).unwrap_or(true) {
                 if self.units.contains_key(&uid) {
+                    bump(&mut self.players[downer], "kills");
                     self.remove_unit(uid);
                     self.on_unit_lost(pid);
                 }
@@ -1041,7 +1342,11 @@ impl Game {
                 let dmg_out = damage(att, cs, &mut self.rng);
                 let dmg_in = damage(cs, att, &mut self.rng);
                 self.cities.get_mut(&cid).unwrap().hp -= dmg_out;
-                self.units.get_mut(&uid).unwrap().hp -= dmg_in;
+                {
+                    let mu = self.units.get_mut(&uid).unwrap();
+                    mu.hp -= dmg_in;
+                    mu.xp += 3;
+                }
                 if self.units[&uid].hp <= 0 {
                     self.remove_unit(uid);
                     self.on_unit_lost(pid);
@@ -1050,8 +1355,12 @@ impl Game {
                     return Ok(());
                 }
                 if self.cities[&cid].hp <= 0 {
-                    self.capture_city(cid, pid);
-                    self.enter_tile(uid, target);
+                    if self.players[pid].is_barbarian {
+                        self.cities.get_mut(&cid).unwrap().hp = 1;
+                    } else {
+                        self.capture_city(cid, pid);
+                        self.enter_tile(uid, target);
+                    }
                 }
             }
         } else {
@@ -1068,6 +1377,7 @@ impl Game {
             }
         }
         self.relocate(uid, pos);
+        self.maybe_clear_camp(uid);
     }
 
     fn do_ranged(&mut self, pid: usize, uid: u32, target: Pos) -> Result<(), String> {
@@ -1104,8 +1414,16 @@ impl Game {
             let o = self.cities[&cid].owner;
             self.auto_declare_war(pid, o);
         }
-        let att = effective_strength(spec.ranged_strength, u.hp);
-        self.units.get_mut(&uid).unwrap().moves_left = 0.0;
+        let att = {
+            let u2 = &self.units[&uid];
+            effective_strength(self.unit_ranged_strength(u2), u2.hp)
+        };
+        {
+            let mu = self.units.get_mut(&uid).unwrap();
+            mu.moves_left = 0.0;
+            mu.fortified = false;
+            mu.xp += 3;
+        }
         let military: Vec<u32> = enemy_ids
             .iter()
             .cloned()
@@ -1116,23 +1434,19 @@ impl Game {
                 .iter()
                 .max_by(|a, b| {
                     let ea = effective_strength(
-                        self.rules.units[self.units[*a].kind.as_str()].strength.max(1.0),
-                        self.units[*a].hp,
-                    );
+                        self.unit_strength(&self.units[*a], true), self.units[*a].hp);
                     let eb = effective_strength(
-                        self.rules.units[self.units[*b].kind.as_str()].strength.max(1.0),
-                        self.units[*b].hp,
-                    );
+                        self.unit_strength(&self.units[*b], true), self.units[*b].hp);
                     ea.partial_cmp(&eb).unwrap()
                 })
                 .unwrap();
             let ds = effective_strength(
-                self.rules.units[self.units[&did].kind.as_str()].strength.max(1.0),
-                self.units[&did].hp,
-            ) + self.tile_defense_bonus(target);
+                self.unit_strength(&self.units[&did], true), self.units[&did].hp)
+                + self.tile_defense_bonus(target);
             let dmg = damage(att, ds, &mut self.rng);
             self.units.get_mut(&did).unwrap().hp -= dmg;
             if self.units[&did].hp <= 0 {
+                bump(&mut self.players[pid], "kills");
                 let downer = self.units[&did].owner;
                 self.remove_unit(did);
                 self.on_unit_lost(downer);
@@ -1142,6 +1456,7 @@ impl Game {
             let dmg = damage(att, 1.0, &mut self.rng);
             self.units.get_mut(&did).unwrap().hp -= dmg;
             if self.units[&did].hp <= 0 {
+                bump(&mut self.players[pid], "kills");
                 let downer = self.units[&did].owner;
                 self.remove_unit(did);
                 self.on_unit_lost(downer);
@@ -1159,6 +1474,9 @@ impl Game {
         let u = self.own_unit(pid, uid)?;
         if u.kind != "settler" {
             return Err("only settlers found cities".into());
+        }
+        if self.players[pid].is_barbarian {
+            return Err("barbarians do not found cities".into());
         }
         if !self.can_found_city(uid) {
             return Err("cannot found city here".into());
@@ -1207,6 +1525,7 @@ impl Game {
             queue: Vec::new(),
             original_owner: pid,
             is_capital,
+            struck: false,
         };
         {
             let center = self.map.tiles.get_mut(&pos).unwrap();
@@ -1246,6 +1565,7 @@ impl Game {
         let mu = self.units.get_mut(&uid).unwrap();
         mu.charges -= 1;
         mu.moves_left = 0.0;
+        bump(&mut self.players[pid], "improvements");
         if self.units[&uid].charges <= 0 {
             self.remove_unit(uid);
         }
@@ -1308,10 +1628,14 @@ impl Game {
         if !self.available_techs(pid).iter().any(|t| t == tech) {
             return Err("tech unavailable".into());
         }
+        let cost = self.rules.techs[tech].cost;
         let p = &mut self.players[pid];
         p.research = Some(tech.to_string());
         p.research_progress = p.research_overflow;
         p.research_overflow = 0.0;
+        if p.boosted_techs.contains(tech) {
+            p.research_progress += 0.4 * cost;
+        }
         Ok(())
     }
 
@@ -1322,16 +1646,100 @@ impl Game {
         if !self.available_civics(pid).iter().any(|c| c == civic) {
             return Err("civic unavailable".into());
         }
+        let cost = self.rules.civics[civic].cost;
         let p = &mut self.players[pid];
         p.civic = Some(civic.to_string());
         p.civic_progress = p.civic_overflow;
         p.civic_overflow = 0.0;
+        if p.boosted_civics.contains(civic) {
+            p.civic_progress += 0.4 * cost;
+        }
+        Ok(())
+    }
+
+    fn do_fortify(&mut self, pid: usize, uid: u32) -> Result<(), String> {
+        let u = self.own_unit(pid, uid)?;
+        if self.rules.units[u.kind.as_str()].class != "military" {
+            return Err("only military units fortify".into());
+        }
+        let mu = self.units.get_mut(&uid).unwrap();
+        mu.fortified = true;
+        mu.moves_left = 0.0;
+        Ok(())
+    }
+
+    fn do_government(&mut self, pid: usize, g: &str) -> Result<(), String> {
+        let spec = self.rules.governments.get(g)
+            .ok_or_else(|| "government unavailable".to_string())?;
+        let p = &self.players[pid];
+        if let Some(c) = &spec.civic {
+            if !p.civics.contains(c) {
+                return Err("government unavailable".into());
+            }
+        }
+        if p.government.as_deref() == Some(g) {
+            return Err("already that government".into());
+        }
+        self.players[pid].government = Some(g.to_string());
+        Ok(())
+    }
+
+    fn do_city_strike(&mut self, pid: usize, cid: u32, target: Pos) -> Result<(), String> {
+        match self.cities.get(&cid) {
+            Some(c) if c.owner == pid => {}
+            _ => return Err("not your city".into()),
+        }
+        if !self.city_can_strike(&self.cities[&cid]) {
+            return Err("city cannot strike".into());
+        }
+        if hex::distance(self.cities[&cid].pos, target) > 2 {
+            return Err("out of range".into());
+        }
+        let enemies: Vec<u32> = self.units_at(target).into_iter()
+            .filter(|id| {
+                let o = &self.units[id];
+                o.owner != pid && self.is_at_war(pid, o.owner)
+            })
+            .collect();
+        if enemies.is_empty() {
+            return Err("no enemy target".into());
+        }
+        let military: Vec<u32> = enemies.iter().cloned()
+            .filter(|id| self.rules.units[self.units[id].kind.as_str()].class == "military")
+            .collect();
+        let did = if military.is_empty() {
+            enemies[0]
+        } else {
+            *military.iter().max_by(|a, b| {
+                let ea = effective_strength(
+                    self.unit_strength(&self.units[*a], true), self.units[*a].hp);
+                let eb = effective_strength(
+                    self.unit_strength(&self.units[*b], true), self.units[*b].hp);
+                ea.partial_cmp(&eb).unwrap()
+            }).unwrap()
+        };
+        let d = self.units[&did].clone();
+        let ds = effective_strength(self.unit_strength(&d, true), d.hp)
+            + self.tile_defense_bonus(target);
+        let att = self.city_strength(cid);
+        let dmg = damage(att, ds, &mut self.rng);
+        self.units.get_mut(&did).unwrap().hp -= dmg;
+        if self.units[&did].hp <= 0 {
+            bump(&mut self.players[pid], "kills");
+            let downer = self.units[&did].owner;
+            self.remove_unit(did);
+            self.on_unit_lost(downer);
+        }
+        self.cities.get_mut(&cid).unwrap().struck = true;
         Ok(())
     }
 
     fn do_declare_war(&mut self, pid: usize, other: usize) -> Result<(), String> {
         if other == pid || other >= self.players.len() || !self.players[other].alive {
             return Err("invalid war target".into());
+        }
+        if self.players[pid].is_barbarian || self.players[other].is_barbarian {
+            return Err("barbarians are always at war".into());
         }
         self.at_war.insert(pair(pid, other));
         Ok(())
@@ -1362,6 +1770,7 @@ impl Game {
         self.current = nxt;
         if wrapped {
             self.turn += 1;
+            self.barbarian_phase();
             if self.turn > self.max_turns && self.winner.is_none() {
                 let mut best: Option<(i64, i64)> = None; // (score, -pid)
                 let mut best_pid = 0;
@@ -1394,6 +1803,7 @@ impl Game {
     // ------------------------------------------------------- turn engine
 
     fn begin_turn(&mut self, pid: usize) {
+        self.check_boosts(pid);
         for uid in self.player_unit_ids(pid) {
             let (kind, hp, pos) = {
                 let u = &self.units[&uid];
@@ -1411,6 +1821,10 @@ impl Game {
             let u = self.units.get_mut(&uid).unwrap();
             u.moves_left = moves;
             u.hp = (u.hp + heal).min(100);
+            while u.level < 4
+                && u.xp >= (15 * u.level as i64 * (u.level as i64 + 1)) / 2 {
+                u.level += 1;
+            }
         }
         let mut sci = 0.0;
         let mut cul = 0.0;
@@ -1466,11 +1880,110 @@ impl Game {
         }
     }
 
+    fn check_boosts(&mut self, pid: usize) {
+        if self.players[pid].is_minor {
+            return;
+        }
+        let techs: Vec<(String, f64, crate::rules::BoostSpec)> = self.rules.techs.iter()
+            .filter_map(|(n, s)| s.boost.clone().map(|b| (n.clone(), s.cost, b)))
+            .collect();
+        for (name, cost, b) in techs {
+            let p = &self.players[pid];
+            if p.techs.contains(&name) || p.boosted_techs.contains(&name) {
+                continue;
+            }
+            if self.boost_met(pid, &b) {
+                let p = &mut self.players[pid];
+                p.boosted_techs.insert(name.clone());
+                if p.research.as_deref() == Some(name.as_str()) {
+                    p.research_progress += 0.4 * cost;
+                }
+            }
+        }
+        let civics: Vec<(String, f64, crate::rules::BoostSpec)> = self.rules.civics.iter()
+            .filter_map(|(n, s)| s.boost.clone().map(|b| (n.clone(), s.cost, b)))
+            .collect();
+        for (name, cost, b) in civics {
+            let p = &self.players[pid];
+            if p.civics.contains(&name) || p.boosted_civics.contains(&name) {
+                continue;
+            }
+            if self.boost_met(pid, &b) {
+                let p = &mut self.players[pid];
+                p.boosted_civics.insert(name.clone());
+                if p.civic.as_deref() == Some(name.as_str()) {
+                    p.civic_progress += 0.4 * cost;
+                }
+            }
+        }
+    }
+
+    fn boost_met(&self, pid: usize, b: &crate::rules::BoostSpec) -> bool {
+        let p = &self.players[pid];
+        let n = b.count;
+        let cities: Vec<&City> = self.cities.values()
+            .filter(|c| c.owner == pid).collect();
+        let trig = b.trigger.as_str();
+        match trig {
+            "kills" | "improvements" | "camps" | "captures" => {
+                p.counters.get(trig).copied().unwrap_or(0) >= n
+            }
+            "cities" => cities.len() as i64 >= n,
+            "districts" => cities.iter()
+                .map(|c| c.districts.len() as i64).sum::<i64>() >= n,
+            "pop" => cities.iter().any(|c| c.pop as i64 >= n),
+            "total_pop" => cities.iter()
+                .map(|c| c.pop as i64).sum::<i64>() >= n,
+            "units" => self.units.values()
+                .filter(|u| u.owner == pid
+                    && self.rules.units[u.kind.as_str()].class == "military")
+                .count() as i64 >= n,
+            "coastal_city" => cities.iter().any(|c| {
+                hex::neighbors(c.pos).iter().any(|nb| {
+                    self.map.get(*nb).map(|t| self.rules.is_water(t)).unwrap_or(false)
+                })
+            }),
+            "war" => self.players.iter().any(|o| {
+                o.id != pid && !o.is_barbarian && self.is_at_war(pid, o.id)
+            }),
+            _ => {
+                if let Some(t) = trig.strip_prefix("units_of:") {
+                    self.units.values()
+                        .filter(|u| u.owner == pid && u.kind == t)
+                        .count() as i64 >= n
+                } else if let Some(d) = trig.strip_prefix("district:") {
+                    cities.iter().any(|c| c.districts.contains_key(d))
+                } else if let Some(bn) = trig.strip_prefix("building:") {
+                    cities.iter()
+                        .filter(|c| c.buildings.iter().any(|x| x == bn))
+                        .count() as i64 >= n
+                } else if let Some(t) = trig.strip_prefix("tech:") {
+                    p.techs.contains(t)
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
     fn process_city(&mut self, pid: usize, cid: u32) -> Yields {
+        self.cities.get_mut(&cid).unwrap().struck = false;
         let ys = self.city_yields(cid);
+        let housing = self.city_housing(&self.cities[&cid]);
+        let am = self.city_amenity_surplus(&self.cities[&cid]);
         {
             let city = self.cities.get_mut(&cid).unwrap();
-            city.food += ys.food - 2.0 * city.pop as f64;
+            let mut surplus = ys.food - 2.0 * city.pop as f64;
+            if surplus > 0.0 {
+                let headroom = housing - city.pop as f64;
+                let hf = if headroom > 1.0 { 1.0 }
+                    else if headroom >= 1.0 { 0.5 }
+                    else if headroom > -2.0 { 0.25 } else { 0.0 };
+                let af = if am >= 2 { 1.1 } else if am >= 0 { 1.0 }
+                    else if am >= -2 { 0.75 } else { 0.5 };
+                surplus *= hf * af;
+            }
+            city.food += surplus;
             let need = growth_threshold(city.pop);
             if city.food >= need {
                 city.pop += 1;
@@ -1627,6 +2140,7 @@ impl Game {
                 self.units.get_mut(&oid).unwrap().owner = new_owner;
             }
         }
+        bump(&mut self.players[new_owner], "captures");
         self.check_elimination(old);
         self.check_domination();
     }
@@ -1637,7 +2151,7 @@ impl Game {
     }
 
     fn check_elimination(&mut self, pid: usize) {
-        if !self.players[pid].alive {
+        if !self.players[pid].alive || self.players[pid].is_barbarian {
             return;
         }
         if self.cities.values().any(|c| c.owner == pid) {

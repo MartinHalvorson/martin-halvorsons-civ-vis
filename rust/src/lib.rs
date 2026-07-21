@@ -49,14 +49,17 @@ mod tests {
         assert!(g.winner.is_some());
         assert!(g.cities.len() >= 2);
         for p in &g.players {
-            assert!(p.techs.len() > 1);
+            if !p.is_barbarian {
+                assert!(p.techs.len() > 1);
+            }
         }
     }
 
     #[test]
     fn city_states_stay_single() {
         let mut g = Game::new(2, 28, 18, 2, 50, 3);
-        let minors: Vec<usize> = g.players.iter().filter(|p| p.is_minor).map(|p| p.id).collect();
+        let minors: Vec<usize> = g.players.iter()
+            .filter(|p| p.is_minor && !p.is_barbarian).map(|p| p.id).collect();
         assert!(!minors.is_empty());
         let mut ais = BasicAi::fleet(&g);
         run_game(&mut g, &mut ais);

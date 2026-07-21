@@ -64,14 +64,18 @@ impl Ai for RandomAi {
 
 // ------------------------------------------------------------------ BasicAi
 
+const GOV_PRIORITY: [&str; 6] = ["merchant_republic", "monarchy", "classical_republic",
+    "oligarchy", "autocracy", "chiefdom"];
+
 #[derive(Default)]
 pub struct BasicAi {
     minor: bool,
+    barb: bool,
 }
 
 impl BasicAi {
     pub fn new() -> BasicAi {
-        BasicAi { minor: false }
+        BasicAi { minor: false, barb: false }
     }
 
     pub fn fleet(g: &Game) -> Vec<BasicAi> {
@@ -82,9 +86,12 @@ impl BasicAi {
 impl Ai for BasicAi {
     fn take_turn(&mut self, g: &mut Game, pid: usize) {
         self.minor = g.players[pid].is_minor;
-        self.research(g, pid);
-        self.diplomacy(g, pid);
-        self.cities(g, pid);
+        self.barb = g.players[pid].is_barbarian;
+        if !self.barb {
+            self.research(g, pid);
+            self.diplomacy(g, pid);
+            self.cities(g, pid);
+        }
         self.units(g, pid);
         if g.winner.is_none() && g.current == pid {
             let _ = g.apply(pid, &Action::EndTurn);
@@ -116,6 +123,19 @@ impl BasicAi {
                 let _ = g.apply(pid, &Action::Civic { civic: pick });
             }
         }
+        for gname in GOV_PRIORITY {
+            if let Some(spec) = g.rules.governments.get(gname) {
+                let ok = spec.civic.as_ref()
+                    .map(|c| g.players[pid].civics.contains(c)).unwrap_or(true);
+                if ok {
+                    if g.players[pid].government.as_deref() != Some(gname) {
+                        let _ = g.apply(pid, &Action::Government {
+                            government: gname.to_string() });
+                    }
+                    break;
+                }
+            }
+        }
     }
 
     fn diplomacy(&self, g: &mut Game, pid: usize) {
@@ -123,7 +143,7 @@ impl BasicAi {
         let others: Vec<usize> = g
             .players
             .iter()
-            .filter(|o| o.id != pid && o.alive)
+            .filter(|o| o.id != pid && o.alive && !o.is_barbarian)
             .map(|o| o.id)
             .collect();
         for o in &others {
@@ -166,6 +186,23 @@ impl BasicAi {
         }
         let city_ids = g.player_city_ids(pid);
         let n_cities = city_ids.len();
+        // walls fire at raiders in range
+        for cid in &city_ids {
+            if g.city_can_strike(&g.cities[cid]) {
+                let cpos = g.cities[cid].pos;
+                for pos in hex::disk(cpos, 2) {
+                    let hit = g.units_at(pos).into_iter().any(|oid| {
+                        let o = &g.units[&oid];
+                        o.owner != pid && g.is_at_war(pid, o.owner)
+                    });
+                    if hit {
+                        let _ = g.apply(pid, &Action::CityStrike {
+                            city: *cid, target: pos });
+                        break;
+                    }
+                }
+            }
+        }
         for cid in &city_ids {
             if !g.cities[cid].queue.is_empty() {
                 continue;
@@ -218,7 +255,7 @@ impl BasicAi {
                 return Some(Item::Unit { unit: m });
             }
         }
-        if !self.minor && n_cities + settlers < 4 && settlers == 0 && city_pop >= 2
+        if !self.minor && !self.barb && n_cities + settlers < 4 && settlers == 0 && city_pop >= 2
             && g.turn < 150
         {
             return Some(Item::Unit { unit: "settler".to_string() });
@@ -322,6 +359,9 @@ impl BasicAi {
     }
 
     fn settler_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
+        if self.minor {
+            return false; // city-states and barbarians never settle
+        }
         let upos = g.units[&uid].pos;
         let mut best: Option<(f64, Pos)> = None;
         for pos in hex::disk(upos, 5) {
@@ -403,19 +443,29 @@ impl BasicAi {
             }
         }
         let u = &g.units[&uid];
-        let mine = effective_strength(g.rules.units[u.kind.as_str()].strength.max(1.0), u.hp);
+        let mine = effective_strength(g.unit_strength(u, false), u.hp);
         for oid in g.units_at(pos) {
             let o = &g.units[&oid];
-            let ospec = &g.rules.units[o.kind.as_str()];
-            if ospec.class == "military" {
-                let theirs = effective_strength(ospec.strength.max(1.0), o.hp);
+            if g.rules.units[o.kind.as_str()].class == "military" {
+                let theirs = effective_strength(g.unit_strength(o, true), o.hp);
                 return mine >= theirs - 8.0;
             }
         }
         true
     }
 
-    fn nearest_enemy(&self, g: &Game, pos: Pos, enemy_ids: &[usize]) -> Option<Pos> {
+    fn nearest_enemy(&self, g: &Game, pid: usize, pos: Pos,
+                     enemy_ids: &[usize]) -> Option<Pos> {
+        // Majors chase barbarians (and their camps) only near their own
+        // territory; wars against civs have no leash.
+        let my_cities: Vec<Pos> = g.cities.values()
+            .filter(|c| c.owner == pid).map(|c| c.pos).collect();
+        let near_home = |tpos: Pos| -> bool {
+            if self.barb || my_cities.is_empty() {
+                return true;
+            }
+            my_cities.iter().map(|c| hex::distance(tpos, *c)).min().unwrap() <= 6
+        };
         let mut best: Option<(i32, Pos)> = None;
         for c in g.cities.values() {
             if enemy_ids.contains(&c.owner) {
@@ -427,9 +477,26 @@ impl BasicAi {
         }
         for u in g.units.values() {
             if enemy_ids.contains(&u.owner) {
+                if Some(u.owner) == g.barb_pid && !near_home(u.pos) {
+                    continue;
+                }
                 let d = hex::distance(pos, u.pos);
                 if best.map(|b| (d, u.pos) < b).unwrap_or(true) {
                     best = Some((d, u.pos));
+                }
+            }
+        }
+        if !self.barb {
+            if let Some(bp) = g.barb_pid {
+                if enemy_ids.contains(&bp) {
+                    for cpos in g.barb_camps.keys() {
+                        if near_home(*cpos) {
+                            let d = hex::distance(pos, *cpos);
+                            if best.map(|b| (d, *cpos) < b).unwrap_or(true) {
+                                best = Some((d, *cpos));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -481,9 +548,9 @@ impl BasicAi {
                     }
                 }
             }
-            return match self.nearest_enemy(g, upos, &enemy_ids) {
+            return match self.nearest_enemy(g, pid, upos, &enemy_ids) {
                 Some(t) => self.step_toward(g, pid, uid, t),
-                None => false,
+                None => self.fortify_or_stop(g, pid, uid),
             };
         }
         // peace: minors guard home; majors explore, then garrison
@@ -496,7 +563,7 @@ impl BasicAi {
             if hex::distance(upos, cap) > 2 {
                 return self.step_toward(g, pid, uid, cap);
             }
-            return false;
+            return self.fortify_or_stop(g, pid, uid);
         }
         let target = match self.nearest_unexplored(g, pid, upos) {
             Some(t) => Some(t),
@@ -520,7 +587,14 @@ impl BasicAi {
         };
         match target {
             Some(t) => self.step_toward(g, pid, uid, t),
-            None => false,
+            None => self.fortify_or_stop(g, pid, uid),
         }
+    }
+
+    fn fortify_or_stop(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
+        if !g.units[&uid].fortified {
+            let _ = g.apply(pid, &Action::Fortify { unit: uid });
+        }
+        false
     }
 }

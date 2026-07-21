@@ -1,5 +1,4 @@
-//! Ruleset loaded from the shared JSON data files (single source of truth
-//! with the Python engine; embedded at compile time).
+//! Ruleset loaded from the shared JSON data files (embedded at compile time).
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -36,8 +35,14 @@ fn dtrue() -> bool {
 fn done() -> f64 {
     1.0
 }
+fn dsight() -> i32 {
+    2
+}
+fn done_i() -> i64 {
+    1
+}
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TerrainSpec {
     #[serde(default)]
     pub yields: Yields,
@@ -49,7 +54,7 @@ pub struct TerrainSpec {
     pub move_cost: f64,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct FeatureSpec {
     #[serde(default)]
     pub yields: Yields,
@@ -57,7 +62,7 @@ pub struct FeatureSpec {
     pub move_cost: f64,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ResourceSpec {
     pub class: String,
     #[serde(default)]
@@ -69,7 +74,7 @@ pub struct ResourceSpec {
     pub improvement: String,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ImprovementSpec {
     #[serde(default)]
     pub tech: Option<String>,
@@ -81,9 +86,11 @@ pub struct ImprovementSpec {
     pub removes_feature: bool,
     #[serde(default)]
     pub water: bool,
+    #[serde(default)]
+    pub unbuildable: bool,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct UnitSpec {
     pub class: String,
     pub cost: f64,
@@ -96,6 +103,8 @@ pub struct UnitSpec {
     pub range: i32,
     #[serde(default)]
     pub charges: i32,
+    #[serde(default = "dsight")]
+    pub sight: i32,
     #[serde(default)]
     pub tech: Option<String>,
     #[serde(default)]
@@ -104,7 +113,7 @@ pub struct UnitSpec {
     pub domain: Option<String>,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DistrictSpec {
     pub cost: f64,
     #[serde(default)]
@@ -119,9 +128,11 @@ pub struct DistrictSpec {
     pub water: bool,
     #[serde(default)]
     pub defense: f64,
+    #[serde(default)]
+    pub amenity: f64,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BuildingSpec {
     pub cost: f64,
     #[serde(default)]
@@ -132,12 +143,44 @@ pub struct BuildingSpec {
     pub district: Option<String>,
     #[serde(default)]
     pub yields: Yields,
+    #[serde(default)]
+    pub housing: f64,
+    #[serde(default)]
+    pub amenity: f64,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BoostSpec {
+    pub trigger: String,
+    #[serde(default = "done_i")]
+    pub count: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TechSpec {
     pub cost: f64,
     pub requires: Vec<String>,
+    #[serde(default)]
+    pub boost: Option<BoostSpec>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GovEffects {
+    pub production_pct: f64,
+    pub science_pct: f64,
+    pub gold_pct: f64,
+    pub combat_strength: f64,
+    pub amenity: f64,
+    pub housing: f64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct GovSpec {
+    #[serde(default)]
+    pub civic: Option<String>,
+    #[serde(default)]
+    pub effects: GovEffects,
 }
 
 #[derive(Clone)]
@@ -151,6 +194,7 @@ pub struct Rules {
     pub buildings: BTreeMap<String, BuildingSpec>,
     pub techs: BTreeMap<String, TechSpec>,
     pub civics: BTreeMap<String, TechSpec>,
+    pub governments: BTreeMap<String, GovSpec>,
 }
 
 impl Rules {
@@ -165,6 +209,7 @@ impl Rules {
             buildings: serde_json::from_str(include_str!("../../civvis/data/buildings.json")).unwrap(),
             techs: serde_json::from_str(include_str!("../../civvis/data/techs.json")).unwrap(),
             civics: serde_json::from_str(include_str!("../../civvis/data/civics.json")).unwrap(),
+            governments: serde_json::from_str(include_str!("../../civvis/data/governments.json")).unwrap(),
         }
     }
 

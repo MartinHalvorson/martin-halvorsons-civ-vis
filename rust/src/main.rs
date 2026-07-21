@@ -49,7 +49,7 @@ fn standings(g: &Game) {
     let minors: Vec<&str> = g
         .players
         .iter()
-        .filter(|p| p.is_minor)
+        .filter(|p| p.is_minor && !p.is_barbarian)
         .map(|p| p.civ.as_str())
         .collect();
     if !minors.is_empty() {
@@ -101,8 +101,8 @@ fn main() {
                     Ok(g) => {
                         let majors: Vec<_> =
                             g.players.iter().filter(|p| !p.is_minor).collect();
-                        let minors: Vec<_> =
-                            g.players.iter().filter(|p| p.is_minor).collect();
+                        let minors: Vec<_> = g.players.iter()
+                            .filter(|p| p.is_minor && !p.is_barbarian).collect();
                         let w = &g.players[g.winner.unwrap()];
                         let mut flags = String::new();
                         if majors.iter().all(|p| p.techs.len() <= 2) {
