@@ -1,0 +1,8 @@
+{
+  "campus": {"cost": 60, "tech": "writing", "yields": {"science": 2}, "adjacency": {"mountain": {"science": 1}, "district": {"science": 0.5}}},
+  "holy_site": {"cost": 60, "tech": "astrology", "yields": {"faith": 2}, "adjacency": {"mountain": {"faith": 1}, "forest": {"faith": 0.5}}},
+  "commercial_hub": {"cost": 60, "tech": "currency", "yields": {"gold": 4}, "adjacency": {"district": {"gold": 1}}},
+  "harbor": {"cost": 60, "tech": "celestial_navigation", "water": true, "yields": {"gold": 2, "food": 1}},
+  "encampment": {"cost": 60, "tech": "bronze_working", "yields": {"production": 1}, "defense": 10},
+  "theater_square": {"cost": 60, "civic": "drama_poetry", "yields": {"culture": 2}, "adjacency": {"district": {"culture": 0.5}}}
+}

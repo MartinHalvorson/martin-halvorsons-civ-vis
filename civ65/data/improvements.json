@@ -1,0 +1,8 @@
+{
+  "farm": {"tech": "agriculture", "yields": {"food": 1}, "terrain": ["grassland", "plains"], "removes_feature": true},
+  "mine": {"tech": "mining", "yields": {"production": 1}},
+  "pasture": {"tech": "animal_husbandry", "yields": {"production": 1}},
+  "plantation": {"tech": "irrigation", "yields": {"gold": 1}},
+  "camp": {"tech": "animal_husbandry", "yields": {"gold": 1}},
+  "fishing_boats": {"tech": "sailing", "yields": {"food": 1}, "water": true}
+}

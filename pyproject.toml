@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "civ65"
+version = "0.1.0"
+description = "Open-source, headless-first 4X strategy engine inspired by Civilization VI (what Unciv is to Civ 5)"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Martin Halvorson"}]
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Games/Entertainment :: Turn Based Strategy",
+]
+
+[project.scripts]
+civ65 = "civ65.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/MartinHalvorson/martin-halvorsons-civ-6.5"
+
+[tool.setuptools.packages.find]
+include = ["civ65*"]
+
+[tool.setuptools.package-data]
+civ65 = ["data/*.json"]

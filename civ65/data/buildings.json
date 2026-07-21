@@ -1,0 +1,12 @@
+{
+  "monument": {"cost": 60, "yields": {"culture": 2}},
+  "granary": {"cost": 65, "tech": "pottery", "yields": {"food": 2}},
+  "walls": {"cost": 80, "tech": "masonry", "yields": {}},
+  "shrine": {"cost": 70, "tech": "astrology", "district": "holy_site", "yields": {"faith": 2}},
+  "library": {"cost": 90, "tech": "writing", "district": "campus", "yields": {"science": 2}},
+  "market": {"cost": 120, "tech": "currency", "district": "commercial_hub", "yields": {"gold": 3}},
+  "barracks": {"cost": 90, "tech": "bronze_working", "district": "encampment", "yields": {"production": 1}},
+  "lighthouse": {"cost": 120, "tech": "celestial_navigation", "district": "harbor", "yields": {"food": 1, "gold": 1}},
+  "amphitheater": {"cost": 150, "civic": "drama_poetry", "district": "theater_square", "yields": {"culture": 2}},
+  "university": {"cost": 250, "tech": "education", "district": "campus", "yields": {"science": 4}}
+}

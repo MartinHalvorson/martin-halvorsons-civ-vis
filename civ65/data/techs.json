@@ -1,0 +1,22 @@
+{
+  "agriculture": {"cost": 25, "requires": []},
+  "pottery": {"cost": 25, "requires": ["agriculture"]},
+  "animal_husbandry": {"cost": 25, "requires": ["agriculture"]},
+  "mining": {"cost": 30, "requires": ["agriculture"]},
+  "sailing": {"cost": 50, "requires": ["agriculture"]},
+  "astrology": {"cost": 50, "requires": ["agriculture"]},
+  "irrigation": {"cost": 50, "requires": ["pottery"]},
+  "archery": {"cost": 50, "requires": ["animal_husbandry"]},
+  "writing": {"cost": 55, "requires": ["pottery"]},
+  "masonry": {"cost": 80, "requires": ["mining"]},
+  "bronze_working": {"cost": 80, "requires": ["mining"]},
+  "horseback_riding": {"cost": 120, "requires": ["archery"]},
+  "currency": {"cost": 120, "requires": ["writing"]},
+  "celestial_navigation": {"cost": 120, "requires": ["sailing", "astrology"]},
+  "iron_working": {"cost": 120, "requires": ["bronze_working"]},
+  "mathematics": {"cost": 200, "requires": ["currency"]},
+  "construction": {"cost": 200, "requires": ["masonry"]},
+  "engineering": {"cost": 200, "requires": ["construction"]},
+  "education": {"cost": 300, "requires": ["mathematics"]},
+  "machinery": {"cost": 280, "requires": ["engineering"]}
+}

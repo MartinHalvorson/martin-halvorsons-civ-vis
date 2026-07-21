@@ -1,0 +1,14 @@
+{
+  "settler": {"class": "civilian", "cost": 80, "moves": 2},
+  "builder": {"class": "civilian", "cost": 50, "moves": 2, "charges": 3},
+  "scout": {"class": "military", "cost": 30, "moves": 3, "strength": 10},
+  "warrior": {"class": "military", "cost": 40, "moves": 2, "strength": 20},
+  "slinger": {"class": "military", "cost": 35, "moves": 2, "strength": 5, "ranged_strength": 15, "range": 1},
+  "archer": {"class": "military", "cost": 60, "moves": 2, "strength": 15, "ranged_strength": 25, "range": 2, "tech": "archery"},
+  "spearman": {"class": "military", "cost": 65, "moves": 2, "strength": 25, "tech": "bronze_working"},
+  "swordsman": {"class": "military", "cost": 90, "moves": 2, "strength": 36, "tech": "iron_working", "requires_resource": "iron"},
+  "horseman": {"class": "military", "cost": 80, "moves": 4, "strength": 36, "tech": "horseback_riding", "requires_resource": "horses"},
+  "catapult": {"class": "military", "cost": 120, "moves": 2, "strength": 23, "ranged_strength": 35, "range": 2, "tech": "mathematics"},
+  "crossbowman": {"class": "military", "cost": 180, "moves": 2, "strength": 30, "ranged_strength": 40, "range": 2, "tech": "machinery"},
+  "galley": {"class": "military", "cost": 65, "moves": 3, "strength": 30, "domain": "sea", "tech": "sailing"}
+}

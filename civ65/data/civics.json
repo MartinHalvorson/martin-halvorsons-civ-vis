@@ -1,0 +1,10 @@
+{
+  "code_of_laws": {"cost": 20, "requires": []},
+  "craftsmanship": {"cost": 40, "requires": ["code_of_laws"]},
+  "foreign_trade": {"cost": 40, "requires": ["code_of_laws"]},
+  "military_tradition": {"cost": 50, "requires": ["craftsmanship"]},
+  "early_empire": {"cost": 60, "requires": ["foreign_trade"]},
+  "state_workforce": {"cost": 60, "requires": ["craftsmanship"]},
+  "drama_poetry": {"cost": 90, "requires": ["early_empire"]},
+  "political_philosophy": {"cost": 110, "requires": ["state_workforce", "early_empire"]}
+}

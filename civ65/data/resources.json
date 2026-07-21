@@ -1,0 +1,14 @@
+{
+  "wheat": {"class": "bonus", "yields": {"food": 1}, "terrain": ["plains", "grassland"], "improvement": "farm"},
+  "cattle": {"class": "bonus", "yields": {"food": 1}, "terrain": ["grassland"], "improvement": "pasture"},
+  "sheep": {"class": "bonus", "yields": {"food": 1}, "terrain": ["plains", "tundra", "desert"], "improvement": "pasture"},
+  "stone": {"class": "bonus", "yields": {"production": 1}, "terrain": ["grassland", "plains", "tundra"], "improvement": "mine"},
+  "deer": {"class": "bonus", "yields": {"production": 1}, "feature": ["forest"], "improvement": "camp"},
+  "fish": {"class": "bonus", "yields": {"food": 1}, "terrain": ["coast"], "improvement": "fishing_boats"},
+  "bananas": {"class": "bonus", "yields": {"food": 1}, "feature": ["jungle"], "improvement": "plantation"},
+  "horses": {"class": "strategic", "yields": {"production": 1}, "terrain": ["grassland", "plains"], "improvement": "pasture"},
+  "iron": {"class": "strategic", "yields": {"production": 1}, "terrain": ["grassland", "plains", "desert", "tundra"], "improvement": "mine"},
+  "silk": {"class": "luxury", "yields": {"gold": 1, "culture": 1}, "feature": ["forest"], "improvement": "plantation"},
+  "wine": {"class": "luxury", "yields": {"food": 1, "gold": 1}, "terrain": ["grassland", "plains"], "improvement": "plantation"},
+  "salt": {"class": "luxury", "yields": {"gold": 2}, "terrain": ["desert", "plains"], "improvement": "mine"}
+}

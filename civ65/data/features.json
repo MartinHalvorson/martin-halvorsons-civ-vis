@@ -1,0 +1,6 @@
+{
+  "forest": {"yields": {"production": 1}, "move_cost": 2},
+  "jungle": {"yields": {"food": 1}, "move_cost": 2},
+  "marsh": {"yields": {"food": 1}, "move_cost": 2},
+  "oasis": {"yields": {"food": 3, "gold": 1}}
+}
