@@ -166,6 +166,7 @@ impl Player {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Action {
     Move { unit: u32, to: Pos },
+    MoveTo { unit: u32, to: Pos },
     Attack { unit: u32, target: Pos },
     Ranged { unit: u32, target: Pos },
     FoundCity { unit: u32 },
@@ -680,8 +681,12 @@ impl Game {
     }
 
     pub fn can_move(&self, uid: u32, pos: Pos) -> bool {
+        self.can_enter(uid, self.units[&uid].pos, pos)
+    }
+
+    fn can_enter(&self, uid: u32, from: Pos, pos: Pos) -> bool {
         let u = &self.units[&uid];
-        if hex::distance(u.pos, pos) != 1 {
+        if hex::distance(from, pos) != 1 {
             return false;
         }
         let t = match self.map.get(pos) {
@@ -720,6 +725,104 @@ impl Game {
             }
         }
         true
+    }
+
+    /// All tiles the unit can reach this turn with its remaining movement
+    /// (Dijkstra maximizing leftover MP; every intermediate tile must be
+    /// legally enterable, matching repeated single-step moves).
+    pub fn reachable(&self, uid: u32) -> Vec<Pos> {
+        let (start, moves) = match self.units.get(&uid) {
+            Some(u) => (u.pos, u.moves_left),
+            None => return vec![],
+        };
+        let best = self.flow(uid, start, moves);
+        best.into_keys().filter(|p| *p != start).collect()
+    }
+
+    fn flow(&self, uid: u32, start: Pos, moves: f64) -> BTreeMap<Pos, f64> {
+        let mut best: BTreeMap<Pos, f64> = BTreeMap::new();
+        best.insert(start, moves);
+        let mut queue = vec![start];
+        while let Some(cur) = queue.pop() {
+            let rem = best[&cur];
+            if rem <= 0.0 {
+                continue;
+            }
+            for n in hex::neighbors(cur) {
+                if !self.map.tiles.contains_key(&n) || !self.can_enter(uid, cur, n) {
+                    continue;
+                }
+                let cost = self.rules.move_cost(&self.map.tiles[&n]);
+                let new_rem = (rem - cost).max(0.0);
+                if best.get(&n).map(|b| new_rem > *b).unwrap_or(true) {
+                    best.insert(n, new_rem);
+                    queue.push(n);
+                }
+            }
+        }
+        best
+    }
+
+    fn path_to(&self, uid: u32, to: Pos) -> Option<Vec<Pos>> {
+        let (start, moves) = {
+            let u = self.units.get(&uid)?;
+            (u.pos, u.moves_left)
+        };
+        if start == to {
+            return Some(vec![]);
+        }
+        let mut best: BTreeMap<Pos, f64> = BTreeMap::new();
+        let mut parent: BTreeMap<Pos, Pos> = BTreeMap::new();
+        best.insert(start, moves);
+        let mut queue = vec![start];
+        while let Some(cur) = queue.pop() {
+            let rem = best[&cur];
+            if rem <= 0.0 {
+                continue;
+            }
+            for n in hex::neighbors(cur) {
+                if !self.map.tiles.contains_key(&n) || !self.can_enter(uid, cur, n) {
+                    continue;
+                }
+                let cost = self.rules.move_cost(&self.map.tiles[&n]);
+                let new_rem = (rem - cost).max(0.0);
+                if best.get(&n).map(|b| new_rem > *b).unwrap_or(true) {
+                    best.insert(n, new_rem);
+                    parent.insert(n, cur);
+                    queue.push(n);
+                }
+            }
+        }
+        parent.get(&to)?;
+        let mut path = vec![to];
+        let mut cur = to;
+        while let Some(p) = parent.get(&cur) {
+            if *p == start {
+                break;
+            }
+            path.push(*p);
+            cur = *p;
+        }
+        path.reverse();
+        Some(path)
+    }
+
+    fn do_move_to(&mut self, pid: usize, uid: u32, to: Pos) -> Result<(), String> {
+        let u = self.own_unit(pid, uid)?;
+        if u.moves_left <= 0.0 {
+            return Err("no moves left".into());
+        }
+        let path = self.path_to(uid, to).ok_or_else(|| "unreachable".to_string())?;
+        if path.is_empty() {
+            return Err("already there".into());
+        }
+        for step in path {
+            if self.units.get(&uid).map(|x| x.moves_left <= 0.0).unwrap_or(true) {
+                break;
+            }
+            self.do_move(pid, uid, step)?;
+        }
+        Ok(())
     }
 
     // -------------------------------------------------------- city helpers
@@ -1167,6 +1270,7 @@ impl Game {
         }
         match action {
             Action::Move { unit, to } => self.do_move(pid, *unit, *to),
+            Action::MoveTo { unit, to } => self.do_move_to(pid, *unit, *to),
             Action::Attack { unit, target } => self.do_attack(pid, *unit, *target),
             Action::Ranged { unit, target } => self.do_ranged(pid, *unit, *target),
             Action::FoundCity { unit } => self.do_found_city(pid, *unit),

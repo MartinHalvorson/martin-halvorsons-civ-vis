@@ -26,6 +26,7 @@ data (JSON rulesets)  ->  engine (Game)  ->  interfaces (CivEnv / CLI / AIs)
 | type | fields | effect |
 |---|---|---|
 | `move` | `unit`, `to: [q,r]` | move one tile (cost from terrain) |
+| `move_to` | `unit`, `to: [q,r]` | multi-step move along best path within remaining MP |
 | `attack` | `unit`, `target` | melee attack unit/city (auto-declares war) |
 | `ranged` | `unit`, `target` | ranged attack, no counterattack |
 | `found_city` | `unit` | settler founds a city (min distance 4) |

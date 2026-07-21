@@ -125,7 +125,7 @@ fn handle(stream: &mut TcpStream, session: &mut Session) {
             respond_json(stream, &json!({
                 "techs": r.techs, "civics": r.civics,
                 "terrains": r.terrains, "features": r.features,
-                "resources": r.resources,
+                "resources": r.resources, "improvements": r.improvements,
                 "governments": r.governments, "units": r.units,
                 "buildings": r.buildings, "districts": r.districts,
             }));

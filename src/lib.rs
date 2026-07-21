@@ -73,6 +73,20 @@ mod tests {
     }
 
     #[test]
+    fn movement_range_and_move_to() {
+        let mut g = Game::new_full(2, 20, 14, 5, 60, 0, false);
+        let uid = g.player_unit_ids(0).into_iter()
+            .find(|id| g.units[id].kind == "warrior").unwrap();
+        let reach = g.reachable(uid);
+        assert!(!reach.is_empty());
+        let start = g.units[&uid].pos;
+        let far = *reach.iter()
+            .max_by_key(|p| crate::hex::distance(start, **p)).unwrap();
+        g.apply(0, &Action::MoveTo { unit: uid, to: far }).unwrap();
+        assert_eq!(g.units[&uid].pos, far);
+    }
+
+    #[test]
     fn serialization_roundtrip() {
         let mut g = Game::new(2, 18, 12, 4, 25, 1);
         let mut ais = BasicAi::fleet(&g);

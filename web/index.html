@@ -15,6 +15,10 @@
   #modeline { position: fixed; bottom: 10px; left: 10px; background: #141a23cc;
               padding: 4px 10px; border-radius: 4px; font-size: 12px; z-index: 6;
               color: #f0c674; }
+  #tip { position: fixed; pointer-events: none; background: #141a23f0;
+         border: 1px solid #40536b; border-radius: 6px; padding: 6px 10px;
+         font-size: 12px; z-index: 20; display: none; max-width: 260px;
+         line-height: 1.5; }
   #side { width: 340px; min-width: 340px; background: #171d26; padding: 10px;
           overflow-y: auto; border-left: 1px solid #2a3442; }
   h1 { font-size: 15px; margin-bottom: 6px; color: #f0c674; }
@@ -71,6 +75,7 @@
     <button id="zhome" title="center on your empire">⌂</button>
   </div>
   <div id="modeline"></div>
+  <div id="tip"></div>
 </div>
 <div id="side">
   <h1>Civilization VIS</h1>
@@ -83,6 +88,15 @@
   <div class="sec"><h2>Players</h2><div id="players"></div></div>
   <div id="err"></div>
   <button class="primary" id="endturn">End Turn (Enter)</button>
+  <div class="sec" style="margin-top:8px">
+    <h2>Display</h2>
+    <select id="viewsel">
+      <option value="beautiful">beautiful</option>
+      <option value="simple">simple</option>
+      <option value="minimal">minimal (fastest)</option>
+    </select>
+    <div class="small">headless sims: CLI `civvis simulate / soak`</div>
+  </div>
   <div class="sec" style="margin-top:8px">
     <h2>New game</h2>
     players <select id="np"><option>2</option><option selected>4</option><option>6</option></select>
@@ -98,6 +112,16 @@ const TERRAIN = { grassland:"#4c7a3f", plains:"#8a8f3f", desert:"#c9b26b", tundr
 const PCOLORS = ["#ffd700","#e05050","#50a0e0","#50c878","#c878e0","#e09050","#70d0d0","#f0f080",
                  "#a0a0ff","#ffa0c0","#80e080","#d0b080"];
 const FEAT = { forest:"♣", jungle:"☘", marsh:"~", oasis:"☉" };
+const TERRAIN2 = { grassland:"#5d9450", plains:"#a3a851", desert:"#e0c987",
+                   tundra:"#96a396", snow:"#f2f7fa", coast:"#4d86ad",
+                   ocean:"#27496b", mountain:"#82868e" };
+const FEAT_ICON = { forest:"🌲", jungle:"🌴", marsh:"🌾", oasis:"🏝" };
+const RES_ICON = { wheat:"🌾", cattle:"🐄", sheep:"🐑", stone:"🪨", deer:"🦌",
+                   fish:"🐟", bananas:"🍌", horses:"🐎", iron:"⚒️", silk:"🧵",
+                   wine:"🍷", salt:"🧂" };
+const YICON = { food:"🍞", production:"⚙️", gold:"🪙", science:"🔬",
+                culture:"🎭", faith:"✡" };
+let VIEW = localStorage.getItem("civvis-view") || "beautiful";
 let state = null, sel = null, selCity = null, ox = 0, oy = 0;
 let lensOn = false, tackMode = false, tacks = [], dragMoved = false;
 let TMAP = new Map(), lastSeed = null, cycleIdx = -1;
@@ -128,6 +152,7 @@ function legalFor(type) { return state.legal_actions.filter(a => a.type === type
 function render(st) {
   state = st;
   if (st.seed !== undefined && st.seed !== lastSeed) { lastSeed = st.seed; loadTacks(); }
+  if (sel) sel = st.units.find(u => u.id === sel.id && u.owner === 0) || null;
   document.getElementById("err").textContent = st.error || "";
   if (st.error === undefined || st.error === null) { /* keep selection */ }
   drawMap();
@@ -163,9 +188,9 @@ function drawMap() {
   // move/attack highlights for the selected unit
   const hl = {};
   if (sel) {
+    for (const p of (sel.reachable || [])) hl[key(p)] = "#ffffff";
     for (const a of state.legal_actions) {
       if (a.unit !== sel.id) continue;
-      if (a.type === "move") hl[key(a.to)] = "#ffffff";
       if (a.type === "attack" || a.type === "ranged") hl[key(a.target)] = "#ff5050";
     }
   }
@@ -175,25 +200,51 @@ function drawMap() {
     const [x,y] = hexXY(t.pos[0], t.pos[1]);
     const k = key(t.pos);
     hexPath(x,y);
-    cx.fillStyle = TERRAIN[t.terrain] || "#333";
+    if (VIEW === "beautiful") {
+      const grad = cx.createRadialGradient(x, y - 4*R, 2*R, x, y, S * 1.1);
+      grad.addColorStop(0, TERRAIN2[t.terrain] || "#444");
+      grad.addColorStop(1, TERRAIN[t.terrain] || "#333");
+      cx.fillStyle = grad;
+    } else {
+      cx.fillStyle = TERRAIN[t.terrain] || "#333";
+    }
     cx.fill();
     if (t.owner !== null && t.owner !== undefined) {
       cx.strokeStyle = pcol(t.owner); cx.lineWidth = 1.5*R; cx.globalAlpha = 0.8;
       cx.stroke(); cx.globalAlpha = 1;
     } else { cx.strokeStyle = "#00000040"; cx.lineWidth = 1; cx.stroke(); }
-    cx.fillStyle = "#00000090"; cx.textAlign = "center";
-    cx.font = f(11) + "px sans-serif";
-    if (t.hills) { cx.fillText("◠◠", x, y - 6*R); }
-    if (t.feature) cx.fillText(FEAT[t.feature] || "?", x - 8*R, y + 12*R);
-    if (t.resource) { cx.fillStyle = "#ffe080"; cx.fillText("●", x + 9*R, y + 12*R);
-      cx.fillStyle = "#00000090"; }
-    if (t.improvement === "barbarian_camp" || campSet.has(k)) {
-      cx.fillStyle = "#ff4040"; cx.font = "bold " + f(13) + "px sans-serif";
-      cx.fillText("⛺", x, y+4*R);
+    cx.textAlign = "center";
+    if (VIEW !== "minimal") {
       cx.fillStyle = "#00000090";
-    } else if (t.improvement) { cx.fillStyle = "#5a4632";
-      cx.fillRect(x-3*R, y+6*R, 6*R, 4*R);
-      cx.fillStyle = "#00000090"; }
+      cx.font = f(11) + "px sans-serif";
+      if (t.hills) { cx.fillText("◠◠", x, y - 6*R); }
+      if (t.feature) {
+        if (VIEW === "beautiful") {
+          cx.font = f(13) + "px sans-serif";
+          cx.fillText(FEAT_ICON[t.feature] || "?", x - 7*R, y + 12*R);
+          cx.font = f(11) + "px sans-serif";
+        } else {
+          cx.fillText(FEAT[t.feature] || "?", x - 8*R, y + 12*R);
+        }
+      }
+      if (t.resource) {
+        if (VIEW === "beautiful" && RES_ICON[t.resource]) {
+          cx.font = f(12) + "px sans-serif";
+          cx.fillText(RES_ICON[t.resource], x + 8*R, y + 12*R);
+          cx.font = f(11) + "px sans-serif";
+        } else {
+          cx.fillStyle = "#ffe080"; cx.fillText("●", x + 9*R, y + 12*R);
+          cx.fillStyle = "#00000090";
+        }
+      }
+      if (t.improvement === "barbarian_camp" || campSet.has(k)) {
+        cx.fillStyle = "#ff4040"; cx.font = "bold " + f(13) + "px sans-serif";
+        cx.fillText("⛺", x, y+4*R);
+        cx.fillStyle = "#00000090";
+      } else if (t.improvement) { cx.fillStyle = "#5a4632";
+        cx.fillRect(x-3*R, y+6*R, 6*R, 4*R);
+        cx.fillStyle = "#00000090"; }
+    }
     if (t.district) { cx.fillStyle = "#e8e8e8"; cx.fillRect(x-6*R, y-4*R, 12*R, 9*R);
       cx.fillStyle = "#111"; cx.font = "bold " + f(9) + "px sans-serif";
       cx.fillText(t.district[0].toUpperCase(), x, y+3*R); }
@@ -245,6 +296,16 @@ function drawMap() {
       cx.fill();
     }
   }
+  // right-drag order preview line
+  if (rdrag && rdragTo && sel) {
+    const [x1, y1] = hexXY(sel.pos[0], sel.pos[1]);
+    const [x2, y2] = hexXY(rdragTo[0], rdragTo[1]);
+    cx.setLineDash([6, 5]);
+    cx.strokeStyle = "#f0c674"; cx.lineWidth = 2.5;
+    cx.beginPath(); cx.moveTo(x1, y1); cx.lineTo(x2, y2); cx.stroke();
+    cx.setLineDash([]);
+    hexPath(x2, y2); cx.stroke();
+  }
   // map tacks (key 3)
   for (const tk of tacks) {
     const [x, y] = hexXY(tk[0], tk[1]);
@@ -255,18 +316,23 @@ function drawMap() {
 }
 
 function tileYield(t) {
-  const y = { food: 0, production: 0, gold: 0 };
+  const y = tileYieldFull(t);
+  return { food: y.food, production: y.production, gold: y.gold };
+}
+
+function tileYieldFull(t) {
+  const y = { food: 0, production: 0, gold: 0, science: 0, culture: 0, faith: 0 };
   if (!RULES) return y;
   const add = src => {
     if (!src || !src.yields) return;
-    y.food += src.yields.food || 0;
-    y.production += src.yields.production || 0;
-    y.gold += src.yields.gold || 0;
+    for (const k in y) y[k] += src.yields[k] || 0;
   };
   add(RULES.terrains && RULES.terrains[t.terrain]);
   if (t.hills) y.production += 1;
   if (t.feature && RULES.features) add(RULES.features[t.feature]);
   if (t.resource && RULES.resources) add(RULES.resources[t.resource]);
+  if (t.improvement && t.improvement !== "barbarian_camp" && RULES.improvements)
+    add(RULES.improvements[t.improvement]);
   return y;
 }
 
@@ -385,12 +451,11 @@ cv.addEventListener("click", ev => {
   }
   // acting on a highlighted tile with the selected unit?
   if (sel) {
-    const acts = state.legal_actions.filter(a => a.unit === sel.id &&
-      ((a.type === "move" && key(a.to) === k) ||
-       ((a.type === "attack" || a.type === "ranged") && key(a.target) === k)));
-    if (acts.length) {
-      const atk = acts.find(a => a.type === "attack" || a.type === "ranged");
-      send(atk || acts[0]);
+    const atk = state.legal_actions.find(a => a.unit === sel.id &&
+      (a.type === "attack" || a.type === "ranged") && key(a.target) === k);
+    if (atk) { send(atk); return; }
+    if ((sel.reachable || []).some(p => key(p) === k)) {
+      send({type: "move_to", unit: sel.id, to: [pos[0], pos[1]]});
       return;
     }
   }
@@ -593,21 +658,46 @@ document.addEventListener("keydown", ev => {
   else if (ev.key === "3") { tackMode = !tackMode; lensOn = false; modeline(); drawMap(); }
 });
 
-// right-click: order the selected unit (move / attack / ranged)
-cv.addEventListener("contextmenu", ev => {
-  ev.preventDefault();
-  if (!sel) return;
+// right mouse: press on a unit (or with one selected), drag, release on the
+// target tile to order it (move_to / attack / ranged). Plain right-click on a
+// target does the same.
+let rdrag = null, rdragTo = null;
+cv.addEventListener("contextmenu", ev => ev.preventDefault());
+cv.addEventListener("mousedown", ev => {
+  if (ev.button !== 2 || !state) return;
   const rect = cv.getBoundingClientRect();
   const pos = pixelToHex(ev.clientX - rect.left, ev.clientY - rect.top);
   if (!pos) return;
-  const k = key(pos);
-  const acts = state.legal_actions.filter(a => a.unit === sel.id &&
-    ((a.type === "move" && key(a.to) === k) ||
-     ((a.type === "attack" || a.type === "ranged") && key(a.target) === k)));
-  if (acts.length) {
-    const atk = acts.find(a => a.type !== "move");
-    send(atk || acts[0]);
+  const here = state.units.filter(u => u.owner === 0 && key(u.pos) === key(pos));
+  if (here.length) {
+    sel = here.find(u => u.moves_left > 0) || here[0];
+    selCity = null;
+    drawSide();
   }
+  if (sel) { rdrag = true; rdragTo = pos; drawMap(); }
+});
+cv.addEventListener("mousemove", ev => {
+  if (!rdrag) return;
+  const rect = cv.getBoundingClientRect();
+  const pos = pixelToHex(ev.clientX - rect.left, ev.clientY - rect.top);
+  if (pos && (!rdragTo || key(pos) !== key(rdragTo))) { rdragTo = pos; drawMap(); }
+});
+window.addEventListener("mouseup", ev => {
+  if (ev.button !== 2 || !rdrag) return;
+  const rect = cv.getBoundingClientRect();
+  const pos = pixelToHex(ev.clientX - rect.left, ev.clientY - rect.top);
+  rdrag = null; rdragTo = null;
+  if (!pos || !sel) { drawMap(); return; }
+  const k = key(pos);
+  if (key(sel.pos) === k) { drawMap(); return; }  // released on the unit itself
+  const atk = state.legal_actions.find(a => a.unit === sel.id &&
+    (a.type === "attack" || a.type === "ranged") && key(a.target) === k);
+  if (atk) { send(atk); return; }
+  if ((sel.reachable || []).some(p => key(p) === k)) {
+    send({type: "move_to", unit: sel.id, to: [pos[0], pos[1]]});
+    return;
+  }
+  drawMap();
 });
 
 // left-drag pans the map (click still selects if the mouse barely moved)
@@ -628,6 +718,58 @@ window.addEventListener("mousemove", ev => {
   }
 });
 window.addEventListener("mouseup", () => { dragState = null; });
+
+// hover tile inspector
+const tip = document.getElementById("tip");
+cv.addEventListener("mousemove", ev => {
+  if (!state || (dragState && dragMoved)) { tip.style.display = "none"; return; }
+  const rect = cv.getBoundingClientRect();
+  const pos = pixelToHex(ev.clientX - rect.left, ev.clientY - rect.top);
+  const t = pos && TMAP.get(key(pos));
+  if (!t) { tip.style.display = "none"; return; }
+  const k = key(pos);
+  const lines = [];
+  let head = t.terrain + (t.hills ? " hills" : "");
+  if (t.feature) head += " · " + t.feature;
+  lines.push("<b>" + head + "</b>");
+  if (t.resource)
+    lines.push((RES_ICON[t.resource] || "●") + " " + t.resource +
+               (RULES && RULES.resources ? " (" + RULES.resources[t.resource].class + ")" : ""));
+  if (t.improvement) lines.push("⚒ " + t.improvement.replaceAll("_", " "));
+  if (t.district) lines.push("🏗 " + t.district.replaceAll("_", " ") + " district");
+  const y = tileYieldFull(t);
+  const ystr = Object.entries(y).filter(([, v]) => v > 0)
+    .map(([kk, v]) => v + YICON[kk]).join(" ");
+  if (ystr && !t.district) lines.push(ystr);
+  if (t.owner !== null && t.owner !== undefined)
+    lines.push("territory: " + state.players[t.owner].civ);
+  const city = state.cities.find(c => c.pos[0] === pos[0] && c.pos[1] === pos[1]);
+  if (city) lines.push("🏛 <b>" + city.name + "</b> pop " + city.pop +
+                       " (" + state.players[city.owner].civ + ")");
+  for (const u of state.units) {
+    if (key(u.pos) !== k) continue;
+    lines.push("● " + state.players[u.owner].civ + " " + u.type +
+               " — " + u.hp + "hp, " + u.moves_left + "mp" +
+               (u.level > 1 ? ", lvl " + u.level : "") +
+               (u.fortified ? ", fortified" : ""));
+  }
+  tip.innerHTML = lines.join("<br>");
+  tip.style.display = "block";
+  tip.style.left = Math.min(ev.clientX + 16, window.innerWidth - 280) + "px";
+  tip.style.top = (ev.clientY + 16) + "px";
+});
+cv.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+
+// display mode
+{
+  const vs = document.getElementById("viewsel");
+  vs.value = VIEW;
+  vs.onchange = () => {
+    VIEW = vs.value;
+    localStorage.setItem("civvis-view", VIEW);
+    if (state) drawMap();
+  };
+}
 document.getElementById("newgame").onclick = async () => {
   const np = +document.getElementById("np").value;
   sel = null; selCity = null;

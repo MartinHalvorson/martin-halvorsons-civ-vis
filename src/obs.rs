@@ -33,7 +33,14 @@ pub fn observation(g: &Game, pid: usize) -> Value {
     }).collect();
     let units: Vec<Value> = g.units.values()
         .filter(|u| u.owner == pid || vis.contains(&u.pos))
-        .map(|u| serde_json::to_value(u).unwrap())
+        .map(|u| {
+            let mut v = serde_json::to_value(u).unwrap();
+            if u.owner == pid {
+                v["reachable"] = json!(g.reachable(u.id).iter()
+                    .map(|p| json!([p.0, p.1])).collect::<Vec<_>>());
+            }
+            v
+        })
         .collect();
     let mut empire = [0.0f64; 6]; // food, prod, gold, sci, cul, faith
     let mut cities: Vec<Value> = Vec::new();
