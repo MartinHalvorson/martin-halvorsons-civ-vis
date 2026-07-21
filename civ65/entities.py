@@ -77,9 +77,11 @@ class Player:
     faith: float = 0.0
     explored: set = field(default_factory=set)
     alive: bool = True
+    is_minor: bool = False  # city-state
 
     def to_dict(self):
-        return {"id": self.id, "civ": self.civ, "techs": sorted(self.techs),
+        return {"id": self.id, "civ": self.civ, "is_minor": self.is_minor,
+                "techs": sorted(self.techs),
                 "research": self.research, "research_progress": self.research_progress,
                 "research_overflow": self.research_overflow,
                 "civics": sorted(self.civics), "civic": self.civic,
@@ -91,6 +93,7 @@ class Player:
     @classmethod
     def from_dict(cls, d):
         d = dict(d)
+        d.setdefault("is_minor", False)
         d["techs"] = set(d["techs"])
         d["civics"] = set(d["civics"])
         d["explored"] = {tuple(p) for p in d["explored"]}

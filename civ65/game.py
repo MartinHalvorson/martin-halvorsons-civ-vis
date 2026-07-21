@@ -24,6 +24,9 @@ CITY_NAMES = {
     "Scythia": ["Pokrovka", "Gelonos", "Kamenka", "Aktau"],
 }
 STARTING_TECHS = {"agriculture"}
+CITY_STATE_NAMES = ["Kabul", "Geneva", "Carthage", "Hattusa", "Mohenjo-Daro",
+                    "Yerevan", "Zanzibar", "Auckland", "Valletta", "Vilnius",
+                    "Stockholm", "Kandy"]
 
 
 class IllegalAction(Exception):
@@ -37,7 +40,7 @@ def growth_threshold(pop):
 
 class Game:
     def __init__(self, num_players=2, width=24, height=16, seed=0, max_turns=500,
-                 ruleset=None, _skip_setup=False):
+                 ruleset=None, num_city_states=0, _skip_setup=False):
         self.rules = ruleset or Ruleset()
         self.seed = seed
         self.max_turns = max_turns
@@ -56,13 +59,26 @@ class Game:
             self.map = None
             self.players = []
             return
-        self.map, spawns = mapgen.generate(self.rules, width, height, num_players, self.rng)
+        total = num_players + num_city_states
+        self.map, spawns = mapgen.generate(self.rules, width, height, total, self.rng)
         self.players = [Player(id=i, civ=CIV_NAMES[i % len(CIV_NAMES)],
                                techs=set(STARTING_TECHS)) for i in range(num_players)]
-        for p, pos in zip(self.players, spawns):
+        for p, pos in zip(self.players, spawns[:num_players]):
             self._spawn_unit("settler", p.id, pos)
             self._spawn_unit("warrior", p.id, pos)
             self._reveal(p, pos, radius=3)
+        # city-states: pre-founded single-city minor players
+        for i, pos in enumerate(spawns[num_players:]):
+            if any(hexgrid.distance(pos, s) < 4 for s in spawns[:num_players]) or \
+               any(hexgrid.distance(pos, c.pos) < 4 for c in self.cities.values()):
+                continue  # too crowded; skip this city-state
+            pid = len(self.players)
+            name = CITY_STATE_NAMES[i % len(CITY_STATE_NAMES)]
+            p = Player(id=pid, civ=name, techs=set(STARTING_TECHS), is_minor=True)
+            self.players.append(p)
+            self._found_city_for(p, pos, name=name)
+            self._place_new_unit("warrior", pid, pos)
+            self._place_new_unit("slinger", pid, pos)
 
     # ------------------------------------------------------------------ queries
 
@@ -581,26 +597,32 @@ class Game:
             raise IllegalAction("only settlers found cities")
         if not self.can_found_city(u):
             raise IllegalAction("cannot found city here")
-        names = CITY_NAMES.get(p.civ, [])
-        n_mine = len([c for c in self.cities.values() if c.original_owner == p.id])
-        name = names[n_mine] if n_mine < len(names) else f"{p.civ} {n_mine + 1}"
-        city = City(id=self.next_id, name=name, owner=p.id, pos=u.pos,
+        self._found_city_for(p, u.pos)
+        self._remove_unit(u.id)
+
+    def _found_city_for(self, p, pos, name=None):
+        if name is None:
+            names = CITY_NAMES.get(p.civ, [])
+            n_mine = len([c for c in self.cities.values() if c.original_owner == p.id])
+            name = names[n_mine] if n_mine < len(names) else f"{p.civ} {n_mine + 1}"
+        city = City(id=self.next_id, name=name, owner=p.id, pos=tuple(pos),
                     original_owner=p.id,
-                    is_capital=not any(c.original_owner == p.id and c.is_capital
-                                       for c in self.cities.values()))
+                    is_capital=(not p.is_minor) and not any(
+                        c.original_owner == p.id and c.is_capital
+                        for c in self.cities.values()))
         self.next_id += 1
         self.cities[city.id] = city
         self._city_by_pos[city.pos] = city.id
         center = self.map.get(city.pos)
         center.feature = None
         center.improvement = None
-        for pos in [city.pos] + hexgrid.neighbors(city.pos):
-            t = self.map.get(pos)
+        for tpos in [city.pos] + hexgrid.neighbors(city.pos):
+            t = self.map.get(tpos)
             if t is not None and t.owner_city is None:
                 t.owner_city = city.id
-                city.owned_tiles.append(pos)
-        self._remove_unit(u.id)
+                city.owned_tiles.append(tpos)
         self._reveal(p, city.pos, radius=3)
+        return city
 
     def _do_improve(self, p, action):
         u = self._own_unit(p, action["unit"])
@@ -697,7 +719,8 @@ class Game:
         if wrapped:
             self.turn += 1
             if self.turn > self.max_turns and self.winner is None:
-                best = max((pl for pl in self.players if pl.alive),
+                majors = [pl for pl in self.players if pl.alive and not pl.is_minor]
+                best = max(majors or self.players,
                            key=lambda pl: (self.score(pl.id), -pl.id))
                 self._set_winner(best.id, "score")
         if self.winner is None:
@@ -732,7 +755,7 @@ class Game:
                 p.research_overflow = p.research_progress - cost
                 p.research = None
                 p.research_progress = 0.0
-                if len(p.techs) >= len(self.rules.techs):
+                if not p.is_minor and len(p.techs) >= len(self.rules.techs):
                     self._set_winner(p.id, "science")
         else:
             p.research_overflow += sci
@@ -866,7 +889,7 @@ class Game:
             self._remove_unit(u.id)
 
     def _check_domination(self):
-        alive = [p for p in self.players if p.alive]
+        alive = [p for p in self.players if p.alive and not p.is_minor]
         if len(alive) == 1:
             self._set_winner(alive[0].id, "domination")
             return

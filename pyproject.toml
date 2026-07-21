@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "civ65"
-version = "0.1.0"
+version = "0.2.0"
 description = "Open-source, headless-first 4X strategy engine inspired by Civilization VI (what Unciv is to Civ 5)"
 readme = "README.md"
 license = {text = "MIT"}

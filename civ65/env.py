@@ -7,8 +7,9 @@ from .game import Game, IllegalAction
 
 class CivEnv:
     def __init__(self, num_players=2, width=20, height=14, seed=0, max_turns=300,
-                 opponent="basic", reward_mode="win"):
+                 opponent="basic", reward_mode="win", num_city_states=0):
         self.num_players = num_players
+        self.num_city_states = num_city_states
         self.width = width
         self.height = height
         self.seed = seed
@@ -25,8 +26,10 @@ class CivEnv:
             self.seed = seed
         self.game = Game(num_players=self.num_players, width=self.width,
                          height=self.height, seed=self.seed,
-                         max_turns=self.max_turns)
-        self._ais = {p.id: make_ai(self.opponent, seed=self.seed + p.id)
+                         max_turns=self.max_turns,
+                         num_city_states=self.num_city_states)
+        self._ais = {p.id: make_ai("basic" if p.is_minor else self.opponent,
+                                   seed=self.seed + p.id)
                      for p in self.game.players if p.id != 0}
         return self.observe()
 
@@ -57,7 +60,7 @@ class CivEnv:
         g = self.game
         guard = 0
         while (g.winner is None and g.current != 0
-               and g.players[0].alive and guard < 2 * self.num_players):
+               and g.players[0].alive and guard < 2 * len(g.players)):
             pid = g.current
             self._ais[pid].take_turn(g, pid)
             if g.current == pid and g.winner is None:
@@ -123,6 +126,7 @@ class CivEnv:
                    "civics": sorted(p.civics), "civic": p.civic,
                    "civic_progress": p.civic_progress},
             "players": [{"id": o.id, "civ": o.civ, "alive": o.alive,
+                         "is_minor": o.is_minor,
                          "score": g.score(o.id),
                          "cities": len(g.player_cities(o.id)),
                          "at_war_with_me": g.is_at_war(pid, o.id)}

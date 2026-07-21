@@ -20,6 +20,8 @@ mechanics.
 - Tech tree **and civics tree** (separate science/culture progress, overflow)
 - Units, melee + ranged combat with Civ 6 damage math (`30·e^(Δ/25)`),
   city sieges, capture, civilian capture
+- **City-states**: pre-founded minor civs that defend themselves, never expand
+  or start wars, and can be conquered (excluded from victory conditions)
 - Diplomacy: war/peace; victory by **domination, science, or score**
 - Fog of war (per-player explored + visible sets in observations)
 - Full JSON serialization (save/load), deterministic given a seed
@@ -32,6 +34,7 @@ mechanics.
 ```bash
 pip install -e .
 civ65 simulate --players 4 --seed 42          # AI self-play with ascii map
+civ65 soak --games 10 --players 4 --turns 120  # many full games, flag anomalies
 civ65 benchmark                                # engine speed
 ```
 

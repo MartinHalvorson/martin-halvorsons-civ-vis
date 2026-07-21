@@ -24,6 +24,7 @@ class BasicAI:
         self.rng = random.Random(seed)
 
     def take_turn(self, game, pid):
+        self._minor = game.players[pid].is_minor
         try:
             self._research(game, pid)
             self._diplomacy(game, pid)
@@ -63,6 +64,8 @@ class BasicAI:
         for o in others:
             if game.is_at_war(pid, o.id) and my_power < 0.6 * game.military_power(o.id):
                 self._try(game, pid, {"type": "make_peace", "player": o.id})
+        if self._minor:
+            return  # city-states never start wars
         at_war = any(game.is_at_war(pid, o.id) for o in others)
         if not at_war and game.turn > 40 and len(game.player_cities(pid)) >= 2 and others:
             weakest = min(others, key=lambda o: game.military_power(o.id))
@@ -114,8 +117,8 @@ class BasicAI:
             m = self._best_military(game, pid, city)
             if m:
                 return {"unit": m}
-        if (n_cities + settlers < 4 and settlers == 0 and city.pop >= 2
-                and game.turn < 150):
+        if (not self._minor and n_cities + settlers < 4 and settlers == 0
+                and city.pop >= 2 and game.turn < 150):
             return {"unit": "settler"}
         if builders < (n_cities + 1) // 2:
             return {"unit": "builder"}
@@ -242,7 +245,15 @@ class BasicAI:
                                                          "target": list(pos)})
             target = self._nearest_enemy(game, pid, u.pos, enemies_at_war)
             return self._step_toward(game, pid, u, target)
-        # peace: explore, then garrison
+        # peace: minors guard home; majors explore, then garrison
+        if self._minor:
+            cities = game.player_cities(pid)
+            if not cities:
+                return False
+            cap = cities[0].pos
+            if hexgrid.distance(u.pos, cap) > 2:
+                return self._step_toward(game, pid, u, cap)
+            return False
         target = self._nearest_unexplored(game, pid, u.pos)
         if target is None:
             cities = game.player_cities(pid)
