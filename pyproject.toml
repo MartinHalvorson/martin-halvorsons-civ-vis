@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "civ65"
+name = "civvis"
 version = "0.2.0"
 description = "Open-source, headless-first 4X strategy engine inspired by Civilization VI (what Unciv is to Civ 5)"
 readme = "README.md"
@@ -17,13 +17,13 @@ classifiers = [
 ]
 
 [project.scripts]
-civ65 = "civ65.cli:main"
+civvis = "civvis.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/MartinHalvorson/martin-halvorsons-civ-vis"
 
 [tool.setuptools.packages.find]
-include = ["civ65*"]
+include = ["civvis*"]
 
 [tool.setuptools.package-data]
-civ65 = ["data/*.json"]
+civvis = ["data/*.json"]

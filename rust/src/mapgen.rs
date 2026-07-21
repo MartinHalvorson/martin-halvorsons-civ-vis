@@ -1,4 +1,4 @@
-//! Map generation (mirrors civ65/mapgen.py).
+//! Map generation (mirrors civvis/mapgen.py).
 use std::collections::BTreeSet;
 
 use crate::rng::Rng;

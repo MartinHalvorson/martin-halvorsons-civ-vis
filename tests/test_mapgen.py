@@ -1,6 +1,6 @@
 import json
 
-from civ65.game import Game
+from civvis.game import Game
 
 
 def test_map_dimensions_and_land_fraction():
@@ -26,7 +26,7 @@ def test_determinism_same_seed():
 
 
 def test_spawns_are_spread_out():
-    from civ65 import hexgrid
+    from civvis import hexgrid
     g = Game(num_players=2, width=24, height=16, seed=3)
     spawns = [u.pos for u in g.units.values() if u.type == "settler"]
     assert len(spawns) == 2

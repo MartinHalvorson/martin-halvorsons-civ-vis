@@ -1,4 +1,4 @@
-# Martin Halvorson's Civ VIS
+# Martin Halvorson's Civilization VIS
 
 An open-source, **headless-first** 4X strategy engine inspired by the mechanics
 of Civilization VI — aiming to be to Civ 6 what [Unciv](https://github.com/yairm210/Unciv)
@@ -25,13 +25,13 @@ mechanics.
 - Diplomacy: war/peace; victory by **domination, science, or score**
 - Fog of war (per-player explored + visible sets in observations)
 - Full JSON serialization (save/load), deterministic given a seed
-- Moddable ruleset: all content lives in `civ65/data/*.json` (Unciv-style)
+- Moddable ruleset: all content lives in `civvis/data/*.json` (Unciv-style)
 - Scripted AIs (`basic`, `random`) and a gym-style `CivEnv` for agents
 - Zero runtime dependencies; pure Python
 
 ## Two engines, one game
 
-- **`civ65/` (Python)** — the reference implementation and executable spec.
+- **`civvis/` (Python)** — the reference implementation and executable spec.
   Zero deps, easiest to iterate on rules, powers the gym-style env today.
 - **`rust/` (Rust)** — the performance core for AI training. Same ruleset
   JSONs (embedded at compile time), same JSON action protocol, same
@@ -41,9 +41,9 @@ mechanics.
 
 ```bash
 cd rust && cargo build --release
-./target/release/civ65r simulate --players 4 --seed 17
-./target/release/civ65r soak --games 10 --players 4 --turns 120
-./target/release/civ65r benchmark --games 100
+./target/release/civvisr simulate --players 4 --seed 17
+./target/release/civvisr soak --games 10 --players 4 --turns 120
+./target/release/civvisr benchmark --games 100
 ```
 
 Each engine is deterministic per seed (RNG formats differ between the two).
@@ -52,15 +52,15 @@ Each engine is deterministic per seed (RNG formats differ between the two).
 
 ```bash
 pip install -e .
-civ65 simulate --players 4 --seed 42          # AI self-play with ascii map
-civ65 soak --games 10 --players 4 --turns 120  # many full games, flag anomalies
-civ65 benchmark                                # engine speed
+civvis simulate --players 4 --seed 42          # AI self-play with ascii map
+civvis soak --games 10 --players 4 --turns 120  # many full games, flag anomalies
+civvis benchmark                                # engine speed
 ```
 
 ## Headless AI development
 
 ```python
-from civ65 import CivEnv
+from civvis import CivEnv
 
 env = CivEnv(num_players=2, seed=0, opponent="basic", reward_mode="score")
 obs = env.reset()
@@ -76,7 +76,7 @@ protocol. See [docs/AI_GUIDE.md](docs/AI_GUIDE.md).
 ## Programmatic engine use
 
 ```python
-from civ65 import Game
+from civvis import Game
 
 g = Game(num_players=2, width=24, height=16, seed=7)
 g.apply(0, {"type": "found_city", "unit": 1})
@@ -87,7 +87,7 @@ g.save("save.json")
 ## Layout
 
 ```
-civ65/           engine package (zero deps)
+civvis/           engine package (zero deps)
   data/          moddable ruleset JSONs (terrain, units, districts, techs...)
   game.py        core turn engine + action protocol
   env.py         gym-style headless environment

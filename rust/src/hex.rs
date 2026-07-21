@@ -1,4 +1,4 @@
-//! Axial hex grid math (mirrors civ65/hexgrid.py).
+//! Axial hex grid math (mirrors civvis/hexgrid.py).
 use crate::Pos;
 
 pub const DIRS: [(i32, i32); 6] = [(1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1)];

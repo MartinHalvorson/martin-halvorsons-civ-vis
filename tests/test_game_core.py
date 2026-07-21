@@ -1,6 +1,6 @@
 import pytest
 
-from civ65.game import Game, IllegalAction, growth_threshold
+from civvis.game import Game, IllegalAction, growth_threshold
 
 
 def both_end_turn(g, times=1):

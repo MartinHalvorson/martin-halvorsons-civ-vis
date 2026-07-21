@@ -1,7 +1,7 @@
 import json
 import random
 
-from civ65.env import CivEnv
+from civvis.env import CivEnv
 
 
 def test_reset_observation_schema():

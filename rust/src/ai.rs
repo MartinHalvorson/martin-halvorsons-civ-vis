@@ -1,4 +1,4 @@
-//! Scripted AIs (mirrors civ65/ai/). BasicAi reads full state (no fog) —
+//! Scripted AIs (mirrors civvis/ai/). BasicAi reads full state (no fog) —
 //! sparring partner, not a fair-play agent.
 use crate::game::{effective_strength, Action, Game, Item};
 use crate::rng::Rng;

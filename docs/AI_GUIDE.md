@@ -6,7 +6,7 @@ Civ-6-like game without a UI in the loop.
 ## CivEnv (gym-style)
 
 ```python
-from civ65 import CivEnv
+from civvis import CivEnv
 
 env = CivEnv(num_players=2, width=20, height=14, seed=0,
              opponent="basic",      # scripted AI for players 1..n
@@ -31,8 +31,8 @@ while not env.done:
 Drive `Game` directly — one `take_turn`-style controller per player:
 
 ```python
-from civ65 import Game
-from civ65.ai import make_ai
+from civvis import Game
+from civvis.ai import make_ai
 
 g = Game(num_players=4, seed=1, max_turns=250)
 ais = {p.id: make_ai("basic", seed=p.id) for p in g.players}
@@ -51,7 +51,7 @@ state (it cheats on fog) — fair-play agents should restrict themselves to
 
 - Same seed + same actions = identical game (RNG serialized in saves), so
   experiments reproduce exactly.
-- `civ65 benchmark` reports turns/sec; pure-Python engine, no deps, so it
+- `civvis benchmark` reports turns/sec; pure-Python engine, no deps, so it
   parallelizes trivially across processes for self-play data generation.
 - Suggested evaluation: fixed seed set, win-rate vs `basic` + mean score at
   turn N; keep `random` as a sanity baseline.

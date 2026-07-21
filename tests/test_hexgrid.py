@@ -1,4 +1,4 @@
-from civ65 import hexgrid
+from civvis import hexgrid
 
 
 def test_distance_symmetric():

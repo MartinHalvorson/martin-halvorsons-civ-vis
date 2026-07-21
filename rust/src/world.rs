@@ -1,4 +1,4 @@
-//! Tiles and the world map (mirrors civ65/world.py).
+//! Tiles and the world map (mirrors civvis/world.py).
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

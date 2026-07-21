@@ -1,4 +1,4 @@
-//! Core turn engine (mirrors civ65/game.py — same mechanics and action protocol).
+//! Core turn engine (mirrors civvis/game.py — same mechanics and action protocol).
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 

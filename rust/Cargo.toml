@@ -1,16 +1,16 @@
 [package]
-name = "civ65"
+name = "civvis"
 version = "0.3.0"
 edition = "2021"
-description = "Martin Halvorson's Civ VIS - Rust performance core (headless Civ 6-style engine)"
+description = "Martin Halvorson's Civilization VIS - Rust performance core (headless Civ 6-style engine)"
 license = "MIT"
 
 [lib]
-name = "civ65"
+name = "civvis"
 path = "src/lib.rs"
 
 [[bin]]
-name = "civ65r"
+name = "civvisr"
 path = "src/main.rs"
 
 [dependencies]

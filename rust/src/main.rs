@@ -1,8 +1,8 @@
 //! CLI: simulate / soak / benchmark (mirrors the Python CLI outputs).
 use std::time::Instant;
 
-use civ65::ai::{run_game, BasicAi};
-use civ65::game::Game;
+use civvis::ai::{run_game, BasicAi};
+use civvis::game::Game;
 
 fn arg(args: &[String], key: &str, default: i64) -> i64 {
     args.iter()
@@ -158,7 +158,7 @@ fn main() {
             );
         }
         _ => {
-            println!("usage: civ65r <simulate|soak|benchmark> [--players N] [--seed N] \
+            println!("usage: civvisr <simulate|soak|benchmark> [--players N] [--seed N] \
                       [--turns N] [--width N] [--height N] [--city-states N] [--games N]");
         }
     }

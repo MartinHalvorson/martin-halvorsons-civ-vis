@@ -123,7 +123,7 @@ def cmd_render(args):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="civ65",
+    ap = argparse.ArgumentParser(prog="civvis",
                                  description="Headless Civ-6-style strategy engine")
     sub = ap.add_subparsers(dest="cmd", required=True)
 

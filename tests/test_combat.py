@@ -1,6 +1,6 @@
 import random
 
-from civ65.combat import damage, effective_strength
+from civvis.combat import damage, effective_strength
 
 
 def test_effective_strength_penalty():

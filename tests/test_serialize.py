@@ -1,8 +1,8 @@
 import json
 
-from civ65.ai import make_ai
-from civ65.cli import run_game
-from civ65.game import Game
+from civvis.ai import make_ai
+from civvis.cli import run_game
+from civvis.game import Game
 
 
 def test_roundtrip_after_play():

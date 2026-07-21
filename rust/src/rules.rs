@@ -156,15 +156,15 @@ pub struct Rules {
 impl Rules {
     pub fn embedded() -> Rules {
         Rules {
-            terrains: serde_json::from_str(include_str!("../../civ65/data/terrains.json")).unwrap(),
-            features: serde_json::from_str(include_str!("../../civ65/data/features.json")).unwrap(),
-            resources: serde_json::from_str(include_str!("../../civ65/data/resources.json")).unwrap(),
-            improvements: serde_json::from_str(include_str!("../../civ65/data/improvements.json")).unwrap(),
-            units: serde_json::from_str(include_str!("../../civ65/data/units.json")).unwrap(),
-            districts: serde_json::from_str(include_str!("../../civ65/data/districts.json")).unwrap(),
-            buildings: serde_json::from_str(include_str!("../../civ65/data/buildings.json")).unwrap(),
-            techs: serde_json::from_str(include_str!("../../civ65/data/techs.json")).unwrap(),
-            civics: serde_json::from_str(include_str!("../../civ65/data/civics.json")).unwrap(),
+            terrains: serde_json::from_str(include_str!("../../civvis/data/terrains.json")).unwrap(),
+            features: serde_json::from_str(include_str!("../../civvis/data/features.json")).unwrap(),
+            resources: serde_json::from_str(include_str!("../../civvis/data/resources.json")).unwrap(),
+            improvements: serde_json::from_str(include_str!("../../civvis/data/improvements.json")).unwrap(),
+            units: serde_json::from_str(include_str!("../../civvis/data/units.json")).unwrap(),
+            districts: serde_json::from_str(include_str!("../../civvis/data/districts.json")).unwrap(),
+            buildings: serde_json::from_str(include_str!("../../civvis/data/buildings.json")).unwrap(),
+            techs: serde_json::from_str(include_str!("../../civvis/data/techs.json")).unwrap(),
+            civics: serde_json::from_str(include_str!("../../civvis/data/civics.json")).unwrap(),
         }
     }
 
