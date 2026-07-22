@@ -553,6 +553,7 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("Global lifetime carbon emissions"));
         assert!(EMBEDDED_INDEX.contains("Alliance · Level"));
         assert!(EMBEDDED_INDEX.contains("p.ai_strategy"));
+        assert!(EMBEDDED_INDEX.contains("changed its grand strategy from"));
         assert!(EMBEDDED_INDEX.contains("const cadence = active ? (SPEC ? 32 : 16) : 90"));
         assert!(EMBEDDED_INDEX.contains(".diplomacy-card.allied"));
         assert!(EMBEDDED_INDEX.contains("function cameraYBounds"));

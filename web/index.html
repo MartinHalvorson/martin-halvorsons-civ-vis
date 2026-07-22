@@ -1030,6 +1030,14 @@ function chronicle(prev, next) {
   for (const p of next.players) {
     const old = prev.players.find(x => x.id === p.id);
     if (old && old.alive && !p.alive) addEvent("☠", `${p.civ} has been defeated.`, next.turn);
+    if (old && !p.is_minor && !p.is_barbarian && old.ai_strategy && p.ai_strategy &&
+        old.ai_strategy !== p.ai_strategy) {
+      const icon = {expansion:"⌂", science:"⚛", culture:"♪", religion:"✦",
+                    diplomacy:"⚜", conquest:"⚔", recovery:"♜"}[p.ai_strategy] || "◇";
+      addEvent(icon,
+        `${p.civ} changed its grand strategy from ${titleCase(old.ai_strategy)} to ${titleCase(p.ai_strategy)}.`,
+        next.turn);
+    }
   }
   const majors = next.players.filter(p => !p.is_minor && !p.is_barbarian && p.alive)
     .sort((a, b) => b.score - a.score);
