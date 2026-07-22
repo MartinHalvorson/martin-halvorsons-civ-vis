@@ -102,7 +102,13 @@ cargo run --release --bin ai_eval -- advanced basic --pairs 100   # paired seats
 
 `AdvancedAi` coordinates nearby units into domain-specific armies and fleets
 with shared muster, advance, focus-fire, hold, and recovery orders that replan
-between battlefield actions. The genetic runner evolves those group-combat
+between battlefield actions. Attack ordering extends static exchange
+evaluation with a bounded cloned-state forcing-reply search, so an apparently
+free capture is discounted when the destination permits an immediate ranged,
+melee, city, Encampment, or air counterattack. Forced strategic choices such as city
+keep/raze/liberate decisions use deterministic make-and-evaluate outcome
+search with victory-specific economy, military, Favor, and Grievance terms.
+The genetic runner evolves those group-combat
 doctrine parameters together with expansion, production, diplomacy, and
 tactical exchange weights; archived champions and a fixed-seed validation gate
 keep the `evolved` agent from promoting narrow or regressive strategies.

@@ -1034,6 +1034,19 @@ impl BasicAi {
                 );
             }
         }
+        if g.players[pid].secret_society.is_none() {
+            let society = if self.pursue_religion {
+                "voidsingers"
+            } else {
+                "owls_of_minerva"
+            };
+            let _ = g.apply(
+                pid,
+                &Action::ChooseSecretSociety {
+                    society: society.to_string(),
+                },
+            );
+        }
         if g.players[pid].pantheon.is_none() && g.players[pid].faith >= 25.0 {
             for b in [
                 "divine_spark",
@@ -1262,6 +1275,9 @@ impl BasicAi {
             }
         }
         let at_war = others.iter().any(|o| g.is_at_war(pid, *o));
+        if at_war {
+            self.levy_city_state_military(g, pid, false);
+        }
         if !at_war
             && (g.turn as f64) > self.w.war_min_turn
             && g.player_city_ids(pid).len() >= 2
@@ -1296,6 +1312,52 @@ impl BasicAi {
                 };
                 let _ = g.apply(pid, &action);
             }
+        }
+    }
+
+    /// Turn spare wartime Gold into immediately usable troops when this AI is
+    /// a city-state's Suzerain. `urgent` lets the strategic AI spend deeper
+    /// into its treasury for Conquest/Recovery plans; the general AI retains
+    /// a larger economic reserve.
+    pub(crate) fn levy_city_state_military(&self, g: &mut Game, pid: usize, urgent: bool) {
+        if self.minor || self.barb {
+            return;
+        }
+        let reserve_share = if urgent { 0.20 } else { 0.40 };
+        let spendable = (g.players[pid].gold * (1.0 - reserve_share) - 20.0).max(0.0);
+        let best = g
+            .players
+            .iter()
+            .filter(|minor| minor.is_minor && !minor.is_barbarian && minor.alive)
+            .filter_map(|minor| {
+                let cost = g.levy_cost(pid, minor.id)?;
+                if cost > spendable + f64::EPSILON {
+                    return None;
+                }
+                let strength = g
+                    .units
+                    .values()
+                    .filter(|unit| unit.owner == minor.id && unit.levied_from.is_none())
+                    .filter(|unit| g.rules.units[unit.kind.as_str()].class == "military")
+                    .map(|unit| g.unit_strength(unit, true))
+                    .sum::<f64>();
+                Some((
+                    strength / cost.max(1.0),
+                    strength,
+                    std::cmp::Reverse(minor.id),
+                    minor.id,
+                ))
+            })
+            .max_by(|left, right| {
+                left.0
+                    .partial_cmp(&right.0)
+                    .unwrap()
+                    .then_with(|| left.1.partial_cmp(&right.1).unwrap())
+                    .then(left.2.cmp(&right.2))
+            })
+            .map(|(_, _, _, minor)| minor);
+        if let Some(player) = best {
+            let _ = g.apply(pid, &Action::LevyMilitary { player });
         }
     }
 
@@ -2056,6 +2118,7 @@ impl BasicAi {
                     "builder" => self.builder_step(g, pid, uid),
                     "trader" => self.trader_step(g, pid, uid),
                     "missionary" => self.missionary_step(g, pid, uid),
+                    "rock_band" => self.rock_band_step(g, pid, uid),
                     _ => self.military_step(g, pid, uid),
                 };
                 if !acted {
@@ -2488,8 +2551,66 @@ impl BasicAi {
         self.step_toward(g, pid, uid, target)
     }
 
+    pub(crate) fn rock_band_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
+        if g.rock_concert_tourism(pid, uid).is_some() {
+            return g.apply(pid, &Action::PerformConcert { unit: uid }).is_ok();
+        }
+        let current = g.units[&uid].pos;
+        let mut venues: Vec<(f64, i32, Pos)> = g
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .filter_map(|position| {
+                let tourism = g.rock_concert_venue(pid, position)?;
+                g.route_step(uid, position, 0)?;
+                Some((tourism, g.wdist(current, position), position))
+            })
+            .collect();
+        venues.sort_by(|left, right| {
+            right
+                .0
+                .partial_cmp(&left.0)
+                .unwrap()
+                .then(left.1.cmp(&right.1))
+                .then(left.2.cmp(&right.2))
+        });
+        let Some((_, _, target)) = venues.first().copied() else {
+            return false;
+        };
+        let Some(next) = g.route_step(uid, target, 0) else {
+            return false;
+        };
+        g.apply(
+            pid,
+            &Action::Move {
+                unit: uid,
+                to: next,
+            },
+        )
+        .is_ok()
+    }
+
     fn builder_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
         let upos = g.units[&uid].pos;
+        let project = g
+            .player_city_ids(pid)
+            .into_iter()
+            .filter_map(|city| {
+                g.project_contribution_target(pid, city)
+                    .map(|position| (g.wdist(upos, position), position, city))
+            })
+            .min();
+        if let Some((_, position, city)) = project {
+            if upos == position && g.can_contribute_project(pid, uid, city) {
+                return g
+                    .apply(pid, &Action::ContributeProject { unit: uid, city })
+                    .is_ok();
+            }
+            if self.step_toward(g, pid, uid, position) {
+                return true;
+            }
+        }
         let repairable = g.map.get(upos).is_some_and(|tile| {
             tile.pillaged
                 && tile.improvement.is_some()
@@ -3821,5 +3942,56 @@ mod tests {
 
         assert_eq!(g.cities[&city].captured_from, None);
         assert_eq!(g.players[1].grievances.get(&0), Some(&50.0));
+    }
+
+    #[test]
+    fn builder_routes_to_a_royal_society_project_and_contributes() {
+        let mut g = Game::new_full(1, 20, 14, 35, 40, 0, false);
+        let settler = g
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|id| g.units[id].kind == "settler")
+            .unwrap();
+        g.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = g.player_city_ids(0)[0];
+        let spaceport = g.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != g.cities[&city].pos)
+            .unwrap();
+        g.map.tiles.get_mut(&spaceport).unwrap().district = Some("spaceport".to_string());
+        g.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert("spaceport".to_string(), spaceport);
+        g.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("royal_society".to_string());
+        g.cities.get_mut(&city).unwrap().queue = vec![Item::Project {
+            project: "launch_earth_satellite".to_string(),
+        }];
+        let builder = g.spawn_test_unit("builder", 0, g.cities[&city].pos);
+        g.units.get_mut(&builder).unwrap().charges = 3;
+
+        let ai = BasicAi::new();
+        assert!(ai.builder_step(&mut g, 0, builder));
+        assert_eq!(g.units[&builder].pos, spaceport);
+        if !g.can_contribute_project(0, builder, city) {
+            // Entering a wooded/hill district can spend the Builder's whole
+            // movement allowance. The project action then belongs to its next
+            // turn, just as it does during an ordinary AI game loop.
+            let movement = g.rules.units["builder"].moves;
+            let builder = g.units.get_mut(&builder).unwrap();
+            builder.moves_left = movement;
+            builder.moved = false;
+            builder.acted = false;
+        }
+        assert!(ai.builder_step(&mut g, 0, builder));
+        assert!(!g.units.contains_key(&builder));
+        assert_eq!(g.cities[&city].production, 54.0);
     }
 }

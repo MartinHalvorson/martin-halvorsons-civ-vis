@@ -2214,6 +2214,12 @@ function drawUbar() {
       h += `<button onclick='send({type:"found_city",unit:${u.id}})'>🏛 Found city</button>`;
     if (a.type === "improve")
       h += `<button onclick='send({type:"improve",unit:${u.id},improvement:"${a.improvement}"})'>⚒ ${a.improvement.replaceAll("_"," ")}</button>`;
+    if (a.type === "contribute_project") {
+      const city = state.cities.find(candidate => candidate.id === a.city);
+      h += `<button class="primary" onclick='send(${JSON.stringify(a)})'>🚀 Contribute to ${city ? city.name : "project"}</button>`;
+    }
+    if (a.type === "perform_concert")
+      h += `<button class="primary" onclick='send(${JSON.stringify(a)})'>♫ Perform concert</button>`;
     if (a.type === "pillage")
       h += `<button class="danger" onclick='send(${JSON.stringify(a)})'>🔥 Pillage</button>`;
     if (a.type === "repair_improvement")
@@ -2279,11 +2285,14 @@ function hook(id, fn) {
   if (el) el.onchange = () => { if (el.value) fn(el.value); };
 }
 function itemName(it) {
+  if (it.unit && it.formation) {
+    return (it.unit + (it.formation >= 2 ? " army/armada" : " corps/fleet")).replaceAll("_", " ");
+  }
   return (it.unit || it.building || it.project || (it.wonder ? it.wonder + " @" + it.pos : it.district + " @" + it.pos)).replaceAll("_", " ");
 }
 function itemCost(it) {
   if (!RULES) return "?";
-  if (it.unit) return RULES.units[it.unit].cost;
+  if (it.unit) return RULES.units[it.unit].cost * (it.formation ? (it.formation >= 2 ? 2.25 : 1.5) : 1);
   if (it.building) return RULES.buildings[it.building].cost;
   if (it.wonder) return RULES.wonders[it.wonder].cost;
   if (it.project) return RULES.projects[it.project].cost;
@@ -2364,10 +2373,12 @@ function drawSide(force = true) {
     me.civic ? civicCost(me.civic) : 0, me.yields.culture, me.boosted_civics);
   const govs = legalFor("government");
   const dedications = legalFor("choose_dedication");
+  const societies = legalFor("choose_secret_society");
   const congressVotes = legalFor("congress_vote");
+  const levies = legalFor("levy_military");
   const dealReplies = state.legal_actions.filter(a => a.type === "accept_deal" || a.type === "reject_deal");
   const gs = document.getElementById("govsec");
-  if (SPEC || govs.length || me.government || dedications.length || congressVotes.length || dealReplies.length) {
+  if (SPEC || govs.length || me.government || dedications.length || societies.length || congressVotes.length || levies.length || dealReplies.length) {
     gs.style.display = "block";
     let politics =
       `<div class="row"><span class="muted">Current</span><b>${titleCase(me.government || "Unformed")}</b></div>` +
@@ -2377,11 +2388,19 @@ function drawSide(force = true) {
       politics += `<div class="row"><span class="muted">Age dedication</span><b>${titleCase(me.age)}</b></div>` +
         dedications.map(a => `<button onclick='send(${JSON.stringify(a)})'>✦ ${titleCase(a.dedication)}</button>`).join("");
     }
+    if (!SPEC && societies.length) {
+      politics += `<div class="row"><span class="muted">Secret Society</span><b>Choose membership</b></div>` +
+        societies.map(a => `<button onclick='send(${JSON.stringify(a)})'>◈ ${titleCase(a.society)}</button>`).join("");
+    }
     if (!SPEC && congressVotes.length) {
       const onePerResolution = congressVotes.filter((vote, index, votes) =>
         votes.findIndex(other => other.resolution === vote.resolution && other.choice === vote.choice) === index);
       politics += `<div class="row"><span class="muted">World Congress</span><b>${compactStat(me.diplomatic_favor)} Favor</b></div>` +
         onePerResolution.map(a => `<button onclick='send(${JSON.stringify(a)})'>⚖ ${titleCase(a.resolution)}: ${titleCase(a.choice)} (${a.votes})</button>`).join("");
+    }
+    if (!SPEC && levies.length) {
+      politics += `<div class="row"><span class="muted">Suzerain militaries</span><b>${levies.length} available</b></div>` +
+        levies.map(a => `<button onclick='send(${JSON.stringify(a)})'>⚔ Levy ${(state.players[a.player] || {}).civ || `city-state #${a.player}`}</button>`).join("");
     }
     if (!SPEC && dealReplies.length) {
       politics += `<div class="row"><span class="muted">Diplomatic proposals</span><b>${dealReplies.length / 2}</b></div>` +

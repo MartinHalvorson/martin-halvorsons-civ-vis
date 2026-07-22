@@ -1327,7 +1327,7 @@ mod tests {
         for _ in 0..5 {
             round(&mut g);
         }
-        assert_eq!(g.players[0].dvp, 1);
+        assert_eq!(g.players[0].dvp, 2);
         // At the Modern-era World Leader resolution, 20 points wins.
         g.players[0].dvp = 18;
         g.world_era = 5;
