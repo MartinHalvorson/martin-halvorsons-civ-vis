@@ -1492,13 +1492,7 @@ impl BasicAi {
                     && g.players[partner].civics.contains("civil_service")
                     && g.alliance_with(pid, partner).is_none()
                 {
-                    let kinds = [
-                        "economic",
-                        "cultural",
-                        "military",
-                        "religious",
-                        "research",
-                    ];
+                    let kinds = ["economic", "cultural", "military", "religious", "research"];
                     kinds
                         .into_iter()
                         .cycle()
@@ -2830,17 +2824,15 @@ impl BasicAi {
                 {
                     continue;
                 }
-                let alliance_connection = g
-                    .alliance_with(pid, c.owner)
-                    .is_some_and(|_| {
-                        !g.routes.iter().any(|route| {
-                            route.owner == pid
-                                && route.ends > g.turn
-                                && g.cities
-                                    .get(&route.dest)
-                                    .is_some_and(|destination| destination.owner == c.owner)
-                        })
-                    }) as usize;
+                let alliance_connection = g.alliance_with(pid, c.owner).is_some_and(|_| {
+                    !g.routes.iter().any(|route| {
+                        route.owner == pid
+                            && route.ends > g.turn
+                            && g.cities
+                                .get(&route.dest)
+                                .is_some_and(|destination| destination.owner == c.owner)
+                    })
+                }) as usize;
                 let key = (alliance_connection, c.districts.len() + 1, *cid);
                 if best.map(|old| key > old).unwrap_or(true) {
                     best = Some(key);

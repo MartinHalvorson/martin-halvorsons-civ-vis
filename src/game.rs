@@ -23309,7 +23309,11 @@ impl Game {
             self.players[partner]
                 .counters
                 .insert(second_key, stored_points);
-            if alliance.kind == "research" && alliance.level >= 2 && turn > 0 && turn % 30 == 0 {
+            if alliance.kind == "research"
+                && alliance.level >= 2
+                && turn > 0
+                && turn.is_multiple_of(30)
+            {
                 self.share_research_alliance_boosts(pid, partner);
             }
             if alliance.kind == "military" && alliance.level >= 2 {
@@ -32582,6 +32586,14 @@ mod district_mechanics {
             game.units[&warrior].xp,
             Game::promotion_threshold(game.units[&warrior].level)
         );
+        let allied_position = game.cities[&game.player_city_ids(1)[0]].pos;
+        let allied_unit = game.spawn_unit("warrior", 1, allied_position);
+        let observed = crate::obs::observation(&game, 0);
+        assert!(observed["units"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|unit| unit["id"] == serde_json::json!(allied_unit)));
     }
 
     #[test]

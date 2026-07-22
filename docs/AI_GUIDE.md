@@ -48,6 +48,12 @@ Incoming diplomatic proposals are priced against their Gold transfer,
 grievances, current strategy, alliance type, war position, and campaign
 fatigue; the agent no longer accepts an exploitative friendship payment or a
 non-peace pact with the rival it is trying to deny.
+Advanced agents proactively seek Research, Cultural, Religious, Military, or
+Economic Alliances according to their victory plan, reject imminent victory
+rivals, and prefer partners whose technology, Tourism, military, religion, or
+city-state network complements the plan. Both AI tiers prioritize the first
+bilateral route that accelerates Alliance experience; Advanced Traders also
+price the exact route yield and Cultural Alliance Great Person benefit.
 Congress ballots follow the same plan: Diplomatic agents back themselves for
 World Leader, other strategies steer target rewards toward the civilization
 furthest from victory, and competition votes predict the strongest public
