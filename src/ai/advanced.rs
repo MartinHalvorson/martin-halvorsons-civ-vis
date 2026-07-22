@@ -6517,9 +6517,7 @@ impl AdvancedAi {
         plan: &StrategicPlan,
     ) -> f64 {
         let target = match action {
-            Action::Attack { unit, target } | Action::Ranged { unit, target }
-                if *unit == uid =>
-            {
+            Action::Attack { unit, target } | Action::Ranged { unit, target } if *unit == uid => {
                 *target
             }
             _ => return f64::NEG_INFINITY,
@@ -6545,10 +6543,13 @@ impl AdvancedAi {
                     ))
             })
             .collect();
-        let target_city = g.city_at(target).filter(|city| {
-            g.cities[city].owner != pid && g.is_at_war(pid, g.cities[city].owner)
-        });
-        let target_encampment = target_city.is_none().then(|| g.encampment_at(target)).flatten();
+        let target_city = g
+            .city_at(target)
+            .filter(|city| g.cities[city].owner != pid && g.is_at_war(pid, g.cities[city].owner));
+        let target_encampment = target_city
+            .is_none()
+            .then(|| g.encampment_at(target))
+            .flatten();
         let mut after = g.clone();
         if after.apply(pid, action).is_err() {
             return f64::NEG_INFINITY;
@@ -6556,8 +6557,7 @@ impl AdvancedAi {
 
         let attacker_loss = match after.units.get(&uid) {
             Some(survivor) => {
-                (attacker.hp - survivor.hp).max(0) as f64
-                    * (1.25 + attacker_spec.cost / 800.0)
+                (attacker.hp - survivor.hp).max(0) as f64 * (1.25 + attacker_spec.cost / 800.0)
             }
             None => 230.0 + attacker_spec.cost * 0.65,
         };
@@ -6580,7 +6580,10 @@ impl AdvancedAi {
         }
         if let Some(city) = target_city {
             let before = &g.cities[&city];
-            let captured = after.cities.get(&city).is_some_and(|city| city.owner == pid);
+            let captured = after
+                .cities
+                .get(&city)
+                .is_some_and(|city| city.owner == pid);
             if captured {
                 value += 520.0
                     + before.pop.max(1) as f64 * 14.0
