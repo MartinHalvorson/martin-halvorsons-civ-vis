@@ -1,7 +1,7 @@
 //! JSON observation builder (fog-of-war view for a player) — feeds the GUI
 //! and any external agent speaking the JSON protocol.
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::game::{growth_threshold, Game};
 use crate::Pos;
@@ -92,6 +92,7 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             "is_capital": c.is_capital,
             "original_owner": c.original_owner,
             "captured_from": c.captured_from,
+            "occupied_from": c.occupied_from,
             "wall_hp": c.wall_hp, "wall_max": g.city_max_wall_hp(c),
             "encampment_hp": c.encampment_hp,
             "encampment_wall_hp": c.encampment_wall_hp,
@@ -209,6 +210,10 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             "age": p.age,
             "tourism": round1(p.tourism_lifetime),
             "religious_tourism": round1(p.religious_tourism_lifetime),
+            "tourism_pressure": g.players.iter()
+                .filter(|target| target.id != pid && !target.is_minor && !target.is_barbarian)
+                .map(|target| (target.id.to_string(), round1(g.tourism_pressure_against(pid, target.id))))
+                .collect::<BTreeMap<_, _>>(),
             "monopoly_gold_per_turn": round1(g.monopoly_bonuses(pid).0),
             "monopoly_tourism_pct": round1(g.monopoly_bonuses(pid).1),
             "secret_society": p.secret_society,

@@ -1162,6 +1162,7 @@ mod tests {
         assert_eq!(g.players[0].era_score, 0);
         // culture victory: overwhelming accumulated tourism wins at wrap
         g.players[0].tourism_lifetime = 100000.0;
+        g.players[0].tourism_pressure.insert(1, 100000.0);
         round(&mut g);
         assert_eq!(g.winner, Some(0));
         assert_eq!(g.victory_type.as_deref(), Some("culture"));

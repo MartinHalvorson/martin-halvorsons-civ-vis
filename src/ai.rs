@@ -104,7 +104,13 @@ impl Ai for RandomAi {
 
 // ------------------------------------------------------------------ BasicAi
 
-const GOV_PRIORITY: [&str; 6] = [
+const GOV_PRIORITY: [&str; 12] = [
+    "digital_democracy",
+    "synthetic_technocracy",
+    "corporate_libertarianism",
+    "democracy",
+    "communism",
+    "fascism",
     "merchant_republic",
     "monarchy",
     "classical_republic",

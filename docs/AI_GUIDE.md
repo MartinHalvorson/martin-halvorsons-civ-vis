@@ -52,6 +52,13 @@ Congress ballots follow the same plan: Diplomatic agents back themselves for
 World Leader, other strategies steer target rewards toward the civilization
 furthest from victory, and competition votes predict the strongest public
 candidate instead of mechanically voting for the current player.
+District production is family-aware: unique replacements inherit the strategic
+role of their standard district, while candidate sites are compared using
+their actual adjacency, specialist and Great Person yields, housing, amenities,
+Loyalty, air capacity, defenses, appeal, and one-time effects. Housing value is
+derived from the post-build city state, including Aqueduct water access and the
+appeal bands for Neighborhoods and Preserves; non-specialty districts are not
+subject to an invented AI population cap.
 
 ## Victory targeting and full-game validation
 
@@ -64,14 +71,19 @@ The six pipelines are concrete rather than score labels. Science reserves a
 Spaceport and completes the launch chain; Culture builds a Theater Square
 network, recruits cultural Great People, trains and routes capacity-aware
 Archaeologists, reaches the Conservation/Professional Sports tourism unlocks,
-improves tourism tiles, and sends promoted Rock Bands to the best risk-adjusted
-foreign venues; Religion founds, enhances, defends,
+improves tourism tiles, connects every rival with a Tourism-amplifying Trade
+Route before duplicating links, buys the direction of Open Borders that boosts
+its own pressure, and sends promoted Rock Bands to the best risk-adjusted
+foreign venues. It also matches an available Tier 3/4 government used by the
+leading Culture defender to remove the conflicting-government penalty;
+Religion founds, enhances, defends,
 and spreads its faith while reconverting its own core first;
 Diplomacy prioritizes Favor, envoys, alliances, city-state liberation, and
 strategic World Congress voting. Congress choices score both the A/B outcome
 and its target, coordinate with visible ballots, contest a rival DVP leader,
 and spend additional Favor when pursuing a diplomatic victory; Domination
-coordinates production and force objectives; Score
+coordinates production and force objectives, then reserves one reachable land
+unit per ungarrisoned occupied city in ascending Loyalty order; Score
 balances expansion and near-term empire value. Society choice supports the
 same goal: Hermetic Order for Science, Voidsingers for Culture/Religion, and
 Owls of Minerva for economic, diplomatic, and conquest plans.
@@ -104,7 +116,7 @@ diagnostics. Map dimensions can be overridden with `--width` and `--height`.
 
 The current engine passes exact, unassisted full-game victories for every
 target on two independent seeds. On seeds 20000 and 20001 respectively, the
-winning turns were Science 1021/940, Culture 559/586, Religion 79/177,
+winning turns were Science 1021/940, Culture 175/385, Religion 79/177,
 Diplomacy 395/395, Domination 82/136, and Score 301/301. The diplomatic turns
 reflect the stock two-stage resolution model rather than the former
 target-only ballots.

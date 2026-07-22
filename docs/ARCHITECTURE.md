@@ -62,11 +62,14 @@ hills/forest/jungle. Melee draws a counterattack; ranged does not. City strength
 uses the strongest unit built (or a stronger garrison), walls, districts,
 terrain, and capital/policy modifiers. Cities have 200 HP and can only be
 captured by melee. Ordinary ranged attacks floor city HP at 1; Bombard attacks
-may deplete it to 0 but cannot capture it. Melee capture converts the city (pop
--1, walls razed), destroys the garrison, captures eligible civilians, and
-forces a keep/raze/liberate disposition before another action. Capitals cannot
-be razed; liberation restores the founder, while occupation and city-state
-elimination feed the Grievance and Diplomatic Favor systems.
+may deplete it to 0 but cannot capture it. Melee capture retains 75% Population,
+damages City Center buildings, transfers housed works, converts unique district
+and building families, removes unavailable infrastructure, resolves units in
+the center plus military/air districts, and forces a keep/raze/liberate
+disposition before another action. Original Capitals and former city-states
+cannot be razed; liberation restores the founder, while persistent occupation,
+elimination, and city-state conquest feed the Loyalty, Grievance, Envoy, and
+Diplomatic Favor systems.
 
 ### Combat AI hierarchy
 
@@ -88,7 +91,9 @@ which catches poisoned captures without searching quiet empire actions.
 Forced strategic decisions use a make-and-evaluate pass over cloned positions.
 For a captured city, `AdvancedAi` evaluates every legal keep, raze, and liberate
 result with victory-specific economy, military, loyalty, capital, Favor, and
-Grievance terms, then plays the highest-valued outcome deterministically.
+Grievance terms, then plays the highest-valued outcome deterministically. It
+greedily reserves one reachable land combat unit per ungarrisoned occupied city,
+lowest Loyalty first, so campaign movement internalizes the occupation penalty.
 
 The parameters controlling clustering, muster thresholds, cohesion, screening,
 engagement depth, focus fire, caution, and recovery are part of the serialized
