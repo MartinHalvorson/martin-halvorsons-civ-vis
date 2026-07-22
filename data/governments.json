@@ -1,10 +1,18 @@
 {
   "chiefdom": {
     "civic": "code_of_laws",
+    "influence_per_turn": 1,
+    "influence_threshold": 100,
+    "envoys_per_threshold": 1,
+    "diplomatic_favor_per_turn": 0,
     "slots": {"military": 1, "economic": 1}
   },
   "autocracy": {
     "civic": "political_philosophy",
+    "influence_per_turn": 3,
+    "influence_threshold": 100,
+    "envoys_per_threshold": 1,
+    "diplomatic_favor_per_turn": 1,
     "effects": {
       "government_building_yields": {"food": 1, "production": 1, "gold": 1, "science": 1, "culture": 1, "faith": 1},
       "wonder_production_pct": 10
@@ -13,56 +21,100 @@
   },
   "oligarchy": {
     "civic": "political_philosophy",
+    "influence_per_turn": 3,
+    "influence_threshold": 100,
+    "envoys_per_threshold": 1,
+    "diplomatic_favor_per_turn": 1,
     "effects": {"combat_strength": 4},
     "slots": {"military": 2, "economic": 1, "wildcard": 1}
   },
   "classical_republic": {
     "civic": "political_philosophy",
+    "influence_per_turn": 3,
+    "influence_threshold": 100,
+    "envoys_per_threshold": 1,
+    "diplomatic_favor_per_turn": 1,
     "effects": {"district_city_amenity": 1, "district_city_housing": 1, "great_people_pct": 15},
     "slots": {"economic": 2, "diplomatic": 1, "wildcard": 1}
   },
   "monarchy": {
     "civic": "divine_right",
+    "influence_per_turn": 5,
+    "influence_threshold": 150,
+    "envoys_per_threshold": 2,
+    "diplomatic_favor_per_turn": 2,
     "effects": {"wall_level_housing": 1, "influence_pct": 50},
     "slots": {"military": 2, "economic": 1, "diplomatic": 1, "wildcard": 2}
   },
   "merchant_republic": {
     "civic": "exploration",
+    "influence_per_turn": 5,
+    "influence_threshold": 150,
+    "envoys_per_threshold": 2,
+    "diplomatic_favor_per_turn": 2,
     "effects": {"governor_gold_pct": 10, "district_production_pct": 15},
     "slots": {"military": 1, "economic": 2, "diplomatic": 2, "wildcard": 1}
   },
   "theocracy": {
     "civic": "reformed_church",
+    "influence_per_turn": 5,
+    "influence_threshold": 150,
+    "envoys_per_threshold": 2,
+    "diplomatic_favor_per_turn": 2,
     "effects": {"religious_strength": 5, "governor_faith_per_pop": 0.5},
     "slots": {"military": 2, "economic": 2, "diplomatic": 1, "wildcard": 1}
   },
   "communism": {
     "civic": "class_struggle",
+    "influence_per_turn": 7,
+    "influence_threshold": 200,
+    "envoys_per_threshold": 3,
+    "diplomatic_favor_per_turn": 3,
     "effects": {"governor_production_per_pop": 0.6, "science_pct": 10},
     "slots": {"military": 3, "economic": 3, "diplomatic": 1, "wildcard": 1}
   },
   "democracy": {
     "civic": "suffrage",
+    "influence_per_turn": 7,
+    "influence_threshold": 200,
+    "envoys_per_threshold": 3,
+    "diplomatic_favor_per_turn": 3,
     "effects": {"allied_suzerain_trade_food": 4, "allied_suzerain_trade_production": 4, "gold_purchase_discount_pct": 15},
     "slots": {"military": 1, "economic": 3, "diplomatic": 2, "wildcard": 2}
   },
   "fascism": {
     "civic": "totalitarianism",
+    "influence_per_turn": 7,
+    "influence_threshold": 200,
+    "envoys_per_threshold": 3,
+    "diplomatic_favor_per_turn": 3,
     "effects": {"combat_strength": 5, "unit_production_pct": 50, "war_weariness_reduction_pct": 15},
     "slots": {"military": 4, "economic": 1, "diplomatic": 1, "wildcard": 2}
   },
   "corporate_libertarianism": {
     "civic": "corporate_libertarianism",
+    "influence_per_turn": 9,
+    "influence_threshold": 250,
+    "envoys_per_threshold": 4,
+    "diplomatic_favor_per_turn": 4,
     "effects": {"commercial_encampment_production_pct": 10, "improved_strategic_resource_rate": 1, "science_pct": -10},
     "slots": {"military": 3, "economic": 1, "diplomatic": 1, "wildcard": 5}
   },
   "digital_democracy": {
     "civic": "digital_democracy",
+    "influence_per_turn": 9,
+    "influence_threshold": 250,
+    "envoys_per_threshold": 4,
+    "diplomatic_favor_per_turn": 4,
     "effects": {"amenity": 2, "culture_per_district": 2, "combat_strength": -3},
     "slots": {"military": 1, "economic": 1, "diplomatic": 3, "wildcard": 5}
   },
   "synthetic_technocracy": {
     "civic": "synthetic_technocracy",
+    "influence_per_turn": 9,
+    "influence_threshold": 250,
+    "envoys_per_threshold": 4,
+    "diplomatic_favor_per_turn": 4,
     "effects": {"power_per_city": 3, "project_production_pct": 30, "tourism_pct": -10},
     "slots": {"military": 1, "economic": 3, "diplomatic": 1, "wildcard": 5}
   }

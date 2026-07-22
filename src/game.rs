@@ -11150,9 +11150,11 @@ impl Game {
 
     pub fn promotion_pending(&self, uid: u32) -> bool {
         self.units.get(&uid).is_some_and(|unit| {
-            let class = &self.rules.units[unit.kind.as_str()].promotion_class;
+            let spec = &self.rules.units[unit.kind.as_str()];
+            let class = &spec.promotion_class;
             let level_cap = if class == "rock_band" { 4 } else { 8 };
-            !class.is_empty()
+            spec.earns_xp
+                && !class.is_empty()
                 && (unit.promotions.is_empty() || unit.level < level_cap)
                 && unit.xp >= Self::promotion_threshold(unit.level)
         })
@@ -11241,6 +11243,13 @@ impl Game {
     }
 
     fn award_xp(&mut self, uid: u32, amt: f64) {
+        if self
+            .units
+            .get(&uid)
+            .is_none_or(|unit| !self.rules.units[unit.kind.as_str()].earns_xp)
+        {
+            return;
+        }
         if self.promotion_pending(uid) {
             return; // XP gain pauses until the pending promotion is selected.
         }
@@ -11263,6 +11272,9 @@ impl Game {
         let Some(unit) = self.units.get(&uid) else {
             return;
         };
+        if !self.rules.units[unit.kind.as_str()].earns_xp {
+            return;
+        }
         if self.promotion_pending(uid) {
             return;
         }
@@ -18386,6 +18398,7 @@ impl Game {
                 if !matches!(formation, 1 | 2)
                     || spec.class != "military"
                     || spec.domain.as_deref() == Some("air")
+                    || !spec.can_formations
                     || (*formation == 1 && self.tree_effect(pid, "corps_fleets") <= 0.0)
                     || (*formation == 2 && self.tree_effect(pid, "armies_armadas") <= 0.0)
                 {
@@ -22238,13 +22251,9 @@ impl Game {
                 let fighter = spec.domain.as_deref() == Some("air")
                     && unit.air_patrol
                     && self.wdist(unit.pos, target) <= spec.range.max(1);
-                let ground = matches!(unit.kind.as_str(), "anti_air_gun" | "mobile_sam")
-                    && self.wdist(unit.pos, target) <= 1;
-                let gdr = unit.kind == "giant_death_robot"
-                    && self.tree_effect(unit.owner, "gdr_air_defense") > 0.0
-                    && self.wdist(unit.pos, target)
-                        <= self.tree_effect(unit.owner, "gdr_anti_air_range").max(1.0) as i32;
-                let governor_air_defense = if ground || gdr {
+                let anti_air = spec.anti_air_strength > 0.0
+                    && self.wdist(unit.pos, target) <= spec.anti_air_range.max(1);
+                let governor_air_defense = if anti_air && spec.class == "support" {
                     self.map.tiles[&unit.pos]
                         .owner_city
                         .filter(|city_id| {
@@ -22257,14 +22266,18 @@ impl Game {
                 } else {
                     0.0
                 };
-                (fighter || ground || gdr).then_some((
-                    spec.ranged_attack_strength()
-                        + if gdr {
-                            self.tree_effect(unit.owner, "gdr_anti_air_strength")
-                        } else {
-                            0.0
-                        }
-                        + governor_air_defense,
+                (fighter || anti_air).then_some((
+                    if fighter {
+                        spec.ranged_attack_strength()
+                    } else {
+                        spec.anti_air_strength
+                    } + if unit.kind == "giant_death_robot"
+                        && self.tree_effect(unit.owner, "gdr_air_defense") > 0.0
+                    {
+                        self.tree_effect(unit.owner, "gdr_anti_air_strength")
+                    } else {
+                        0.0
+                    } + governor_air_defense,
                     unit.id,
                 ))
             })
@@ -23007,6 +23020,7 @@ impl Game {
             || b.moves_left <= 0.0
             || self.wdist(a.pos, b.pos) > 1
             || self.rules.units[a.kind.as_str()].class != "military"
+            || !self.rules.units[a.kind.as_str()].can_formations
         {
             return None;
         }
@@ -25055,13 +25069,12 @@ impl Game {
         if self.players[pid].is_minor || self.players[pid].is_barbarian {
             return;
         }
-        let tier = match self.players[pid].government.as_deref() {
-            Some("autocracy" | "oligarchy" | "classical_republic") => 1.0,
-            Some("monarchy" | "merchant_republic" | "theocracy") => 2.0,
-            Some("communism" | "democracy" | "fascism") => 3.0,
-            Some("corporate_libertarianism" | "digital_democracy" | "synthetic_technocracy") => 4.0,
-            _ => 0.0,
-        };
+        let government_favor = self.players[pid]
+            .government
+            .as_deref()
+            .and_then(|government| self.rules.governments.get(government))
+            .map(|government| government.diplomatic_favor_per_turn)
+            .unwrap_or(0.0);
         let suzerains = self
             .players
             .iter()
@@ -25097,8 +25110,7 @@ impl Game {
         let diplomatic_penalty = world_grievances / 100.0
             + 5.0 * occupied_original_capitals
             + self.carbon_favor_penalty(pid);
-        let favor = 1.0
-            + tier
+        let favor = government_favor
             + suzerains * suzerain_multiplier
             + alliance_favor
             + buildings
@@ -25109,6 +25121,53 @@ impl Game {
             .counters
             .entry("diplomatic_favor".to_string())
             .or_insert(0) += favor.max(0.0).floor() as i64;
+    }
+
+    fn process_influence(&mut self, pid: usize) {
+        if self.players[pid].is_minor || self.players[pid].is_barbarian {
+            return;
+        }
+        let Some(government) = self.players[pid]
+            .government
+            .as_deref()
+            .and_then(|government| self.rules.governments.get(government))
+        else {
+            return;
+        };
+        let base_influence = government.influence_per_turn;
+        let threshold = government.influence_threshold;
+        let envoys_per_threshold = government.envoys_per_threshold;
+        let building_effect = |effect: &str| {
+            self.cities
+                .values()
+                .filter(|city| city.owner == pid)
+                .map(|city| self.city_building_effect(city, effect))
+                .sum::<f64>()
+        };
+        let economic_alliance_influence = self
+            .alliance_partner(pid, "economic", 2)
+            .map(|partner| {
+                self.players
+                    .iter()
+                    .filter(|minor| minor.alive && minor.is_minor && !minor.is_barbarian)
+                    .filter(|minor| self.suzerain_of(minor.id) == Some(partner))
+                    .count() as f64
+            })
+            .unwrap_or(0.0);
+        let influence = (base_influence
+            + economic_alliance_influence
+            + self.policy_effect(pid, "influence_per_turn")
+            + building_effect("influence_points"))
+            * (1.0 + self.gov_effects(pid).influence_pct / 100.0);
+        let player = &mut self.players[pid];
+        player.influence += influence;
+        while threshold > 0.0
+            && envoys_per_threshold > 0
+            && player.influence + f64::EPSILON >= threshold
+        {
+            player.influence -= threshold;
+            player.envoys_free += envoys_per_threshold;
+        }
     }
 
     fn cancel_trade_deals_with(&mut self, first: usize, second: usize) {
@@ -27527,47 +27586,7 @@ impl Game {
         self.process_pressure(pid);
         self.process_loyalty(pid);
         self.record_emergency_presence(pid);
-        if !self.players[pid].is_minor {
-            // influence points scale with government tier; 100 points = 1 envoy
-            let tier = match self.players[pid].government.as_deref() {
-                Some("monarchy") | Some("merchant_republic") | Some("theocracy") => 2.0,
-                Some("communism") | Some("democracy") | Some("fascism") => 3.0,
-                Some("corporate_libertarianism")
-                | Some("digital_democracy")
-                | Some("synthetic_technocracy") => 4.0,
-                Some("autocracy") | Some("oligarchy") | Some("classical_republic") => 1.0,
-                _ => 0.0,
-            };
-            let building_effect = |effect: &str| {
-                self.cities
-                    .values()
-                    .filter(|city| city.owner == pid)
-                    .map(|city| self.city_building_effect(city, effect))
-                    .sum::<f64>()
-            };
-            let economic_alliance_influence = self
-                .alliance_partner(pid, "economic", 2)
-                .map(|partner| {
-                    self.players
-                        .iter()
-                        .filter(|minor| minor.alive && minor.is_minor && !minor.is_barbarian)
-                        .filter(|minor| self.suzerain_of(minor.id) == Some(partner))
-                        .count() as f64
-                })
-                .unwrap_or(0.0);
-            let influence = (1.0
-                + tier
-                + economic_alliance_influence
-                + self.policy_effect(pid, "influence_per_turn")
-                + building_effect("influence_points"))
-                * (1.0 + self.gov_effects(pid).influence_pct / 100.0);
-            let p = &mut self.players[pid];
-            p.influence += influence;
-            if p.influence >= 100.0 {
-                p.influence -= 100.0;
-                p.envoys_free += 1;
-            }
-        }
+        self.process_influence(pid);
         for uid in self.player_unit_ids(pid) {
             let (kind, hp, acted, attacks_left) = {
                 let u = &self.units[&uid];
@@ -28756,9 +28775,11 @@ impl Game {
             && !spec.promotion_class.is_empty()
             && self.governor_effect(city.owner, cid, "military_free_promotion") > 0.0;
         let unit = self.units.get_mut(&uid).unwrap();
-        unit.xp_bonus_pct += xp_pct;
-        unit.xp += starting_xp;
-        if embrasure_promotion {
+        if spec.earns_xp {
+            unit.xp_bonus_pct += xp_pct;
+            unit.xp += starting_xp;
+        }
+        if spec.earns_xp && embrasure_promotion {
             // A free promotion is represented by exactly enough XP to expose
             // the first promotion choice. max() prevents free-promotion
             // effects from stacking with one another.
@@ -30700,6 +30721,97 @@ mod combat_scenarios {
     }
 
     #[test]
+    fn hybrid_units_offer_both_attacks_and_can_capture_cities() {
+        let (mut game, center, ring) = controlled_game(31_434);
+        let robot = game.spawn_unit("giant_death_robot", 0, center);
+        let adjacent = ring[0];
+        game.spawn_unit("warrior", 1, adjacent);
+        let distant = game
+            .wdisk(center, 2)
+            .into_iter()
+            .find(|position| game.wdist(center, *position) == 2)
+            .unwrap();
+        game.spawn_unit("warrior", 1, distant);
+
+        let spec = &game.rules.units["giant_death_robot"];
+        assert!(spec.is_melee_capable());
+        assert!(spec.has_ranged_attack());
+        let legal = game.legal_actions(0);
+        assert!(legal.contains(&Action::Attack {
+            unit: robot,
+            target: adjacent,
+        }));
+        assert!(legal.contains(&Action::Ranged {
+            unit: robot,
+            target: adjacent,
+        }));
+        assert!(legal.contains(&Action::Ranged {
+            unit: robot,
+            target: distant,
+        }));
+
+        let (mut capture, city_pos, capture_ring) = controlled_game(31_435);
+        let city = capture.found_city_for(1, city_pos, None);
+        capture.cities.get_mut(&city).unwrap().hp = 0;
+        capture.cities.get_mut(&city).unwrap().wall_hp = 0;
+        let captor = capture.spawn_unit("giant_death_robot", 0, capture_ring[0]);
+        capture
+            .apply(
+                0,
+                &Action::Attack {
+                    unit: captor,
+                    target: city_pos,
+                },
+            )
+            .unwrap();
+        assert_eq!(capture.cities[&city].owner, 0);
+        assert_eq!(capture.units[&captor].pos, city_pos);
+    }
+
+    #[test]
+    fn anti_air_is_support_only_and_uses_dedicated_land_naval_and_gdr_strengths() {
+        let (mut ground, center, ring) = controlled_game(31_436);
+        let anti_air = ground.spawn_unit("anti_air_gun", 0, ring[0]);
+        let bomber = ground.spawn_unit("bomber", 1, center);
+        let spec = &ground.rules.units["anti_air_gun"];
+        assert_eq!(spec.class, "support");
+        assert!(!spec.is_melee_capable());
+        assert!(!spec.has_ranged_attack());
+        assert!(!ground.legal_actions(0).iter().any(|action| {
+            matches!(
+                action,
+                Action::Attack { unit, .. } | Action::Ranged { unit, .. } if *unit == anti_air
+            )
+        }));
+        let bomber_state = ground.units[&bomber].clone();
+        assert_eq!(
+            ground.air_interception_strength(&bomber_state, center),
+            90.0
+        );
+
+        let (mut naval, center, ring) = controlled_game(31_437);
+        naval.spawn_unit("battleship", 0, ring[0]);
+        let bomber = naval.spawn_unit("bomber", 1, center);
+        let bomber_state = naval.units[&bomber].clone();
+        assert_eq!(naval.air_interception_strength(&bomber_state, center), 90.0);
+
+        let (mut future, center, ring) = controlled_game(31_438);
+        future.spawn_unit("giant_death_robot", 0, ring[0]);
+        let bomber = future.spawn_unit("bomber", 1, center);
+        let bomber_state = future.units[&bomber].clone();
+        assert_eq!(
+            future.air_interception_strength(&bomber_state, center),
+            90.0
+        );
+        future.players[0].techs.insert("robotics".to_string());
+        future.players[0].techs.insert("advanced_ai".to_string());
+        assert_eq!(
+            future.air_interception_strength(&bomber_state, center),
+            130.0
+        );
+    }
+
+    #[test]
     fn eagle_warrior_conversion_uses_base_strength_probability() {
         let (mut g, target, ring) = controlled_game(3144);
         let eagle = g.spawn_unit("eagle_warrior", 0, ring[0]);
@@ -31988,7 +32100,7 @@ mod victory_conditions {
         g.process_diplomacy(0);
 
         assert_eq!(g.players[1].grievances.get(&0), Some(&53.0));
-        assert!((g.players[0].diplomatic_favor - 5.47).abs() < 1e-9);
+        assert!((g.players[0].diplomatic_favor - 4.47).abs() < 1e-9);
     }
 
     #[test]
@@ -34746,8 +34858,8 @@ mod district_mechanics {
         assert_eq!(routed.players[0].alliances[&1].level, 2);
         assert_eq!(
             routed.players[0].diplomatic_favor - favor_before,
-            3.0,
-            "base Favor plus two Favor from a Level 2 alliance"
+            2.0,
+            "a governmentless player receives only the Level 2 alliance's Favor"
         );
         routed.routes.clear();
         routed.players[0].alliances.get_mut(&1).unwrap().points = 239.0;
@@ -34766,6 +34878,62 @@ mod district_mechanics {
         routed.do_accept_deal(1, renewal).unwrap();
         assert_eq!(routed.players[0].alliances[&1].points, 240.0);
         assert_eq!(routed.players[0].alliances[&1].level, 3);
+    }
+
+    #[test]
+    fn governments_generate_stock_influence_envoys_and_favor_by_tier() {
+        let cases = [
+            ("chiefdom", 1.0, 100.0, 1, 0.0),
+            ("autocracy", 3.0, 100.0, 1, 1.0),
+            ("oligarchy", 3.0, 100.0, 1, 1.0),
+            ("classical_republic", 3.0, 100.0, 1, 1.0),
+            ("monarchy", 5.0, 150.0, 2, 2.0),
+            ("merchant_republic", 5.0, 150.0, 2, 2.0),
+            ("theocracy", 5.0, 150.0, 2, 2.0),
+            ("communism", 7.0, 200.0, 3, 3.0),
+            ("democracy", 7.0, 200.0, 3, 3.0),
+            ("fascism", 7.0, 200.0, 3, 3.0),
+            ("corporate_libertarianism", 9.0, 250.0, 4, 4.0),
+            ("digital_democracy", 9.0, 250.0, 4, 4.0),
+            ("synthetic_technocracy", 9.0, 250.0, 4, 4.0),
+        ];
+        for (government, base_rate, threshold, envoys, favor) in cases {
+            let mut game = emergency_game_with_capitals(1, 88_109, 300);
+            game.players[0].government = Some(government.to_string());
+            let spec = &game.rules.governments[government];
+            assert_eq!(spec.influence_per_turn, base_rate, "{government}");
+            assert_eq!(spec.influence_threshold, threshold, "{government}");
+            assert_eq!(spec.envoys_per_threshold, envoys, "{government}");
+            assert_eq!(spec.diplomatic_favor_per_turn, favor, "{government}");
+
+            let actual_rate = if government == "monarchy" {
+                base_rate * 1.5
+            } else {
+                base_rate
+            };
+            game.process_influence(0);
+            assert_eq!(game.players[0].influence, actual_rate, "{government}");
+
+            game.players[0].influence = threshold * 2.0 - actual_rate;
+            game.players[0].envoys_free = 0;
+            game.process_influence(0);
+            assert_eq!(game.players[0].influence, 0.0, "{government}");
+            assert_eq!(game.players[0].envoys_free, envoys * 2, "{government}");
+
+            let favor_before = game.players[0].diplomatic_favor;
+            game.process_diplomacy(0);
+            assert_eq!(
+                game.players[0].diplomatic_favor - favor_before,
+                favor,
+                "{government}"
+            );
+        }
+
+        let mut governmentless = emergency_game_with_capitals(1, 88_110, 300);
+        governmentless.process_influence(0);
+        governmentless.process_diplomacy(0);
+        assert_eq!(governmentless.players[0].influence, 0.0);
+        assert_eq!(governmentless.players[0].diplomatic_favor, 0.0);
     }
 
     #[test]
@@ -34943,6 +35111,7 @@ mod district_mechanics {
 
         let mut economic = emergency_game_with_capitals(3, 88_107, 300);
         economic.players[2].is_minor = true;
+        economic.players[0].government = Some("chiefdom".to_string());
         economic.players[1].envoys.push((2, 3));
         install_alliance(&mut economic, 0, 1, "economic", 2, 80.0);
         let mut economic_baseline = economic.clone();

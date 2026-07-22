@@ -154,16 +154,28 @@ pub struct UnitSpec {
     /// False for units which only enter play through a special effect.
     #[serde(default = "default_true")]
     pub buildable: bool,
+    /// Some super-units cannot combine into Corps/Armies or earn ordinary
+    /// experience and promotion-tree upgrades.
+    #[serde(default = "default_true")]
+    pub can_formations: bool,
+    #[serde(default = "default_true")]
+    pub earns_xp: bool,
     #[serde(default)]
     pub strength: f64,
     #[serde(default)]
     pub ranged_strength: f64, // 0 = no ranged attack
     #[serde(default)]
     pub bombard_strength: f64, // 0 = no anti-district bombard attack
+    /// Automatic defense against hostile air missions. This is distinct from
+    /// an ordinary ranged attack: anti-air support units cannot attack ground
+    /// targets, while several late naval units expose both capabilities.
+    #[serde(default)]
+    pub anti_air_strength: f64,
+    #[serde(default)]
+    pub anti_air_range: i32,
     /// Explicit overrides for hybrid and interception-only units. Most units
     /// infer these capabilities from their strength profile; the Giant Death
-    /// Robot can use both attacks, while AA Guns and Mobile SAMs use their
-    /// ranged stat only for automatic interception.
+    /// Robot can use both ordinary attacks.
     #[serde(default)]
     pub can_melee: Option<bool>,
     #[serde(default)]
@@ -590,6 +602,14 @@ pub struct PolicySlots {
 pub struct GovSpec {
     #[serde(default)]
     pub civic: Option<String>,
+    #[serde(default)]
+    pub influence_per_turn: f64,
+    #[serde(default)]
+    pub influence_threshold: f64,
+    #[serde(default)]
+    pub envoys_per_threshold: i64,
+    #[serde(default)]
+    pub diplomatic_favor_per_turn: f64,
     #[serde(default)]
     pub effects: GovEffects,
     #[serde(default)]

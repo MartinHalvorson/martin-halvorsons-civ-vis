@@ -154,6 +154,7 @@ struct EmpireCounts {
     aircraft: usize,
     siege: usize,
     support: usize,
+    air_defense: usize,
     military_engineers: usize,
     missionaries: usize,
 }
@@ -195,17 +196,22 @@ impl EmpireCounts {
                         }
                     } else if spec.domain.as_deref() == Some("air") {
                         self.aircraft += 1;
-                    }
-                    if spec.has_ranged_attack() {
-                        self.ranged += 1;
                     } else {
-                        self.melee += 1;
+                        if spec.is_melee_capable() {
+                            self.melee += 1;
+                        }
+                        if spec.has_ranged_attack() {
+                            self.ranged += 1;
+                        }
                     }
-                    if spec.siege {
+                    if spec.siege && spec.domain.as_deref() != Some("air") {
                         self.siege += 1;
                     }
                 } else if spec.class == "support" {
                     self.support += 1;
+                    if spec.anti_air_strength > 0.0 {
+                        self.air_defense += 1;
+                    }
                 }
             }
         }
@@ -3594,6 +3600,7 @@ impl AdvancedAi {
         &self,
         g: &Game,
         pid: usize,
+        cid: u32,
         unit: &str,
         plan: &StrategicPlan,
         counts: &EmpireCounts,
@@ -3602,10 +3609,51 @@ impl AdvancedAi {
         if spec.class != "support" || unit == "military_engineer" {
             return -10_000.0;
         }
+        if spec.anti_air_strength > 0.0 {
+            let hostile_aircraft = g
+                .units
+                .values()
+                .filter(|candidate| {
+                    candidate.owner != pid
+                        && g.is_at_war(pid, candidate.owner)
+                        && g.rules.units[candidate.kind.as_str()].domain.as_deref() == Some("air")
+                })
+                .count();
+            let desired = hostile_aircraft.min(g.player_city_ids(pid).len().div_ceil(2).max(1));
+            if desired == 0 || counts.air_defense >= desired {
+                return -10_000.0;
+            }
+            let best_available = g
+                .rules
+                .units
+                .iter()
+                .filter(|(name, candidate)| {
+                    candidate.class == "support"
+                        && candidate.anti_air_strength > 0.0
+                        && g.can_produce(
+                            pid,
+                            cid,
+                            &Item::Unit {
+                                unit: (*name).clone(),
+                            },
+                        )
+                })
+                .map(|(_, candidate)| candidate.anti_air_strength)
+                .fold(0.0_f64, f64::max);
+            if spec.anti_air_strength + 5.0 < best_available {
+                return -2_000.0;
+            }
+            return 340.0
+                + spec.anti_air_strength * 3.0
+                + hostile_aircraft.min(4) as f64 * 65.0
+                + desired.saturating_sub(counts.air_defense) as f64 * 90.0;
+        }
         let land_military = counts
             .military
             .saturating_sub(counts.naval + counts.aircraft);
-        let field_support = counts.support.saturating_sub(counts.military_engineers);
+        let field_support = counts
+            .support
+            .saturating_sub(counts.military_engineers + counts.air_defense);
         let desired_support = if land_military >= 8 {
             2
         } else if land_military >= 3 {
@@ -4116,7 +4164,7 @@ impl AdvancedAi {
                             0.0
                         }
                 } else if spec.class == "support" {
-                    self.support_unit_value(g, pid, unit, plan, counts)
+                    self.support_unit_value(g, pid, cid, unit, plan, counts)
                 } else {
                     20.0
                 }
@@ -5567,11 +5615,11 @@ impl AdvancedAi {
         for uid in units {
             let unit = &g.units[uid];
             let spec = &g.rules.units[unit.kind.as_str()];
-            if spec.class != "military" {
+            if spec.class != "military" || (!spec.is_melee_capable() && !spec.has_ranged_attack()) {
                 continue;
             }
             let radius = if spec.has_ranged_attack() {
-                g.unit_attack_range(*uid)
+                g.unit_attack_range(*uid).max(1)
             } else {
                 1
             };
@@ -5588,13 +5636,21 @@ impl AdvancedAi {
                 for uid in units {
                     let unit = &g.units[uid];
                     let spec = &g.rules.units[unit.kind.as_str()];
-                    if spec.class != "military" {
+                    if spec.class != "military"
+                        || (!spec.is_melee_capable() && !spec.has_ranged_attack())
+                    {
                         continue;
                     }
-                    let ranged = spec.has_ranged_attack();
-                    let radius = if ranged { g.unit_attack_range(*uid) } else { 1 };
-                    if g.wdist(unit.pos, target) <= radius {
-                        score += self.base.exchange_score(g, *uid, target, ranged).max(-20.0);
+                    let distance = g.wdist(unit.pos, target);
+                    let mut exchange = f64::NEG_INFINITY;
+                    if spec.has_ranged_attack() && distance <= g.unit_attack_range(*uid) {
+                        exchange = exchange.max(self.base.exchange_score(g, *uid, target, true));
+                    }
+                    if spec.is_melee_capable() && distance == 1 {
+                        exchange = exchange.max(self.base.exchange_score(g, *uid, target, false));
+                    }
+                    if exchange.is_finite() {
+                        score += exchange.max(-20.0);
                         attackers += 1;
                     }
                 }
@@ -5756,9 +5812,11 @@ impl AdvancedAi {
             });
             let posture = if average_hp <= self.base.w.withdraw_hp + 10.0 {
                 ForcePosture::Recover
-            } else if focus_target.is_some()
-                && (local_strength_ratio >= 0.72 || plan.threatened_city.is_some() || forcing_focus)
-                || units.iter().any(|uid| {
+            } else if (focus_target.is_some()
+                && (local_strength_ratio >= 0.72
+                    || plan.threatened_city.is_some()
+                    || forcing_focus))
+                || (units.iter().any(|uid| {
                     g.units.values().any(|enemy| {
                         enemies.contains(&enemy.owner)
                             && g.wdist(g.units[uid].pos, enemy.pos) <= 2
@@ -5766,7 +5824,7 @@ impl AdvancedAi {
                                 || plan.threatened_city.is_some()
                                 || enemy.hp <= 35)
                     })
-                })
+                }))
             {
                 ForcePosture::Engage
             } else if plan.threatened_city.is_some() || local_strength_ratio < 0.72 {
@@ -5858,11 +5916,13 @@ impl AdvancedAi {
                 .filter(|other| enemies.contains(&other.owner))
             {
                 let enemy_spec = &g.rules.units[enemy.kind.as_str()];
-                if enemy_spec.class != "military" {
+                if enemy_spec.class != "military"
+                    || (!enemy_spec.is_melee_capable() && !enemy_spec.has_ranged_attack())
+                {
                     continue;
                 }
                 let radius = if enemy_spec.has_ranged_attack() {
-                    g.unit_attack_range(enemy.id)
+                    g.unit_attack_range(enemy.id).max(1)
                 } else {
                     1
                 };
@@ -6545,11 +6605,14 @@ impl AdvancedAi {
             .find(|group| group.units.contains(&uid))
             .cloned();
 
-        let ranged = spec.has_ranged_attack();
-        let radius = if ranged { g.unit_attack_range(uid) } else { 1 };
+        let radius = if spec.has_ranged_attack() {
+            g.unit_attack_range(uid).max(1)
+        } else {
+            1
+        };
         let decline_settlers =
             self.counts(g, pid).settlers > 0 || g.player_city_ids(pid).len() >= plan.desired_cities;
-        let mut best: Option<(f64, Pos)> = None;
+        let mut best: Option<(f64, Pos, Action)> = None;
         for pos in g.wdisk(unit.pos, radius) {
             if spec.class != "military" {
                 break;
@@ -6564,57 +6627,53 @@ impl AdvancedAi {
             if unusable_settler && g.city_at(pos).is_none() {
                 continue;
             }
-            let action = if ranged {
-                Action::Ranged {
+            let distance = g.wdist(unit.pos, pos);
+            let mut actions = Vec::with_capacity(2);
+            if spec.has_ranged_attack() && distance <= g.unit_attack_range(uid) {
+                actions.push(Action::Ranged {
                     unit: uid,
                     target: pos,
-                }
-            } else {
-                Action::Attack {
+                });
+            }
+            if spec.is_melee_capable() && distance == 1 {
+                actions.push(Action::Attack {
                     unit: uid,
                     target: pos,
+                });
+            }
+            for action in actions {
+                let mut score = self.tactical_attack_value(g, pid, uid, &action, plan)
+                    - self.base.attack_threshold(g, uid, pos);
+                if plan
+                    .target_city
+                    .is_some_and(|cid| g.cities.get(&cid).is_some_and(|c| c.pos == pos))
+                {
+                    score += 28.0;
                 }
-            };
-            let mut score = self.tactical_attack_value(g, pid, uid, &action, plan)
-                - self.base.attack_threshold(g, uid, pos);
-            if plan
-                .target_city
-                .is_some_and(|cid| g.cities.get(&cid).is_some_and(|c| c.pos == pos))
-            {
-                score += 28.0;
-            }
-            if g.units_at(pos).iter().any(|oid| g.units[oid].hp <= 35) {
-                score += 16.0;
-            }
-            if group.as_ref().and_then(|orders| orders.focus_target) == Some(pos) {
-                score += self.base.w.focus_fire * 10.0;
-            }
-            if let Some(orders) = &group {
+                if g.units_at(pos).iter().any(|oid| g.units[oid].hp <= 35) {
+                    score += 16.0;
+                }
+                if group.as_ref().and_then(|orders| orders.focus_target) == Some(pos) {
+                    score += self.base.w.focus_fire * 10.0;
+                }
+                if let Some(orders) = &group {
+                    score -= self.base.w.local_superiority
+                        * (1.0 - orders.local_strength_ratio).max(0.0);
+                }
                 score -=
-                    self.base.w.local_superiority * (1.0 - orders.local_strength_ratio).max(0.0);
-            }
-            score -= self.base.w.trade_caution * self.forcing_reply_penalty(g, pid, uid, &action);
-            if best
-                .map(|(old, bp)| score > old || (score == old && pos < bp))
-                .unwrap_or(true)
-            {
-                best = Some((score, pos));
+                    self.base.w.trade_caution * self.forcing_reply_penalty(g, pid, uid, &action);
+                if best
+                    .as_ref()
+                    .map(|(old, bp, _)| score > *old || (score == *old && pos < *bp))
+                    .unwrap_or(true)
+                {
+                    best = Some((score, pos, action));
+                }
             }
         }
-        if let Some((score, pos)) = best {
+        if let Some((score, _, action)) = best {
             let required_margin = if unit.hp < 55 { 12.0 } else { 0.0 };
             if score > required_margin {
-                let action = if ranged {
-                    Action::Ranged {
-                        unit: uid,
-                        target: pos,
-                    }
-                } else {
-                    Action::Attack {
-                        unit: uid,
-                        target: pos,
-                    }
-                };
                 if g.apply(pid, &action).is_ok() {
                     return true;
                 }
@@ -8857,8 +8916,8 @@ mod tests {
         let ai = AdvancedAi::targeting(VictoryTarget::Domination);
         let counts = ai.counts(&game, 0);
 
-        assert!(ai.support_unit_value(&game, 0, "battering_ram", &plan, &counts) < -9_000.0);
-        assert!(ai.support_unit_value(&game, 0, "siege_tower", &plan, &counts) > 0.0);
+        assert!(ai.support_unit_value(&game, 0, home, "battering_ram", &plan, &counts) < -9_000.0);
+        assert!(ai.support_unit_value(&game, 0, home, "siege_tower", &plan, &counts) > 0.0);
     }
 
     #[test]
@@ -9043,6 +9102,144 @@ mod tests {
                 target: targets[1],
             })
         );
+    }
+
+    #[test]
+    fn exact_ground_search_prefers_the_high_value_kill_over_a_static_tie() {
+        let mut game = Game::new_full(2, 24, 16, 71_009, 120, 0, false);
+        game.at_war.insert((0, 1));
+        let rival_origin = game
+            .player_unit_ids(1)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .map(|unit| game.units[&unit].pos)
+            .unwrap();
+        game.found_city_for(1, rival_origin, None);
+        for unit in game.units.keys().copied().collect::<Vec<_>>() {
+            game.remove_unit(unit);
+        }
+        let (base, mut targets) = game
+            .map
+            .tiles
+            .iter()
+            .filter(|(position, tile)| {
+                game.rules.is_passable(tile)
+                    && !game.rules.is_water(tile)
+                    && game.city_at(**position).is_none()
+                    && game
+                        .cities
+                        .values()
+                        .all(|city| game.wdist(**position, city.pos) > 5)
+            })
+            .find_map(|(base, _)| {
+                let targets: Vec<Pos> = game
+                    .nbrs(*base)
+                    .into_iter()
+                    .filter(|position| {
+                        game.map.get(*position).is_some_and(|tile| {
+                            game.rules.is_passable(tile) && !game.rules.is_water(tile)
+                        }) && game.city_at(*position).is_none()
+                    })
+                    .collect();
+                (targets.len() >= 2).then_some((*base, targets))
+            })
+            .expect("test map has an isolated two-target engagement");
+        targets.sort_unstable();
+        let robot = game.spawn_test_unit("giant_death_robot", 0, base);
+        let warrior = game.spawn_test_unit("warrior", 1, targets[0]);
+        let armor = game.spawn_test_unit("modern_armor", 1, targets[1]);
+        game.units.get_mut(&warrior).unwrap().hp = 1;
+        game.units.get_mut(&armor).unwrap().hp = 1;
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Conquest,
+            target_player: Some(1),
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+        let mut ai = AdvancedAi::targeting(VictoryTarget::Domination);
+
+        assert_eq!(
+            ai.base.exchange_score(&game, robot, targets[0], true),
+            ai.base.exchange_score(&game, robot, targets[1], true),
+            "the static evaluator intentionally sees two one-hit kills"
+        );
+        let warrior_value = ai.tactical_attack_value(
+            &game,
+            0,
+            robot,
+            &Action::Ranged {
+                unit: robot,
+                target: targets[0],
+            },
+            &plan,
+        );
+        let armor_value = ai.tactical_attack_value(
+            &game,
+            0,
+            robot,
+            &Action::Ranged {
+                unit: robot,
+                target: targets[1],
+            },
+            &plan,
+        );
+        assert!(armor_value > warrior_value + 100.0);
+        assert!(ai.advanced_military_step(&mut game, 0, robot, &plan));
+        assert!(!game.units.contains_key(&armor));
+        assert!(game.units.contains_key(&warrior));
+        assert!(matches!(
+            game.log.last(),
+            Some((0, Action::Attack { target, .. } | Action::Ranged { target, .. }))
+                if *target == targets[1]
+        ));
+    }
+
+    #[test]
+    fn exact_hybrid_search_uses_melee_to_finish_a_city() {
+        let mut game = Game::new_full(2, 24, 16, 71_010, 120, 0, false);
+        let rival_origin = game
+            .player_unit_ids(1)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .map(|unit| game.units[&unit].pos)
+            .unwrap();
+        let city = game.found_city_for(1, rival_origin, None);
+        for unit in game.units.keys().copied().collect::<Vec<_>>() {
+            game.remove_unit(unit);
+        }
+        let target = game.cities[&city].pos;
+        let staging =
+            game.nbrs(target)
+                .into_iter()
+                .find(|position| {
+                    game.map.get(*position).is_some_and(|tile| {
+                        game.rules.is_passable(tile) && !game.rules.is_water(tile)
+                    }) && game.units_at(*position).is_empty()
+                })
+                .unwrap();
+        game.cities.get_mut(&city).unwrap().hp = 0;
+        game.cities.get_mut(&city).unwrap().wall_hp = 0;
+        let robot = game.spawn_test_unit("giant_death_robot", 0, staging);
+        game.at_war.insert((0, 1));
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Conquest,
+            target_player: Some(1),
+            target_city: Some(city),
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+        let mut ai = AdvancedAi::targeting(VictoryTarget::Domination);
+
+        assert!(ai.advanced_military_step(&mut game, 0, robot, &plan));
+        assert_eq!(game.cities[&city].owner, 0);
+        assert!(matches!(
+            game.log.last(),
+            Some((0, Action::Attack { unit, target: action_target }))
+                if *unit == robot && *action_target == target
+        ));
     }
 
     #[test]
