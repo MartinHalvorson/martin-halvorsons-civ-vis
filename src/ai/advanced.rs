@@ -6443,7 +6443,7 @@ impl AdvancedAi {
                     Action::AirRebase { unit, to } if *unit == uid => {
                         let distance = g.wdist(*to, objective);
                         let improvement = current_distance - distance;
-                        let reaches = (distance <= spec.range.max(1)) as i32;
+                        let reaches = (distance <= g.unit_attack_range(uid)) as i32;
                         Some((
                             improvement as f64 * 18.0 + reaches as f64 * 35.0,
                             *to,
@@ -6481,7 +6481,7 @@ impl AdvancedAi {
             })
             .map(|other| {
                 let distance = g.wdist(unit.pos, other.pos);
-                if distance <= spec.range.max(1) * 2 {
+                if distance <= g.air_rebase_range(uid) {
                     80.0 + g.rules.units[other.kind.as_str()].cost * 0.08
                 } else {
                     0.0
@@ -6491,7 +6491,7 @@ impl AdvancedAi {
         let defended_city = plan.threatened_city.is_some_and(|city| {
             g.cities
                 .get(&city)
-                .is_some_and(|city| g.wdist(unit.pos, city.pos) <= spec.range.max(1))
+                .is_some_and(|city| g.wdist(unit.pos, city.pos) <= g.unit_attack_range(uid))
         });
         let patrol_value = hostile_air_threat
             + if defended_city { 55.0 } else { 0.0 }

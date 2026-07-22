@@ -87,6 +87,22 @@
   "deck_crews": {"class":"naval_carrier","tier":3,"requires":["advanced_engines","folding_wings"],"effects":{"heal_after_attack":1},"note":"May heal after attacking."},
   "supercarrier": {"class":"naval_carrier","tier":4,"requires":["folding_wings","deck_crews"],"effects":{"heal_anywhere":1},"note":"May heal outside friendly territory."},
 
+  "dogfighting": {"class":"air_fighter","tier":1,"effects":{"vs_air_fighter":7},"note":"+7 Combat Strength against fighter-class units."},
+  "cockpit_armor": {"class":"air_fighter","tier":1,"effects":{"defend_anti_air":7},"note":"+7 Combat Strength when defending against anti-air."},
+  "interceptor": {"class":"air_fighter","tier":2,"requires":["dogfighting"],"effects":{"vs_air_bomber":7},"note":"+7 Combat Strength against bomber-class units."},
+  "strafe": {"class":"air_fighter","tier":2,"requires":["cockpit_armor"],"effects":{"vs_non_cavalry":17},"note":"+17 Combat Strength against non-cavalry units."},
+  "ground_crews": {"class":"air_fighter","tier":3,"requires":["interceptor"],"effects":{"heal_on_patrol":1},"note":"Heals while patrolling or deployed."},
+  "tank_buster": {"class":"air_fighter","tier":3,"requires":["strafe"],"effects":{"vs_cavalry":17},"note":"+17 Combat Strength against cavalry units."},
+  "drop_tanks": {"class":"air_fighter","tier":4,"requires":["ground_crews","tank_buster"],"effects":{"range":2},"note":"+2 Range."},
+
+  "box_formation": {"class":"air_bomber","tier":1,"effects":{"defend_air_fighter":7},"note":"+7 Combat Strength when defending against fighter-class units."},
+  "evasive_maneuvers": {"class":"air_bomber","tier":1,"effects":{"defend_anti_air":7},"note":"+7 Combat Strength when defending against anti-air."},
+  "torpedo_bomber": {"class":"air_bomber","tier":2,"requires":["box_formation","evasive_maneuvers"],"effects":{"air_vs_naval":17},"note":"+17 Combat Strength against naval units."},
+  "close_air_support": {"class":"air_bomber","tier":2,"requires":["box_formation","evasive_maneuvers"],"effects":{"air_vs_land":12},"note":"+12 Combat Strength against land units."},
+  "tactical_maintenance": {"class":"air_bomber","tier":3,"requires":["torpedo_bomber"],"effects":{"heal_after_attack":1},"note":"May heal after attacking."},
+  "long_range": {"class":"air_bomber","tier":3,"requires":["close_air_support"],"effects":{"range":2},"note":"+2 Range."},
+  "superfortress": {"class":"air_bomber","tier":4,"requires":["tactical_maintenance","long_range"],"effects":{"air_pillage_at_low_health":1},"note":"May air pillage at any health."},
+
   "album_cover_art": {"class":"rock_band","tier":1,"effects":{"rock_wonder_levels":1},"note":"Performs as if 1 level higher at World Wonders."},
   "arena_rock": {"class":"rock_band","tier":1,"effects":{"rock_entertainment_levels":2},"note":"Performs as if 2 levels higher at Entertainment Complexes."},
   "glam_rock": {"class":"rock_band","tier":1,"effects":{"rock_theater_levels":2},"note":"Performs as if 2 levels higher at Theater Squares."},
