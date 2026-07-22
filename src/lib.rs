@@ -11,6 +11,7 @@ pub mod hex;
 pub mod mapgen;
 pub mod neural;
 pub mod obs;
+pub mod obs_tensor;
 pub mod rng;
 pub mod rules;
 pub mod server;

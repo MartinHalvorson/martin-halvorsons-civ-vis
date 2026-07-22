@@ -1,5 +1,19 @@
 # Ten gaps between today's AI and world-class Civ 6 play
 
+> **Status update (2026-07-22, session F).** The parallel rules wave landed
+> far past this doc's snapshot: full Gathering Storm content (77 techs / 61
+> civics, 53 placed wonders, corps/armies, aircraft, espionage, rock bands),
+> deep diplomacy (deals, alliances, World Congress, emergencies), and a
+> chess-style tactical search in `AdvancedAi` (`tactical_attack_value` +
+> `forcing_reply_line`). Re-scored against that reality: **10 and 7 are
+> essentially closed**, **4 is largely closed** (multi-unit joint planning
+> remains), **9 has recorded baselines now** (`docs/EVAL.md`), and **3 has
+> its first half shipped** (`obs_tensor.rs`: 25 fog-honest feature planes +
+> global vector; action-space enumeration/masking still open). The live
+> frontier, in order: **8 (GPU self-play loop) → 1 (learned policy), with 2
+> (macro search) as the improvement operator, then 5 (belief state)**. The
+> original ranking below is kept for context.
+
 State as of 2026-07-22: the engine is complete enough to matter (all six
 victory types, zero ❌ rows in MECHANICS.md, ~27k turns/sec), and the AI
 stack has four rungs — `RandomAi`, `BasicAi` (29 GA-evolved weights,

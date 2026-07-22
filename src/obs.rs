@@ -16,6 +16,39 @@ pub fn observation_spectator(g: &Game, pid: usize) -> Value {
     obs_impl(g, pid, true)
 }
 
+/// Currently visible and ever-explored tile sets for `pid`, including
+/// Level-2+ military-alliance shared vision. Every fog-honest observation
+/// surface (the JSON protocol and the tensor builder) derives from this one
+/// contract.
+pub fn visibility(g: &Game, pid: usize) -> (BTreeSet<Pos>, BTreeSet<Pos>) {
+    let p = &g.players[pid];
+    let mut viewers = vec![pid];
+    viewers.extend(p.alliances.iter().filter_map(|(partner, alliance)| {
+        (alliance.ends > g.turn && alliance.kind == "military" && alliance.level >= 2)
+            .then_some(*partner)
+    }));
+    let mut vis: BTreeSet<Pos> = BTreeSet::new();
+    for viewer in &viewers {
+        for uid in g.player_unit_ids(*viewer) {
+            let u = &g.units[&uid];
+            let sight = g.unit_sight(uid);
+            vis.extend(g.wdisk(u.pos, sight));
+        }
+        for cid in g.player_city_ids(*viewer) {
+            let c = &g.cities[&cid];
+            vis.extend(g.wdisk(c.pos, 2));
+            vis.extend(c.owned_tiles.iter().cloned());
+        }
+    }
+    let mut explored = p.explored.clone();
+    for (partner, alliance) in &p.alliances {
+        if alliance.ends > g.turn && alliance.kind == "military" && alliance.level >= 2 {
+            explored.extend(g.players[*partner].explored.iter().copied());
+        }
+    }
+    (vis, explored)
+}
+
 fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
     let p = &g.players[pid];
     let mut viewers = vec![pid];
@@ -25,35 +58,12 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
                 .then_some(*partner)
         }));
     }
-    let mut vis: BTreeSet<Pos> = BTreeSet::new();
-    if omniscient {
-        vis.extend(g.map.tiles.keys().cloned());
+    let (vis, explored) = if omniscient {
+        let all: BTreeSet<Pos> = g.map.tiles.keys().cloned().collect();
+        (all.clone(), all)
     } else {
-        for viewer in &viewers {
-            for uid in g.player_unit_ids(*viewer) {
-                let u = &g.units[&uid];
-                let sight = g.unit_sight(uid);
-                vis.extend(g.wdisk(u.pos, sight));
-            }
-            for cid in g.player_city_ids(*viewer) {
-                let c = &g.cities[&cid];
-                vis.extend(g.wdisk(c.pos, 2));
-                vis.extend(c.owned_tiles.iter().cloned());
-            }
-        }
-    }
-    let mut explored = if omniscient {
-        vis.clone()
-    } else {
-        p.explored.clone()
+        visibility(g, pid)
     };
-    if !omniscient {
-        for (partner, alliance) in &p.alliances {
-            if alliance.ends > g.turn && alliance.kind == "military" && alliance.level >= 2 {
-                explored.extend(g.players[*partner].explored.iter().copied());
-            }
-        }
-    }
     let tiles: Vec<Value> = explored
         .iter()
         .filter_map(|pos| {
