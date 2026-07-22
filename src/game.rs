@@ -15174,6 +15174,19 @@ impl Game {
         }
     }
 
+    /// Production still required after active progress, item-specific paused
+    /// progress, and unassigned overflow are applied. Search agents use this
+    /// instead of treating a nearly complete build like a fresh one.
+    pub(crate) fn item_remaining_cost_for_city(&self, pid: usize, cid: u32, item: &Item) -> f64 {
+        let city = &self.cities[&cid];
+        let key = Self::item_progress_key(item);
+        let mut invested = city.production_progress.get(&key).copied().unwrap_or(0.0);
+        if city.queue.is_empty() || city.queue.first() == Some(item) {
+            invested += city.production;
+        }
+        (self.item_cost_for_city(pid, cid, item) - invested).max(0.0)
+    }
+
     fn unit_resource_cost(&self, cid: u32, item: &Item) -> f64 {
         let (unit, multiplier) = match item {
             Item::Unit { unit } => (unit, 1.0),
@@ -28501,11 +28514,19 @@ mod victory_conditions {
         g.cities.get_mut(&cid).unwrap().production = 20.0;
         g.do_produce(pid, cid, &builder).unwrap();
         assert_eq!(g.cities[&cid].production, 0.0);
+        assert_eq!(
+            g.item_remaining_cost_for_city(pid, cid, &monument),
+            g.item_cost_for_city(pid, cid, &monument) - 20.0
+        );
         g.cities.get_mut(&cid).unwrap().production = 10.0;
         g.do_produce(pid, cid, &monument).unwrap();
         assert_eq!(g.cities[&cid].production, 20.0);
         g.do_produce(pid, cid, &builder).unwrap();
         assert_eq!(g.cities[&cid].production, 10.0);
+        assert_eq!(
+            g.item_remaining_cost_for_city(pid, cid, &builder),
+            g.item_cost_for_city(pid, cid, &builder) - 10.0
+        );
     }
 
     #[test]
