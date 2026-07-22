@@ -17,7 +17,12 @@ pub struct NeuralAi {
 impl NeuralAi {
     pub fn new(mut w: Weights, net: ValueNet) -> NeuralAi {
         w.war_ratio = 99.0; // the scripted layer never declares; the net does
-        NeuralAi { base: BasicAi::with_weights(w), net, every: 4, horizon: 12 }
+        NeuralAi {
+            base: BasicAi::with_weights(w),
+            net,
+            every: 4,
+            horizon: 12,
+        }
     }
 
     /// Win probability after playing `horizon` rounds out with default AIs.
@@ -43,9 +48,12 @@ impl NeuralAi {
         if g.turn % self.every != 0 || g.player_city_ids(pid).len() < 2 {
             return;
         }
-        let others: Vec<usize> = g.players.iter()
+        let others: Vec<usize> = g
+            .players
+            .iter()
             .filter(|o| o.id != pid && o.alive && !o.is_minor && !o.is_barbarian)
-            .map(|o| o.id).collect();
+            .map(|o| o.id)
+            .collect();
         if others.is_empty() || others.iter().any(|o| g.is_at_war(pid, *o)) {
             return;
         }
@@ -71,8 +79,7 @@ impl NeuralAi {
 
 impl Ai for NeuralAi {
     fn take_turn(&mut self, g: &mut Game, pid: usize) {
-        if !g.players[pid].is_minor && !g.players[pid].is_barbarian
-            && g.winner.is_none() {
+        if !g.players[pid].is_minor && !g.players[pid].is_barbarian && g.winner.is_none() {
             self.consider_war(g, pid);
         }
         self.base.take_turn(g, pid);

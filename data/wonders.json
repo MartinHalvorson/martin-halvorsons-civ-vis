@@ -1,0 +1,231 @@
+{
+  "great_bath": {
+    "cost": 180, "tech": "pottery", "housing": 3, "amenity": 1,
+    "feature": ["floodplains", "grassland_floodplains", "plains_floodplains"],
+    "effects": {"flood_immunity": 1, "mitigated_flood_faith": 1}
+  },
+  "etemenanki": {
+    "cost": 220, "tech": "writing", "yields": {"science": 2},
+    "feature": ["floodplains", "grassland_floodplains", "plains_floodplains", "marsh"],
+    "effects": {"empire_marsh_science": 2, "empire_marsh_production": 1, "city_floodplain_science": 1, "city_floodplain_production": 1}
+  },
+  "hanging_gardens": {"cost": 180, "tech": "irrigation", "housing": 2, "river": true, "effects": {"empire_growth_pct": 15}},
+  "pyramids": {
+    "cost": 220, "tech": "masonry", "yields": {"culture": 2}, "terrain": ["desert"], "hills": false,
+    "effects": {"free_builder": 1, "builder_charges": 1}
+  },
+  "stonehenge": {
+    "cost": 180, "tech": "astrology", "yields": {"faith": 2}, "hills": false, "adjacent_resource": "stone",
+    "effects": {"free_great_prophet": 1, "religion_founding_site": 1}
+  },
+  "temple_artemis": {
+    "cost": 180, "tech": "archery", "yields": {"food": 4}, "housing": 3, "adjacent_improvement": "camp",
+    "effects": {"improvement_amenity_range": 4}
+  },
+
+  "apadana": {
+    "cost": 400, "civic": "political_philosophy", "great_work_slots": {"any": 2}, "placement": "adjacent_capital",
+    "effects": {"envoys_per_wonder": 2}
+  },
+  "colosseum": {
+    "cost": 400, "civic": "games_recreation", "yields": {"culture": 2}, "amenity": 2, "regional_range": 6,
+    "hills": false, "requires_buildings": ["arena"], "adjacent_district": "entertainment_complex"
+  },
+  "colossus": {
+    "cost": 400, "tech": "shipbuilding", "yields": {"gold": 3}, "water": true, "coast": true,
+    "adjacent_district": "harbor", "great_person_points": {"admiral": 1},
+    "effects": {"trade_route_capacity": 1, "free_trader": 1}
+  },
+  "great_library": {
+    "cost": 400, "civic": "recorded_history", "yields": {"science": 2}, "hills": false,
+    "requires_buildings": ["library"], "adjacent_district": "campus", "great_work_slots": {"writing": 2},
+    "great_person_points": {"scientist": 1, "writer": 1}, "effects": {"ancient_classical_tech_boosts": 1}
+  },
+  "great_lighthouse": {
+    "cost": 290, "tech": "celestial_navigation", "yields": {"gold": 3}, "water": true, "coast": true,
+    "requires_buildings": ["lighthouse"], "adjacent_district": "harbor", "great_person_points": {"admiral": 1},
+    "effects": {"naval_movement": 1}
+  },
+  "jebel_barkal": {
+    "cost": 400, "tech": "iron_working", "yields": {"faith": 4}, "terrain": ["desert"], "hills": true,
+    "effects": {"iron_per_turn": 6, "regional_faith": 4, "regional_faith_range": 6}
+  },
+  "machu_picchu": {
+    "cost": 400, "tech": "engineering", "yields": {"gold": 4}, "terrain": ["mountain"], "placement": "mountain",
+    "effects": {"mountain_commercial_industrial_theater_adjacency": 1}
+  },
+  "mahabodhi_temple": {
+    "cost": 400, "civic": "theology", "yields": {"faith": 4}, "feature": ["forest"],
+    "requires_buildings": ["temple"], "adjacent_district": "holy_site", "founded_religion": true,
+    "effects": {"apostles": 2, "diplomatic_victory_points": 2}
+  },
+  "mausoleum_at_halicarnassus": {
+    "cost": 400, "civic": "defensive_tactics", "adjacent_district": "harbor",
+    "effects": {"city_coast_science": 1, "city_coast_faith": 1, "city_coast_culture": 1, "great_engineer_charges": 1}
+  },
+  "oracle": {
+    "cost": 290, "civic": "mysticism", "yields": {"culture": 1, "faith": 1}, "hills": true,
+    "effects": {"great_person_faith_patronage_discount_pct": 25, "city_district_gpp": 2}
+  },
+  "petra": {
+    "cost": 400, "tech": "mathematics", "terrain": ["desert"], "hills": false,
+    "effects": {"city_desert_food": 2, "city_desert_production": 1, "city_desert_gold": 2}
+  },
+  "statue_of_zeus": {
+    "cost": 400, "civic": "military_training", "yields": {"gold": 3}, "hills": false,
+    "requires_buildings": ["barracks"], "adjacent_district": "encampment",
+    "effects": {"free_archers": 3, "free_spearmen": 3, "free_battering_rams": 1, "anti_cavalry_production_pct": 50}
+  },
+  "terracotta_army": {
+    "cost": 400, "tech": "construction", "terrain": ["grassland", "plains"], "hills": false,
+    "requires_any_buildings": ["barracks", "stable"], "adjacent_district": "encampment",
+    "great_person_points": {"general": 1}, "effects": {"promote_all_current_units": 1, "archaeologist_open_borders": 1}
+  },
+
+  "alhambra": {
+    "cost": 710, "tech": "castles", "amenity": 2, "hills": true, "adjacent_district": "encampment",
+    "great_person_points": {"general": 2}, "effects": {"military_policy_slots": 1, "defensive_structure": 1}
+  },
+  "angkor_wat": {
+    "cost": 710, "civic": "medieval_faires", "yields": {"faith": 2}, "adjacent_district": "aqueduct",
+    "effects": {"empire_population": 1, "empire_housing": 1}
+  },
+  "chichen_itza": {
+    "cost": 710, "civic": "guilds", "feature": ["jungle"],
+    "effects": {"city_rainforest_culture": 2, "city_rainforest_production": 1}
+  },
+  "hagia_sophia": {
+    "cost": 710, "tech": "buttress", "yields": {"faith": 4}, "hills": false,
+    "adjacent_district": "holy_site", "founded_religion": true, "effects": {"religious_spread_charges": 1}
+  },
+  "huey_teocalli": {
+    "cost": 710, "tech": "military_tactics", "water": true, "terrain": ["lake"], "placement": "lake_adjacent_land",
+    "effects": {"empire_lake_food": 1, "empire_lake_production": 1, "adjacent_lake_amenity": 1}
+  },
+  "kilwa_kisiwani": {
+    "cost": 710, "tech": "machinery", "coast": true, "hills": false,
+    "effects": {"envoys": 3, "suzerain_type_city_bonus_pct": 15, "suzerain_type_empire_bonus_pct": 15}
+  },
+  "kotoku_in": {
+    "cost": 710, "civic": "divine_right", "requires_buildings": ["temple"], "adjacent_district": "holy_site",
+    "effects": {"city_faith_pct": 20, "free_warrior_monks": 4}
+  },
+  "meenakshi_temple": {
+    "cost": 710, "civic": "civil_service", "yields": {"faith": 3}, "adjacent_district": "holy_site", "founded_religion": true,
+    "effects": {"gurus": 2, "guru_purchase_discount_pct": 30, "guru_adjacent_religious_strength": 5, "guru_adjacent_religious_movement": 1}
+  },
+  "mont_st_michel": {
+    "cost": 710, "civic": "divine_right", "yields": {"faith": 2}, "great_work_slots": {"relic": 2},
+    "feature": ["floodplains", "grassland_floodplains", "plains_floodplains", "marsh"],
+    "effects": {"apostles_gain_martyr": 1}
+  },
+  "university_of_sankore": {
+    "cost": 710, "tech": "education", "yields": {"science": 3, "faith": 1}, "terrain": ["desert"],
+    "requires_buildings": ["university"], "adjacent_district": "campus", "great_person_points": {"scientist": 2},
+    "effects": {"incoming_foreign_route_science": 1, "incoming_foreign_route_gold": 1, "incoming_route_city_science": 2, "domestic_route_city_faith": 1}
+  },
+
+  "casa_de_contratacion": {
+    "cost": 920, "tech": "cartography", "adjacent_district": "government_plaza", "great_person_points": {"merchant": 3},
+    "effects": {"governor_titles": 3, "governor_foreign_continent_yields_pct": 15}
+  },
+  "forbidden_city": {
+    "cost": 920, "tech": "printing", "yields": {"culture": 5}, "hills": false, "adjacent_district": "city_center",
+    "effects": {"wildcard_policy_slots": 1}
+  },
+  "great_zimbabwe": {
+    "cost": 920, "tech": "banking", "yields": {"gold": 5}, "requires_buildings": ["market"],
+    "adjacent_district": "commercial_hub", "adjacent_resource": "cattle", "great_person_points": {"merchant": 2},
+    "effects": {"trade_route_capacity": 1, "origin_route_bonus_resource_gold": 2, "origin_route_bonus_resource_range": 3}
+  },
+  "orszaghaz": {
+    "cost": 920, "tech": "sanitation", "yields": {"culture": 4}, "river": true,
+    "effects": {"suzerain_diplomatic_favor_pct": 100}
+  },
+  "oxford_university": {
+    "cost": 1240, "tech": "scientific_theory", "great_work_slots": {"writing": 2},
+    "terrain": ["grassland", "plains"], "hills": false, "requires_buildings": ["university"],
+    "adjacent_district": "campus", "great_person_points": {"scientist": 3},
+    "effects": {"city_science_pct": 20, "free_random_techs": 2}
+  },
+  "potala_palace": {
+    "cost": 1060, "tech": "astronomy", "yields": {"culture": 2, "faith": 3}, "hills": true, "adjacent_mountain": true,
+    "effects": {"diplomatic_policy_slots": 1, "diplomatic_victory_points": 1}
+  },
+  "st_basils_cathedral": {
+    "cost": 920, "civic": "reformed_church", "great_work_slots": {"relic": 3}, "adjacent_district": "city_center",
+    "effects": {"city_religious_tourism_pct": 100, "city_tundra_food": 1, "city_tundra_production": 1, "city_tundra_culture": 1}
+  },
+  "taj_mahal": {"cost": 920, "civic": "humanism", "river": true, "effects": {"historic_moment_bonus": 1}},
+  "torre_de_belem": {
+    "cost": 920, "civic": "mercantilism", "yields": {"gold": 5}, "water": true, "coast": true,
+    "adjacent_district": "harbor", "great_person_points": {"admiral": 1},
+    "effects": {"origin_international_luxury_gold": 2, "free_foreign_continent_city_center_building": 1}
+  },
+  "venetian_arsenal": {
+    "cost": 920, "tech": "mass_production", "water": true, "coast": true, "adjacent_district": "industrial_zone",
+    "great_person_points": {"engineer": 2}, "effects": {"duplicate_naval_units": 1}
+  },
+
+  "big_ben": {
+    "cost": 1450, "tech": "economics", "yields": {"gold": 6}, "river": true, "requires_buildings": ["bank"],
+    "adjacent_district": "commercial_hub", "great_person_points": {"merchant": 3},
+    "effects": {"economic_policy_slots": 1, "treasury_gold_pct": 50}
+  },
+  "bolshoi_theatre": {
+    "cost": 1240, "civic": "opera_ballet", "great_work_slots": {"writing": 1, "music": 1}, "hills": false,
+    "adjacent_district": "theater_square", "great_person_points": {"writer": 2, "musician": 2},
+    "effects": {"free_random_civics": 2}
+  },
+  "hermitage": {
+    "cost": 1450, "civic": "natural_history", "great_work_slots": {"art": 4}, "river": true,
+    "great_person_points": {"artist": 3}
+  },
+  "ruhr_valley": {
+    "cost": 1240, "tech": "industrialization", "river": true, "requires_buildings": ["factory"],
+    "adjacent_district": "industrial_zone", "effects": {"city_production_pct": 20, "city_mine_quarry_production": 1}
+  },
+  "statue_of_liberty": {
+    "cost": 1240, "civic": "civil_engineering", "water": true, "coast": true, "adjacent_district": "harbor",
+    "effects": {"diplomatic_victory_points": 4, "regional_full_loyalty_range": 6}
+  },
+
+  "biosphere": {
+    "cost": 1740, "tech": "synthetic_materials", "adjacent_district": "neighborhood", "river": true,
+    "effects": {"renewable_power_pct": 200, "renewable_power_tourism": 1, "rainforest_marsh_adjacent_appeal": 1}
+  },
+  "broadway": {
+    "cost": 1620, "civic": "mass_media", "great_work_slots": {"writing": 1, "music": 2}, "hills": false,
+    "adjacent_district": "theater_square", "great_person_points": {"writer": 3, "musician": 3},
+    "effects": {"city_culture_pct": 20, "free_atomic_civic_boosts": 1}
+  },
+  "cristo_redentor": {
+    "cost": 1620, "civic": "mass_media", "yields": {"culture": 4}, "hills": true,
+    "effects": {"religious_tourism_unreduced": 1, "seaside_resort_tourism_pct": 100}
+  },
+  "eiffel_tower": {
+    "cost": 1620, "tech": "steel", "hills": false, "adjacent_district": "city_center", "effects": {"empire_appeal": 2}
+  },
+  "estadio_do_maracana": {
+    "cost": 1740, "civic": "professional_sports", "yields": {"culture": 6}, "amenity": 2, "hills": false,
+    "requires_buildings": ["stadium"], "adjacent_district": "entertainment_complex", "effects": {"empire_amenity": 2}
+  },
+  "golden_gate_bridge": {
+    "cost": 1620, "tech": "combustion", "amenity": 3, "water": true, "coast": true, "placement": "golden_gate_bridge",
+    "effects": {"bridge_passage": 1, "city_appeal": 4, "city_improvement_park_tourism_pct": 100, "route_district_gold_multiplier": 2}
+  },
+
+  "amundsen_scott_research_station": {
+    "cost": 1620, "civic": "rapid_deployment", "terrain": ["snow"], "requires_buildings": ["research_lab"],
+    "adjacent_district": "campus", "great_person_points": {"scientist": 5},
+    "effects": {"empire_science_pct": 20, "empire_production_pct": 10, "snow_condition_double": 5}
+  },
+  "sydney_opera_house": {
+    "cost": 1850, "civic": "cultural_heritage", "yields": {"culture": 8}, "great_work_slots": {"music": 3},
+    "water": true, "coast": true, "adjacent_district": "harbor", "great_person_points": {"musician": 5}
+  },
+  "panama_canal": {
+    "cost": 920, "tech": "steam_power", "yields": {"gold": 10}, "hills": false, "placement": "panama_canal",
+    "effects": {"free_adjacent_canals": 2, "naval_passage": 1, "route_district_gold_multiplier": 2}
+  }
+}

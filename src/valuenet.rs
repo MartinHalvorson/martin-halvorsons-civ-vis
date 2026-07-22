@@ -32,7 +32,11 @@ impl ValueNet {
                 }
             }
             for v in next.iter_mut() {
-                *v = if l < last { v.max(0.0) } else { 1.0 / (1.0 + (-*v).exp()) };
+                *v = if l < last {
+                    v.max(0.0)
+                } else {
+                    1.0 / (1.0 + (-*v).exp())
+                };
             }
             a = next;
         }
@@ -53,14 +57,20 @@ mod tests {
             None => return,
         };
         #[derive(serde::Deserialize)]
-        struct Fix { input: Vec<f32>, output: f64 }
+        struct Fix {
+            input: Vec<f32>,
+            output: f64,
+        }
         let raw = match std::fs::read_to_string("evolved/valuenet_fixture.json") {
             Ok(r) => r,
             Err(_) => return,
         };
         let fix: Fix = serde_json::from_str(&raw).unwrap();
         let got = net.eval(&fix.input);
-        assert!((got - fix.output).abs() < 1e-4,
-                "rust {got} vs python {}", fix.output);
+        assert!(
+            (got - fix.output).abs() < 1e-4,
+            "rust {got} vs python {}",
+            fix.output
+        );
     }
 }

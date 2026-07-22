@@ -1,0 +1,79 @@
+{
+  "amani": {
+    "name":"Amani", "title":"The Diplomat", "establish_turns":5,
+    "effects":{"loyalty":8,"city_state_envoys":2},
+    "promotions":{
+      "emissary":{"tier":1,"effects":{"foreign_city_loyalty":-2}},
+      "affluence":{"tier":1,"effects":{"strategic_resources":1,"luxury_resources":1}},
+      "local_informants":{"tier":2,"requires":["emissary"],"effects":{"enemy_spy_level":-3}},
+      "foreign_investor":{"tier":2,"requires":["affluence"],"effects":{"city_state_resource_access":1}},
+      "puppeteer":{"tier":3,"requires":["local_informants","foreign_investor"],"effects":{"city_state_envoys_multiplier":2}}
+    }
+  },
+  "liang": {
+    "name":"Liang", "title":"The Surveyor", "establish_turns":5,
+    "effects":{"loyalty":8,"builder_charges":1},
+    "promotions":{
+      "zoning_commissioner":{"tier":1,"effects":{"district_production_pct":20}},
+      "aquaculture":{"tier":1,"effects":{"fishery":1}},
+      "reinforced_materials":{"tier":2,"requires":["zoning_commissioner"],"effects":{"disaster_immunity":1}},
+      "water_works":{"tier":2,"requires":["aquaculture"],"effects":{"water_building_housing":2,"water_building_amenity":1}},
+      "parks_and_recreation":{"tier":3,"requires":["reinforced_materials","water_works"],"effects":{"city_park":1}}
+    }
+  },
+  "magnus": {
+    "name":"Magnus", "title":"The Steward", "establish_turns":5,
+    "effects":{"loyalty":8,"harvest_pct":50},
+    "promotions":{
+      "surplus_logistics":{"tier":1,"effects":{"growth_pct":20,"incoming_trade_food":2}},
+      "provision":{"tier":1,"effects":{"settler_no_population":1}},
+      "industrialist":{"tier":2,"requires":["surplus_logistics"],"effects":{"power_resource_discount_pct":80}},
+      "black_marketeer":{"tier":2,"requires":["provision"],"effects":{"strategic_resource_discount_pct":80}},
+      "vertical_integration":{"tier":3,"requires":["industrialist","black_marketeer"],"effects":{"regional_industry_all":1}}
+    }
+  },
+  "moksha": {
+    "name":"Moksha", "title":"The Cardinal", "establish_turns":5,
+    "effects":{"loyalty":8,"religious_heal_full":1},
+    "promotions":{
+      "bishop":{"tier":1,"effects":{"religious_pressure_pct":100,"theological_strength":5}},
+      "laying_on_of_hands":{"tier":1,"effects":{"religious_heal_full":1}},
+      "citadel_of_god":{"tier":2,"requires":["bishop"],"effects":{"district_faith_pct":25}},
+      "patron_saint":{"tier":2,"requires":["laying_on_of_hands"],"effects":{"apostle_extra_promotion":1}},
+      "divine_architect":{"tier":3,"requires":["citadel_of_god","patron_saint"],"effects":{"faith_purchase_districts":1}}
+    }
+  },
+  "pingala": {
+    "name":"Pingala", "title":"The Educator", "establish_turns":5,
+    "effects":{"loyalty":8,"science_pct":15,"culture_pct":15},
+    "promotions":{
+      "connoisseur":{"tier":1,"effects":{"culture_per_pop":1}},
+      "researcher":{"tier":1,"effects":{"science_per_pop":1}},
+      "grants":{"tier":2,"requires":["connoisseur","researcher"],"effects":{"great_people_pct":100}},
+      "space_initiative":{"tier":2,"requires":["researcher"],"effects":{"space_project_production_pct":30}},
+      "curator":{"tier":3,"requires":["connoisseur","grants"],"effects":{"great_work_tourism_pct":100}}
+    }
+  },
+  "reyna": {
+    "name":"Reyna", "title":"The Financier", "establish_turns":5,
+    "effects":{"loyalty":8,"gold_per_citizen":2},
+    "promotions":{
+      "harbormaster":{"tier":1,"effects":{"commercial_harbor_adjacency_pct":100}},
+      "forestry_management":{"tier":1,"effects":{"unimproved_feature_gold":2,"appeal":1}},
+      "tax_collector":{"tier":2,"requires":["harbormaster","forestry_management"],"effects":{"gold_per_pop":2}},
+      "contractor":{"tier":2,"requires":["tax_collector"],"effects":{"gold_purchase_districts":1}},
+      "renewable_subsidizer":{"tier":3,"requires":["contractor"],"effects":{"renewable_power":1}}
+    }
+  },
+  "victor": {
+    "name":"Victor", "title":"The Castellan", "establish_turns":3,
+    "effects":{"loyalty":8,"garrison_strength":5},
+    "promotions":{
+      "garrison_commander":{"tier":1,"effects":{"nearby_city_loyalty":4,"city_unit_defense":5}},
+      "defense_logistics":{"tier":1,"effects":{"city_siege_immunity":1,"strategic_stockpile":1}},
+      "embrasure":{"tier":2,"requires":["garrison_commander"],"effects":{"city_extra_strike":1,"military_free_promotion":1}},
+      "air_defense_initiative":{"tier":2,"requires":["defense_logistics"],"effects":{"air_defense":25}},
+      "arms_race_proponent":{"tier":3,"requires":["embrasure","air_defense_initiative"],"effects":{"military_production_pct":30}}
+    }
+  }
+}

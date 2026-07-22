@@ -17,6 +17,32 @@
     },
     "move_cost": 2
   },
+  "floodplains": {
+    "yields": {
+      "food": 3
+    }
+  },
+  "grassland_floodplains": {
+    "yields": {
+      "food": 1
+    }
+  },
+  "plains_floodplains": {
+    "yields": {
+      "food": 1
+    }
+  },
+  "reef": {
+    "yields": {
+      "food": 1,
+      "production": 1
+    }
+  },
+  "geothermal_fissure": {
+    "yields": {
+      "science": 1
+    }
+  },
   "oasis": {
     "yields": {
       "food": 3,
@@ -72,6 +98,13 @@
   "mount_everest": {
     "yields": {
       "faith": 1
+    },
+    "natural_wonder": true,
+    "impassable": true
+  },
+  "pamukkale": {
+    "yields": {
+      "culture": 2
     },
     "natural_wonder": true,
     "impassable": true

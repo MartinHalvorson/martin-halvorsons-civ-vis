@@ -12,10 +12,23 @@ pub struct Tile {
     pub hills: bool,
     pub resource: Option<String>,
     pub improvement: Option<String>,
+    /// Improvements and ordinary districts stop producing yields while
+    /// pillaged. City/Encampment defenses keep their dedicated damage state.
+    #[serde(default)]
+    pub pillaged: bool,
     pub district: Option<String>,
+    #[serde(default)]
+    pub wonder: Option<String>,
     pub owner_city: Option<u32>,
     #[serde(default)]
-    pub river: bool,
+    /// River segments on this hex's six edges, in `hex::DIRS` order.
+    /// Shared edges are mirrored on both neighboring tiles.
+    pub river_edges: [bool; 6],
+    /// Coastal cliff segments on this hex's six shared edges. Like rivers,
+    /// cliff edges are mirrored onto the neighboring tile so saves and
+    /// observations remain self-contained.
+    #[serde(default)]
+    pub cliff_edges: [bool; 6],
     #[serde(default)]
     pub road: bool,
     /// Stock Civ VI continent region, zero-based. Water has no continent.
@@ -32,9 +45,12 @@ impl Tile {
             hills: false,
             resource: None,
             improvement: None,
+            pillaged: false,
             district: None,
+            wonder: None,
             owner_city: None,
-            river: false,
+            river_edges: [false; 6],
+            cliff_edges: [false; 6],
             road: false,
             continent: None,
         }
@@ -59,7 +75,11 @@ struct WorldMapSer {
 impl From<WorldMapSer> for WorldMap {
     fn from(s: WorldMapSer) -> WorldMap {
         let tiles = s.tiles.into_iter().map(|t| (t.pos, t)).collect();
-        WorldMap { width: s.width, height: s.height, tiles }
+        WorldMap {
+            width: s.width,
+            height: s.height,
+            tiles,
+        }
     }
 }
 
@@ -82,10 +102,77 @@ impl WorldMap {
                 tiles.insert(pos, Tile::new(pos));
             }
         }
-        WorldMap { width, height, tiles }
+        WorldMap {
+            width,
+            height,
+            tiles,
+        }
     }
 
     pub fn get(&self, pos: Pos) -> Option<&Tile> {
         self.tiles.get(&pos)
+    }
+
+    /// Direction index from one adjacent tile to another, accounting for the
+    /// east-west cylindrical seam.
+    pub fn direction_to(&self, from: Pos, to: Pos) -> Option<usize> {
+        hex::neighbors(from)
+            .into_iter()
+            .map(|p| hex::canon(p, self.width))
+            .position(|p| p == to)
+    }
+
+    /// Add or remove the river segment shared by two adjacent tiles.
+    /// Returns false when either tile is absent or the positions are not
+    /// adjacent. Keeping both edge masks in sync makes saves and observations
+    /// self-contained tile by tile.
+    pub fn set_river_edge(&mut self, a: Pos, b: Pos, present: bool) -> bool {
+        let Some(direction) = self.direction_to(a, b) else {
+            return false;
+        };
+        if !self.tiles.contains_key(&a) || !self.tiles.contains_key(&b) {
+            return false;
+        }
+        self.tiles.get_mut(&a).unwrap().river_edges[direction] = present;
+        self.tiles.get_mut(&b).unwrap().river_edges[(direction + 3) % 6] = present;
+        true
+    }
+
+    /// Whether the shared boundary between two adjacent tiles carries a river.
+    pub fn has_river_edge(&self, a: Pos, b: Pos) -> bool {
+        self.direction_to(a, b)
+            .and_then(|direction| self.tiles.get(&a).map(|t| t.river_edges[direction]))
+            .unwrap_or(false)
+    }
+
+    /// Add or remove a coastal cliff on the shared edge between two tiles.
+    pub fn set_cliff_edge(&mut self, a: Pos, b: Pos, present: bool) -> bool {
+        let Some(direction) = self.direction_to(a, b) else {
+            return false;
+        };
+        if !self.tiles.contains_key(&a) || !self.tiles.contains_key(&b) {
+            return false;
+        }
+        self.tiles.get_mut(&a).unwrap().cliff_edges[direction] = present;
+        self.tiles.get_mut(&b).unwrap().cliff_edges[(direction + 3) % 6] = present;
+        true
+    }
+
+    pub fn has_cliff_edge(&self, a: Pos, b: Pos) -> bool {
+        self.direction_to(a, b)
+            .and_then(|direction| self.tiles.get(&a).map(|t| t.cliff_edges[direction]))
+            .unwrap_or(false)
+    }
+
+    pub fn clear_rivers(&mut self) {
+        for tile in self.tiles.values_mut() {
+            tile.river_edges = [false; 6];
+        }
+    }
+}
+
+impl Tile {
+    pub fn has_river(&self) -> bool {
+        self.river_edges.iter().any(|edge| *edge)
     }
 }

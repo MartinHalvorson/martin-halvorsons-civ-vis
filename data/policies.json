@@ -1,118 +1,122 @@
 {
-  "discipline": {
-    "slot": "military",
-    "civic": "code_of_laws",
-    "note": "+5 combat strength fighting barbarians"
-  },
-  "survey": {
-    "slot": "military",
-    "civic": "code_of_laws",
-    "note": "double XP for recon units"
-  },
-  "god_king": {
-    "slot": "economic",
-    "civic": "code_of_laws",
-    "note": "+1 gold and +1 faith in the capital"
-  },
-  "urban_planning": {
-    "slot": "economic",
-    "civic": "code_of_laws",
-    "note": "+1 production in all cities"
-  },
-  "agoge": {
-    "slot": "military",
-    "civic": "craftsmanship",
-    "note": "+50% production toward melee, anti-cavalry and ranged units"
-  },
-  "ilkum": {
-    "slot": "economic",
-    "civic": "craftsmanship",
-    "note": "+30% production toward builders"
-  },
-  "maritime_industries": {
-    "slot": "military",
-    "civic": "foreign_trade",
-    "note": "+100% production toward naval units"
-  },
-  "maneuver": {
-    "slot": "military",
-    "civic": "military_tradition",
-    "note": "+50% production toward cavalry units"
-  },
-  "strategos": {
-    "slot": "wildcard",
-    "civic": "military_tradition",
-    "note": "+2 great general points per turn"
-  },
-  "colonization": {
-    "slot": "economic",
-    "civic": "early_empire",
-    "note": "+50% production toward settlers"
-  },
-  "conscription": {
-    "slot": "military",
-    "civic": "state_workforce",
-    "note": "unit maintenance reduced by 1 gold per unit"
-  },
-  "insulae": {
-    "slot": "economic",
-    "civic": "games_recreation",
-    "note": "+1 housing in cities with 2+ districts"
-  },
-  "bastions": {
-    "slot": "military",
-    "civic": "defensive_tactics",
-    "note": "+6 city defense strength, +5 city ranged strength"
-  },
-  "limes": {
-    "slot": "military",
-    "civic": "defensive_tactics",
-    "note": "+100% production toward defensive buildings"
-  },
-  "serfdom": {
-    "slot": "economic",
-    "civic": "feudalism",
-    "note": "newly trained builders gain 2 extra build charges"
-  },
-  "feudal_contract": {
-    "slot": "military",
-    "civic": "feudalism",
-    "replaces": "agoge",
-    "note": "+50% production toward melee, anti-cavalry and ranged units"
-  },
-  "meritocracy": {
-    "slot": "economic",
-    "civic": "civil_service",
-    "note": "+1 culture per specialty district in each city"
-  },
-  "retainers": {
-    "slot": "military",
-    "civic": "civil_service",
-    "note": "+1 amenity in cities with a garrisoned unit"
-  },
-  "town_charters": {
-    "slot": "economic",
-    "civic": "guilds",
-    "note": "+100% commercial hub adjacency bonuses"
-  },
-  "craftsmen": {
-    "slot": "economic",
-    "civic": "guilds",
-    "note": "+100% industrial zone adjacency bonuses"
-  },
-  "caravansaries": {
-    "slot": "economic",
-    "civic": "foreign_trade",
-    "note": "+2 gold from all trade routes"
-  },
-  "inspiration": {
-    "slot": "wildcard",
-    "civic": "drama_poetry",
-    "note": "+2 great scientist points per turn"
-  },
-  "revelation": {
-    "slot": "wildcard",
-    "civic": "drama_poetry",
-    "note": "+2 great prophet points per turn"
-  }
+  "discipline": {"slot":"military","civic":"code_of_laws","note":"+5 Combat Strength against Barbarians.","effects":{"barbarian_combat":5}},
+  "survey": {"slot":"military","civic":"code_of_laws","note":"Double experience for recon units.","effects":{"recon_xp_pct":100}},
+  "god_king": {"slot":"economic","civic":"code_of_laws","note":"+1 Faith and +1 Gold in the Capital.","effects":{"capital_faith":1,"capital_gold":1}},
+  "urban_planning": {"slot":"economic","civic":"code_of_laws","note":"+1 Production in all cities.","effects":{"city_production":1}},
+
+  "agoge": {"slot":"military","civic":"craftsmanship","note":"+50% Production toward early melee, anti-cavalry, and ranged units.","effects":{"infantry_production_pct":50}},
+  "ilkum": {"slot":"economic","civic":"craftsmanship","note":"+30% Production toward Builders.","effects":{"builder_production_pct":30}},
+  "caravansaries": {"slot":"economic","civic":"foreign_trade","note":"+2 Gold from all Trade Routes.","effects":{"trade_gold":2}},
+  "maritime_industries": {"slot":"military","civic":"foreign_trade","note":"+100% Production toward early naval units.","effects":{"naval_production_pct":100}},
+  "maneuver": {"slot":"military","civic":"military_tradition","note":"+50% Production toward early cavalry units.","effects":{"cavalry_production_pct":50}},
+  "strategos": {"slot":"wildcard","civic":"military_tradition","note":"+2 Great General points per turn.","effects":{"gpp_general":2}},
+  "inspiration": {"slot":"wildcard","civic":"mysticism","note":"+2 Great Scientist points per turn.","effects":{"gpp_scientist":2}},
+  "revelation": {"slot":"wildcard","civic":"mysticism","note":"+2 Great Prophet points per turn.","effects":{"gpp_prophet":2}},
+  "colonization": {"slot":"economic","civic":"early_empire","note":"+50% Production toward Settlers.","effects":{"settler_production_pct":50}},
+  "land_surveyors": {"slot":"economic","civic":"early_empire","note":"Tile purchase cost reduced by 20%.","effects":{"tile_purchase_discount_pct":20}},
+  "limitanei": {"slot":"military","civic":"early_empire","note":"+2 Loyalty in cities with a garrison.","effects":{"garrison_loyalty":2}},
+  "conscription": {"slot":"military","civic":"state_workforce","note":"Unit maintenance reduced by 1 Gold per unit.","effects":{"unit_maintenance_discount":1}},
+  "corvee": {"slot":"economic","civic":"state_workforce","note":"+15% Production toward Ancient and Classical wonders.","effects":{"wonder_production_pct":15}},
+  "literary_tradition": {"slot":"wildcard","civic":"drama_poetry","note":"+2 Great Writer points per turn.","effects":{"gpp_writer":2}},
+  "insulae": {"slot":"economic","civic":"games_recreation","note":"+1 Housing in cities with at least 2 specialty districts.","effects":{"housing_at_2_districts":1}},
+  "charismatic_leader": {"slot":"diplomatic","civic":"political_philosophy","note":"+2 Influence points per turn.","effects":{"influence_per_turn":2}},
+  "diplomatic_league": {"slot":"diplomatic","civic":"political_philosophy","note":"The first Envoy sent to each city-state counts as two.","effects":{"first_envoy_bonus":1}},
+  "equestrian_orders": {"slot":"military","civic":"military_training","note":"Improved Horses and Iron accumulate one additional resource.","effects":{"early_strategic_resource_rate":1}},
+  "raid": {"slot":"military","civic":"military_training","note":"+50% yields from pillaging and coastal raids.","effects":{"pillage_yield_pct":50}},
+  "veterancy": {"slot":"military","civic":"military_training","note":"+30% Production toward Encampments, Harbors, and their buildings.","effects":{"military_port_production_pct":30}},
+  "scripture": {"slot":"economic","civic":"theology","note":"+100% Holy Site adjacency bonuses.","effects":{"holy_site_adjacency_pct":100}},
+  "bastions": {"slot":"military","civic":"defensive_tactics","note":"+6 City Defense and +5 City Ranged Strength.","effects":{"city_defense":6,"city_ranged":5}},
+  "limes": {"slot":"military","civic":"defensive_tactics","note":"+100% Production toward defensive buildings.","effects":{"wall_production_pct":100}},
+  "natural_philosophy": {"slot":"economic","civic":"recorded_history","note":"+100% Campus adjacency bonuses.","effects":{"campus_adjacency_pct":100}},
+  "praetorium": {"slot":"diplomatic","civic":"recorded_history","note":"Governors provide +2 Loyalty to their city.","effects":{"governor_loyalty":2}},
+  "naval_infrastructure": {"slot":"economic","civic":"naval_tradition","note":"+100% Harbor adjacency bonuses.","effects":{"harbor_adjacency_pct":100}},
+  "navigation": {"slot":"wildcard","civic":"naval_tradition","note":"+2 Great Admiral points per turn.","effects":{"gpp_admiral":2}},
+  "civil_prestige": {"slot":"economic","civic":"civil_service","note":"Established promoted Governors provide +1 Amenity and +2 Housing.","effects":{"governor_amenity":1,"governor_housing":2}},
+  "retainers": {"slot":"military","civic":"civil_service","note":"+1 Amenity in cities with a garrison.","effects":{"garrison_amenity":1}},
+  "feudal_contract": {"slot":"military","civic":"feudalism","replaces":"agoge","note":"+50% Production toward pre-Industrial melee, anti-cavalry, and ranged units.","effects":{"infantry_production_pct":50}},
+  "serfdom": {"slot":"economic","civic":"feudalism","note":"New Builders gain 2 extra actions.","effects":{"builder_charges":2}},
+  "chivalry": {"slot":"military","civic":"divine_right","replaces":"maneuver","note":"+50% Production toward pre-Modern cavalry units.","effects":{"cavalry_production_pct":50}},
+  "gothic_architecture": {"slot":"economic","civic":"divine_right","replaces":"corvee","note":"+15% Production toward pre-Industrial wonders.","effects":{"wonder_production_pct":15}},
+  "professional_army": {"slot":"military","civic":"mercenaries","note":"50% Gold discount on unit upgrades.","effects":{"upgrade_gold_discount_pct":50}},
+  "retinues": {"slot":"military","civic":"mercenaries","note":"50% resource discount on unit upgrades.","effects":{"upgrade_resource_discount_pct":50}},
+  "trade_confederation": {"slot":"economic","civic":"mercenaries","note":"+1 Culture and +1 Science from international Trade Routes.","effects":{"trade_culture":1,"trade_science":1}},
+  "craftsmen": {"slot":"military","civic":"guilds","note":"+100% Industrial Zone adjacency bonuses.","effects":{"industrial_zone_adjacency_pct":100}},
+  "town_charters": {"slot":"economic","civic":"guilds","note":"+100% Commercial Hub adjacency bonuses.","effects":{"commercial_hub_adjacency_pct":100}},
+  "traveling_merchants": {"slot":"wildcard","civic":"guilds","note":"+2 Great Merchant points per turn.","effects":{"gpp_merchant":2}},
+  "aesthetics": {"slot":"economic","civic":"medieval_faires","note":"+100% Theater Square adjacency bonuses.","effects":{"theater_square_adjacency_pct":100}},
+  "medina_quarter": {"slot":"economic","civic":"medieval_faires","note":"+2 Housing in cities with at least 3 specialty districts.","effects":{"housing_at_3_districts":2}},
+  "merchant_confederation": {"slot":"diplomatic","civic":"medieval_faires","note":"+1 Gold from each Envoy at city-states.","effects":{"gold_per_envoy":1}},
+  "colonial_offices": {"slot":"diplomatic","civic":"exploration","note":"+15% growth in cities outside the capital continent.","effects":{"foreign_continent_growth_pct":15}},
+  "press_gangs": {"slot":"military","civic":"exploration","replaces":"maritime_industries","note":"+100% Production toward pre-Modern naval units.","effects":{"naval_production_pct":100}},
+  "religious_orders": {"slot":"economic","civic":"reformed_church","note":"Religious units gain +5 theological Combat Strength.","effects":{"religious_strength":5}},
+  "simultaneum": {"slot":"economic","civic":"reformed_church","note":"+100% Faith from Holy Site buildings.","effects":{"holy_site_building_faith_pct":100}},
+  "wars_of_religion": {"slot":"military","civic":"reformed_church","note":"+4 Combat Strength against civilizations following another Religion.","effects":{"different_religion_combat":4}},
+  "machiavellianism": {"slot":"diplomatic","civic":"diplomatic_service","note":"+50% Spy Production and operations take 25% less time.","effects":{"spy_production_pct":50,"spy_time_pct":-25}},
+  "wisselbanken": {"slot":"diplomatic","civic":"diplomatic_service","note":"Alliance routes provide +2 Food and +2 Production.","effects":{"trade_food":2,"trade_production":2}},
+  "frescoes": {"slot":"wildcard","civic":"humanism","note":"+2 Great Artist points, plus 2 per Art Museum.","effects":{"gpp_artist":2,"gpp_artist_per_art_museum":2}},
+  "invention": {"slot":"wildcard","civic":"humanism","note":"+4 Great Engineer points, plus 2 per Workshop.","effects":{"gpp_engineer":4,"gpp_engineer_per_workshop":2}},
+  "drill_manuals": {"slot":"military","civic":"mercantilism","note":"Improved Niter and Coal accumulate one additional resource.","effects":{"industrial_strategic_resource_rate":1}},
+  "logistics": {"slot":"military","civic":"mercantilism","note":"+1 Movement when starting in friendly territory.","effects":{"friendly_start_movement":1}},
+  "triangular_trade": {"slot":"economic","civic":"mercantilism","replaces":"caravansaries","note":"+4 Gold and +1 Faith from Trade Routes.","effects":{"trade_gold":4,"trade_faith":1}},
+  "free_market": {"slot":"economic","civic":"the_enlightenment","note":"+100% Gold from Commercial Hub buildings.","effects":{"commercial_building_gold_pct":100}},
+  "liberalism": {"slot":"economic","civic":"the_enlightenment","note":"+1 Amenity in cities with at least 2 specialty districts.","effects":{"amenity_at_2_districts":1}},
+  "rationalism": {"slot":"economic","civic":"the_enlightenment","note":"+100% Science from Campus buildings.","effects":{"campus_building_science_pct":100}},
+  "colonial_taxes": {"slot":"diplomatic","civic":"colonialism","note":"+25% Gold in cities outside the capital continent.","effects":{"foreign_continent_gold_pct":25}},
+  "native_conquest": {"slot":"military","civic":"colonialism","note":"Earlier-era unit kills yield Gold.","effects":{"earlier_era_kill_gold_pct":50}},
+  "raj": {"slot":"diplomatic","civic":"colonialism","note":"Suzerain city-states provide +2 Science, Culture, Faith, and Gold.","effects":{"suzerain_all_yields":2,"city_state_route_gold":2}},
+  "grand_opera": {"slot":"economic","civic":"opera_ballet","note":"+100% Culture from Theater Square buildings.","effects":{"theater_building_culture_pct":100}},
+  "symphonies": {"slot":"wildcard","civic":"opera_ballet","note":"+4 Great Musician points, plus 4 per Broadcast Center.","effects":{"gpp_musician":4,"gpp_musician_per_broadcast_center":4}},
+  "public_works": {"slot":"economic","civic":"civil_engineering","replaces":"ilkum","note":"+30% Builder Production and +2 Builder actions.","effects":{"builder_production_pct":30,"builder_charges":2}},
+  "skyscrapers": {"slot":"economic","civic":"civil_engineering","replaces":"gothic_architecture","note":"+15% Production toward all wonders.","effects":{"wonder_production_pct":15}},
+  "grande_armee": {"slot":"military","civic":"nationalism","replaces":"feudal_contract","note":"+50% Production toward pre-Modern melee, anti-cavalry, and ranged units.","effects":{"infantry_production_pct":50}},
+  "national_identity": {"slot":"military","civic":"nationalism","note":"Units suffer 50% less strength reduction when injured.","effects":{"wounded_penalty_reduction_pct":50}},
+  "expropriation": {"slot":"economic","civic":"scorched_earth","replaces":"colonization","note":"+50% Settler Production and 20% cheaper plots.","effects":{"settler_production_pct":50,"tile_purchase_discount_pct":20}},
+  "military_organization": {"slot":"wildcard","civic":"scorched_earth","note":"Armories and Academies generate Great General points; Generals gain Movement.","effects":{"gpp_general_per_armory":2,"gpp_general_per_military_academy":4}},
+  "total_war": {"slot":"military","civic":"scorched_earth","replaces":"raid","note":"+50% pillage, raid, and trade-route plunder yields.","effects":{"pillage_yield_pct":50}},
+  "force_modernization": {"slot":"military","civic":"urbanization","replaces":"professional_army","note":"50% Gold and resource discount on unit upgrades.","effects":{"upgrade_gold_discount_pct":50,"upgrade_resource_discount_pct":50}},
+  "military_research": {"slot":"military","civic":"urbanization","note":"Military Academies, Seaports, and Renaissance Walls provide +2 Science.","effects":{"late_military_building_science":2}},
+  "public_transport": {"slot":"economic","civic":"urbanization","note":"Neighborhoods provide Food and Production by Appeal.","effects":{"neighborhood_food":3,"neighborhood_production":1}},
+  "resource_management": {"slot":"military","civic":"conservation","note":"Improved Aluminum and Oil accumulate one additional resource.","effects":{"modern_strategic_resource_rate":1}},
+  "propaganda": {"slot":"military","civic":"mass_media","note":"25% less war weariness.","effects":{"war_weariness_reduction_pct":25}},
+  "levee_en_masse": {"slot":"military","civic":"mobilization","replaces":"conscription","note":"Unit maintenance reduced by 2 Gold per unit.","effects":{"unit_maintenance_discount":2}},
+  "laissez_faire": {"slot":"wildcard","civic":"capitalism","note":"Banks, Stock Exchanges, Shipyards, and Seaports provide Great Person points.","effects":{"late_economic_gpp":2}},
+  "market_economy": {"slot":"economic","civic":"capitalism","note":"International routes gain resource Gold, +2 Culture, and +2 Science.","effects":{"trade_gold":2,"trade_culture":2,"trade_science":2}},
+  "collectivization": {"slot":"economic","civic":"class_struggle","note":"Domestic routes gain +4 Food and +2 Production.","effects":{"trade_food":4,"trade_production":2}},
+  "defense_of_motherland": {"slot":"wildcard","civic":"class_struggle","note":"No home-territory war weariness and +100% late support-unit Production.","effects":{"support_production_pct":100,"home_war_weariness_reduction_pct":100}},
+  "economic_union": {"slot":"economic","civic":"ideology","replaces":"town_charters","note":"+100% Commercial Hub and Harbor adjacency bonuses.","effects":{"commercial_hub_adjacency_pct":100,"harbor_adjacency_pct":100}},
+  "five_year_plan": {"slot":"economic","civic":"ideology","replaces":"craftsmen","note":"+100% Campus and Industrial Zone adjacency bonuses.","effects":{"campus_adjacency_pct":100,"industrial_zone_adjacency_pct":100}},
+  "gunboat_diplomacy": {"slot":"diplomatic","civic":"ideology","note":"Open city-state borders and +4 Influence per turn.","effects":{"influence_per_turn":4}},
+  "lightning_warfare": {"slot":"military","civic":"ideology","replaces":"chivalry","note":"+50% Production toward all cavalry units.","effects":{"cavalry_production_pct":50}},
+  "finest_hour": {"slot":"wildcard","civic":"suffrage","note":"+5 Combat Strength in or adjacent to home territory.","effects":{"friendly_combat":5}},
+  "new_deal": {"slot":"economic","civic":"suffrage","note":"+4 Housing and +2 Amenities in cities with 3 specialty districts.","effects":{"housing_at_3_districts":4,"amenity_at_3_districts":2}},
+  "martial_law": {"slot":"wildcard","civic":"totalitarianism","note":"25% less war weariness and +4 garrison Loyalty.","effects":{"war_weariness_reduction_pct":25,"garrison_loyalty":4}},
+  "third_alternative": {"slot":"military","civic":"totalitarianism","note":"Late military, science, and power buildings provide Culture and Gold.","effects":{"late_building_culture":2,"late_building_gold":4}},
+  "nobel_prize": {"slot":"wildcard","civic":"nuclear_program","note":"Universities, Research Labs, Factories, and Power Plants provide Great Person points.","effects":{"late_science_industry_gpp":2}},
+  "nuclear_espionage": {"slot":"diplomatic","civic":"nuclear_program","note":"Undetected tech-boost theft grants an extra boost.","effects":{"spy_tech_boost_bonus":1}},
+  "heritage_tourism": {"slot":"economic","civic":"cultural_heritage","note":"+100% Tourism from Art and Artifacts.","effects":{"art_artifact_tourism_pct":100}},
+  "containment": {"slot":"diplomatic","civic":"cold_war","note":"Envoys count twice against city-states led by another government.","effects":{"different_government_envoy_bonus":1}},
+  "cryptography": {"slot":"diplomatic","civic":"cold_war","note":"Enemy Spies -2 levels; offensive Spies +1 level.","effects":{"enemy_spy_level":-2,"offensive_spy_level":1}},
+  "international_waters": {"slot":"military","civic":"cold_war","replaces":"press_gangs","note":"+100% Production toward naval units except Carriers.","effects":{"naval_production_pct":100}},
+  "second_strike_capability": {"slot":"military","civic":"cold_war","note":"Nuclear Device maintenance reduced by 50%.","effects":{"nuclear_maintenance_discount_pct":50}},
+  "sports_media": {"slot":"economic","civic":"professional_sports","replaces":"aesthetics","note":"+100% Theater adjacency and +1 Amenity from Stadiums.","effects":{"theater_square_adjacency_pct":100,"stadium_amenity":1}},
+  "after_action_reports": {"slot":"military","civic":"rapid_deployment","note":"All units gain +25% combat experience.","effects":{"unit_xp_pct":25}},
+  "military_first": {"slot":"military","civic":"rapid_deployment","replaces":"grande_armee","note":"+50% Production toward all melee, anti-cavalry, and ranged units.","effects":{"infantry_production_pct":50}},
+  "integrated_space_cell": {"slot":"military","civic":"space_race","note":"+15% Space Race project Production with a Military Academy or Seaport.","effects":{"space_project_production_pct":15}},
+  "music_censorship": {"slot":"diplomatic","civic":"space_race","note":"Foreign Rock Bands cannot enter; large cities lose 1 Amenity.","effects":{"block_foreign_rock_bands":1,"large_city_amenity":-1}},
+  "satellite_broadcasts": {"slot":"economic","civic":"space_race","note":"+200% Tourism from Great Works of Music.","effects":{"music_tourism_pct":200}},
+  "ecommerce": {"slot":"economic","civic":"globalization","replaces":"triangular_trade","note":"+5 Gold and +2 Production from Trade Routes.","effects":{"trade_gold":5,"trade_production":2}},
+  "international_space_agency": {"slot":"diplomatic","civic":"globalization","note":"+5% Science per city-state you are Suzerain of.","effects":{"science_pct_per_suzerain":5}},
+  "strategic_air_force": {"slot":"military","civic":"globalization","note":"+50% Production toward air units and Carriers.","effects":{"air_production_pct":50,"carrier_production_pct":50}},
+  "collective_activism": {"slot":"diplomatic","civic":"social_media","note":"+5% Culture per city-state you are Suzerain of.","effects":{"culture_pct_per_suzerain":5}},
+  "communications_office": {"slot":"diplomatic","civic":"social_media","note":"Governors provide Loyalty per Promotion.","effects":{"governor_loyalty":1}},
+  "online_communities": {"slot":"economic","civic":"social_media","note":"+50% Tourism to civilizations with your Trade Route.","effects":{"trade_partner_tourism_pct":50}},
+
+  "future_counter_diplomatic": {"slot":"wildcard","civic":"information_warfare","note":"Rabblerousing: recover Favor and gain +1 Favor per turn.","effects":{"diplomatic_favor_per_turn":1}},
+  "future_victory_domination": {"slot":"wildcard","civic":"information_warfare","note":"Integrated Attack Logistics: +1 enemy-territory Movement and +50% GDR Production.","effects":{"enemy_start_movement":1,"gdr_production_pct":50}},
+  "future_counter_culture": {"slot":"wildcard","civic":"exodus_imperative","note":"Space Tourism: incoming Tourism reduced by 20%.","effects":{"incoming_tourism_pct":-20}},
+  "future_victory_science": {"slot":"wildcard","civic":"exodus_imperative","note":"Aerospace Contractors: Spaceports provide Aluminum and Power.","effects":{"spaceport_aluminum":3,"spaceport_power":3}},
+  "future_counter_science": {"slot":"wildcard","civic":"cultural_hegemony","note":"Non-State Actors: Spies may choose any promotion.","effects":{"spy_any_promotion":1}},
+  "future_victory_culture": {"slot":"wildcard","civic":"cultural_hegemony","note":"Hallyu: Rock Bands may choose any promotion.","effects":{"rock_band_any_promotion":1}},
+  "future_counter_domination": {"slot":"wildcard","civic":"smart_power_doctrine","note":"Global Coalition: +7 Combat Strength in friendly territory.","effects":{"friendly_combat":7}},
+  "future_victory_diplomatic": {"slot":"wildcard","civic":"smart_power_doctrine","note":"Diplomatic Capital: +4 Diplomatic Favor per turn.","effects":{"diplomatic_favor_per_turn":4}}
 }

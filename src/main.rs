@@ -13,6 +13,14 @@ fn arg(args: &[String], key: &str, default: i64) -> i64 {
         .unwrap_or(default)
 }
 
+fn arg_text(args: &[String], key: &str, default: &str) -> String {
+    args.iter()
+        .position(|arg| arg == key)
+        .and_then(|index| args.get(index + 1))
+        .cloned()
+        .unwrap_or_else(|| default.to_string())
+}
+
 fn auto_cs(args: &[String], players: i64) -> usize {
     let cs = arg(args, "--city-states", -1);
     if cs >= 0 {
@@ -24,7 +32,11 @@ fn auto_cs(args: &[String], players: i64) -> usize {
 
 fn auto_dimension(args: &[String], key: &str, players: i64, width: bool) -> i32 {
     let size = MapSize::for_players(players.max(1) as usize);
-    arg(args, key, if width { size.width } else { size.height } as i64) as i32
+    arg(
+        args,
+        key,
+        if width { size.width } else { size.height } as i64,
+    ) as i32
 }
 
 fn standings(g: &Game) {
@@ -36,7 +48,12 @@ fn standings(g: &Game) {
         g.victory_type.clone().unwrap_or_default(),
         g.turn
     );
-    let mut majors: Vec<usize> = g.players.iter().filter(|p| !p.is_minor).map(|p| p.id).collect();
+    let mut majors: Vec<usize> = g
+        .players
+        .iter()
+        .filter(|p| !p.is_minor)
+        .map(|p| p.id)
+        .collect();
     majors.sort_by_key(|pid| -g.score(*pid));
     for pid in majors {
         let p = &g.players[pid];
@@ -105,10 +122,12 @@ fn main() {
                 });
                 match result {
                     Ok(g) => {
-                        let majors: Vec<_> =
-                            g.players.iter().filter(|p| !p.is_minor).collect();
-                        let minors: Vec<_> = g.players.iter()
-                            .filter(|p| p.is_minor && !p.is_barbarian).collect();
+                        let majors: Vec<_> = g.players.iter().filter(|p| !p.is_minor).collect();
+                        let minors: Vec<_> = g
+                            .players
+                            .iter()
+                            .filter(|p| p.is_minor && !p.is_barbarian)
+                            .collect();
                         let w = &g.players[g.winner.unwrap()];
                         let mut flags = String::new();
                         if majors.iter().all(|p| p.techs.len() <= 2) {
@@ -164,26 +183,27 @@ fn main() {
             );
         }
         "tournament" => {
-            let names: Vec<String> = args.iter()
+            let names: Vec<String> = args
+                .iter()
                 .position(|a| a == "--ais")
                 .and_then(|i| args.get(i + 1))
                 .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
                 .unwrap_or_else(|| vec!["advanced".to_string(), "basic".to_string()]);
             for n in &names {
                 if !civvis::elo::BUILTIN_AIS.contains(&n.as_str()) {
-                    eprintln!("unknown AI {n:?}; builtin: {:?} (custom bots: \
+                    eprintln!(
+                        "unknown AI {n:?}; builtin: {:?} (custom bots: \
                               use civvis::elo::run_tournament from Rust)",
-                              civvis::elo::BUILTIN_AIS);
+                        civvis::elo::BUILTIN_AIS
+                    );
                     std::process::exit(1);
                 }
             }
             let cfg = civvis::elo::TourneyCfg {
                 games: arg(&args, "--games", 20) as u32,
                 players_per_game: arg(&args, "--players", 4) as usize,
-                width: auto_dimension(&args, "--width",
-                                      arg(&args, "--players", 4), true),
-                height: auto_dimension(&args, "--height",
-                                       arg(&args, "--players", 4), false),
+                width: auto_dimension(&args, "--width", arg(&args, "--players", 4), true),
+                height: auto_dimension(&args, "--height", arg(&args, "--players", 4), false),
                 max_turns: arg(&args, "--turns", 150) as u32,
                 num_city_states: auto_cs(&args, arg(&args, "--players", 4)),
                 seed: arg(&args, "--seed", 0) as u64,
@@ -206,11 +226,25 @@ fn main() {
                 max_turns: arg(&args, "--turns", 160) as u32,
                 seed: arg(&args, "--seed", 1) as u64,
                 threads: arg(&args, "--threads", 8) as usize,
-                dir: "evolved".to_string(),
+                dir: arg_text(&args, "--dir", "evolved"),
             });
         }
         "play" => {
             let players = arg(&args, "--players", 4);
+            let resumed: Option<Game> = args
+                .iter()
+                .position(|value| value == "--resume")
+                .and_then(|index| args.get(index + 1))
+                .map(|path| {
+                    let raw = std::fs::read_to_string(path).unwrap_or_else(|error| {
+                        eprintln!("cannot read checkpoint {path}: {error}");
+                        std::process::exit(2);
+                    });
+                    serde_json::from_str(&raw).unwrap_or_else(|error| {
+                        eprintln!("cannot load checkpoint {path}: {error}");
+                        std::process::exit(2);
+                    })
+                });
             let seed = {
                 let s = arg(&args, "--seed", -1);
                 if s >= 0 {
@@ -218,10 +252,11 @@ fn main() {
                 } else {
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap().subsec_nanos() as u64
+                        .unwrap()
+                        .subsec_nanos() as u64
                 }
             };
-            civvis::server::serve(
+            civvis::server::serve_with_game(
                 arg(&args, "--port", 8765) as u16,
                 !args.iter().any(|a| a == "--no-open"),
                 civvis::server::Params {
@@ -232,13 +267,17 @@ fn main() {
                     max_turns: arg(&args, "--turns", 500) as u32,
                     num_city_states: auto_cs(&args, players),
                     spectate: args.iter().any(|a| a == "--spectate" || a == "--watch"),
-                });
+                },
+                resumed,
+            );
         }
         _ => {
-            println!("usage: civvis <simulate|soak|benchmark|tournament|play|evolve> \
+            println!(
+                "usage: civvis <simulate|soak|benchmark|tournament|play|evolve> \
                       [--players N] [--seed N] [--turns N] [--width N] [--height N] \
                       [--city-states N] [--games N] [--ais a,b] [--port N] [--no-open] \
-                      [--spectate]");
+                      [--spectate] [--resume checkpoint.json]"
+            );
         }
     }
 }

@@ -8,8 +8,14 @@ use crate::game::Game;
 use crate::rng::Rng;
 use crate::setup::MapSize;
 
-pub const BUILTIN_AIS: [&str; 6] = [
-    "advanced", "advanced_evolved", "basic", "random", "evolved", "neural",
+pub const BUILTIN_AIS: [&str; 7] = [
+    "advanced",
+    "advanced_evolved",
+    "advanced_v1",
+    "basic",
+    "random",
+    "evolved",
+    "neural",
 ];
 
 pub fn expected(ra: f64, rb: f64) -> f64 {
@@ -63,18 +69,19 @@ impl EloPool {
 
 pub fn builtin_ai(name: &str, seed: u64) -> Box<dyn Ai> {
     match name {
-        // Keep the advanced agent's strategic layer isolated from the older
-        // GA champion so `advanced` vs `basic` is a clean architecture test.
         "advanced" => Box::new(AdvancedAi::new()),
         "advanced_evolved" => Box::new(
             crate::evolve::load_champion("evolved")
                 .map(AdvancedAi::with_weights)
-                .unwrap_or_else(AdvancedAi::new)),
+                .unwrap_or_else(AdvancedAi::new),
+        ),
+        "advanced_v1" => Box::new(AdvancedAi::legacy()),
         "random" => Box::new(RandomAi::new(seed)),
         "evolved" => Box::new(
             crate::evolve::load_champion("evolved")
-                .map(BasicAi::with_weights)
-                .unwrap_or_else(BasicAi::new)),
+                .map(AdvancedAi::with_weights)
+                .unwrap_or_else(AdvancedAi::new),
+        ),
         "neural" => {
             let w = crate::evolve::load_champion("evolved").unwrap_or_default();
             match crate::valuenet::ValueNet::load("evolved") {
@@ -101,11 +108,17 @@ pub struct TourneyCfg {
 impl Default for TourneyCfg {
     fn default() -> Self {
         let size = MapSize::for_players(4);
-        TourneyCfg { games: 20, players_per_game: 4,
-                     width: size.width, height: size.height,
-                     max_turns: 150, num_city_states: size.default_city_states,
-                     seed: 0, k: 24.0,
-                     verbose: true }
+        TourneyCfg {
+            games: 20,
+            players_per_game: 4,
+            width: size.width,
+            height: size.height,
+            max_turns: 150,
+            num_city_states: size.default_city_states,
+            seed: 0,
+            k: 24.0,
+            verbose: true,
+        }
     }
 }
 
@@ -122,26 +135,34 @@ where
             .map(|_| names[rng.below(names.len())].clone())
             .collect();
         if names.len() > 1 && seats.iter().all(|s| *s == seats[0]) {
-            let others: Vec<&String> = names.iter()
-                .filter(|n| **n != seats[0]).collect();
+            let others: Vec<&String> = names.iter().filter(|n| **n != seats[0]).collect();
             let i = rng.below(cfg.players_per_game);
             seats[i] = others[rng.below(others.len())].clone();
         }
-        let mut game = Game::new(cfg.players_per_game, cfg.width, cfg.height,
-                                 gseed, cfg.max_turns, cfg.num_city_states);
-        let mut ais: Vec<Box<dyn Ai>> = game.players.iter().map(|p| {
-            if p.id < cfg.players_per_game {
-                make(&seats[p.id], gseed + p.id as u64)
-            } else {
-                builtin_ai("basic", gseed + p.id as u64)
-            }
-        }).collect();
+        let mut game = Game::new(
+            cfg.players_per_game,
+            cfg.width,
+            cfg.height,
+            gseed,
+            cfg.max_turns,
+            cfg.num_city_states,
+        );
+        let mut ais: Vec<Box<dyn Ai>> = game
+            .players
+            .iter()
+            .map(|p| {
+                if p.id < cfg.players_per_game {
+                    make(&seats[p.id], gseed + p.id as u64)
+                } else {
+                    builtin_ai("basic", gseed + p.id as u64)
+                }
+            })
+            .collect();
         run_game(&mut game, &mut ais);
         let winner = game.winner.unwrap();
         let mut ranked: Vec<usize> = (0..cfg.players_per_game).collect();
         ranked.sort_by_key(|pid| (*pid != winner, -game.score(*pid), *pid));
-        let placements: Vec<String> = ranked.iter()
-            .map(|pid| seats[*pid].clone()).collect();
+        let placements: Vec<String> = ranked.iter().map(|pid| seats[*pid].clone()).collect();
         pool.record(&placements, cfg.k);
         if cfg.verbose {
             let wname = if winner < cfg.players_per_game {
@@ -149,17 +170,19 @@ where
             } else {
                 game.players[winner].civ.clone()
             };
-            println!("game {gi:3}  winner={wname:<10} ({}, {}, t{})  seats={seats:?}",
-                     game.players[winner].civ,
-                     game.victory_type.clone().unwrap_or_default(), game.turn);
+            println!(
+                "game {gi:3}  winner={wname:<10} ({}, {}, t{})  seats={seats:?}",
+                game.players[winner].civ,
+                game.victory_type.clone().unwrap_or_default(),
+                game.turn
+            );
         }
     }
     pool
 }
 
 pub fn leaderboard(pool: &EloPool) -> String {
-    let mut rows: Vec<(&String, f64)> = pool.ratings.iter()
-        .map(|(n, r)| (n, *r)).collect();
+    let mut rows: Vec<(&String, f64)> = pool.ratings.iter().map(|(n, r)| (n, *r)).collect();
     rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap().then(a.0.cmp(b.0)));
     let mut out = String::from("Elo leaderboard:\n");
     for (name, r) in rows {
@@ -167,7 +190,12 @@ pub fn leaderboard(pool: &EloPool) -> String {
         let w = pool.wins[name.as_str()];
         out.push_str(&format!(
             "  {:<14} {:7.1}   games={:<4} wins={:<4} winrate={:.0}%\n",
-            name, r, g, w, 100.0 * w as f64 / g.max(1) as f64));
+            name,
+            r,
+            g,
+            w,
+            100.0 * w as f64 / g.max(1) as f64
+        ));
     }
     out
 }

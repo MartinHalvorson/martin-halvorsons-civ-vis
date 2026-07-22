@@ -1,204 +1,931 @@
 {
+  "palace": {
+    "cost": 1,
+    "buildable": false,
+    "district": "city_center",
+    "yields": { "production": 2, "gold": 5, "science": 2, "culture": 1 },
+    "housing": 1,
+    "amenity": 1,
+    "great_work_slots": { "any": 1 }
+  },
   "monument": {
     "cost": 60,
-    "yields": {
-      "culture": 2
-    }
+    "district": "city_center",
+    "yields": { "culture": 2 }
   },
   "granary": {
     "cost": 65,
     "tech": "pottery",
-    "yields": {
-      "food": 1
-    },
+    "district": "city_center",
+    "yields": { "food": 1 },
     "housing": 2
+  },
+  "water_mill": {
+    "cost": 80,
+    "tech": "wheel",
+    "district": "city_center",
+    "yields": { "food": 1, "production": 1 },
+    "effects": { "requires_river_city": 1, "farmable_bonus_resource_food": 1 }
   },
   "walls": {
     "cost": 80,
     "tech": "masonry",
-    "yields": {}
+    "district": "city_center",
+    "outer_defense": 100
   },
-  "shrine": {
-    "cost": 70,
-    "tech": "astrology",
-    "district": "holy_site",
-    "yields": {
-      "faith": 2
-    }
+  "medieval_walls": {
+    "cost": 220,
+    "tech": "castles",
+    "district": "city_center",
+    "requires": ["walls"],
+    "outer_defense": 100
+  },
+  "renaissance_walls": {
+    "cost": 300,
+    "tech": "siege_tactics",
+    "district": "city_center",
+    "requires": ["medieval_walls"],
+    "outer_defense": 100
+  },
+  "sewer": {
+    "cost": 200,
+    "tech": "sanitation",
+    "district": "city_center",
+    "housing": 2,
+    "maintenance": 2
+  },
+  "flood_barrier": {
+    "cost": 80,
+    "tech": "computers",
+    "district": "city_center",
+    "maintenance": 1,
+    "effects": { "protect_coastal_lowlands": 1, "cost_per_coastal_lowland": 80 }
+  },
+  "palgum": {
+    "cost": 80,
+    "tech": "irrigation",
+    "district": "city_center",
+    "unique_to": "Babylon",
+    "replaces": "water_mill",
+    "yields": { "production": 2 },
+    "housing": 1,
+    "effects": { "fresh_water_tile_food": 1, "requires_fresh_water_city": 1 }
+  },
+  "tsikhe": {
+    "cost": 260,
+    "tech": "siege_tactics",
+    "district": "city_center",
+    "unique_to": "Georgia",
+    "replaces": "renaissance_walls",
+    "requires": ["medieval_walls"],
+    "yields": { "faith": 4 },
+    "outer_defense": 200,
+    "effects": { "faith_tourism_after_conservation": 1 }
   },
   "library": {
     "cost": 90,
     "tech": "writing",
     "district": "campus",
-    "yields": {
-      "science": 2
+    "yields": { "science": 2 },
+    "maintenance": 1,
+    "citizen_slots": 1,
+    "great_person_points": { "scientist": 1 }
+  },
+  "university": {
+    "cost": 250,
+    "tech": "education",
+    "district": "campus",
+    "requires": ["library"],
+    "yields": { "science": 4 },
+    "housing": 1,
+    "maintenance": 2,
+    "citizen_slots": 1,
+    "great_person_points": { "scientist": 1 },
+    "effects": { "rock_concert_tourism": 500 }
+  },
+  "research_lab": {
+    "cost": 440,
+    "tech": "chemistry",
+    "district": "campus",
+    "requires": ["university"],
+    "yields": { "science": 3 },
+    "maintenance": 3,
+    "power": 3,
+    "citizen_slots": 1,
+    "great_person_points": { "scientist": 1 },
+    "effects": { "powered_science": 5, "citizen_science": 1 }
+  },
+  "madrasa": {
+    "cost": 250,
+    "civic": "theology",
+    "district": "campus",
+    "unique_to": "Arabia",
+    "replaces": "university",
+    "requires": ["library"],
+    "yields": { "science": 5 },
+    "housing": 1,
+    "maintenance": 2,
+    "citizen_slots": 1,
+    "great_person_points": { "scientist": 1 },
+    "effects": { "faith_equal_campus_adjacency": 1, "rock_concert_tourism": 500 }
+  },
+  "navigation_school": {
+    "cost": 250,
+    "tech": "education",
+    "district": "campus",
+    "unique_to": "Portugal",
+    "replaces": "university",
+    "requires": ["library"],
+    "yields": { "science": 4 },
+    "housing": 1,
+    "maintenance": 2,
+    "citizen_slots": 1,
+    "great_person_points": { "admiral": 1, "scientist": 1 },
+    "effects": {
+      "science_equal_harbor_adjacency": 1,
+      "coastal_or_lake_tile_science": 0.5,
+      "rock_concert_tourism": 500
     }
+  },
+  "alchemical_society": {
+    "cost": 250,
+    "buildable": false,
+    "tech": "education",
+    "district": "campus",
+    "replaces": "university",
+    "requires": ["library"],
+    "yields": { "science": 4, "production": 2 },
+    "housing": 1,
+    "maintenance": 2,
+    "citizen_slots": 1,
+    "great_person_points": { "engineer": 1, "merchant": 1, "scientist": 1 },
+    "effects": { "requires_hermetic_order": 1, "gold_equal_campus_adjacency": 1 }
+  },
+  "shrine": {
+    "cost": 70,
+    "tech": "astrology",
+    "district": "holy_site",
+    "yields": { "faith": 2 },
+    "maintenance": 1,
+    "citizen_slots": 1,
+    "great_person_points": { "prophet": 1 }
+  },
+  "temple": {
+    "cost": 120,
+    "civic": "theology",
+    "district": "holy_site",
+    "requires": ["shrine"],
+    "yields": { "faith": 4 },
+    "maintenance": 2,
+    "citizen_slots": 1,
+    "great_person_points": { "prophet": 1 },
+    "great_work_slots": { "relic": 1 }
+  },
+  "stave_church": {
+    "cost": 120,
+    "civic": "theology",
+    "district": "holy_site",
+    "unique_to": "Norway",
+    "replaces": "temple",
+    "requires": ["shrine"],
+    "yields": { "faith": 4 },
+    "maintenance": 2,
+    "citizen_slots": 1,
+    "great_person_points": { "prophet": 1 },
+    "great_work_slots": { "relic": 1 },
+    "effects": { "holy_site_woods_adjacency": 1, "coastal_resource_production": 1 }
+  },
+  "prasat": {
+    "cost": 120,
+    "civic": "theology",
+    "district": "holy_site",
+    "unique_to": "Khmer",
+    "replaces": "temple",
+    "requires": ["shrine"],
+    "yields": { "faith": 6 },
+    "maintenance": 2,
+    "citizen_slots": 1,
+    "great_person_points": { "prophet": 1 },
+    "great_work_slots": { "relic": 1 },
+    "effects": { "culture_per_population": 0.5, "relic_tourism_bonus": 10 }
+  },
+  "cathedral": {
+    "cost": 190,
+    "district": "holy_site",
+    "requires": ["temple"],
+    "yields": { "faith": 3 },
+    "citizen_slots": 1,
+    "great_work_slots": { "religious_art": 1 },
+    "worship_belief": "cathedral",
+    "purchase_only": true
+  },
+  "dar_e_mehr": {
+    "cost": 190,
+    "district": "holy_site",
+    "requires": ["temple"],
+    "yields": { "faith": 3 },
+    "citizen_slots": 1,
+    "worship_belief": "dar_e_mehr",
+    "purchase_only": true,
+    "effects": { "faith_per_era_since_built": 1, "immune_to_disasters": 1 }
+  },
+  "gurdwara": {
+    "cost": 190,
+    "district": "holy_site",
+    "requires": ["temple"],
+    "yields": { "faith": 3, "food": 2 },
+    "housing": 1,
+    "citizen_slots": 1,
+    "worship_belief": "gurdwara",
+    "purchase_only": true
+  },
+  "meeting_house": {
+    "cost": 190,
+    "district": "holy_site",
+    "requires": ["temple"],
+    "yields": { "faith": 3, "production": 2 },
+    "citizen_slots": 1,
+    "worship_belief": "meeting_house",
+    "purchase_only": true
+  },
+  "mosque": {
+    "cost": 190,
+    "district": "holy_site",
+    "requires": ["temple"],
+    "yields": { "faith": 3 },
+    "citizen_slots": 1,
+    "worship_belief": "mosque",
+    "purchase_only": true,
+    "effects": { "religious_unit_spread_charges": 1 }
+  },
+  "pagoda": {
+    "cost": 190,
+    "district": "holy_site",
+    "requires": ["temple"],
+    "yields": { "faith": 3 },
+    "citizen_slots": 1,
+    "worship_belief": "pagoda",
+    "purchase_only": true,
+    "effects": { "diplomatic_favor": 1 }
+  },
+  "stupa": {
+    "cost": 190,
+    "district": "holy_site",
+    "requires": ["temple"],
+    "yields": { "faith": 3 },
+    "amenity": 1,
+    "citizen_slots": 1,
+    "worship_belief": "stupa",
+    "purchase_only": true
+  },
+  "synagogue": {
+    "cost": 190,
+    "district": "holy_site",
+    "requires": ["temple"],
+    "yields": { "faith": 5 },
+    "citizen_slots": 1,
+    "worship_belief": "synagogue",
+    "purchase_only": true
+  },
+  "wat": {
+    "cost": 190,
+    "district": "holy_site",
+    "requires": ["temple"],
+    "yields": { "faith": 3, "science": 2 },
+    "citizen_slots": 1,
+    "worship_belief": "wat",
+    "purchase_only": true
   },
   "market": {
     "cost": 120,
     "tech": "currency",
     "district": "commercial_hub",
-    "yields": {
-      "gold": 3
+    "yields": { "gold": 2 },
+    "citizen_slots": 1,
+    "great_person_points": { "merchant": 1 },
+    "trade_route_capacity": 1
+  },
+  "bank": {
+    "cost": 290,
+    "tech": "banking",
+    "district": "commercial_hub",
+    "requires": ["market"],
+    "yields": { "gold": 5 },
+    "citizen_slots": 1,
+    "great_person_points": { "merchant": 1 }
+  },
+  "stock_exchange": {
+    "cost": 330,
+    "tech": "economics",
+    "district": "commercial_hub",
+    "requires": ["bank"],
+    "yields": { "gold": 4 },
+    "power": 3,
+    "citizen_slots": 1,
+    "great_person_points": { "merchant": 1 },
+    "effects": { "powered_gold": 7, "citizen_gold": 2, "product_slots": 3 }
+  },
+  "sukiennice": {
+    "cost": 120,
+    "tech": "currency",
+    "district": "commercial_hub",
+    "unique_to": "Poland",
+    "replaces": "market",
+    "yields": { "gold": 2 },
+    "citizen_slots": 1,
+    "great_person_points": { "merchant": 1 },
+    "trade_route_capacity": 1,
+    "effects": { "domestic_route_production": 4, "international_route_gold": 2 }
+  },
+  "grand_bazaar": {
+    "cost": 220,
+    "tech": "banking",
+    "district": "commercial_hub",
+    "unique_to": "Ottomans",
+    "replaces": "bank",
+    "requires": ["market"],
+    "yields": { "gold": 5 },
+    "citizen_slots": 1,
+    "great_person_points": { "merchant": 1 },
+    "effects": { "strategic_resource_accumulation": 1, "city_luxury_amenity": 1 }
+  },
+  "gilded_vault": {
+    "cost": 290,
+    "buildable": false,
+    "tech": "banking",
+    "district": "commercial_hub",
+    "replaces": "bank",
+    "requires": ["market"],
+    "yields": { "gold": 5 },
+    "citizen_slots": 1,
+    "great_person_points": { "merchant": 2 },
+    "effects": {
+      "requires_owls_of_minerva": 1,
+      "culture_equal_commercial_adjacency": 1,
+      "harbor_trade_route_capacity": 1
     }
   },
   "barracks": {
     "cost": 90,
     "tech": "bronze_working",
     "district": "encampment",
-    "yields": {
-      "production": 1
-    },
-    "housing": 1
+    "excludes": ["stable"],
+    "yields": { "production": 1 },
+    "housing": 1,
+    "maintenance": 1,
+    "citizen_slots": 1,
+    "great_person_points": { "general": 1 },
+    "effects": { "melee_anti_cavalry_ranged_xp_pct": 25, "strategic_stockpile": 10 }
+  },
+  "stable": {
+    "cost": 120,
+    "tech": "horseback_riding",
+    "district": "encampment",
+    "excludes": ["barracks"],
+    "yields": { "production": 1 },
+    "housing": 1,
+    "maintenance": 1,
+    "citizen_slots": 1,
+    "great_person_points": { "general": 1 },
+    "effects": { "cavalry_siege_xp_pct": 25, "strategic_stockpile": 10 }
+  },
+  "armory": {
+    "cost": 195,
+    "tech": "military_engineering",
+    "district": "encampment",
+    "requires_any": ["barracks", "stable"],
+    "yields": { "production": 3 },
+    "maintenance": 2,
+    "citizen_slots": 1,
+    "great_person_points": { "general": 1 },
+    "effects": { "unit_starting_xp": 10, "strategic_stockpile": 10 }
+  },
+  "military_academy": {
+    "cost": 330,
+    "tech": "military_science",
+    "district": "encampment",
+    "requires": ["armory"],
+    "yields": { "production": 4 },
+    "housing": 1,
+    "maintenance": 2,
+    "citizen_slots": 1,
+    "great_person_points": { "general": 1 },
+    "effects": {
+      "citizen_production": 1,
+      "corps_army_production_pct": 25,
+      "strategic_stockpile": 10
+    }
+  },
+  "basilikoi_paides": {
+    "cost": 90,
+    "tech": "bronze_working",
+    "district": "encampment",
+    "unique_to": "Macedon",
+    "replaces": "barracks",
+    "excludes": ["stable"],
+    "yields": { "production": 1 },
+    "housing": 1,
+    "maintenance": 1,
+    "citizen_slots": 1,
+    "great_person_points": { "general": 1 },
+    "effects": {
+      "melee_anti_cavalry_ranged_xp_pct": 25,
+      "science_per_unit_cost_pct": 25,
+      "strategic_stockpile": 10
+    }
+  },
+  "ordu": {
+    "cost": 120,
+    "tech": "horseback_riding",
+    "district": "encampment",
+    "unique_to": "Mongolia",
+    "replaces": "stable",
+    "excludes": ["barracks"],
+    "yields": { "production": 1 },
+    "housing": 1,
+    "maintenance": 1,
+    "citizen_slots": 1,
+    "great_person_points": { "general": 1 },
+    "effects": { "cavalry_siege_xp_pct": 25, "cavalry_movement": 1, "strategic_stockpile": 10 }
   },
   "lighthouse": {
     "cost": 120,
     "tech": "celestial_navigation",
     "district": "harbor",
-    "yields": {
-      "food": 1,
-      "gold": 1
-    },
-    "housing": 1
+    "housing": 1,
+    "citizen_slots": 1,
+    "great_person_points": { "admiral": 1 },
+    "trade_route_capacity": 1,
+    "effects": { "coast_tile_food": 1, "coastal_city_housing": 1 }
+  },
+  "shipyard": {
+    "cost": 290,
+    "tech": "mass_production",
+    "district": "harbor",
+    "requires": ["lighthouse"],
+    "yields": { "food": 1 },
+    "maintenance": 1,
+    "citizen_slots": 1,
+    "great_person_points": { "admiral": 1 },
+    "effects": {
+      "production_equal_harbor_adjacency": 1,
+      "unimproved_coast_production": 1,
+      "rock_concert_tourism": 500
+    }
+  },
+  "seaport": {
+    "cost": 440,
+    "tech": "electricity",
+    "district": "harbor",
+    "requires": ["shipyard"],
+    "yields": { "food": 2, "gold": 2 },
+    "housing": 1,
+    "citizen_slots": 1,
+    "great_person_points": { "admiral": 1 },
+    "effects": {
+      "citizen_food": 1,
+      "fleet_armada_production_pct": 25,
+      "product_slots": 3
+    }
   },
   "amphitheater": {
     "cost": 150,
     "civic": "drama_poetry",
     "district": "theater_square",
-    "yields": {
-      "culture": 2
+    "yields": { "culture": 2 },
+    "maintenance": 1,
+    "citizen_slots": 1,
+    "great_person_points": { "writer": 1 },
+    "great_work_slots": { "writing": 2 },
+    "effects": { "rock_concert_tourism": 250 }
+  },
+  "art_museum": {
+    "cost": 290,
+    "civic": "humanism",
+    "district": "theater_square",
+    "requires": ["amphitheater"],
+    "excludes": ["archaeological_museum"],
+    "yields": { "culture": 2 },
+    "maintenance": 2,
+    "citizen_slots": 1,
+    "great_person_points": { "writer": 1, "artist": 2 },
+    "great_work_slots": { "art": 3 }
+  },
+  "archaeological_museum": {
+    "cost": 290,
+    "civic": "humanism",
+    "district": "theater_square",
+    "requires": ["amphitheater"],
+    "excludes": ["art_museum"],
+    "yields": { "culture": 2 },
+    "maintenance": 2,
+    "citizen_slots": 1,
+    "great_person_points": { "writer": 1, "artist": 2 },
+    "great_work_slots": { "artifact": 3 }
+  },
+  "broadcast_center": {
+    "cost": 440,
+    "tech": "radio",
+    "district": "theater_square",
+    "requires_any": ["art_museum", "archaeological_museum"],
+    "yields": { "culture": 2 },
+    "maintenance": 3,
+    "power": 3,
+    "citizen_slots": 1,
+    "great_person_points": { "artist": 1, "musician": 2 },
+    "great_work_slots": { "music": 1 },
+    "effects": { "powered_culture": 4, "citizen_culture": 1, "rock_concert_tourism": 750 }
+  },
+  "film_studio": {
+    "cost": 440,
+    "tech": "radio",
+    "district": "theater_square",
+    "unique_to": "America",
+    "replaces": "broadcast_center",
+    "requires_any": ["art_museum", "archaeological_museum"],
+    "yields": { "culture": 2 },
+    "maintenance": 3,
+    "power": 3,
+    "citizen_slots": 1,
+    "great_person_points": { "artist": 1, "musician": 2 },
+    "great_work_slots": { "music": 1 },
+    "effects": {
+      "powered_culture": 4,
+      "citizen_culture": 1,
+      "modern_civ_tourism_pct": 100,
+      "rock_concert_tourism": 750
     }
   },
-  "aqueduct": {
-    "cost": 130,
-    "tech": "engineering",
-    "yields": {},
-    "housing": 2
-  },
-  "arena": {
+  "marae": {
     "cost": 150,
-    "civic": "games_recreation",
-    "district": "entertainment_complex",
-    "yields": {
-      "culture": 1
-    },
-    "amenity": 2
+    "civic": "drama_poetry",
+    "district": "theater_square",
+    "unique_to": "Maori",
+    "replaces": "amphitheater",
+    "citizen_slots": 1,
+    "effects": {
+      "passable_feature_culture": 1,
+      "passable_feature_faith": 1,
+      "feature_tourism_after_flight": 1,
+      "rock_concert_tourism": 250
+    }
   },
   "workshop": {
     "cost": 195,
     "tech": "apprenticeship",
     "district": "industrial_zone",
-    "yields": {
-      "production": 2
+    "yields": { "production": 3 },
+    "maintenance": 1,
+    "citizen_slots": 1,
+    "great_person_points": { "engineer": 1 }
+  },
+  "factory": {
+    "cost": 330,
+    "tech": "industrialization",
+    "district": "industrial_zone",
+    "requires": ["workshop"],
+    "yields": { "production": 3 },
+    "maintenance": 2,
+    "power": 2,
+    "citizen_slots": 1,
+    "great_person_points": { "engineer": 1 },
+    "regional_range": 6,
+    "effects": { "powered_production": 3 }
+  },
+  "electronics_factory": {
+    "cost": 330,
+    "tech": "industrialization",
+    "district": "industrial_zone",
+    "unique_to": "Japan",
+    "replaces": "factory",
+    "requires": ["workshop"],
+    "yields": { "production": 3 },
+    "maintenance": 2,
+    "power": 2,
+    "citizen_slots": 1,
+    "great_person_points": { "engineer": 1 },
+    "regional_range": 6,
+    "effects": { "powered_production": 5, "electricity_culture": 4 }
+  },
+  "coal_power_plant": {
+    "cost": 300,
+    "tech": "industrialization",
+    "district": "industrial_zone",
+    "requires": ["factory"],
+    "excludes": ["oil_power_plant", "nuclear_power_plant"],
+    "maintenance": 3,
+    "citizen_slots": 1,
+    "great_person_points": { "engineer": 1 },
+    "regional_range": 6,
+    "regional_group": "power_plant",
+    "effects": {
+      "production_equal_industrial_adjacency": 1,
+      "coal_per_power": 0.25,
+      "power_generated": 4,
+      "co2_per_resource": 820
     }
   },
-  "armory": {
-    "cost": 195,
-    "tech": "military_tactics",
-    "district": "encampment",
-    "yields": {
-      "production": 2
+  "oil_power_plant": {
+    "cost": 360,
+    "tech": "electricity",
+    "district": "industrial_zone",
+    "requires": ["factory"],
+    "excludes": ["coal_power_plant", "nuclear_power_plant"],
+    "yields": { "production": 3 },
+    "maintenance": 3,
+    "citizen_slots": 1,
+    "great_person_points": { "engineer": 1 },
+    "regional_range": 6,
+    "regional_group": "power_plant",
+    "effects": { "citizen_production": 1, "oil_per_power": 0.25, "power_generated": 4, "co2_per_resource": 490 }
+  },
+  "nuclear_power_plant": {
+    "cost": 480,
+    "tech": "nuclear_fission",
+    "district": "industrial_zone",
+    "requires": ["factory"],
+    "excludes": ["coal_power_plant", "oil_power_plant"],
+    "yields": { "production": 4, "science": 3 },
+    "maintenance": 3,
+    "citizen_slots": 1,
+    "great_person_points": { "engineer": 1 },
+    "regional_range": 6,
+    "regional_group": "power_plant",
+    "effects": {
+      "citizen_production": 1,
+      "uranium_per_power": 0.0625,
+      "power_generated": 16,
+      "co2_per_resource": 48,
+      "reactor_accident_risk": 1
     }
   },
-  "medieval_walls": {
-    "cost": 220,
-    "tech": "castles",
-    "yields": {}
-  },
-  "bank": {
-    "cost": 220,
-    "tech": "banking",
-    "district": "commercial_hub",
-    "yields": {
-      "gold": 4
-    }
-  },
-  "university": {
-    "cost": 250,
-    "tech": "education",
-    "district": "campus",
-    "yields": {
-      "science": 4
-    },
-    "housing": 1
-  },
-  "great_bath": {
-    "cost": 180,
-    "tech": "pottery",
-    "yields": {
-      "faith": 1
-    },
-    "housing": 3,
-    "amenity": 1,
-    "wonder": true
-  },
-  "pyramids": {
-    "cost": 220,
-    "tech": "masonry",
-    "yields": {
-      "culture": 2
-    },
-    "builder_charges": 1,
-    "wonder": true
-  },
-  "stonehenge": {
-    "cost": 180,
-    "tech": "astrology",
-    "yields": {
-      "faith": 4
-    },
-    "wonder": true
-  },
-  "hanging_gardens": {
-    "cost": 180,
-    "tech": "irrigation",
-    "housing": 2,
-    "growth_pct": 15,
-    "wonder": true
-  },
-  "terracotta_army": {
-    "cost": 400,
-    "tech": "construction",
-    "yields": {
-      "culture": 2
-    },
-    "unit_levels": 1,
-    "wonder": true
-  },
-  "colosseum": {
-    "cost": 400,
+  "arena": {
+    "cost": 150,
     "civic": "games_recreation",
-    "yields": {
-      "culture": 2
-    },
+    "district": "entertainment_complex",
+    "yields": { "culture": 1 },
     "amenity": 2,
-    "wonder": true
+    "maintenance": 1,
+    "effects": { "rock_concert_tourism": 250 }
   },
-  "great_library": {
-    "cost": 400,
-    "civic": "drama_poetry",
-    "yields": {
-      "science": 3,
-      "culture": 1
-    },
-    "wonder": true
+  "zoo": {
+    "cost": 360,
+    "civic": "natural_history",
+    "district": "entertainment_complex",
+    "requires": ["arena"],
+    "amenity": 1,
+    "maintenance": 2,
+    "regional_range": 6,
+    "effects": { "rainforest_marsh_science": 1 }
   },
-  "colossus": {
-    "cost": 400,
-    "tech": "shipbuilding",
-    "yields": {
-      "gold": 6
-    },
-    "coastal": true,
-    "wonder": true
+  "stadium": {
+    "cost": 480,
+    "civic": "professional_sports",
+    "district": "entertainment_complex",
+    "requires": ["zoo"],
+    "amenity": 1,
+    "maintenance": 3,
+    "power": 2,
+    "regional_range": 6,
+    "effects": { "powered_amenity": 2, "rock_concert_tourism": 750 }
   },
-  "alhambra": {
-    "cost": 710,
-    "tech": "castles",
-    "yields": {
-      "culture": 2
-    },
+  "tlachtli": {
+    "cost": 135,
+    "civic": "games_recreation",
+    "district": "entertainment_complex",
+    "unique_to": "Aztec",
+    "replaces": "arena",
+    "yields": { "faith": 2, "culture": 2 },
     "amenity": 2,
-    "wonder": true
+    "maintenance": 1,
+    "great_person_points": { "general": 1 },
+    "effects": { "rock_concert_tourism": 250 }
+  },
+  "thermal_bath": {
+    "cost": 360,
+    "civic": "natural_history",
+    "district": "entertainment_complex",
+    "unique_to": "Hungary",
+    "replaces": "zoo",
+    "requires": ["arena"],
+    "yields": { "production": 2 },
+    "amenity": 2,
+    "maintenance": 2,
+    "regional_range": 6,
+    "effects": { "geothermal_fissure_amenity": 2, "geothermal_fissure_tourism": 3 }
+  },
+  "ferris_wheel": {
+    "cost": 290,
+    "civic": "natural_history",
+    "district": "water_park",
+    "yields": { "culture": 3 },
+    "amenity": 2,
+    "maintenance": 1,
+    "effects": { "rock_concert_tourism": 250 }
+  },
+  "aquarium": {
+    "cost": 360,
+    "civic": "natural_history",
+    "district": "water_park",
+    "requires": ["ferris_wheel"],
+    "amenity": 1,
+    "maintenance": 2,
+    "regional_range": 9,
+    "effects": { "coast_lake_feature_science": 1 }
+  },
+  "aquatics_center": {
+    "cost": 480,
+    "civic": "professional_sports",
+    "district": "water_park",
+    "requires": ["aquarium"],
+    "amenity": 1,
+    "maintenance": 3,
+    "power": 2,
+    "regional_range": 9,
+    "effects": { "powered_amenity": 2, "rock_concert_tourism": 750 }
+  },
+  "hangar": {
+    "cost": 380,
+    "tech": "flight",
+    "district": "aerodrome",
+    "yields": { "production": 2 },
+    "maintenance": 1,
+    "effects": { "air_unit_xp_pct": 25, "air_slots": 1 }
+  },
+  "airport": {
+    "cost": 480,
+    "tech": "advanced_flight",
+    "district": "aerodrome",
+    "requires": ["hangar"],
+    "yields": { "production": 4 },
+    "maintenance": 2,
+    "power": 1,
+    "effects": {
+      "powered_production": 2,
+      "air_unit_xp_pct": 25,
+      "air_slots": 1,
+      "airlift": 1
+    }
+  },
+  "food_market": {
+    "cost": 380,
+    "tech": "replaceable_parts",
+    "district": "neighborhood",
+    "excludes": ["shopping_mall"],
+    "yields": { "food": 4 },
+    "maintenance": 1,
+    "power": 1,
+    "effects": { "powered_food": 2 }
+  },
+  "shopping_mall": {
+    "cost": 440,
+    "civic": "capitalism",
+    "district": "neighborhood",
+    "excludes": ["food_market"],
+    "yields": { "gold": 2 },
+    "amenity": 1,
+    "maintenance": 1,
+    "power": 1,
+    "effects": { "powered_gold": 2, "powered_amenity": 1, "tourism": 4 }
+  },
+  "hydroelectric_dam": {
+    "cost": 440,
+    "tech": "electricity",
+    "district": "dam",
+    "maintenance": 1,
+    "effects": { "renewable_power_generated": 6 }
+  },
+  "consulate": {
+    "cost": 150,
+    "tech": "mathematics",
+    "district": "diplomatic_quarter",
+    "maintenance": 1,
+    "effects": { "influence_points": 2, "enemy_spy_level_reduction": 1 }
+  },
+  "chancery": {
+    "cost": 290,
+    "civic": "diplomatic_service",
+    "district": "diplomatic_quarter",
+    "requires": ["consulate"],
+    "maintenance": 2,
+    "effects": {
+      "influence_points": 3,
+      "enemy_spy_level_reduction": 1,
+      "spy_capture_or_kill_science_per_level": 50
+    }
+  },
+  "ancestral_hall": {
+    "cost": 150,
+    "district": "government_plaza",
+    "excludes": ["audience_chamber", "warlords_throne"],
+    "maintenance": 1,
+    "effects": { "settler_production_pct": 50, "free_builder_new_city": 1 }
+  },
+  "audience_chamber": {
+    "cost": 150,
+    "district": "government_plaza",
+    "excludes": ["ancestral_hall", "warlords_throne"],
+    "maintenance": 1,
+    "effects": { "governor_city_housing": 4, "governor_city_amenity": 2, "no_governor_loyalty": -2 }
+  },
+  "warlords_throne": {
+    "cost": 150,
+    "district": "government_plaza",
+    "excludes": ["ancestral_hall", "audience_chamber"],
+    "maintenance": 1,
+    "effects": { "capture_city_production_pct": 20, "capture_city_duration": 5 }
+  },
+  "foreign_ministry": {
+    "cost": 290,
+    "district": "government_plaza",
+    "requires_any": ["ancestral_hall", "audience_chamber", "warlords_throne"],
+    "excludes": ["intelligence_agency", "grand_masters_chapel", "queens_bibliotheque"],
+    "maintenance": 2,
+    "effects": { "levy_discount_pct": 50, "levied_unit_combat_strength": 4 }
+  },
+  "intelligence_agency": {
+    "cost": 290,
+    "district": "government_plaza",
+    "requires_any": ["ancestral_hall", "audience_chamber", "warlords_throne"],
+    "excludes": ["foreign_ministry", "grand_masters_chapel", "queens_bibliotheque"],
+    "maintenance": 2,
+    "effects": { "spy_capacity": 1, "spy_mission_time_pct": -25 }
+  },
+  "grand_masters_chapel": {
+    "cost": 290,
+    "district": "government_plaza",
+    "requires_any": ["ancestral_hall", "audience_chamber", "warlords_throne"],
+    "excludes": ["foreign_ministry", "intelligence_agency", "queens_bibliotheque"],
+    "yields": { "faith": 5 },
+    "maintenance": 2,
+    "effects": { "faith_purchase_land_units": 1, "pillaging_faith_pct": 50 }
+  },
+  "queens_bibliotheque": {
+    "cost": 217,
+    "district": "government_plaza",
+    "unique_to": "Sweden",
+    "requires_any": ["ancestral_hall", "audience_chamber", "warlords_throne"],
+    "excludes": ["foreign_ministry", "intelligence_agency", "grand_masters_chapel"],
+    "maintenance": 2,
+    "great_person_points": { "artist": 2, "writer": 2, "musician": 2 },
+    "great_work_slots": { "writing": 2, "art": 2, "music": 2 }
+  },
+  "national_history_museum": {
+    "cost": 440,
+    "district": "government_plaza",
+    "requires_any": ["foreign_ministry", "intelligence_agency", "grand_masters_chapel", "queens_bibliotheque"],
+    "excludes": ["royal_society", "war_department"],
+    "maintenance": 3,
+    "great_work_slots": { "any": 4 }
+  },
+  "royal_society": {
+    "cost": 440,
+    "district": "government_plaza",
+    "requires_any": ["foreign_ministry", "intelligence_agency", "grand_masters_chapel", "queens_bibliotheque"],
+    "excludes": ["national_history_museum", "war_department"],
+    "maintenance": 3,
+    "effects": { "builder_charge_space_project_pct": 2 }
+  },
+  "war_department": {
+    "cost": 440,
+    "district": "government_plaza",
+    "requires_any": ["foreign_ministry", "intelligence_agency", "grand_masters_chapel", "queens_bibliotheque"],
+    "excludes": ["national_history_museum", "royal_society"],
+    "maintenance": 3,
+    "effects": { "heal_on_unit_kill": 20 }
+  },
+  "grove": {
+    "cost": 150,
+    "civic": "mysticism",
+    "district": "preserve",
+    "effects": {
+      "charming_adjacent_food": 1,
+      "charming_adjacent_faith": 1,
+      "breathtaking_adjacent_food": 2,
+      "breathtaking_adjacent_faith": 2,
+      "breathtaking_adjacent_culture": 2
+    }
+  },
+  "sanctuary": {
+    "cost": 440,
+    "civic": "conservation",
+    "district": "preserve",
+    "requires": ["grove"],
+    "effects": {
+      "charming_adjacent_science": 1,
+      "charming_adjacent_gold": 1,
+      "breathtaking_adjacent_science": 2,
+      "breathtaking_adjacent_gold": 2,
+      "breathtaking_adjacent_production": 2
+    }
+  },
+  "old_god_obelisk": {
+    "cost": 60,
+    "buildable": false,
+    "district": "city_center",
+    "replaces": "monument",
+    "yields": { "culture": 1, "faith": 4 },
+    "great_work_slots": { "any": 1 },
+    "effects": { "requires_voidsingers": 1 }
   }
 }

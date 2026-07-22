@@ -1,56 +1,193 @@
 {
   "farm": {
-    "yields": {
-      "food": 1
-    },
+    "yields": {"food": 1},
     "housing": 0.5,
-    "terrain": [
-      "grassland",
-      "plains"
-    ],
+    "terrain": ["grassland", "plains"],
+    "requires_flat": true,
     "removes_feature": true
   },
   "mine": {
     "tech": "mining",
-    "yields": {
-      "production": 1
-    }
+    "yields": {"production": 1},
+    "resources": ["iron", "niter", "coal", "aluminum", "uranium", "salt"],
+    "hills_or_resource": true
+  },
+  "quarry": {
+    "tech": "mining",
+    "yields": {"production": 1},
+    "resources": ["stone"],
+    "resource_only": true
   },
   "pasture": {
     "tech": "animal_husbandry",
-    "yields": {
-      "production": 1
-    },
-    "housing": 0.5
+    "yields": {"production": 1},
+    "housing": 0.5,
+    "resources": ["cattle", "sheep", "horses"],
+    "resource_only": true
   },
   "plantation": {
     "tech": "irrigation",
-    "yields": {
-      "gold": 2
-    },
-    "housing": 0.5
+    "yields": {"gold": 2},
+    "housing": 0.5,
+    "resources": ["bananas", "silk", "wine"],
+    "resource_only": true
   },
   "camp": {
     "tech": "animal_husbandry",
-    "yields": {
-      "gold": 2
-    },
-    "housing": 0.5
+    "yields": {"gold": 2},
+    "housing": 0.5,
+    "resources": ["deer"],
+    "resource_only": true
   },
   "fishing_boats": {
     "tech": "sailing",
-    "yields": {
-      "food": 1
-    },
+    "yields": {"food": 1},
     "housing": 0.5,
+    "resources": ["fish"],
+    "resource_only": true,
     "water": true
   },
-  "barbarian_camp": {
-    "yields": {},
-    "unbuildable": true
+  "lumber_mill": {
+    "tech": "construction",
+    "yields": {"production": 2},
+    "feature": ["forest", "jungle"]
   },
-  "goody_hut": {
-    "yields": {},
-    "unbuildable": true
-  }
+  "oil_well": {
+    "tech": "refining",
+    "yields": {"production": 2},
+    "resources": ["oil"],
+    "resource_only": true
+  },
+  "offshore_oil_rig": {
+    "tech": "plastics",
+    "yields": {"production": 2},
+    "resources": ["oil"],
+    "resource_only": true,
+    "water": true
+  },
+  "wind_farm": {
+    "tech": "composites",
+    "yields": {"production": 1, "gold": 2},
+    "requires_hills": true,
+    "effects": {"power": 2}
+  },
+  "geothermal_plant": {
+    "tech": "synthetic_materials",
+    "yields": {"production": 1, "science": 1},
+    "feature": ["geothermal_fissure"],
+    "effects": {"power": 2}
+  },
+  "solar_farm": {
+    "tech": "satellites",
+    "yields": {"production": 1, "gold": 1},
+    "requires_flat": true,
+    "effects": {"power": 2}
+  },
+  "offshore_wind_farm": {
+    "tech": "predictive_systems",
+    "yields": {"production": 2},
+    "terrain": ["coast", "lake"],
+    "water": true,
+    "effects": {"power": 2}
+  },
+  "seaside_resort": {
+    "tech": "radio",
+    "yields": {"gold": 1, "culture": 2},
+    "terrain": ["grassland", "plains", "desert"],
+    "requires_flat": true,
+    "effects": {"tourism": 4}
+  },
+  "ski_resort": {
+    "civic": "professional_sports",
+    "yields": {"gold": 1, "culture": 1},
+    "terrain": ["mountain"],
+    "effects": {"tourism": 4, "amenity": 1}
+  },
+  "seastead": {
+    "tech": "seasteads",
+    "yields": {"food": 2, "production": 1, "culture": 1},
+    "terrain": ["coast", "ocean"],
+    "water": true,
+    "effects": {"housing": 2, "tourism": 1}
+  },
+  "fort": {
+    "tech": "siege_tactics",
+    "builder_buildable": false,
+    "effects": {"defense": 4}
+  },
+  "airstrip": {
+    "tech": "flight",
+    "builder_buildable": false,
+    "requires_flat": true,
+    "effects": {"air_slots": 3}
+  },
+  "missile_silo": {
+    "tech": "rocketry",
+    "builder_buildable": false,
+    "requires_flat": true
+  },
+  "mountain_tunnel": {
+    "tech": "chemistry",
+    "builder_buildable": false,
+    "terrain": ["mountain"],
+    "effects": {"passage": 1}
+  },
+
+  "sphinx": {
+    "civic": "craftsmanship",
+    "unique_to": "Egypt",
+    "yields": {"culture": 1, "faith": 1},
+    "requires_flat": true
+  },
+  "great_wall": {
+    "tech": "masonry",
+    "unique_to": "China",
+    "yields": {"gold": 2},
+    "effects": {"defense": 4}
+  },
+  "nubian_pyramid": {
+    "tech": "masonry",
+    "unique_to": "Nubia",
+    "yields": {"faith": 1},
+    "terrain": ["desert"],
+    "requires_flat": true
+  },
+  "kurgan": {
+    "tech": "animal_husbandry",
+    "unique_to": "Scythia",
+    "yields": {"gold": 1, "faith": 1},
+    "requires_flat": true
+  },
+
+  "national_park": {
+    "civic": "conservation",
+    "builder_buildable": false,
+    "yields": {"culture": 2},
+    "effects": {"tourism": 8, "amenity": 2}
+  },
+  "archaeological_dig": {
+    "civic": "natural_history",
+    "builder_buildable": false,
+    "resources": ["antiquity_site"],
+    "resource_only": true,
+    "yields": {"culture": 3},
+    "effects": {"tourism": 3}
+  },
+  "shipwreck_excavation": {
+    "civic": "cultural_heritage",
+    "builder_buildable": false,
+    "resources": ["shipwreck"],
+    "resource_only": true,
+    "water": true,
+    "yields": {"culture": 3},
+    "effects": {"tourism": 3}
+  },
+  "rock_concert": {
+    "civic": "cold_war",
+    "builder_buildable": false,
+    "yields": {"culture": 4},
+    "effects": {"tourism": 8}
+  },
+  "barbarian_camp": {"yields": {}, "unbuildable": true},
+  "goody_hut": {"yields": {}, "unbuildable": true}
 }

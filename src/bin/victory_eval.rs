@@ -1,11 +1,14 @@
-//! Full-length multiplayer diagnostics for AI victory pursuit.
-use std::collections::BTreeMap;
-
-use civvis::ai::{run_game, AdvancedAi};
+//! End-to-end victory-condition evaluator.
+//!
+//! Every major in each game is given the same explicit victory target. A run
+//! only passes when the real game loop ends with that victory type; no state
+//! is injected and no victory check is called directly.
+use civvis::ai::{run_game, AdvancedAi, VictoryTarget};
 use civvis::game::Game;
-use civvis::setup::MapSize;
+use std::collections::{BTreeMap, BTreeSet};
+use std::time::Instant;
 
-fn number(args: &[String], flag: &str, default: i64) -> i64 {
+fn number(args: &[String], flag: &str, default: usize) -> usize {
     args.iter()
         .position(|arg| arg == flag)
         .and_then(|index| args.get(index + 1))
@@ -13,125 +16,172 @@ fn number(args: &[String], flag: &str, default: i64) -> i64 {
         .unwrap_or(default)
 }
 
+fn selected_targets(args: &[String]) -> Result<Vec<VictoryTarget>, String> {
+    let Some(index) = args.iter().position(|arg| arg == "--target") else {
+        return Ok(VictoryTarget::ALL.to_vec());
+    };
+    let raw = args
+        .get(index + 1)
+        .ok_or_else(|| "--target requires a value".to_string())?;
+    if raw == "all" {
+        return Ok(VictoryTarget::ALL.to_vec());
+    }
+    raw.split(',').map(str::parse).collect()
+}
+
+fn default_turn_limit(target: VictoryTarget) -> u32 {
+    match target {
+        VictoryTarget::Religion => 450,
+        VictoryTarget::Domination => 650,
+        VictoryTarget::Diplomacy => 750,
+        VictoryTarget::Culture => 900,
+        VictoryTarget::Science => 1_200,
+        VictoryTarget::Score => 300,
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let games = number(&args, "--games", 20).max(1) as usize;
-    let players = number(&args, "--players", 4).max(2) as usize;
-    let turns = number(&args, "--turns", 500).max(1) as u32;
-    let first_seed = number(&args, "--seed", 0).max(0) as u64;
-    let details = args.iter().any(|arg| arg == "--details");
-    let size = MapSize::for_players(players);
-    let mut victories: BTreeMap<String, usize> = BTreeMap::new();
-    let mut total_turns = 0_u64;
+    let targets = selected_targets(&args).unwrap_or_else(|error| {
+        eprintln!("{error}");
+        std::process::exit(2);
+    });
+    let games = number(&args, "--games", 3);
+    let start_seed = number(&args, "--start-seed", 9_000) as u64;
+    let players = number(&args, "--players", 2).clamp(2, 8);
+    let width = number(&args, "--width", 24).max(16) as i32;
+    let height = number(&args, "--height", 16).max(12) as i32;
+    let override_turns = args
+        .iter()
+        .position(|arg| arg == "--turns")
+        .and_then(|index| args.get(index + 1))
+        .and_then(|value| value.parse::<u32>().ok());
+    let mut failures = 0;
+    let mut winners: BTreeMap<&'static str, BTreeSet<usize>> = BTreeMap::new();
+    let started = Instant::now();
 
-    for offset in 0..games {
-        let seed = first_seed + offset as u64;
-        let mut game = Game::new_full(
-            players,
-            size.width,
-            size.height,
-            seed,
-            turns,
-            size.default_city_states,
-            false,
-        );
-        let mut ais = AdvancedAi::fleet(&game);
-        run_game(&mut game, &mut ais);
-        total_turns += game.turn as u64;
-        let victory = game.victory_type.clone().unwrap_or_else(|| "none".to_string());
-        *victories.entry(victory.clone()).or_default() += 1;
+    for target in targets.iter().copied() {
+        for game_index in 0..games {
+            let seed = start_seed + game_index as u64;
+            let city_states = if target == VictoryTarget::Diplomacy {
+                (players + 1).max(3)
+            } else {
+                0
+            };
+            let turns = override_turns.unwrap_or_else(|| default_turn_limit(target));
+            let game_started = Instant::now();
+            let mut game = Game::new_full(players, width, height, seed, turns, city_states, false);
+            let mut ais = AdvancedAi::fleet_targeting(&game, target);
+            run_game(&mut game, &mut ais);
 
-        let majors: Vec<_> = game.players.iter()
-            .filter(|player| !player.is_minor && !player.is_barbarian)
-            .map(|player| player.id)
-            .collect();
-        let top_dvp = majors.iter().map(|pid| game.players[*pid].dvp).max().unwrap_or(0);
-        let top_techs = majors.iter().map(|pid| game.players[*pid].techs.len()).max().unwrap_or(0);
-        let top_projects = majors.iter()
-            .map(|pid| game.players[*pid].science_projects.len()).max().unwrap_or(0);
-        let top_distance = majors.iter().map(|pid| game.players[*pid].exoplanet_distance)
-            .fold(0.0_f64, f64::max);
-        let best_culture = majors.iter().map(|pid| {
-            let target = majors.iter().filter(|other| *other != pid)
-                .map(|other| game.domestic_tourists(*other)).max().unwrap_or(0);
-            let cities: Vec<_> = game.cities.values()
-                .filter(|city| city.owner == *pid).collect();
-            let theaters = cities.iter()
-                .filter(|city| city.districts.contains_key("theater_square")).count();
-            let amphitheaters = cities.iter()
-                .filter(|city| city.buildings.iter().any(|building| building == "amphitheater"))
-                .count();
-            let wonders = cities.iter().flat_map(|city| city.buildings.iter())
-                .filter(|building| game.rules.buildings[building.as_str()].wonder).count();
-            (game.foreign_tourists(*pid) - target, *pid, theaters, amphitheaters,
-             wonders, game.foreign_tourists(*pid), target)
-        }).max().unwrap();
-        let top_capitals = majors.iter().map(|pid| game.cities.values()
-            .filter(|city| city.is_capital && city.owner == *pid)
-            .count()).max().unwrap_or(0);
-        let top_religious_civs = majors.iter().filter_map(|pid| {
-            let religion = game.players[*pid].religion.as_deref()?;
-            Some(majors.iter().filter(|other| {
-                let cities: Vec<_> = game.cities.values()
-                    .filter(|city| city.owner == **other).collect();
-                let followers = cities.iter()
-                    .filter(|city| game.city_religion(city) == Some(religion)).count();
-                !cities.is_empty() && followers * 2 > cities.len()
-            }).count())
-        }).max().unwrap_or(0);
-
-        println!(
-            "seed {seed:<5} t{:<3} {:<10} {:<9} tech {:>2}/33 proj {top_projects} dist {:>2.0}/50 dvp {:>2}/20 culture {:+} {} {}/{} T{} A{} W{} caps {}/{} religion {}/{}",
-            game.turn,
-            victory,
-            game.players[game.winner.unwrap()].civ,
-            top_techs,
-            top_distance,
-            top_dvp,
-            best_culture.0,
-            game.players[best_culture.1].civ,
-            best_culture.5,
-            best_culture.6,
-            best_culture.2,
-            best_culture.3,
-            best_culture.4,
-            top_capitals,
-            majors.len(),
-            top_religious_civs,
-            majors.len(),
-        );
-        if details {
-            for pid in &majors {
-                let target = majors.iter().filter(|other| *other != pid)
-                    .map(|other| game.domestic_tourists(*other)).max().unwrap_or(0);
-                let cities: Vec<_> = game.cities.values()
-                    .filter(|city| city.owner == *pid).collect();
-                let theaters = cities.iter()
-                    .filter(|city| city.districts.contains_key("theater_square")).count();
-                let amphitheaters = cities.iter()
-                    .filter(|city| city.buildings.iter()
-                        .any(|building| building == "amphitheater"))
-                    .count();
-                let wonders = cities.iter().flat_map(|city| city.buildings.iter())
-                    .filter(|building| game.rules.buildings[building.as_str()].wonder).count();
-                println!(
-                    "  culture {:<9} plan {:?} visitors {}/{} domestic {} T{} A{} W{} output {:.0}",
-                    game.players[*pid].civ,
-                    ais[*pid].current_plan().map(|plan| plan.strategy),
-                    game.foreign_tourists(*pid),
-                    target,
-                    game.domestic_tourists(*pid),
-                    theaters,
-                    amphitheaters,
-                    wonders,
-                    game.players[*pid].tourism_lifetime,
-                );
+            let actual = game.victory_type.as_deref().unwrap_or("none");
+            let winner = game.winner.unwrap_or(usize::MAX);
+            let passed = actual == target.as_str();
+            failures += usize::from(!passed);
+            if passed {
+                winners.entry(target.as_str()).or_default().insert(winner);
             }
+            let winner_state = game.players.get(winner);
+            let progress = winner_state.map(|player| match target {
+                VictoryTarget::Science => format!(
+                    "techs={}/{} projects={} distance={:.0} science={:.1}",
+                    player.techs.len(),
+                    game.rules.techs.len(),
+                    player.science_projects.len(),
+                    player.exoplanet_distance,
+                    game.player_city_ids(winner)
+                        .into_iter()
+                        .map(|city| game.city_yields(city).science)
+                        .sum::<f64>()
+                ),
+                VictoryTarget::Culture => {
+                    let target = game
+                        .players
+                        .iter()
+                        .filter(|rival| {
+                            rival.id != winner
+                                && rival.alive
+                                && !rival.is_minor
+                                && !rival.is_barbarian
+                        })
+                        .map(|rival| game.domestic_tourists(rival.id))
+                        .max()
+                        .unwrap_or(0);
+                    let cities = game.player_city_ids(winner);
+                    let theaters = cities
+                        .iter()
+                        .filter(|city| {
+                            game.cities[city].districts.contains_key("theater_square")
+                                || game.cities[city].districts.contains_key("acropolis")
+                        })
+                        .count();
+                    let tourist_improvements = cities
+                        .iter()
+                        .flat_map(|city| game.cities[city].owned_tiles.iter())
+                        .filter_map(|position| game.map.tiles[position].improvement.as_deref())
+                        .filter(|improvement| {
+                            game.rules.improvements[*improvement]
+                                .effects
+                                .get("tourism")
+                                .copied()
+                                .unwrap_or(0.0)
+                                > 0.0
+                        })
+                        .count();
+                    format!(
+                        "visiting={} target={} domestic={} tourism={:.1}/turn cities={} theaters={} tourist_tiles={} lifetime={:.0}",
+                        game.foreign_tourists(winner),
+                        target,
+                        game.domestic_tourists(winner),
+                        game.tourism_per_turn(winner),
+                        cities.len(),
+                        theaters,
+                        tourist_improvements,
+                        player.tourism_lifetime,
+                    )
+                }
+                VictoryTarget::Religion => {
+                    format!("religion={}", player.religion.as_deref().unwrap_or("none"))
+                }
+                VictoryTarget::Diplomacy => format!("dvp={}", player.dvp),
+                VictoryTarget::Domination => {
+                    format!("cities={}", game.player_city_ids(winner).len())
+                }
+                VictoryTarget::Score => format!("score={}", game.score(winner)),
+            });
+            println!(
+                "{:<11} seed={} target={:<10} actual={:<10} winner={} turn={} {} [{:.2}s]",
+                if passed { "PASS" } else { "FAIL" },
+                seed,
+                target.as_str(),
+                actual,
+                if winner == usize::MAX {
+                    "none".to_string()
+                } else {
+                    winner.to_string()
+                },
+                game.turn,
+                progress.unwrap_or_default(),
+                game_started.elapsed().as_secs_f64(),
+            );
         }
     }
 
-    println!("\nVictory mix ({games} games, average {:.1} turns):", total_turns as f64 / games as f64);
-    for (victory, count) in victories {
-        println!("  {victory:<10} {count:>3}  ({:>5.1}%)", 100.0 * count as f64 / games as f64);
+    println!("\nseat winners by target:");
+    for target in &targets {
+        println!(
+            "  {:<10} {:?}",
+            target.as_str(),
+            winners.get(target.as_str())
+        );
+    }
+    println!(
+        "{} games, {} failures in {:.2}s",
+        targets.len() * games,
+        failures,
+        started.elapsed().as_secs_f64()
+    );
+    if failures > 0 {
+        std::process::exit(1);
     }
 }

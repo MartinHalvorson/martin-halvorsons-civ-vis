@@ -1,71 +1,66 @@
 {
   "chiefdom": {
     "civic": "code_of_laws",
-    "effects": {},
-    "slots": {
-      "military": 1,
-      "economic": 1
-    }
+    "slots": {"military": 1, "economic": 1}
   },
   "autocracy": {
     "civic": "political_philosophy",
-    "effects": {
-      "production_pct": 10
-    },
-    "slots": {
-      "military": 1,
-      "economic": 1,
-      "diplomatic": 1,
-      "wildcard": 1
-    }
+    "effects": {"capital_yields": {"food": 1, "production": 1, "gold": 1, "science": 1, "culture": 1, "faith": 1}},
+    "slots": {"military": 1, "economic": 1, "diplomatic": 1, "wildcard": 1}
   },
   "oligarchy": {
     "civic": "political_philosophy",
-    "effects": {
-      "combat_strength": 4
-    },
-    "slots": {
-      "military": 2,
-      "economic": 1,
-      "wildcard": 1
-    }
+    "effects": {"combat_strength": 4},
+    "slots": {"military": 2, "economic": 1, "wildcard": 1}
   },
   "classical_republic": {
     "civic": "political_philosophy",
-    "effects": {
-      "amenity": 1,
-      "science_pct": 5,
-      "great_people_pct": 15
-    },
-    "slots": {
-      "economic": 2,
-      "diplomatic": 1,
-      "wildcard": 1
-    }
+    "effects": {"amenity": 1, "housing": 1, "great_people_pct": 15},
+    "slots": {"economic": 2, "diplomatic": 1, "wildcard": 1}
   },
   "monarchy": {
-    "civic": "civil_service",
-    "effects": {
-      "housing": 1
-    },
-    "slots": {
-      "military": 2,
-      "economic": 1,
-      "diplomatic": 1,
-      "wildcard": 2
-    }
+    "civic": "divine_right",
+    "effects": {"housing": 1},
+    "slots": {"military": 2, "economic": 1, "diplomatic": 1, "wildcard": 2}
   },
   "merchant_republic": {
-    "civic": "guilds",
-    "effects": {
-      "gold_pct": 15,
-      "amenity": 1
-    },
-    "slots": {
-      "military": 1,
-      "economic": 2,
-      "diplomatic": 2,
-      "wildcard": 1
-    }
+    "civic": "exploration",
+    "effects": {"gold_pct": 10},
+    "slots": {"military": 1, "economic": 2, "diplomatic": 2, "wildcard": 1}
+  },
+  "theocracy": {
+    "civic": "reformed_church",
+    "effects": {"religious_strength": 5, "faith_per_pop": 0.5},
+    "slots": {"military": 2, "economic": 2, "diplomatic": 1, "wildcard": 1}
+  },
+  "communism": {
+    "civic": "class_struggle",
+    "effects": {"production_per_pop": 0.6},
+    "slots": {"military": 3, "economic": 3, "diplomatic": 1, "wildcard": 1}
+  },
+  "democracy": {
+    "civic": "suffrage",
+    "effects": {"trade_food": 4, "trade_production": 4},
+    "slots": {"military": 1, "economic": 3, "diplomatic": 2, "wildcard": 2}
+  },
+  "fascism": {
+    "civic": "totalitarianism",
+    "effects": {"combat_strength": 5},
+    "slots": {"military": 4, "economic": 1, "diplomatic": 1, "wildcard": 2}
+  },
+  "corporate_libertarianism": {
+    "civic": "corporate_libertarianism",
+    "effects": {"production_pct": 10},
+    "slots": {"military": 3, "economic": 1, "diplomatic": 1, "wildcard": 5}
+  },
+  "digital_democracy": {
+    "civic": "digital_democracy",
+    "effects": {"amenity": 2, "culture_per_district": 2},
+    "slots": {"military": 1, "economic": 1, "diplomatic": 3, "wildcard": 5}
+  },
+  "synthetic_technocracy": {
+    "civic": "synthetic_technocracy",
+    "effects": {"project_production_pct": 30},
+    "slots": {"military": 1, "economic": 3, "diplomatic": 1, "wildcard": 5}
   }
 }

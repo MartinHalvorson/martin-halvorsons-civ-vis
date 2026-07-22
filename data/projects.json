@@ -3,6 +3,11 @@
     "cost": 1,
     "repeatable": true
   },
+  "repair_encampment": {
+    "cost": 60,
+    "district": "encampment",
+    "repeatable": true
+  },
   "launch_earth_satellite": {
     "cost": 900,
     "tech": "rocketry",
@@ -39,5 +44,47 @@
     "district": "spaceport",
     "requires": ["exoplanet_expedition"],
     "repeatable": true
+  },
+  "convert_reactor_to_coal": {
+    "cost": 300, "tech": "industrialization", "district": "industrial_zone",
+    "requires_buildings": ["factory"], "repeatable": true,
+    "effects": {"power_source_coal": 1}
+  },
+  "convert_reactor_to_oil": {
+    "cost": 360, "tech": "electricity", "district": "industrial_zone",
+    "requires_buildings": ["factory"], "repeatable": true,
+    "effects": {"power_source_oil": 1}
+  },
+  "convert_reactor_to_uranium": {
+    "cost": 480, "tech": "nuclear_fission", "district": "industrial_zone",
+    "requires_buildings": ["factory"], "repeatable": true,
+    "effects": {"power_source_nuclear": 1}
+  },
+  "manhattan_project": {
+    "cost": 1000, "tech": "nuclear_fission", "district": "industrial_zone"
+  },
+  "build_nuclear_device": {
+    "cost": 800, "tech": "nuclear_fission", "district": "industrial_zone",
+    "requires": ["manhattan_project"], "repeatable": true,
+    "effects": {"nuclear_devices": 1}
+  },
+  "recommission_reactor": {
+    "cost": 200, "tech": "nuclear_fission", "district": "industrial_zone",
+    "requires_buildings": ["nuclear_power_plant"], "repeatable": true,
+    "effects": {"reactor_age_reset": 1}
+  },
+  "operation_ivy": {
+    "cost": 1200, "tech": "nuclear_fusion", "district": "industrial_zone",
+    "requires": ["manhattan_project"]
+  },
+  "build_thermonuclear_device": {
+    "cost": 1000, "tech": "nuclear_fusion", "district": "industrial_zone",
+    "requires": ["operation_ivy"], "repeatable": true,
+    "effects": {"thermonuclear_devices": 1}
+  },
+  "carbon_recapture": {
+    "cost": 600, "civic": "global_warming_mitigation", "district": "industrial_zone",
+    "repeatable": true,
+    "effects": {"co2_recaptured": 50, "diplomatic_favor": 30}
   }
 }

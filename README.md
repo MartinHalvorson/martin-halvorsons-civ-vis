@@ -22,12 +22,17 @@ Firaxis or 2K; no assets, art, text, or code from Civilization VI are used.
   wonders, continents, and religion caps)
 - Cities: Civ 6 growth curve, border expansion, **housing & amenities**
 - **Districts with adjacency bonuses**, buildings, improvements, builder charges
-- Tech tree **and civics tree** (28 early-game techs plus 5 space-race techs,
-  and 14 civics)
+- Complete Gathering Storm-style **technology and civics trees** (77
+  technologies and 61 civics spanning Ancient through Future)
   with **Eureka/Inspiration boosts** (data-driven triggers)
 - Units with **XP/levels and fortify**, per-unit sight; melee/ranged/bombard
   combat and **zone of control** with Civ 6 math; city sieges, capture, and
-  **city ranged strikes**
+  **city and Encampment ranged strikes**
+- The full standard **naval roster** from Galleys through Nuclear Submarines,
+  with naval melee/ranged/raider/carrier classes and staged sea access
+- Data-driven **class promotion trees**, **Corps/Armies**, and linked escorts
+- **Theological combat** with Missionaries, Apostles, Gurus, Inquisitors,
+  religious pressure, healing, inquisition, heresy removal, and condemnation
 - **Barbarians** (camps, era-scaled raiders), **city-states**, **governments**
 - War/peace; all six Civ VI victory paths: **domination, science, culture,
   religious, diplomatic, and score**
@@ -41,6 +46,27 @@ Firaxis or 2K; no assets, art, text, or code from Civilization VI are used.
 cargo build --release
 ./target/release/civvis play --players 4        # browser GUI; you are player 0
 ```
+
+For an unattended spectator that checks for new code only between games:
+
+```bash
+python3 tools/spectator_supervisor.py --players 4
+```
+
+It keeps the result reachable for at least 10 seconds, checks the current Git
+upstream, safely fast-forwards when possible, rebuilds local edits too, and
+automatically starts the next game. Builds happen while the completed result
+server remains available; a promoted runtime is reused immediately when it
+already matches the source. Active matches are atomically checkpointed every
+five seconds. If the server crashes or stops responding, the supervisor resumes
+that checkpoint; if the same state repeatedly freezes, it quarantines the save
+and starts a fresh match instead of entering a restart loop. It also nudges a
+simulation that stops advancing, while browser requests use timeouts and retry
+after temporary server outages.
+
+The supervisor fingerprints all runtime inputs before and after compilation.
+If code changes during the build or the newest source does not compile, the
+known-good result/game stays available while it waits and retries.
 
 Player-count defaults use Civ VI's stock world rows: 2 players = Duel
 (`44×26`, 3 city-states), 4 = Tiny (`60×38`, 6 city-states), and 6 = Small
@@ -66,7 +92,16 @@ observations under `citizens` and shown in the city panel.
 ./target/release/civvis benchmark --games 100            # turns/sec
 ./target/release/civvis tournament --ais advanced,basic --games 40 # Elo ratings
 cargo run --release --bin ai_eval -- advanced basic --pairs 100   # paired seats
+./target/release/civvis evolve --generations 100 --pop 24 --games 12 \
+  --threads 8 --dir evolved                              # evolve full strategy + doctrine
 ```
+
+`AdvancedAi` coordinates nearby units into domain-specific armies and fleets
+with shared muster, advance, focus-fire, hold, and recovery orders that replan
+between battlefield actions. The genetic runner evolves those group-combat
+doctrine parameters together with expansion, production, diplomacy, and
+tactical exchange weights; archived champions and a fixed-seed validation gate
+keep the `evolved` agent from promoting narrow or regressive strategies.
 
 In-process Rust agents implement one trait:
 

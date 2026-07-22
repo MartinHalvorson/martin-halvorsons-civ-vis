@@ -218,8 +218,9 @@ mod tests {
     }
 
     #[test]
-    fn four_and_six_player_worlds_generate_the_complete_profiles() {
-        assert_generated_profile(4, 41);
-        assert_generated_profile(6, 61);
+    fn every_selectable_world_generates_its_complete_profile() {
+        for (players, seed) in [(2, 21), (4, 41), (6, 61), (8, 81), (10, 101), (12, 121)] {
+            assert_generated_profile(players, seed);
+        }
     }
 }

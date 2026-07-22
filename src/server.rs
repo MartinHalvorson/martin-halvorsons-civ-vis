@@ -1,5 +1,6 @@
 //! Zero-dependency local HTTP server for the human-vs-AI browser GUI.
-//! Endpoints: GET / (page), GET /state, GET /rules, POST /action, POST /new.
+//! Endpoints: GET / (page), GET /state, GET /save, GET /rules,
+//! POST /action, POST /step, POST /new.
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -49,19 +50,53 @@ pub struct Shared {
 const RESTART_MS: u64 = 10_000;
 
 impl Session {
+    fn ai_fleet(game: &Game) -> Vec<Box<dyn Ai + Send>> {
+        game.players
+            .iter()
+            .map(|p| -> Box<dyn Ai + Send> {
+                if p.is_minor || p.is_barbarian {
+                    return Box::new(BasicAi::new());
+                }
+                Box::new(AdvancedAi::new())
+            })
+            .collect()
+    }
+
     pub fn new(params: Params) -> Session {
-        let game = Game::new_full(params.num_players, params.width, params.height,
-                                  params.seed, params.max_turns,
-                                  params.num_city_states, true);
+        let game = Game::new_full(
+            params.num_players,
+            params.width,
+            params.height,
+            params.seed,
+            params.max_turns,
+            params.num_city_states,
+            true,
+        );
         // Paired and multiplayer evaluation make the hierarchical agent the
         // strongest built-in default. Minors/barbarians retain the cheaper
         // baseline because they do not need empire-level planning.
-        let ais: Vec<Box<dyn Ai + Send>> = game.players.iter().map(|p| -> Box<dyn Ai + Send> {
-            if p.is_minor || p.is_barbarian {
-                return Box::new(BasicAi::new());
-            }
-            Box::new(AdvancedAi::new())
-        }).collect();
+        let ais = Self::ai_fleet(&game);
+        Session { params, game, ais }
+    }
+
+    /// Restore an interrupted match and rebuild only the AIs' transient plans.
+    /// The serialized game retains the authoritative RNG and world state.
+    pub fn from_game(mut params: Params, game: Game) -> Session {
+        params.num_players = game
+            .players
+            .iter()
+            .filter(|player| !player.is_minor && !player.is_barbarian)
+            .count();
+        params.num_city_states = game
+            .players
+            .iter()
+            .filter(|player| player.is_minor && !player.is_barbarian)
+            .count();
+        params.width = game.map.width;
+        params.height = game.map.height;
+        params.seed = game.seed;
+        params.max_turns = game.max_turns;
+        let ais = Self::ai_fleet(&game);
         Session { params, game, ais }
     }
 
@@ -71,18 +106,25 @@ impl Session {
             // Observe from the current player's seat (fall back to the first
             // living major when a minor/barbarian is up).
             let pid = if g.players[g.current].is_minor {
-                g.players.iter().find(|p| !p.is_minor && p.alive)
-                    .map(|p| p.id).unwrap_or(0)
+                g.players
+                    .iter()
+                    .find(|p| !p.is_minor && p.alive)
+                    .map(|p| p.id)
+                    .unwrap_or(0)
             } else {
                 g.current
             };
             let mut o = observation_spectator(g, pid);
             o["spectate"] = json!(true);
             o["legal_actions"] = json!([]);
+            // Lets a long-running spectator notice that its server was
+            // rebuilt/restarted between games and reload the latest UI.
+            o["server_instance"] = json!(std::process::id());
             return o;
         }
         let mut o = observation(&self.game, 0);
         o["legal_actions"] = serde_json::to_value(self.game.legal_actions(0)).unwrap();
+        o["server_instance"] = json!(std::process::id());
         o
     }
 
@@ -118,8 +160,11 @@ impl Session {
         if matches!(action, Action::EndTurn) {
             let g = &mut self.game;
             let mut guard = 0;
-            while g.winner.is_none() && g.current != 0 && g.players[0].alive
-                && guard < 2 * g.players.len() {
+            while g.winner.is_none()
+                && g.current != 0
+                && g.players[0].alive
+                && guard < 2 * g.players.len()
+            {
                 let pid = g.current;
                 self.ais[pid].take_turn(g, pid);
                 if g.current == pid && g.winner.is_none() {
@@ -166,7 +211,12 @@ fn respond(stream: &mut TcpStream, code: &str, ctype: &str, body: &[u8]) {
 }
 
 fn respond_json(stream: &mut TcpStream, v: &Value) {
-    respond(stream, "200 OK", "application/json", v.to_string().as_bytes());
+    respond(
+        stream,
+        "200 OK",
+        "application/json",
+        v.to_string().as_bytes(),
+    );
 }
 
 fn new_game_params(current: &Params, request: &Value) -> Params {
@@ -221,7 +271,9 @@ fn auto_step_loop(sh: Arc<Shared>) {
                 sh.restart_in.store(left, Ordering::Relaxed);
                 if left == 0 {
                     let mut p = s.params.clone();
-                    p.seed = p.seed.wrapping_mul(6364136223846793005)
+                    p.seed = p
+                        .seed
+                        .wrapping_mul(6364136223846793005)
                         .wrapping_add(1442695040888963407);
                     *s = Session::new(p);
                     over_since = None;
@@ -307,19 +359,29 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
             decorate(&mut o, sh);
             respond_json(stream, &o);
         }
+        ("GET", "/save") => {
+            let session = sh.session.lock().unwrap();
+            let save = serde_json::to_value(&session.game).unwrap();
+            respond_json(stream, &save);
+        }
         ("GET", "/rules") => {
             let session = sh.session.lock().unwrap();
             let r = &session.game.rules;
-            respond_json(stream, &json!({
-                "techs": r.techs, "civics": r.civics,
-                "terrains": r.terrains, "features": r.features,
-                "resources": r.resources, "improvements": r.improvements,
-                "governments": r.governments, "units": r.units,
-                "buildings": r.buildings, "districts": r.districts,
-                "projects": r.projects,
-                "policies": r.policies, "beliefs": r.beliefs, "civs": r.civs,
-                "map_sizes": CIV6_MAP_SIZES,
-            }));
+            respond_json(
+                stream,
+                &json!({
+                    "techs": r.techs, "civics": r.civics,
+                    "terrains": r.terrains, "features": r.features,
+                    "resources": r.resources, "improvements": r.improvements,
+                    "governments": r.governments, "units": r.units,
+                    "promotions": r.promotions,
+                    "buildings": r.buildings, "districts": r.districts,
+                    "wonders": r.wonders,
+                    "projects": r.projects,
+                    "policies": r.policies, "beliefs": r.beliefs, "civs": r.civs,
+                    "map_sizes": CIV6_MAP_SIZES,
+                }),
+            );
         }
         ("POST", "/action") => {
             let mut session = sh.session.lock().unwrap();
@@ -356,14 +418,18 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
             decorate(&mut o, sh);
             respond_json(stream, &o);
         }
-        _ => respond(stream, "404 Not Found", "application/json",
-                     b"{\"error\":\"not found\"}"),
+        _ => respond(
+            stream,
+            "404 Not Found",
+            "application/json",
+            b"{\"error\":\"not found\"}",
+        ),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{new_game_params, Params};
+    use super::{new_game_params, Params, Session, EMBEDDED_INDEX};
     use serde_json::json;
 
     fn current() -> Params {
@@ -380,39 +446,107 @@ mod tests {
 
     #[test]
     fn new_game_player_count_applies_the_whole_civ6_size_profile() {
-        let tiny = new_game_params(&current(), &json!({"num_players": 4}));
-        assert_eq!((tiny.width, tiny.height, tiny.num_city_states), (60, 38, 6));
-
-        let small = new_game_params(&tiny, &json!({"num_players": 6}));
-        assert_eq!((small.width, small.height, small.num_city_states), (74, 46, 9));
+        let expected = [
+            (2, 44, 26, 3),
+            (4, 60, 38, 6),
+            (6, 74, 46, 9),
+            (8, 84, 54, 12),
+            (10, 96, 60, 15),
+            (12, 106, 66, 18),
+        ];
+        let mut params = current();
+        for (players, width, height, city_states) in expected {
+            params = new_game_params(&params, &json!({"num_players": players}));
+            assert_eq!(params.num_players, players);
+            assert_eq!(
+                (params.width, params.height, params.num_city_states),
+                (width, height, city_states)
+            );
+        }
     }
 
     #[test]
     fn explicit_advanced_overrides_win_over_the_profile() {
-        let p = new_game_params(&current(), &json!({
-            "num_players": 6,
-            "width": 80,
-            "height": 50,
-            "num_city_states": 2
-        }));
+        let p = new_game_params(
+            &current(),
+            &json!({
+                "num_players": 6,
+                "width": 80,
+                "height": 50,
+                "num_city_states": 2
+            }),
+        );
         assert_eq!((p.width, p.height, p.num_city_states), (80, 50, 2));
+    }
+
+    #[test]
+    fn browser_exposes_every_stock_size_with_setup_first() {
+        for players in [2, 4, 6, 8, 10, 12] {
+            assert!(
+                EMBEDDED_INDEX.contains(&format!("<option value=\"{players}\"")),
+                "browser setup is missing the {players}-player map size"
+            );
+        }
+        assert!(EMBEDDED_INDEX.contains("RULES.map_sizes.map(size =>"));
+        assert!(!EMBEDDED_INDEX.contains("RULES.map_sizes.filter"));
+
+        let setup = EMBEDDED_INDEX
+            .find("<details class=\"utility-panel\">")
+            .expect("simulation setup panel");
+        let strategy = EMBEDDED_INDEX
+            .find("<span>Active strategy</span>")
+            .expect("active strategy section");
+        assert!(setup < strategy, "simulation setup should be at the top");
+    }
+
+    #[test]
+    fn state_identifies_the_running_server_instance() {
+        let state = Session::new(current()).state();
+        assert_eq!(
+            state["server_instance"].as_u64(),
+            Some(std::process::id() as u64)
+        );
+    }
+
+    #[test]
+    fn restored_session_preserves_progress_and_derives_its_world_settings() {
+        let mut game = Session::new(current()).game;
+        game.turn = 37;
+        game.current = 1;
+        let mut wrong = current();
+        wrong.num_players = 12;
+        wrong.width = 106;
+        wrong.height = 66;
+        wrong.num_city_states = 18;
+
+        let restored = Session::from_game(wrong, game);
+        assert_eq!((restored.game.turn, restored.game.current), (37, 1));
+        assert_eq!(restored.params.num_players, 2);
+        assert_eq!((restored.params.width, restored.params.height), (20, 14));
+        assert_eq!(restored.params.num_city_states, 1);
     }
 }
 
-pub fn serve(port: u16, open_browser: bool, params: Params) {
+pub fn serve_with_game(port: u16, open_browser: bool, params: Params, game: Option<Game>) {
     let listener = TcpListener::bind(("127.0.0.1", port))
         .unwrap_or_else(|e| panic!("cannot bind port {port}: {e}"));
     let actual = listener.local_addr().unwrap().port();
     let url = format!("http://127.0.0.1:{actual}/");
+    let session = match game {
+        Some(game) => Session::from_game(params, game),
+        None => Session::new(params),
+    };
     println!("Martin Halvorson's Civilization VIS — playing at {url}");
-    if params.spectate {
-        println!("Spectator mode: all {} players are AI-driven. Ctrl+C to quit.",
-                 params.num_players);
+    if session.params.spectate {
+        println!(
+            "Spectator mode: all {} players are AI-driven. Ctrl+C to quit.",
+            session.params.num_players
+        );
     } else {
         println!("You are player 0. Ctrl+C to quit.");
     }
     let shared = Arc::new(Shared {
-        session: Mutex::new(Session::new(params)),
+        session: Mutex::new(session),
         pace_ms: AtomicU64::new(100), // lightning by default
         paused: AtomicBool::new(false),
         restart_in: AtomicU64::new(u64::MAX),
@@ -429,10 +563,15 @@ pub fn serve(port: u16, open_browser: bool, params: Params) {
     }
 }
 
+pub fn serve(port: u16, open_browser: bool, params: Params) {
+    serve_with_game(port, open_browser, params, None);
+}
+
 fn open_url(url: &str) {
     #[cfg(windows)]
     let _ = std::process::Command::new("cmd")
-        .args(["/C", "start", "", url]).spawn();
+        .args(["/C", "start", "", url])
+        .spawn();
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(url).spawn();
     #[cfg(all(not(windows), not(target_os = "macos")))]
