@@ -62,6 +62,7 @@
     "strength": 35,
     "tech": "iron_working",
     "requires_resource": "iron",
+    "resource_cost": 20,
     "promotion_class": "melee",
     "zone_of_control": true
   },
@@ -72,6 +73,7 @@
     "strength": 36,
     "tech": "horseback_riding",
     "requires_resource": "horses",
+    "resource_cost": 20,
     "cavalry": true,
     "promotion_class": "light_cavalry",
     "zone_of_control": true
@@ -113,6 +115,7 @@
     "strength": 50,
     "tech": "stirrups",
     "requires_resource": "iron",
+    "resource_cost": 20,
     "cavalry": true,
     "promotion_class": "heavy_cavalry",
     "zone_of_control": true
@@ -123,6 +126,8 @@
     "moves": 2,
     "strength": 55,
     "tech": "gunpowder",
+    "requires_resource": "niter",
+    "resource_cost": 20,
     "promotion_class": "melee",
     "zone_of_control": true
   },
@@ -168,6 +173,8 @@
     "range": 2,
     "domain": "sea",
     "tech": "square_rigging",
+    "requires_resource": "niter",
+    "resource_cost": 20,
     "promotion_class": "naval_ranged",
     "zone_of_control": true
   },
@@ -191,6 +198,9 @@
     "sight": 3,
     "domain": "sea",
     "tech": "steam_power",
+    "requires_resource": "coal",
+    "resource_cost": 1,
+    "resource_maintenance": 1,
     "promotion_class": "naval_melee",
     "zone_of_control": true
   },
@@ -203,6 +213,9 @@
     "range": 3,
     "domain": "sea",
     "tech": "refining",
+    "requires_resource": "coal",
+    "resource_cost": 1,
+    "resource_maintenance": 1,
     "promotion_class": "naval_ranged",
     "zone_of_control": true
   },
@@ -215,6 +228,9 @@
     "range": 2,
     "domain": "sea",
     "tech": "electricity",
+    "requires_resource": "oil",
+    "resource_cost": 1,
+    "resource_maintenance": 1,
     "promotion_class": "naval_raider"
   },
   "destroyer": {
@@ -225,6 +241,9 @@
     "sight": 3,
     "domain": "sea",
     "tech": "combined_arms",
+    "requires_resource": "oil",
+    "resource_cost": 1,
+    "resource_maintenance": 1,
     "promotion_class": "naval_melee",
     "zone_of_control": true
   },
@@ -248,6 +267,9 @@
     "sight": 3,
     "domain": "sea",
     "tech": "lasers",
+    "requires_resource": "oil",
+    "resource_cost": 1,
+    "resource_maintenance": 1,
     "promotion_class": "naval_ranged",
     "zone_of_control": true
   },
@@ -328,6 +350,7 @@
     "strength": 40,
     "tech": "iron_working",
     "requires_resource": "iron",
+    "resource_cost": 20,
     "unique_to": "Rome",
     "replaces": "swordsman",
     "promotion_class": "melee",
@@ -418,11 +441,11 @@
   },
   "man_at_arms": {
     "class": "military", "cost": 160, "moves": 2, "strength": 45,
-    "tech": "apprenticeship", "requires_resource": "iron", "promotion_class": "melee", "zone_of_control": true
+    "tech": "apprenticeship", "requires_resource": "iron", "resource_cost": 20, "promotion_class": "melee", "zone_of_control": true
   },
   "courser": {
     "class": "military", "cost": 200, "moves": 5, "strength": 46,
-    "tech": "castles", "requires_resource": "horses", "cavalry": true, "promotion_class": "light_cavalry", "zone_of_control": true
+    "tech": "castles", "requires_resource": "horses", "resource_cost": 20, "cavalry": true, "promotion_class": "light_cavalry", "zone_of_control": true
   },
   "skirmisher": {
     "class": "military", "cost": 150, "moves": 3, "strength": 20,
@@ -439,7 +462,7 @@
   },
   "bombard": {
     "class": "military", "cost": 280, "moves": 2, "strength": 45,
-    "bombard_strength": 55, "range": 2, "tech": "metal_casting", "requires_resource": "niter",
+    "bombard_strength": 55, "range": 2, "tech": "metal_casting", "requires_resource": "niter", "resource_cost": 20,
     "siege": true, "promotion_class": "siege"
   },
   "pike_and_shot": {
@@ -448,16 +471,16 @@
   },
   "cavalry": {
     "class": "military", "cost": 330, "moves": 5, "strength": 62,
-    "tech": "military_science", "requires_resource": "horses", "cavalry": true,
+    "tech": "military_science", "requires_resource": "horses", "resource_cost": 20, "cavalry": true,
     "promotion_class": "light_cavalry", "zone_of_control": true
   },
   "line_infantry": {
     "class": "military", "cost": 360, "moves": 2, "strength": 65,
-    "tech": "military_science", "requires_resource": "niter", "promotion_class": "melee", "zone_of_control": true
+    "tech": "military_science", "requires_resource": "niter", "resource_cost": 20, "promotion_class": "melee", "zone_of_control": true
   },
   "cuirassier": {
     "class": "military", "cost": 330, "moves": 4, "strength": 64,
-    "tech": "ballistics", "requires_resource": "iron", "cavalry": true,
+    "tech": "ballistics", "requires_resource": "iron", "resource_cost": 20, "cavalry": true,
     "promotion_class": "heavy_cavalry", "zone_of_control": true
   },
   "field_cannon": {
@@ -470,34 +493,34 @@
   },
   "infantry": {
     "class": "military", "cost": 430, "moves": 2, "strength": 75,
-    "tech": "replaceable_parts", "requires_resource": "oil", "promotion_class": "melee", "zone_of_control": true
+    "tech": "replaceable_parts", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1, "promotion_class": "melee", "zone_of_control": true
   },
   "artillery": {
     "class": "military", "cost": 430, "moves": 2, "strength": 60,
-    "bombard_strength": 80, "range": 2, "tech": "steel", "requires_resource": "oil",
+    "bombard_strength": 80, "range": 2, "tech": "steel", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1,
     "siege": true, "promotion_class": "siege"
   },
   "biplane": {
     "class": "military", "cost": 430, "moves": 6, "strength": 80,
-    "ranged_strength": 75, "range": 4, "tech": "flight", "requires_resource": "oil",
+    "ranged_strength": 75, "range": 4, "tech": "flight", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1,
     "requires_district": "aerodrome", "domain": "air"
   },
   "observation_balloon": {"class": "support", "cost": 240, "moves": 2, "tech": "flight", "sight": 3},
   "medic": {"class": "support", "cost": 370, "moves": 2, "tech": "sanitation"},
   "tank": {
     "class": "military", "cost": 480, "moves": 4, "strength": 85,
-    "tech": "combustion", "requires_resource": "oil", "cavalry": true,
+    "tech": "combustion", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1, "cavalry": true,
     "promotion_class": "heavy_cavalry", "zone_of_control": true
   },
   "supply_convoy": {"class": "support", "cost": 450, "moves": 4, "tech": "combustion"},
   "fighter": {
     "class": "military", "cost": 520, "moves": 8, "strength": 100,
-    "ranged_strength": 100, "range": 6, "tech": "advanced_flight", "requires_resource": "aluminum",
+    "ranged_strength": 100, "range": 6, "tech": "advanced_flight", "requires_resource": "aluminum", "resource_cost": 1, "resource_maintenance": 1,
     "requires_district": "aerodrome", "domain": "air"
   },
   "bomber": {
     "class": "military", "cost": 560, "moves": 7, "strength": 85,
-    "bombard_strength": 110, "range": 8, "tech": "advanced_flight", "requires_resource": "aluminum",
+    "bombard_strength": 110, "range": 8, "tech": "advanced_flight", "requires_resource": "aluminum", "resource_cost": 1, "resource_maintenance": 1,
     "requires_district": "aerodrome", "domain": "air", "siege": true
   },
   "anti_air_gun": {
@@ -515,7 +538,7 @@
   "drone": {"class": "support", "cost": 420, "moves": 3, "tech": "computers", "sight": 4},
   "modern_armor": {
     "class": "military", "cost": 680, "moves": 4, "strength": 95,
-    "tech": "composites", "requires_resource": "oil", "cavalry": true,
+    "tech": "composites", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1, "cavalry": true,
     "promotion_class": "heavy_cavalry", "zone_of_control": true
   },
   "modern_at": {
@@ -528,12 +551,12 @@
   },
   "rocket_artillery": {
     "class": "military", "cost": 680, "moves": 3, "strength": 70,
-    "bombard_strength": 100, "range": 3, "tech": "guidance_systems", "requires_resource": "oil",
+    "bombard_strength": 100, "range": 3, "tech": "guidance_systems", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1,
     "siege": true, "promotion_class": "siege"
   },
   "helicopter": {
     "class": "military", "cost": 600, "moves": 4, "strength": 86,
-    "tech": "synthetic_materials", "requires_resource": "aluminum", "cavalry": true,
+    "tech": "synthetic_materials", "requires_resource": "aluminum", "resource_cost": 1, "resource_maintenance": 1, "cavalry": true,
     "promotion_class": "light_cavalry", "zone_of_control": true
   },
   "spec_ops": {
@@ -542,22 +565,26 @@
   },
   "mechanized_infantry": {
     "class": "military", "cost": 650, "moves": 3, "strength": 85,
-    "tech": "satellites", "requires_resource": "oil", "promotion_class": "melee", "zone_of_control": true
+    "tech": "satellites", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1, "promotion_class": "melee", "zone_of_control": true
   },
   "jet_fighter": {
     "class": "military", "cost": 650, "moves": 10, "strength": 110,
-    "ranged_strength": 110, "range": 8, "tech": "lasers", "requires_resource": "aluminum",
+    "ranged_strength": 110, "range": 8, "tech": "lasers", "requires_resource": "aluminum", "resource_cost": 1, "resource_maintenance": 1,
     "requires_district": "aerodrome", "domain": "air"
   },
   "jet_bomber": {
     "class": "military", "cost": 700, "moves": 9, "strength": 90,
-    "bombard_strength": 120, "range": 10, "tech": "stealth_technology", "requires_resource": "aluminum",
+    "bombard_strength": 120, "range": 10, "tech": "stealth_technology", "requires_resource": "aluminum", "resource_cost": 1, "resource_maintenance": 1,
     "requires_district": "aerodrome", "domain": "air", "siege": true
   },
   "giant_death_robot": {
     "class": "military", "cost": 1500, "moves": 5, "strength": 130,
-    "ranged_strength": 120, "range": 3, "tech": "robotics", "requires_resource": "uranium",
+    "ranged_strength": 120, "range": 3, "tech": "robotics", "requires_resource": "uranium", "resource_cost": 1, "resource_maintenance": 3,
     "promotion_class": "melee", "zone_of_control": true
+  },
+  "warrior_monk": {
+    "class": "military", "cost": 200, "moves": 3, "strength": 40,
+    "buildable": false, "promotion_class": "warrior_monk", "zone_of_control": true
   },
   "naturalist": {
     "class": "civilian", "cost": 400, "moves": 2, "charges": 1,

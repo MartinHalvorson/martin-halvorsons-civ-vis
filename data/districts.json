@@ -10,6 +10,7 @@
     "cost": 54,
     "tech": "writing",
     "yields": {},
+    "citizen_yields": {"science": 2},
     "adjacency": {
       "mountain": {"science": 1},
       "rainforest": {"science": 0.5},
@@ -25,6 +26,7 @@
     "cost": 54,
     "tech": "astrology",
     "yields": {},
+    "citizen_yields": {"faith": 2},
     "adjacency": {
       "natural_wonder": {"faith": 2},
       "mountain": {"faith": 1},
@@ -40,6 +42,7 @@
     "cost": 54,
     "tech": "bronze_working",
     "yields": {},
+    "citizen_yields": {"gold": 2, "production": 1},
     "placement": "not_adjacent_city",
     "great_person_points": {"general": 1},
     "defense": 10,
@@ -50,6 +53,7 @@
     "cost": 54,
     "tech": "currency",
     "yields": {},
+    "citizen_yields": {"gold": 4},
     "adjacency": {
       "river": {"gold": 2},
       "harbor": {"gold": 2},
@@ -65,6 +69,7 @@
     "water": true,
     "placement": "coast",
     "yields": {},
+    "citizen_yields": {"food": 1, "gold": 2},
     "adjacency": {
       "coast_resource": {"gold": 1},
       "district": {"gold": 0.5},
@@ -77,6 +82,7 @@
     "cost": 54,
     "civic": "drama_poetry",
     "yields": {},
+    "citizen_yields": {"culture": 2},
     "adjacency": {
       "wonder": {"culture": 2},
       "district": {"culture": 0.5},
@@ -92,6 +98,7 @@
     "cost": 54,
     "tech": "apprenticeship",
     "yields": {},
+    "citizen_yields": {"production": 2},
     "adjacency": {
       "quarry": {"production": 1},
       "strategic_resource": {"production": 1},

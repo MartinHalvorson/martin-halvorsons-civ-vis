@@ -1080,6 +1080,18 @@ impl AdvancedAi {
                 if resolution.ballots.contains_key(&pid) {
                     continue;
                 }
+                // In an explicit victory evaluation every major shares the
+                // same objective. Letting non-diplomatic targets repeatedly
+                // nominate themselves for scored Congress resolutions can
+                // end an otherwise healthy science or culture race with an
+                // accidental diplomatic victory. They may still vote on
+                // unscored resolutions such as International Aid.
+                if self.victory_target.is_some()
+                    && self.victory_target != Some(VictoryTarget::Diplomacy)
+                    && matches!(resolution.id.as_str(), "world_leader" | "world_fair")
+                {
+                    continue;
+                }
                 let choice = pid.to_string();
                 if resolution.choices.contains(&choice) {
                     let votes = if plan.strategy == GrandStrategy::Diplomacy
@@ -3288,6 +3300,12 @@ impl Ai for AdvancedAi {
             self.base.take_turn(g, pid);
             return;
         }
+        self.base.resolve_city_dispositions(
+            g,
+            pid,
+            self.victory_target == Some(VictoryTarget::Diplomacy),
+            self.victory_target == Some(VictoryTarget::Domination),
+        );
         self.observe_campaign(g, pid);
         if self.plan_stale(g, pid) {
             self.plan = Some(self.assess(g, pid));
@@ -3329,6 +3347,12 @@ impl Ai for AdvancedAi {
             self.advanced_command_actions(g, pid, &plan);
         }
         self.advanced_units(g, pid, &plan);
+        self.base.resolve_city_dispositions(
+            g,
+            pid,
+            plan.strategy == GrandStrategy::Diplomacy,
+            plan.strategy == GrandStrategy::Conquest,
+        );
         if g.winner.is_none() && g.current == pid {
             let _ = g.apply(pid, &Action::EndTurn);
         }
@@ -3497,6 +3521,60 @@ mod tests {
         assert_eq!("religious".parse(), Ok(VictoryTarget::Religion));
         assert_eq!("diplomatic".parse(), Ok(VictoryTarget::Diplomacy));
         assert_eq!("conquest".parse(), Ok(VictoryTarget::Domination));
+    }
+
+    #[test]
+    fn explicit_non_diplomatic_targets_do_not_score_congress_points() {
+        use crate::game::{CongressResolution, CongressSession};
+
+        let session = || CongressSession {
+            convened: 0,
+            closes: 5,
+            resolutions: vec![
+                CongressResolution {
+                    id: "world_leader".to_string(),
+                    title: "Diplomatic Victory".to_string(),
+                    choices: vec!["0".to_string(), "1".to_string()],
+                    ballots: BTreeMap::new(),
+                },
+                CongressResolution {
+                    id: "international_aid".to_string(),
+                    title: "International Aid".to_string(),
+                    choices: vec!["0".to_string(), "1".to_string()],
+                    ballots: BTreeMap::new(),
+                },
+            ],
+        };
+        let plan = |strategy| StrategicPlan {
+            strategy,
+            target_player: Some(1),
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: 0,
+        };
+
+        let mut science_game = Game::new(2, 24, 16, 77, 80, 0);
+        science_game.congress = Some(session());
+        AdvancedAi::targeting(VictoryTarget::Science).advanced_diplomacy(
+            &mut science_game,
+            0,
+            &plan(GrandStrategy::Science),
+        );
+        let science_resolutions = &science_game.congress.as_ref().unwrap().resolutions;
+        assert!(!science_resolutions[0].ballots.contains_key(&0));
+        assert!(science_resolutions[1].ballots.contains_key(&0));
+
+        let mut diplomacy_game = Game::new(2, 24, 16, 78, 80, 0);
+        diplomacy_game.congress = Some(session());
+        AdvancedAi::targeting(VictoryTarget::Diplomacy).advanced_diplomacy(
+            &mut diplomacy_game,
+            0,
+            &plan(GrandStrategy::Diplomacy),
+        );
+        assert!(diplomacy_game.congress.as_ref().unwrap().resolutions[0]
+            .ballots
+            .contains_key(&0));
     }
 
     #[test]
@@ -4058,15 +4136,36 @@ mod tests {
             .iter()
             .filter(|p| !p.is_minor && p.alive)
             .all(|p| p.techs.len() > 1));
-        assert!(g
-            .players
-            .iter()
-            .filter(|p| !p.is_minor && p.alive)
-            .all(|p| g
-                .player_unit_ids(p.id)
-                .into_iter()
-                .filter(|uid| g.units[uid].kind == "settler")
-                .count()
-                <= 1));
+        // Captured enemy Settlers legitimately make the on-map total exceed
+        // one. Guard the behavior this test actually cares about: the AI must
+        // never manufacture an accumulating backlog of its own Settlers.
+        for player in g.players.iter().filter(|p| !p.is_minor && p.alive) {
+            let produced = g
+                .log
+                .iter()
+                .filter(|(pid, action)| {
+                    *pid == player.id
+                        && matches!(
+                            action,
+                            Action::Produce {
+                                item: Item::Unit { unit },
+                                ..
+                            } if unit == "settler"
+                        )
+                })
+                .count();
+            let founded = g
+                .log
+                .iter()
+                .filter(|(pid, action)| {
+                    *pid == player.id && matches!(action, Action::FoundCity { .. })
+                })
+                .count();
+            assert!(
+                produced <= founded + 1,
+                "advanced AI accumulated self-produced Settlers: player {}, {produced} produced and {founded} used",
+                player.id
+            );
+        }
     }
 }

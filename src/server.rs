@@ -424,6 +424,9 @@ mod tests {
             .find("<span>Active strategy</span>")
             .expect("active strategy section");
         assert!(setup < strategy, "simulation setup should be at the top");
+        assert!(EMBEDDED_INDEX.contains("Quick Deals"));
+        assert!(EMBEDDED_INDEX.contains("function drawQuickDeals()"));
+        assert!(EMBEDDED_INDEX.contains("type:\"trade\""));
     }
 
     #[test]
@@ -433,6 +436,9 @@ mod tests {
             state["server_instance"].as_u64(),
             Some(std::process::id() as u64)
         );
+        assert!(state["quick_deals"].is_array());
+        assert!(state["active_trade_deals"].is_array());
+        assert!(state["me"]["resources"].is_array());
     }
 
     #[test]

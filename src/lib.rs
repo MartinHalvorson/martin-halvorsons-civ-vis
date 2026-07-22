@@ -898,6 +898,11 @@ mod tests {
             g.is_at_war(minor, 1),
             "a city-state follows its Suzerain into war"
         );
+        g.current = 1;
+        let peace = g.legal_actions(1);
+        assert!(peace.contains(&Action::MakePeace { player: 0 }));
+        assert!(!peace.contains(&Action::MakePeace { player: minor }));
+        g.current = 0;
         g.at_war.remove(&(0, 1));
         assert!(
             !g.is_at_war(minor, 1),

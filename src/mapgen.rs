@@ -1149,4 +1149,44 @@ mod river_tests {
             );
         }
     }
+
+    #[test]
+    fn natural_wonders_use_their_connected_multi_tile_footprints() {
+        let rules = Rules::embedded();
+        let mut rng = Rng::new(88_104);
+        let (world, _) = generate(&rules, 50, 32, 2, 0, 8, 3, &mut rng);
+        let expected = [
+            ("great_barrier_reef", 2usize),
+            ("crater_lake", 1),
+            ("pantanal", 4),
+            ("uluru", 1),
+            ("yosemite", 2),
+            ("dead_sea", 2),
+            ("mount_everest", 3),
+            ("pamukkale", 2),
+        ];
+        for (wonder, footprint) in expected {
+            let tiles: BTreeSet<Pos> = world
+                .tiles
+                .iter()
+                .filter(|(_, tile)| tile.feature.as_deref() == Some(wonder))
+                .map(|(position, _)| *position)
+                .collect();
+            assert_eq!(tiles.len(), footprint, "{wonder} footprint");
+            let mut reached = BTreeSet::new();
+            let mut frontier = vec![*tiles.iter().next().unwrap()];
+            while let Some(position) = frontier.pop() {
+                if !reached.insert(position) {
+                    continue;
+                }
+                frontier.extend(
+                    hex::neighbors(position)
+                        .into_iter()
+                        .map(|neighbor| hex::canon(neighbor, world.width))
+                        .filter(|neighbor| tiles.contains(neighbor)),
+                );
+            }
+            assert_eq!(reached, tiles, "{wonder} must be contiguous");
+        }
+    }
 }

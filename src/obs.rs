@@ -87,6 +87,8 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             "id": c.id, "name": c.name, "owner": c.owner,
             "pos": [c.pos.0, c.pos.1], "pop": c.pop, "hp": c.hp,
             "is_capital": c.is_capital,
+            "original_owner": c.original_owner,
+            "captured_from": c.captured_from,
             "wall_hp": c.wall_hp, "wall_max": g.city_max_wall_hp(c),
             "encampment_hp": c.encampment_hp,
             "encampment_wall_hp": c.encampment_wall_hp,
@@ -211,6 +213,18 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
                     "class": spec.class,
                     "native": g.connected_resource_count(pid, resource),
                     "available": g.resource_access_count(pid, resource),
+                    "stockpile": (spec.class == "strategic")
+                        .then(|| round1(g.strategic_stockpile(pid, resource))),
+                    "capacity": (spec.class == "strategic")
+                        .then(|| round1(g.strategic_stockpile_capacity(pid))),
+                    "per_turn": (spec.class == "strategic")
+                        .then(|| round1(g.strategic_resource_rate(pid, resource))),
+                    "shortage": (spec.class == "strategic").then(|| {
+                        p.strategic_resource_shortages
+                            .get(resource)
+                            .copied()
+                            .unwrap_or(0)
+                    }),
                 }))
                 .collect::<Vec<_>>(),
             "policies": p.policies,

@@ -95,5 +95,13 @@
   "indulgence_vendor": {"class":"religious_apostle","tier":1,"effects":{"gold_per_conversion":100},"note":"Gain Gold when this unit first converts a city."},
   "martyr": {"class":"religious_apostle","tier":1,"effects":{"relic_on_death":1},"note":"Creates a Relic if defeated in theological combat."},
   "chaplain": {"class":"religious_apostle","tier":1,"effects":{"adjacent_heal":20},"note":"Adjacent friendly units heal faster."},
-  "heathen_conversion": {"class":"religious_apostle","tier":1,"effects":{"convert_barbarians":1},"note":"Convert adjacent Barbarian units."}
+  "heathen_conversion": {"class":"religious_apostle","tier":1,"effects":{"convert_barbarians":1},"note":"Convert adjacent Barbarian units."},
+
+  "shadow_strike": {"class":"warrior_monk","tier":1,"effects":{"flanking_multiplier":2},"note":"Double flanking bonus."},
+  "twilight_veil": {"class":"warrior_monk","tier":1,"effects":{"camouflage":1},"note":"Visible only to adjacent enemy units."},
+  "exploding_palms": {"class":"warrior_monk","tier":2,"requires":["shadow_strike"],"effects":{"combat_all":10},"note":"+10 Combat Strength."},
+  "disciples": {"class":"warrior_monk","tier":2,"requires":["twilight_veil"],"effects":{"religious_pressure_on_kill":250},"note":"Spreads its religion after defeating a unit."},
+  "sweeping_wind": {"class":"warrior_monk","tier":3,"requires":["exploding_palms","disciples"],"effects":{"extra_attacks":1},"note":"+1 attack per turn when Movement allows."},
+  "dancing_crane": {"class":"warrior_monk","tier":3,"requires":["exploding_palms","disciples"],"effects":{"movement":1},"note":"+1 Movement."},
+  "cobra_strike": {"class":"warrior_monk","tier":4,"requires":["sweeping_wind","dancing_crane"],"effects":{"combat_all":15},"note":"+15 Combat Strength."}
 }
