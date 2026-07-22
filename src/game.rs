@@ -7198,6 +7198,12 @@ pub enum Action {
         unit: u32,
         target: Pos,
     },
+    /// Bomber mission that pillages one improvement, district, or building
+    /// layer without collecting the normal ground-unit plunder reward.
+    AirPillage {
+        unit: u32,
+        target: Pos,
+    },
     AirPatrol {
         unit: u32,
         to: Pos,
@@ -20532,8 +20538,20 @@ impl Game {
                 let range = self.unit_attack_range(uid);
                 let origin = self.air_operation_origin(uid);
                 for target in self.wdisk(origin, range) {
-                    if target != origin && self.enemy_air_strike_target_at(pid, target) {
+                    if target != origin
+                        && u.attacks_left > 0
+                        && self.enemy_air_strike_target_at(pid, target)
+                    {
                         actions.push(Action::AirStrike { unit: uid, target });
+                    }
+                    if target != origin
+                        && spec.promotion_class == "air_bomber"
+                        && u.attacks_left > 0
+                        && (u.hp >= 50
+                            || self.promotion_effect(u, "air_pillage_at_low_health") > 0.0)
+                        && self.air_pillageable_at(pid, target)
+                    {
+                        actions.push(Action::AirPillage { unit: uid, target });
                     }
                 }
                 for base in self.wdisk(u.pos, self.air_rebase_range(uid)) {
@@ -20607,8 +20625,20 @@ impl Game {
                     let range = self.unit_attack_range(uid);
                     let origin = self.air_operation_origin(uid);
                     for target in self.wdisk(origin, range) {
-                        if target != origin && self.enemy_air_strike_target_at(pid, target) {
+                        if target != origin
+                            && u.attacks_left > 0
+                            && self.enemy_air_strike_target_at(pid, target)
+                        {
                             acts.push(Action::AirStrike { unit: uid, target });
+                        }
+                        if target != origin
+                            && spec.promotion_class == "air_bomber"
+                            && u.attacks_left > 0
+                            && (u.hp >= 50
+                                || self.promotion_effect(&u, "air_pillage_at_low_health") > 0.0)
+                            && self.air_pillageable_at(pid, target)
+                        {
+                            acts.push(Action::AirPillage { unit: uid, target });
                         }
                     }
                     for base in self.wdisk(u.pos, self.air_rebase_range(uid)) {
@@ -21556,6 +21586,7 @@ impl Game {
             | Action::CoastalRaid { unit, .. }
             | Action::AirRebase { unit, .. }
             | Action::AirStrike { unit, .. }
+            | Action::AirPillage { unit, .. }
             | Action::AirPatrol { unit, .. }
             | Action::Fortify { unit }
             | Action::Promote { unit, .. }
@@ -21601,6 +21632,7 @@ impl Game {
             Action::CoastalRaid { unit, target } => self.do_coastal_raid(pid, *unit, *target),
             Action::AirRebase { unit, to } => self.do_air_rebase(pid, *unit, *to),
             Action::AirStrike { unit, target } => self.do_air_strike(pid, *unit, *target),
+            Action::AirPillage { unit, target } => self.do_air_pillage(pid, *unit, *target),
             Action::AirPatrol { unit, to } => self.do_air_patrol(pid, *unit, *to),
             Action::Produce { city, item } => self.do_produce(pid, *city, item),
             Action::Buy {
@@ -23599,6 +23631,16 @@ impl Game {
         })
     }
 
+    /// Air Pillage follows the normal ownership, war, garrison, and remaining
+    /// layer rules, but barbarian camps are captured by entering their tile
+    /// rather than bombed for the camp-clear reward.
+    fn air_pillageable_at(&self, pid: usize, pos: Pos) -> bool {
+        self.map
+            .get(pos)
+            .is_some_and(|tile| tile.improvement.as_deref() != Some("barbarian_camp"))
+            && self.pillageable_at(pid, pos)
+    }
+
     fn grant_pillage_reward(&mut self, pid: usize, uid: u32, source: &str, coastal: bool) {
         let amount = 25.0
             * (self.world_era as f64 + 1.0)
@@ -23664,6 +23706,7 @@ impl Game {
         uid: u32,
         pos: Pos,
         coastal: bool,
+        award_spoils: bool,
     ) -> Result<(), String> {
         if !self.pillageable_at(pid, pos) {
             return Err("nothing pillageable there".into());
@@ -23681,40 +23724,43 @@ impl Game {
             improvement
         } else {
             let district = self.map.tiles[&pos].district.clone().unwrap();
-            if !self.map.tiles[&pos].pillaged {
-                self.map.tiles.get_mut(&pos).unwrap().pillaged = true;
-                district
-            } else {
-                let cid = self.map.tiles[&pos].owner_city.unwrap();
-                let building = self.cities[&cid]
-                    .buildings
-                    .iter()
-                    .filter(|building| !self.cities[&cid].pillaged_buildings.contains(*building))
-                    .filter(|building| {
-                        self.rules.buildings[building.as_str()]
-                            .district
-                            .as_ref()
-                            .is_some_and(|family| self.district_is_family(&district, family))
-                    })
-                    .max_by(|a, b| {
-                        self.rules.buildings[a.as_str()]
-                            .cost
-                            .partial_cmp(&self.rules.buildings[b.as_str()].cost)
-                            .unwrap()
-                            .then(a.cmp(b))
-                    })
-                    .cloned()
-                    .ok_or_else(|| "district is already fully pillaged".to_string())?;
+            let cid = self.map.tiles[&pos].owner_city.unwrap();
+            let building = self.cities[&cid]
+                .buildings
+                .iter()
+                .filter(|building| !self.cities[&cid].pillaged_buildings.contains(*building))
+                .filter(|building| {
+                    self.rules.buildings[building.as_str()]
+                        .district
+                        .as_ref()
+                        .is_some_and(|family| self.district_is_family(&district, family))
+                })
+                .max_by(|a, b| {
+                    self.rules.buildings[a.as_str()]
+                        .cost
+                        .partial_cmp(&self.rules.buildings[b.as_str()].cost)
+                        .unwrap()
+                        .then(a.cmp(b))
+                })
+                .cloned();
+            if let Some(building) = building {
                 self.cities
                     .get_mut(&cid)
                     .unwrap()
                     .pillaged_buildings
                     .insert(building.clone());
                 building
+            } else if !self.map.tiles[&pos].pillaged {
+                self.map.tiles.get_mut(&pos).unwrap().pillaged = true;
+                district
+            } else {
+                return Err("district is already fully pillaged".to_string());
             }
         };
         self.scatter_aircraft_from(pos);
-        self.grant_pillage_reward(pid, uid, &source, coastal);
+        if award_spoils {
+            self.grant_pillage_reward(pid, uid, &source, coastal);
+        }
         Ok(())
     }
 
@@ -23728,7 +23774,7 @@ impl Game {
         {
             return Err("unit cannot pillage".into());
         }
-        self.pillage_tile(pid, uid, unit.pos, false)?;
+        self.pillage_tile(pid, uid, unit.pos, false, true)?;
         let cost = if self.promotion_effect(&unit, "pillage_cost") > 0.0 {
             1.0
         } else {
@@ -23778,7 +23824,7 @@ impl Game {
         {
             return Err("unit cannot coastal raid that tile".into());
         }
-        self.pillage_tile(pid, uid, target, true)?;
+        self.pillage_tile(pid, uid, target, true, true)?;
         self.consume_unit_attack(uid);
         Ok(())
     }
@@ -24255,6 +24301,44 @@ impl Game {
                 self.on_unit_lost(defender.owner);
             }
         }
+        self.consume_unit_attack(uid);
+        if let Some(aircraft) = self.units.get_mut(&uid) {
+            aircraft.air_patrol = false;
+            aircraft.air_patrol_pos = None;
+        }
+        Ok(())
+    }
+
+    fn do_air_pillage(&mut self, pid: usize, uid: u32, target: Pos) -> Result<(), String> {
+        let bomber = self.own_unit(pid, uid)?;
+        let spec = &self.rules.units[bomber.kind.as_str()];
+        if spec.domain.as_deref() != Some("air")
+            || spec.promotion_class != "air_bomber"
+            || bomber.moves_left <= 0.0
+            || bomber.attacks_left <= 0
+            || (bomber.hp < 50
+                && self.promotion_effect(&bomber, "air_pillage_at_low_health") <= 0.0)
+            || self.wdist(self.air_operation_origin(uid), target) > self.unit_attack_range(uid)
+            || !self.air_pillageable_at(pid, target)
+        {
+            return Err("invalid air pillage".into());
+        }
+
+        let (destroyed, _) = self.resolve_air_interceptions(uid, target);
+        if destroyed {
+            return Ok(());
+        }
+        if self.units[&uid].hp < 50
+            && self.promotion_effect(&self.units[&uid], "air_pillage_at_low_health") <= 0.0
+        {
+            // The official operation resolves interception before checking
+            // whether an ordinary bomber still has the required 50 HP.
+            self.consume_unit_attack(uid);
+            return Ok(());
+        }
+        // This applies exactly one normal pillage layer, including scattering
+        // aircraft from a disabled Aerodrome, but Air Pillage awards no loot.
+        self.pillage_tile(pid, uid, target, false, false)?;
         self.consume_unit_attack(uid);
         if let Some(aircraft) = self.units.get_mut(&uid) {
             aircraft.air_patrol = false;
@@ -33188,6 +33272,103 @@ mod combat_scenarios {
     }
 
     #[test]
+    fn air_pillage_uses_exact_health_floor_layer_order_and_no_spoils() {
+        let (mut game, base, _) = controlled_game(31_445);
+        game.found_city_for(0, base, None);
+        let enemy_center = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|position| {
+                game.wdist(base, *position) >= 5
+                    && game.wdist(base, *position) <= 8
+                    && game.wdisk(*position, 1).len() == 7
+            })
+            .unwrap();
+        let enemy_city = game.found_city_for(1, enemy_center, None);
+        let mut owned: Vec<Pos> = game.cities[&enemy_city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .filter(|position| *position != enemy_center)
+            .collect();
+        owned.sort_unstable();
+        let campus = owned[0];
+        let farm = owned[1];
+        game.map.tiles.get_mut(&campus).unwrap().district = Some("campus".to_string());
+        game.cities
+            .get_mut(&enemy_city)
+            .unwrap()
+            .districts
+            .insert("campus".to_string(), campus);
+        game.cities
+            .get_mut(&enemy_city)
+            .unwrap()
+            .buildings
+            .extend(["library".to_string(), "university".to_string()]);
+
+        let bomber = game.spawn_unit("bomber", 0, base);
+        game.units.get_mut(&bomber).unwrap().hp = 50;
+        let action = Action::AirPillage {
+            unit: bomber,
+            target: campus,
+        };
+        assert!(game.legal_actions(0).contains(&action));
+        let treasury = game.players[0].gold;
+        let faith = game.players[0].faith;
+        let science = game.players[0].research_overflow;
+        let culture = game.players[0].civic_overflow;
+
+        game.apply(0, &action).unwrap();
+        assert!(game.cities[&enemy_city]
+            .pillaged_buildings
+            .contains("university"));
+        assert!(!game.cities[&enemy_city]
+            .pillaged_buildings
+            .contains("library"));
+        assert!(!game.map.tiles[&campus].pillaged);
+
+        for expected_building in [Some("library"), None] {
+            let unit = game.units.get_mut(&bomber).unwrap();
+            unit.moves_left = 10.0;
+            unit.attacks_left = 1;
+            unit.acted = false;
+            game.apply(0, &action).unwrap();
+            if let Some(building) = expected_building {
+                assert!(game.cities[&enemy_city]
+                    .pillaged_buildings
+                    .contains(building));
+                assert!(!game.map.tiles[&campus].pillaged);
+            }
+        }
+        assert!(game.map.tiles[&campus].pillaged);
+        assert_eq!(game.players[0].gold, treasury);
+        assert_eq!(game.players[0].faith, faith);
+        assert_eq!(game.players[0].research_overflow, science);
+        assert_eq!(game.players[0].civic_overflow, culture);
+
+        game.map.tiles.get_mut(&farm).unwrap().improvement = Some("farm".to_string());
+        let low_bomber = game.spawn_unit("bomber", 0, base);
+        game.units.get_mut(&low_bomber).unwrap().hp = 49;
+        let low_action = Action::AirPillage {
+            unit: low_bomber,
+            target: farm,
+        };
+        assert!(!game.legal_actions(0).contains(&low_action));
+        assert!(game.apply(0, &low_action).is_err());
+        game.units
+            .get_mut(&low_bomber)
+            .unwrap()
+            .promotions
+            .insert("superfortress".to_string());
+        assert!(game.legal_actions(0).contains(&low_action));
+        game.apply(0, &low_action).unwrap();
+        assert!(game.map.tiles[&farm].pillaged);
+        assert_eq!(game.units[&low_bomber].hp, 49);
+    }
+
+    #[test]
     fn fighter_interception_diverts_fighter_strikes_from_ground_targets() {
         let (mut game, target, ring) = controlled_game(31_441);
         let victim = game.spawn_unit("warrior", 1, target);
@@ -33406,6 +33587,114 @@ mod combat_scenarios {
         assert_eq!(game.units[&aircraft].pos, city_pos);
         assert_eq!(game.units[&aircraft].moves_left, 0.0);
         assert!(game.units[&aircraft].acted);
+    }
+
+    #[test]
+    fn bombers_air_pillage_without_spoils_and_superfortress_ignores_health_gate() {
+        let (mut game, base, ring) = controlled_game(31_446);
+        let home = game.found_city_for(0, base, None);
+        let enemy_city = game.found_city_for(1, ring[2], None);
+        let target = ring[0];
+        {
+            let tile = game.map.tiles.get_mut(&target).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.owner_city = Some(enemy_city);
+            tile.improvement = Some("mine".to_string());
+            tile.pillaged = false;
+        }
+        let bomber = game.spawn_unit("bomber", 0, base);
+        let mission = Action::AirPillage {
+            unit: bomber,
+            target,
+        };
+
+        game.units.get_mut(&bomber).unwrap().hp = 49;
+        assert!(!game.legal_actions(0).contains(&mission));
+        assert_eq!(
+            game.apply(0, &mission),
+            Err("invalid air pillage".to_string()),
+            "ordinary bombers need at least 50 HP"
+        );
+
+        game.units.get_mut(&bomber).unwrap().hp = 50;
+        assert!(game.legal_actions(0).contains(&mission));
+        let before = (
+            game.players[0].gold,
+            game.players[0].faith,
+            game.players[0].research_overflow,
+            game.players[0].civic_overflow,
+            game.cities[&home].production,
+        );
+        game.apply(0, &mission).unwrap();
+        assert!(game.map.tiles[&target].pillaged);
+        assert_eq!(
+            (
+                game.players[0].gold,
+                game.players[0].faith,
+                game.players[0].research_overflow,
+                game.players[0].civic_overflow,
+                game.cities[&home].production,
+            ),
+            before,
+            "Air Pillage damages infrastructure but awards no plunder"
+        );
+        assert_eq!(game.units[&bomber].moves_left, 0.0);
+        assert_eq!(game.units[&bomber].attacks_left, 0);
+
+        let (mut intercepted, base, ring) = controlled_game(31_448);
+        intercepted.found_city_for(0, base, None);
+        let enemy_city = intercepted.found_city_for(1, ring[2], None);
+        let target = ring[0];
+        {
+            let tile = intercepted.map.tiles.get_mut(&target).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.owner_city = Some(enemy_city);
+            tile.improvement = Some("mine".to_string());
+        }
+        let bomber = intercepted.spawn_unit("bomber", 0, base);
+        intercepted.units.get_mut(&bomber).unwrap().hp = 51;
+        let fighter = intercepted.spawn_unit("biplane", 1, ring[3]);
+        let patrol = intercepted.units.get_mut(&fighter).unwrap();
+        patrol.air_patrol = true;
+        patrol.air_patrol_pos = Some(target);
+        intercepted
+            .apply(
+                0,
+                &Action::AirPillage {
+                    unit: bomber,
+                    target,
+                },
+            )
+            .unwrap();
+        assert!(intercepted.units.contains_key(&bomber));
+        assert!(intercepted.units[&bomber].hp < 50);
+        assert!(
+            !intercepted.map.tiles[&target].pillaged,
+            "dropping below 50 HP during interception aborts ordinary Air Pillage"
+        );
+        assert_eq!(intercepted.units[&bomber].attacks_left, 0);
+
+        let (mut promoted, base, ring) = controlled_game(31_447);
+        promoted.found_city_for(0, base, None);
+        let enemy_city = promoted.found_city_for(1, ring[2], None);
+        let target = ring[0];
+        {
+            let tile = promoted.map.tiles.get_mut(&target).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.owner_city = Some(enemy_city);
+            tile.improvement = Some("mine".to_string());
+        }
+        let bomber = promoted.spawn_unit("bomber", 0, base);
+        let unit = promoted.units.get_mut(&bomber).unwrap();
+        unit.hp = 1;
+        unit.promotions.insert("superfortress".to_string());
+        let mission = Action::AirPillage {
+            unit: bomber,
+            target,
+        };
+        assert!(promoted.legal_actions(0).contains(&mission));
+        promoted.apply(0, &mission).unwrap();
+        assert!(promoted.map.tiles[&target].pillaged);
     }
 
     #[test]

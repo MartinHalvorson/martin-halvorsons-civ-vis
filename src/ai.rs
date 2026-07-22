@@ -829,6 +829,50 @@ impl BasicAi {
     /// Non-generic actions that define a unit's strategic job. Fast raiders
     /// exploit infrastructure, and aircraft use missions and rebasing instead
     /// of pretending to be land units with long range.
+    fn air_pillage_score(g: &Game, target: Pos) -> i32 {
+        let Some(tile) = g.map.get(target) else {
+            return 0;
+        };
+        if let Some(improvement) = tile.improvement.as_deref() {
+            return match improvement {
+                "airstrip" => 145,
+                "oil_well" | "offshore_oil_rig" | "mine" | "quarry" => 90,
+                "farm" | "fishing_boats" => 55,
+                _ => 70,
+            };
+        }
+        let Some(district) = tile.district.as_deref() else {
+            return 0;
+        };
+        if let Some(cost) = tile
+            .owner_city
+            .and_then(|city| g.cities.get(&city))
+            .and_then(|city| {
+                city.buildings
+                    .iter()
+                    .filter(|building| !city.pillaged_buildings.contains(*building))
+                    .filter(|building| {
+                        g.rules.buildings[building.as_str()]
+                            .district
+                            .as_ref()
+                            .is_some_and(|family| g.district_family(district) == family)
+                    })
+                    .map(|building| g.rules.buildings[building.as_str()].cost as i32)
+                    .max()
+            })
+        {
+            return 70 + cost / 5;
+        }
+        if !tile.pillaged {
+            return match g.district_family(district) {
+                "aerodrome" | "industrial_zone" | "campus" | "spaceport" => 135,
+                "commercial_hub" | "harbor" | "holy_site" | "theater_square" => 115,
+                _ => 90,
+            };
+        }
+        65
+    }
+
     pub(crate) fn doctrine_action(&self, g: &Game, pid: usize, uid: u32) -> Option<Action> {
         let doctrine = Self::unit_doctrine(g, uid);
         if !matches!(
@@ -899,7 +943,7 @@ impl BasicAi {
                     )
                 }),
             UnitDoctrine::AirStrike => {
-                let strike = legal
+                let mission = legal
                     .iter()
                     .filter_map(|action| match action {
                         Action::AirStrike { unit, target } if *unit == uid => {
@@ -915,11 +959,14 @@ impl BasicAi {
                             let city = g.city_at(*target).is_some() as i32;
                             Some((city * 120 + 100 - target_hp, *target, action.clone()))
                         }
+                        Action::AirPillage { unit, target } if *unit == uid => {
+                            Some((Self::air_pillage_score(g, *target), *target, action.clone()))
+                        }
                         _ => None,
                     })
                     .max_by_key(|(score, target, _)| (*score, std::cmp::Reverse(*target)))
                     .map(|(_, _, action)| action);
-                strike
+                mission
                     .or_else(|| {
                         let enemy_positions: Vec<Pos> = g
                             .units
@@ -5213,6 +5260,7 @@ mod tests {
                     Action::Pillage { unit }
                     | Action::AirRebase { unit, .. }
                     | Action::AirStrike { unit, .. }
+                    | Action::AirPillage { unit, .. }
                     | Action::AirPatrol { unit, .. }
                     | Action::CoastalRaid { unit, .. } => *unit == uid,
                     _ => false,
