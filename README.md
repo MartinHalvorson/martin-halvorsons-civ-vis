@@ -51,8 +51,9 @@ python3 tools/spectator_supervisor.py --players 4
 
 It keeps the result visible for 10 seconds, checks the current Git upstream,
 safely fast-forwards when possible, rebuilds local edits too, and automatically
-starts the next game. A network or build failure falls back to the last working
-binary instead of ending continuous play.
+starts the next game. The supervisor fingerprints all runtime inputs before and
+after compilation. If code changes during the build or the newest source does
+not compile, it waits and retries instead of starting a stale game.
 
 Player-count defaults use Civ VI's stock world rows: 2 players = Duel
 (`44×26`, 3 city-states), 4 = Tiny (`60×38`, 6 city-states), and 6 = Small

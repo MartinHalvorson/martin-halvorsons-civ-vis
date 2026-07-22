@@ -3,14 +3,16 @@
 
 The supervisor deliberately never replaces code during a live match. Once a
 winner appears it captures that match's size, fetches the configured upstream,
-fast-forwards when safe, builds the newest worktree, and starts another game
-after the result-screen cooldown. A build or network failure is non-fatal: the
-last working binary is relaunched so continuous play does not stop.
+fast-forwards when safe, builds the newest stable worktree snapshot, and starts
+another game after the result-screen cooldown. A network failure can use newer
+local code, while a build failure pauses new games until the latest code works.
 """
 
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -28,6 +30,8 @@ from urllib.request import urlopen
 ROOT = Path(__file__).resolve().parents[1]
 BINARY = ROOT / "target" / "release" / ("civvis.exe" if os.name == "nt" else "civvis")
 RUNTIME_BINARY = ROOT / "target" / "spectator" / BINARY.name
+RUNTIME_METADATA = RUNTIME_BINARY.parent / "build.json"
+RUNTIME_INPUTS = ("Cargo.toml", "Cargo.lock", "build.rs", "src", "data", "web")
 
 
 def log(message: str) -> None:
@@ -96,20 +100,70 @@ def promote_binary() -> None:
     os.replace(staged, RUNTIME_BINARY)
 
 
-def build_latest() -> bool:
-    log("building the latest worktree")
-    result = command("cargo", "build", "--release")
-    if result.returncode == 0:
+def source_snapshot() -> str:
+    """Hash every input embedded in or compiled into the game binary."""
+    files: list[Path] = []
+    for relative in RUNTIME_INPUTS:
+        path = ROOT / relative
+        if path.is_file():
+            files.append(path)
+        elif path.is_dir():
+            files.extend(candidate for candidate in path.rglob("*") if candidate.is_file())
+
+    digest = hashlib.sha256()
+    for path in sorted(files, key=lambda candidate: candidate.relative_to(ROOT).as_posix()):
+        relative = path.relative_to(ROOT).as_posix().encode()
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def write_runtime_metadata(snapshot: str) -> None:
+    revision = command("git", "rev-parse", "--short", "HEAD", check=True).stdout.strip()
+    dirty = bool(command("git", "status", "--porcelain").stdout.strip())
+    metadata = {
+        "revision": revision,
+        "dirty": dirty,
+        "source_snapshot": snapshot,
+        "binary_sha256": hashlib.sha256(RUNTIME_BINARY.read_bytes()).hexdigest(),
+        "built_at": datetime.now(timezone.utc).isoformat(),
+    }
+    staged = RUNTIME_METADATA.with_suffix(".json.new")
+    staged.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    os.replace(staged, RUNTIME_METADATA)
+    log(f"build ready at {revision}{' + local edits' if dirty else ''}")
+
+
+def build_latest(max_attempts: int = 3) -> bool:
+    """Build a stable snapshot; never promote an already-obsolete build."""
+    for attempt in range(1, max_attempts + 1):
+        before = source_snapshot()
+        log(f"building the latest worktree (attempt {attempt}/{max_attempts})")
+        result = command("cargo", "build", "--release")
+        if result.returncode != 0:
+            log("latest worktree does not build; no new game will use stale code")
+            print(result.stdout, file=sys.stderr, flush=True)
+            return False
+        after = source_snapshot()
+        if before != after:
+            log("source changed during compilation; discarding that build")
+            continue
         promote_binary()
-        revision = command("git", "rev-parse", "--short", "HEAD", check=True).stdout.strip()
-        dirty = bool(command("git", "status", "--porcelain").stdout.strip())
-        log(f"build ready at {revision}{' + local edits' if dirty else ''}")
+        write_runtime_metadata(after)
         return True
-    log("build failed; relaunching the last working binary")
-    print(result.stdout, file=sys.stderr, flush=True)
-    if not RUNTIME_BINARY.exists() and BINARY.exists():
-        promote_binary()
+    log("source kept changing during compilation; waiting for a stable snapshot")
     return False
+
+
+def prepare_latest(retry_seconds: float) -> None:
+    """Block until the newest local/upstream source has a verified build."""
+    while True:
+        sync_current_branch()
+        if build_latest():
+            return
+        log(f"retrying the latest build in {retry_seconds:g}s")
+        time.sleep(retry_seconds)
 
 
 def read_state(port: int, timeout: float = 1.0) -> dict[str, Any] | None:
@@ -233,6 +287,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--turns", type=int, default=500)
     parser.add_argument("--cooldown", type=float, default=10.0)
     parser.add_argument("--poll", type=float, default=0.5)
+    parser.add_argument("--build-retry", type=float, default=15.0)
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument(
         "--adopt-pid",
@@ -254,26 +309,23 @@ def main() -> int:
     process: subprocess.Popen[str] | None = None
     adopted_pid = args.adopt_pid
 
-    if adopted_pid is None:
-        sync_current_branch()
-        if not build_latest() and not RUNTIME_BINARY.exists():
-            return 1
-        process = start_server(args.port, settings, not args.no_open)
-        wait_for_server(args.port, process)
-    else:
-        if not process_alive(None, adopted_pid):
-            log(f"cannot adopt PID {adopted_pid}: it is not running")
-            return 2
-        log(f"adopted PID {adopted_pid} on port {args.port}")
-
     try:
+        if adopted_pid is None:
+            prepare_latest(args.build_retry)
+            process = start_server(args.port, settings, not args.no_open)
+            wait_for_server(args.port, process)
+        else:
+            if not process_alive(None, adopted_pid):
+                log(f"cannot adopt PID {adopted_pid}: it is not running")
+                return 2
+            log(f"adopted PID {adopted_pid} on port {args.port}")
+
         while True:
             state = read_state(args.port)
             if state is None:
                 if not process_alive(process, adopted_pid):
                     log("server stopped unexpectedly; rebuilding and resuming")
-                    sync_current_branch()
-                    build_latest()
+                    prepare_latest(args.build_retry)
                     process = start_server(args.port, settings, False)
                     adopted_pid = None
                     wait_for_server(args.port, process)
@@ -293,11 +345,12 @@ def main() -> int:
             stop_server(process, adopted_pid)
             process = None
             adopted_pid = None
-            sync_current_branch()
-            build_latest()
             remaining = args.cooldown - (time.monotonic() - finished_at)
             if remaining > 0:
                 time.sleep(remaining)
+            # Update immediately before launch: a commit or local edit that
+            # arrived during the result cooldown must make this next game too.
+            prepare_latest(args.build_retry)
             process = start_server(args.port, settings, False)
             wait_for_server(args.port, process)
     except KeyboardInterrupt:
