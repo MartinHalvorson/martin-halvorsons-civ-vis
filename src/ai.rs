@@ -105,7 +105,16 @@ pub struct Weights {
     pub d_commercial: f64,
     pub d_holy: f64,
     pub d_theater: f64,
+    // opening book: first four capital builds, indexes into OPENING_MENU
+    // (floor; >= menu length = no scripted pick, evaluate normally)
+    pub open0: f64,
+    pub open1: f64,
+    pub open2: f64,
+    pub open3: f64,
 }
+
+pub const OPENING_MENU: [&str; 6] = ["scout", "warrior", "builder", "settler",
+    "slinger", "monument"];
 
 impl Default for Weights {
     fn default() -> Weights {
@@ -117,6 +126,7 @@ impl Default for Weights {
             settle_food: 1.2, settle_prod: 1.0, settle_gold: 0.3, settle_dist: 0.4,
             min_city_dist: 4.0, wonder_min_bld: 3.0, faith_builder: 120.0,
             d_campus: 4.0, d_commercial: 3.0, d_holy: 2.0, d_theater: 1.0,
+            open0: 1.0, open1: 3.0, open2: 2.0, open3: 5.0, // warrior settler builder monument
         }
     }
 }
@@ -130,7 +140,8 @@ impl Weights {
              self.settle_food, self.settle_prod,
              self.settle_gold, self.settle_dist, self.min_city_dist,
              self.wonder_min_bld, self.faith_builder,
-             self.d_campus, self.d_commercial, self.d_holy, self.d_theater]
+             self.d_campus, self.d_commercial, self.d_holy, self.d_theater,
+             self.open0, self.open1, self.open2, self.open3]
     }
 
     pub fn from_vec(v: &[f64]) -> Weights {
@@ -143,17 +154,19 @@ impl Weights {
             settle_gold: v[14], settle_dist: v[15], min_city_dist: v[16],
             wonder_min_bld: v[17], faith_builder: v[18],
             d_campus: v[19], d_commercial: v[20], d_holy: v[21], d_theater: v[22],
+            open0: v[23], open1: v[24], open2: v[25], open3: v[26],
         }
     }
 
     /// (lo, hi) clamp per gene, same order as to_vec.
-    pub fn bounds() -> [(f64, f64); 23] {
+    pub fn bounds() -> [(f64, f64); 27] {
         [(2.0, 12.0), (1.0, 5.0), (60.0, 400.0), (0.3, 4.0), (0.2, 2.0),
          (0.8, 5.0), (-20.0, 80.0), (0.2, 1.2), (10.0, 200.0),
          (-25.0, 25.0), (0.0, 80.0), (0.2, 3.0),
          (0.2, 3.0), (0.2, 3.0), (0.0, 2.0), (0.0, 2.0), (3.0, 7.0),
          (0.0, 8.0), (40.0, 400.0),
-         (0.0, 8.0), (0.0, 8.0), (0.0, 8.0), (0.0, 8.0)]
+         (0.0, 8.0), (0.0, 8.0), (0.0, 8.0), (0.0, 8.0),
+         (0.0, 6.99), (0.0, 6.99), (0.0, 6.99), (0.0, 6.99)]
     }
 }
 
@@ -162,15 +175,16 @@ pub struct BasicAi {
     minor: bool,
     barb: bool,
     w: Weights,
+    book_pos: usize, // opening-book progress (capital builds played so far)
 }
 
 impl BasicAi {
     pub fn new() -> BasicAi {
-        BasicAi { minor: false, barb: false, w: Weights::default() }
+        BasicAi { minor: false, barb: false, w: Weights::default(), book_pos: 0 }
     }
 
     pub fn with_weights(w: Weights) -> BasicAi {
-        BasicAi { minor: false, barb: false, w }
+        BasicAi { minor: false, barb: false, w, book_pos: 0 }
     }
 
     pub fn fleet(g: &Game) -> Vec<BasicAi> {
@@ -314,7 +328,7 @@ impl BasicAi {
         }
     }
 
-    fn cities(&self, g: &mut Game, pid: usize) {
+    fn cities(&mut self, g: &mut Game, pid: usize) {
         let mut settlers = 0;
         let mut builders = 0;
         let mut military = 0;
@@ -352,6 +366,37 @@ impl BasicAi {
         for cid in &city_ids {
             if !g.cities[cid].queue.is_empty() {
                 continue;
+            }
+            // chess-style opening book: scripted first capital builds
+            if !self.minor && !self.barb && g.cities[cid].is_capital && self.book_pos < 4 {
+                let mut played = false;
+                while self.book_pos < 4 && !played {
+                    let gene = [self.w.open0, self.w.open1, self.w.open2,
+                                self.w.open3][self.book_pos];
+                    self.book_pos += 1;
+                    let i = gene.max(0.0) as usize;
+                    if i >= OPENING_MENU.len() {
+                        continue; // "pass" gene: fall back to evaluation
+                    }
+                    let name = OPENING_MENU[i];
+                    let item = if name == "monument" {
+                        Item::Building { building: name.to_string() }
+                    } else {
+                        Item::Unit { unit: name.to_string() }
+                    };
+                    if g.apply(pid, &Action::Produce { city: *cid, item: item.clone() }).is_ok() {
+                        match &item {
+                            Item::Unit { unit } if unit == "settler" => settlers += 1,
+                            Item::Unit { unit } if unit == "builder" => builders += 1,
+                            Item::Unit { .. } => military += 1,
+                            _ => {}
+                        }
+                        played = true;
+                    }
+                }
+                if played {
+                    continue;
+                }
             }
             if let Some(item) =
                 self.pick_item(g, pid, *cid, n_cities, settlers, builders, military)

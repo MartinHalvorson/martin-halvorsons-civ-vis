@@ -123,7 +123,7 @@ fn evaluate_all(pop: &[Weights], champ: &Weights, cfg: &EvoCfg, gen: u32) -> Vec
     fits
 }
 
-fn mutate(w: &Weights, rng: &mut Rng, bounds: &[(f64, f64); 23]) -> Weights {
+fn mutate(w: &Weights, rng: &mut Rng, bounds: &[(f64, f64); 27]) -> Weights {
     let mut v = w.to_vec();
     for (i, g) in v.iter_mut().enumerate() {
         let (lo, hi) = bounds[i];
