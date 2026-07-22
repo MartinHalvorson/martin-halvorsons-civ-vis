@@ -2941,7 +2941,18 @@ impl AdvancedAi {
     fn strategic_governors(&self, g: &mut Game, pid: usize, plan: &StrategicPlan) {
         let priority = Self::governor_priority(plan.strategy);
         while g.governor_titles_available(pid) > 0 {
-            let primary = priority[0];
+            // Strategy can change every assessment window, but Governor
+            // Titles arrive much more slowly. Finish the earliest incumbent's
+            // two-promotion foundation before adapting the roster, otherwise
+            // transient wars or victory races recreate the old dilution bug.
+            let primary_name = g.players[pid]
+                .governor_roster
+                .iter()
+                .filter(|(_, state)| state.promotions.len() < 2)
+                .min_by_key(|(name, state)| (state.assigned_turn, name.as_str()))
+                .map(|(name, _)| name.clone())
+                .unwrap_or_else(|| priority[0].to_string());
+            let primary = primary_name.as_str();
             if !g.players[pid].governor_roster.contains_key(primary) {
                 if let Some(city) = self.best_governor_city(g, pid, primary, plan) {
                     if g.apply(
@@ -6605,6 +6616,54 @@ mod tests {
             game.players[0].governor_roster["pingala"].promotions.len(),
             2
         );
+    }
+
+    #[test]
+    fn governor_path_stays_focused_when_strategy_changes_between_titles() {
+        let mut game = Game::new_full(1, 24, 16, 7_112, 200, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        game.players[0]
+            .civics
+            .insert("political_philosophy".to_string());
+        let assessed_turn = game.turn;
+        let plan = |strategy| StrategicPlan {
+            strategy,
+            target_player: None,
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn,
+        };
+        let ai = AdvancedAi::new();
+        ai.strategic_governors(&mut game, 0, &plan(GrandStrategy::Expansion));
+        assert!(game.players[0].governor_roster.contains_key("magnus"));
+
+        game.players[0]
+            .counters
+            .insert("district_governor_titles".to_string(), 1);
+        ai.strategic_governors(&mut game, 0, &plan(GrandStrategy::Science));
+        game.players[0]
+            .counters
+            .insert("district_governor_titles".to_string(), 2);
+        ai.strategic_governors(&mut game, 0, &plan(GrandStrategy::Conquest));
+
+        assert_eq!(game.players[0].governor_roster.len(), 1);
+        assert_eq!(
+            game.players[0].governor_roster["magnus"].promotions.len(),
+            2
+        );
+
+        found_test_city(&mut game, 0);
+        game.players[0]
+            .counters
+            .insert("district_governor_titles".to_string(), 3);
+        ai.strategic_governors(&mut game, 0, &plan(GrandStrategy::Science));
+        assert!(game.players[0].governor_roster.contains_key("pingala"));
     }
 
     #[test]
