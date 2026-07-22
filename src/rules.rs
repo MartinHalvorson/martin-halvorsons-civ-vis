@@ -206,6 +206,11 @@ pub struct UnitSpec {
     /// ordinary improvement catalog; engineers/archaeologists are explicit).
     #[serde(default)]
     pub builds: Vec<String>,
+    /// Data-driven auras and special unit rules. Support units currently use
+    /// `adjacent_siege_range`, `adjacent_siege_bombard`, `adjacent_heal`, and
+    /// `adjacent_movement`; unknown entries remain forward-compatible.
+    #[serde(default)]
+    pub effects: BTreeMap<String, f64>,
 }
 
 impl UnitSpec {
@@ -527,10 +532,16 @@ pub struct GovEffects {
     pub science_pct: f64,
     pub gold_pct: f64,
     pub governor_gold_pct: f64,
+    pub governor_faith_per_pop: f64,
     pub district_production_pct: f64,
+    pub wonder_production_pct: f64,
     pub combat_strength: f64,
     pub amenity: f64,
     pub housing: f64,
+    pub district_city_amenity: f64,
+    pub district_city_housing: f64,
+    pub wall_level_housing: f64,
+    pub influence_pct: f64,
     pub great_people_pct: f64,
     pub production_per_pop: f64,
     pub faith_per_pop: f64,
@@ -540,6 +551,7 @@ pub struct GovEffects {
     pub project_production_pct: f64,
     pub religious_strength: f64,
     pub capital_yields: Yields,
+    pub government_building_yields: Yields,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]

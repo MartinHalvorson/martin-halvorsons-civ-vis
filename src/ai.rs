@@ -3987,7 +3987,7 @@ impl BasicAi {
             // A scout needs a clear opportunity; an assault unit presses a
             // thinner edge, and siege spends its attacks on districts.
             let ranged = spec.has_ranged_attack();
-            let radius = if ranged { spec.range.max(1) } else { 1 };
+            let radius = if ranged { g.unit_attack_range(uid) } else { 1 };
             let mut best: Option<(f64, Pos)> = None;
             for pos in g.wdisk(upos, radius) {
                 if pos == upos

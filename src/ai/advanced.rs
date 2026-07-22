@@ -3978,7 +3978,207 @@ impl AdvancedAi {
         }
     }
 
-    #[allow(dead_code)]
+    fn support_unit_value(
+        &self,
+        g: &Game,
+        pid: usize,
+        unit: &str,
+        plan: &StrategicPlan,
+        counts: &EmpireCounts,
+    ) -> f64 {
+        let spec = &g.rules.units[unit];
+        if spec.class != "support" || unit == "military_engineer" {
+            return -10_000.0;
+        }
+        let land_military = counts
+            .military
+            .saturating_sub(counts.naval + counts.aircraft);
+        let field_support = counts.support.saturating_sub(counts.military_engineers);
+        let desired_support = if land_military >= 8 {
+            2
+        } else if land_military >= 3 {
+            1
+        } else {
+            0
+        };
+        if field_support >= desired_support {
+            return -10_000.0;
+        }
+
+        let existing_kinds: Vec<&str> = g
+            .units
+            .values()
+            .filter(|candidate| candidate.owner == pid)
+            .map(|candidate| candidate.kind.as_str())
+            .chain(
+                g.cities
+                    .values()
+                    .filter(|city| city.owner == pid)
+                    .filter_map(|city| match city.queue.first() {
+                        Some(Item::Unit { unit }) => Some(unit.as_str()),
+                        _ => None,
+                    }),
+            )
+            .collect();
+        let has_capability = |effect: &str| {
+            existing_kinds.iter().any(|kind| {
+                g.rules.units[*kind]
+                    .effects
+                    .get(effect)
+                    .is_some_and(|amount| *amount > 0.0)
+            })
+        };
+        let is_breach = matches!(unit, "battering_ram" | "siege_tower");
+        if (spec
+            .effects
+            .get("adjacent_siege_range")
+            .copied()
+            .unwrap_or(0.0)
+            > 0.0
+            && has_capability("adjacent_siege_range"))
+            || (spec.effects.get("adjacent_heal").copied().unwrap_or(0.0) > 0.0
+                && has_capability("adjacent_heal"))
+            || (is_breach
+                && existing_kinds
+                    .iter()
+                    .any(|kind| matches!(*kind, "battering_ram" | "siege_tower")))
+        {
+            return -10_000.0;
+        }
+
+        let target_cities: Vec<_> = plan
+            .target_city
+            .and_then(|city| g.cities.get(&city))
+            .into_iter()
+            .chain(g.cities.values().filter(|city| {
+                city.owner != pid
+                    && g.is_at_war(pid, city.owner)
+                    && plan.target_city != Some(city.id)
+            }))
+            .collect();
+        let breach_value = if is_breach {
+            target_cities
+                .iter()
+                .filter(|city| !g.players[city.owner].techs.contains("steel"))
+                .map(|city| {
+                    let wall_levels = city
+                        .buildings
+                        .iter()
+                        .filter(|building| g.rules.buildings[building.as_str()].outer_defense > 0)
+                        .count();
+                    match unit {
+                        "battering_ram" if wall_levels == 1 => 760.0,
+                        "siege_tower" if (1..=2).contains(&wall_levels) => 800.0,
+                        _ => 0.0,
+                    }
+                })
+                .fold(0.0_f64, f64::max)
+        } else {
+            0.0
+        };
+        let siege_range = spec
+            .effects
+            .get("adjacent_siege_range")
+            .copied()
+            .unwrap_or(0.0);
+        let siege_bombard = spec
+            .effects
+            .get("adjacent_siege_bombard")
+            .copied()
+            .unwrap_or(0.0);
+        let siege_value = if counts.siege > 0 {
+            siege_range * 470.0 + siege_bombard * 38.0
+        } else {
+            0.0
+        };
+        let wounded = g
+            .units
+            .values()
+            .filter(|candidate| {
+                candidate.owner == pid
+                    && candidate.hp < 100
+                    && g.rules.units[candidate.kind.as_str()].class == "military"
+            })
+            .count() as f64;
+        let heal = spec.effects.get("adjacent_heal").copied().unwrap_or(0.0);
+        let movement = spec
+            .effects
+            .get("adjacent_movement")
+            .copied()
+            .unwrap_or(0.0);
+        let logistics_value = if heal > 0.0 {
+            heal * 12.0 + wounded.min(4.0) * 85.0 + movement * 210.0
+        } else {
+            0.0
+        };
+        let value = breach_value.max(siege_value).max(logistics_value);
+        if value > 0.0 {
+            value
+                + if plan.strategy == GrandStrategy::Conquest {
+                    140.0
+                } else {
+                    0.0
+                }
+        } else {
+            -10_000.0
+        }
+    }
+
+    /// The adaptive agent normally delegates routine city queues to the
+    /// lightweight governor. Reserve at most one empty queue per turn for a
+    /// support capability that the active campaign and army can actually use.
+    fn advanced_support_production(&self, g: &mut Game, pid: usize, plan: &StrategicPlan) {
+        if self.base.book_pos < 4
+            || !g
+                .players
+                .iter()
+                .any(|other| other.id != pid && g.is_at_war(pid, other.id))
+        {
+            return;
+        }
+        let counts = self.counts(g, pid);
+        let mut best: Option<(f64, u32, String)> = None;
+        for city in g
+            .cities
+            .values()
+            .filter(|city| city.owner == pid && city.queue.is_empty())
+        {
+            for item in g.producible_items(pid, city.id) {
+                let Item::Unit { unit } = item else { continue };
+                if g.rules.units[unit.as_str()].class != "support" || unit == "military_engineer" {
+                    continue;
+                }
+                let value = self.production_value(
+                    g,
+                    pid,
+                    city.id,
+                    &Item::Unit { unit: unit.clone() },
+                    plan,
+                    &counts,
+                );
+                if best.as_ref().is_none_or(|(old, old_city, old_unit)| {
+                    value > *old + 1e-9
+                        || ((value - *old).abs() < 1e-9
+                            && (city.id, unit.as_str()) < (*old_city, old_unit.as_str()))
+                }) {
+                    best = Some((value, city.id, unit));
+                }
+            }
+        }
+        let Some((value, city, unit)) = best else {
+            return;
+        };
+        if value > 0.0 {
+            let _ = g.apply(
+                pid,
+                &Action::Produce {
+                    city,
+                    item: Item::Unit { unit },
+                },
+            );
+        }
+    }
+
     fn advanced_production(&self, g: &mut Game, pid: usize, plan: &StrategicPlan) {
         let mut counts = self.counts(g, pid);
         let city_ids = g.player_city_ids(pid);
@@ -4292,13 +4492,8 @@ impl AdvancedAi {
                         } else {
                             0.0
                         }
-                } else if spec.class == "support"
-                    && plan.strategy == GrandStrategy::Conquest
-                    && counts.support == 0
-                {
-                    180.0
                 } else if spec.class == "support" {
-                    -10_000.0
+                    self.support_unit_value(g, pid, unit, plan, counts)
                 } else {
                     20.0
                 }
@@ -5742,7 +5937,7 @@ impl AdvancedAi {
                 continue;
             }
             let radius = if spec.has_ranged_attack() {
-                spec.range.max(1)
+                g.unit_attack_range(*uid)
             } else {
                 1
             };
@@ -5763,7 +5958,7 @@ impl AdvancedAi {
                         continue;
                     }
                     let ranged = spec.has_ranged_attack();
-                    let radius = if ranged { spec.range.max(1) } else { 1 };
+                    let radius = if ranged { g.unit_attack_range(*uid) } else { 1 };
                     if g.wdist(unit.pos, target) <= radius {
                         score += self.base.exchange_score(g, *uid, target, ranged).max(-20.0);
                         attackers += 1;
@@ -5961,7 +6156,7 @@ impl AdvancedAi {
         let preferred_depth = match role {
             ForceRole::Recon => spec.range.max(2),
             ForceRole::Vanguard | ForceRole::Mobile => 1,
-            ForceRole::Ranged | ForceRole::Siege => spec.range.max(1),
+            ForceRole::Ranged | ForceRole::Siege => g.unit_attack_range(uid),
             ForceRole::Support => 2,
             ForceRole::AirStrike => spec.range.max(3),
         };
@@ -6012,7 +6207,7 @@ impl AdvancedAi {
                     continue;
                 }
                 let radius = if enemy_spec.has_ranged_attack() {
-                    enemy_spec.range.max(1)
+                    g.unit_attack_range(enemy.id)
                 } else {
                     1
                 };
@@ -6145,7 +6340,8 @@ impl AdvancedAi {
                 let spec = &position.rules.units[unit.kind.as_str()];
                 spec.class == "military"
                     && spec.domain.as_deref() != Some("air")
-                    && position.wdist(unit.pos, victim_pos) <= spec.range.max(1) + 2
+                    && position.wdist(unit.pos, victim_pos)
+                        <= position.unit_attack_range(unit.id) + 2
             })
             .map(|unit| unit.id)
             .collect();
@@ -6578,7 +6774,7 @@ impl AdvancedAi {
             .cloned();
 
         let ranged = spec.has_ranged_attack();
-        let radius = if ranged { spec.range.max(1) } else { 1 };
+        let radius = if ranged { g.unit_attack_range(uid) } else { 1 };
         let decline_settlers =
             self.counts(g, pid).settlers > 0 || g.player_city_ids(pid).len() >= plan.desired_cities;
         let mut best: Option<(f64, Pos)> = None;
@@ -7378,6 +7574,7 @@ impl Ai for AdvancedAi {
                 self.advanced_production(g, pid, &plan);
             }
             if self.victory_target.is_none() {
+                self.advanced_support_production(g, pid, &plan);
                 self.base.cities(g, pid);
             }
         }
@@ -9162,6 +9359,87 @@ mod tests {
             ai.production_value(&game, 0, city, &defender, &plan, &counts) > 0.0,
             "a Galley cannot satisfy the empire's missing land-defense quota"
         );
+    }
+
+    #[test]
+    fn adaptive_production_reserves_a_real_siege_support_capability() {
+        let mut game = Game::new_full(2, 24, 16, 71_007, 160, 0, false);
+        for pid in 0..2 {
+            game.current = pid;
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        game.current = 0;
+        let home = game.player_city_ids(0)[0];
+        let target = game.player_city_ids(1)[0];
+        game.cities.get_mut(&home).unwrap().queue.clear();
+        game.players[0].techs.insert("flight".to_string());
+        let position = game.cities[&home].pos;
+        game.spawn_test_unit("catapult", 0, position);
+        game.spawn_test_unit("warrior", 0, position);
+        game.spawn_test_unit("warrior", 0, position);
+        game.at_war.insert((0, 1));
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Conquest,
+            target_player: Some(1),
+            target_city: Some(target),
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+        let mut ai = AdvancedAi::new();
+        ai.base.book_pos = 4;
+
+        ai.advanced_support_production(&mut game, 0, &plan);
+
+        assert!(matches!(
+            game.cities[&home].queue.first(),
+            Some(Item::Unit { unit }) if unit == "observation_balloon"
+        ));
+    }
+
+    #[test]
+    fn support_search_respects_ram_and_tower_wall_eras() {
+        let mut game = Game::new_full(2, 24, 16, 71_008, 160, 0, false);
+        for pid in 0..2 {
+            game.current = pid;
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        game.current = 0;
+        let home = game.player_city_ids(0)[0];
+        let target = game.player_city_ids(1)[0];
+        let position = game.cities[&home].pos;
+        game.spawn_test_unit("warrior", 0, position);
+        game.spawn_test_unit("warrior", 0, position);
+        game.spawn_test_unit("warrior", 0, position);
+        game.cities.get_mut(&target).unwrap().buildings =
+            vec!["walls".to_string(), "medieval_walls".to_string()];
+        game.cities.get_mut(&target).unwrap().wall_hp = 200;
+        game.at_war.insert((0, 1));
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Conquest,
+            target_player: Some(1),
+            target_city: Some(target),
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+        let ai = AdvancedAi::targeting(VictoryTarget::Domination);
+        let counts = ai.counts(&game, 0);
+
+        assert!(ai.support_unit_value(&game, 0, "battering_ram", &plan, &counts) < -9_000.0);
+        assert!(ai.support_unit_value(&game, 0, "siege_tower", &plan, &counts) > 0.0);
     }
 
     #[test]

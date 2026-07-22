@@ -198,8 +198,13 @@ generic policy. Recon units keep exploring during wars unless a clearly good
 attack is available; assault and high-strength units accept thinner combat
 advantages; mobile and naval-raider units exploit pillage opportunities;
 ranged units preserve firing depth; siege prioritizes cities and districts;
-support stays close to the line; fighters prefer interception patrols while
-bombers prefer strikes and useful rebasing. If no recon unit exists, one
+support stays close to the line; fighters compare exact strikes against
+interception patrol value, while bombers search cloned strike results and
+useful rebasing rather than statically preferring any city. Aircraft are kept
+out of ground-force readiness and local-superiority totals. Production reserves
+one logistics capability for a real land force (and a second for a large one):
+Rams/Towers only for eligible wall eras, Balloons/Drones when siege can exploit
+them, and Medic/Convoy support for wounded or mobility-constrained armies. If no recon unit exists, one
 ordinary combat unit explores at peace instead of sending the whole army.
 Before committing an attack, a bounded quiescence search clones the resulting
 position, orders the opponent's forcing replies, and extends the four strongest

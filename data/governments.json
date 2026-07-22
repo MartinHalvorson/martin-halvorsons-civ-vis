@@ -5,7 +5,10 @@
   },
   "autocracy": {
     "civic": "political_philosophy",
-    "effects": {"capital_yields": {"food": 1, "production": 1, "gold": 1, "science": 1, "culture": 1, "faith": 1}},
+    "effects": {
+      "government_building_yields": {"food": 1, "production": 1, "gold": 1, "science": 1, "culture": 1, "faith": 1},
+      "wonder_production_pct": 10
+    },
     "slots": {"military": 1, "economic": 1, "diplomatic": 1, "wildcard": 1}
   },
   "oligarchy": {
@@ -15,12 +18,12 @@
   },
   "classical_republic": {
     "civic": "political_philosophy",
-    "effects": {"amenity": 1, "housing": 1, "great_people_pct": 15},
+    "effects": {"district_city_amenity": 1, "district_city_housing": 1, "great_people_pct": 15},
     "slots": {"economic": 2, "diplomatic": 1, "wildcard": 1}
   },
   "monarchy": {
     "civic": "divine_right",
-    "effects": {"housing": 1},
+    "effects": {"wall_level_housing": 1, "influence_pct": 50},
     "slots": {"military": 2, "economic": 1, "diplomatic": 1, "wildcard": 2}
   },
   "merchant_republic": {
@@ -30,7 +33,7 @@
   },
   "theocracy": {
     "civic": "reformed_church",
-    "effects": {"religious_strength": 5, "faith_per_pop": 0.5},
+    "effects": {"religious_strength": 5, "governor_faith_per_pop": 0.5},
     "slots": {"military": 2, "economic": 2, "diplomatic": 1, "wildcard": 1}
   },
   "communism": {

@@ -4326,6 +4326,194 @@ mod maintenance_tests {
 }
 
 #[cfg(test)]
+mod government_runtime_tests {
+    use super::*;
+
+    fn one_city(seed: u64) -> (Game, u32) {
+        let mut game = Game::new_full(1, 24, 16, seed, 120, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        let city = game.found_city_for(0, game.units[&settler].pos, None);
+        (game, city)
+    }
+
+    fn without_government(game: &Game) -> Game {
+        let mut baseline = game.clone();
+        baseline.players[0].government = None;
+        baseline
+    }
+
+    fn assert_yield_delta(actual: Yields, baseline: Yields, expected: f64) {
+        assert!((actual.food - baseline.food - expected).abs() < 1e-9);
+        assert!((actual.production - baseline.production - expected).abs() < 1e-9);
+        assert!((actual.gold - baseline.gold - expected).abs() < 1e-9);
+        assert!((actual.science - baseline.science - expected).abs() < 1e-9);
+        assert!((actual.culture - baseline.culture - expected).abs() < 1e-9);
+        assert!((actual.faith - baseline.faith - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn autocracy_counts_active_government_buildings_and_boosts_wonders() {
+        let (mut game, city) = one_city(774_501);
+        game.players[0].government = Some("autocracy".to_string());
+
+        let baseline = without_government(&game);
+        assert_yield_delta(game.city_yields(city), baseline.city_yields(city), 1.0);
+
+        install_test_district(&mut game, city, "government_plaza");
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("ancestral_hall".to_string());
+        let baseline = without_government(&game);
+        assert_yield_delta(game.city_yields(city), baseline.city_yields(city), 2.0);
+
+        let diplomatic_quarter = install_test_district(&mut game, city, "diplomatic_quarter");
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("consulate".to_string());
+        let baseline = without_government(&game);
+        assert_yield_delta(game.city_yields(city), baseline.city_yields(city), 3.0);
+
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .pillaged_buildings
+            .insert("consulate".to_string());
+        let baseline = without_government(&game);
+        assert_yield_delta(game.city_yields(city), baseline.city_yields(city), 2.0);
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .pillaged_buildings
+            .remove("consulate");
+        game.map
+            .tiles
+            .get_mut(&diplomatic_quarter)
+            .unwrap()
+            .pillaged = true;
+        let baseline = without_government(&game);
+        assert_yield_delta(game.city_yields(city), baseline.city_yields(city), 2.0);
+
+        let wonder = Item::Wonder {
+            wonder: "pyramids".to_string(),
+            pos: game.cities[&city].pos,
+        };
+        let baseline = without_government(&game);
+        assert!(
+            (game.item_prod_mult(0, city, Some(&wonder))
+                - baseline.item_prod_mult(0, city, Some(&wonder))
+                - 0.10)
+                .abs()
+                < 1e-9
+        );
+    }
+
+    #[test]
+    fn classical_republic_requires_a_completed_district() {
+        let (mut game, city) = one_city(774_502);
+        game.players[0].government = Some("classical_republic".to_string());
+        let baseline = without_government(&game);
+        assert_eq!(
+            game.city_housing(&game.cities[&city]),
+            baseline.city_housing(&baseline.cities[&city])
+        );
+        assert_eq!(
+            game.city_local_amenities(&game.cities[&city]),
+            baseline.city_local_amenities(&baseline.cities[&city])
+        );
+
+        let district = install_test_district(&mut game, city, "campus");
+        let baseline = without_government(&game);
+        assert_eq!(
+            game.city_housing(&game.cities[&city]),
+            baseline.city_housing(&baseline.cities[&city]) + 1.0
+        );
+        assert_eq!(
+            game.city_local_amenities(&game.cities[&city]),
+            baseline.city_local_amenities(&baseline.cities[&city]) + 1
+        );
+
+        // A pillaged district still exists, so it continues satisfying the
+        // government's city-level eligibility condition.
+        game.map.tiles.get_mut(&district).unwrap().pillaged = true;
+        let baseline = without_government(&game);
+        assert_eq!(
+            game.city_housing(&game.cities[&city]),
+            baseline.city_housing(&baseline.cities[&city]) + 1.0
+        );
+    }
+
+    #[test]
+    fn monarchy_counts_active_wall_levels_and_multiplies_influence() {
+        let (mut game, city) = one_city(774_503);
+        game.players[0].government = Some("monarchy".to_string());
+        let baseline = without_government(&game);
+        assert_eq!(
+            game.city_housing(&game.cities[&city]),
+            baseline.city_housing(&baseline.cities[&city])
+        );
+
+        game.cities.get_mut(&city).unwrap().buildings.extend([
+            "walls".to_string(),
+            "medieval_walls".to_string(),
+            "renaissance_walls".to_string(),
+        ]);
+        let baseline = without_government(&game);
+        assert_eq!(
+            game.city_housing(&game.cities[&city]),
+            baseline.city_housing(&baseline.cities[&city]) + 3.0
+        );
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .pillaged_buildings
+            .insert("medieval_walls".to_string());
+        let baseline = without_government(&game);
+        assert_eq!(
+            game.city_housing(&game.cities[&city]),
+            baseline.city_housing(&baseline.cities[&city]) + 2.0
+        );
+
+        let mut merchant = game.clone();
+        merchant.players[0].government = Some("merchant_republic".to_string());
+        game.players[0].influence = 0.0;
+        merchant.players[0].influence = 0.0;
+        game.begin_turn(0);
+        merchant.begin_turn(0);
+        assert!((game.players[0].influence - merchant.players[0].influence * 1.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn theocracy_faith_per_population_requires_a_governor() {
+        let (mut game, city) = one_city(774_504);
+        game.cities.get_mut(&city).unwrap().pop = 2;
+        game.players[0].government = Some("theocracy".to_string());
+        let baseline = without_government(&game);
+        assert_eq!(
+            game.city_yields(city).faith,
+            baseline.city_yields(city).faith
+        );
+
+        game.players[0]
+            .civics
+            .insert("political_philosophy".to_string());
+        game.do_appoint_governor(0, "pingala", city).unwrap();
+        let baseline = without_government(&game);
+        assert_eq!(
+            game.city_yields(city).faith,
+            baseline.city_yields(city).faith + 1.0
+        );
+    }
+}
+
+#[cfg(test)]
 mod district_building_wonder_runtime_tests {
     use super::*;
 
@@ -7529,6 +7717,11 @@ impl Game {
         };
         let location = self.healing_location(unit.owner, unit.pos);
         let naval_or_embarked = spec.domain.as_deref() == Some("sea") || self.is_embarked(unit);
+        let support_heal = if spec.class == "military" {
+            self.adjacent_support_effect(unit, "adjacent_heal").round() as i32
+        } else {
+            0
+        };
         if naval_or_embarked {
             let friendly = self
                 .map
@@ -7539,9 +7732,9 @@ impl Game {
                     city.owner == unit.owner || self.suzerain_of(city.owner) == Some(unit.owner)
                 });
             if friendly || self.promotion_effect(unit, "heal_anywhere") > 0.0 {
-                20 + emergency_heal
+                20 + emergency_heal + support_heal
             } else {
-                emergency_heal
+                emergency_heal + support_heal
             }
         } else {
             location.rate()
@@ -7551,6 +7744,7 @@ impl Game {
                     0
                 }
                 + emergency_heal
+                + support_heal
         }
     }
 
@@ -11060,6 +11254,7 @@ impl Game {
             }
             Some(Item::Wonder { pos, .. }) => {
                 bonus += self.policy_effect(pid, "wonder_production_pct") / 100.0;
+                bonus += self.gov_effects(pid).wonder_production_pct / 100.0;
                 if self.has_ability(pid, "iteru") && self.map.tiles[pos].has_river() {
                     bonus += 0.15; // Egypt: Iteru (river cities)
                 }
@@ -11513,7 +11708,8 @@ impl Game {
         if bs <= 0.0 {
             return 0.0;
         }
-        bs + self.government_combat_bonus(u)
+        bs + self.adjacent_support_effect(u, "adjacent_siege_bombard")
+            + self.government_combat_bonus(u)
             + self.unit_formation_bonus(u)
             + self.congress_military_strength_bonus(u)
             + self.religious_combat_belief_bonus(u.owner, u.pos)
@@ -11642,7 +11838,21 @@ impl Game {
             }
         }
         h += 3.0 * salt_industry_units;
-        h + self.gov_effects(city.owner).housing
+        let government = self.gov_effects(city.owner);
+        h += government.housing;
+        if !city.districts.is_empty() {
+            h += government.district_city_housing;
+        }
+        let active_wall_levels = city
+            .buildings
+            .iter()
+            .filter(|building| {
+                !city.pillaged_buildings.contains(*building)
+                    && self.building_district_is_active(city, building)
+                    && self.rules.buildings[building.as_str()].outer_defense > 0
+            })
+            .count() as f64;
+        h + government.wall_level_housing * active_wall_levels
     }
 
     pub fn wonder_built(&self, name: &str) -> bool {
@@ -12645,7 +12855,11 @@ impl Game {
         if city.pop >= 10 {
             supply += self.policy_effect(city.owner, "large_city_amenity");
         }
-        supply += self.gov_effects(city.owner).amenity;
+        let government = self.gov_effects(city.owner);
+        supply += government.amenity;
+        if !city.districts.is_empty() {
+            supply += government.district_city_amenity;
+        }
         let garrison = self.units_at(city.pos).into_iter().any(|id| {
             let o = &self.units[&id];
             o.owner == city.owner && self.rules.units[o.kind.as_str()].class == "military"
@@ -13758,6 +13972,7 @@ impl Game {
         }) {
             moves += 1.0;
         }
+        moves += self.adjacent_support_effect(u, "adjacent_movement");
         moves
     }
 
@@ -13776,6 +13991,34 @@ impl Game {
         } else {
             base.min(self.unit_base_max_moves(linked.id))
         }
+    }
+
+    /// Strongest same-owner support aura on this unit's tile or an adjacent
+    /// tile. Effects of the same family do not stack, so a maximum also
+    /// handles a Medic beside a Supply Convoy or a Balloon beside a Drone.
+    fn adjacent_support_effect(&self, unit: &Unit, effect: &str) -> f64 {
+        self.wdisk(unit.pos, 1)
+            .into_iter()
+            .flat_map(|position| self.units_at(position))
+            .filter(|other| self.units[other].owner == unit.owner)
+            .filter_map(|other| {
+                let support = &self.rules.units[self.units[&other].kind.as_str()];
+                (support.class == "support")
+                    .then(|| support.effects.get(effect).copied().unwrap_or(0.0))
+            })
+            .fold(0.0, f64::max)
+    }
+
+    pub fn unit_attack_range(&self, uid: u32) -> i32 {
+        let unit = &self.units[&uid];
+        let spec = &self.rules.units[unit.kind.as_str()];
+        spec.range.max(1)
+            + self.promotion_effect(unit, "range") as i32
+            + if spec.siege {
+                self.adjacent_support_effect(unit, "adjacent_siege_range") as i32
+            } else {
+                0
+            }
     }
 
     pub fn unit_sight(&self, uid: u32) -> i32 {
@@ -16639,6 +16882,9 @@ impl Game {
         let eff = self.gov_effects(city.owner);
         ys.production += eff.production_per_pop * city.pop as f64;
         ys.faith += eff.faith_per_pop * city.pop as f64;
+        if self.city_governor_active(city.owner, city.id) {
+            ys.faith += eff.governor_faith_per_pop * city.pop as f64;
+        }
         ys.culture += eff.culture_per_district * self.city_specialty_district_count(city) as f64;
         ys.science +=
             self.governor_effect(city.owner, city.id, "science_per_pop") * city.pop as f64;
@@ -16671,6 +16917,27 @@ impl Game {
         }
         if self.city_has_palace(city) {
             ys.add(eff.capital_yields);
+        }
+        let government_buildings = city
+            .buildings
+            .iter()
+            .filter(|building| {
+                !city.pillaged_buildings.contains(*building)
+                    && self.building_district_is_active(city, building)
+                    && self.rules.buildings[building.as_str()]
+                        .district
+                        .as_deref()
+                        .is_some_and(|district| {
+                            matches!(
+                                self.district_family(district),
+                                "government_plaza" | "diplomatic_quarter"
+                            )
+                        })
+            })
+            .count()
+            + usize::from(self.city_has_palace(city));
+        for _ in 0..government_buildings {
+            ys.add(eff.government_building_yields);
         }
         ys.production *= 1.0 + eff.production_pct / 100.0;
         ys.science *= 1.0 + eff.science_pct / 100.0;
@@ -18655,8 +18922,7 @@ impl Game {
                                 || !u.moved
                                 || self.promotion_effect(&u, "attack_after_move") > 0.0)
                         {
-                            let range =
-                                spec.range.max(1) + self.promotion_effect(&u, "range") as i32;
+                            let range = self.unit_attack_range(uid);
                             for pos in self.wdisk(u.pos, range) {
                                 if pos == u.pos || !self.map.tiles.contains_key(&pos) {
                                     continue;
@@ -20601,7 +20867,7 @@ impl Game {
         if u.moves_left <= 0.0 || u.attacks_left <= 0 {
             return Err("no moves left".into());
         }
-        let range = spec.range.max(1) + self.promotion_effect(&u, "range") as i32;
+        let range = self.unit_attack_range(uid);
         if self.wdist(u.pos, target) > range {
             return Err("out of range".into());
         }
@@ -27098,11 +27364,12 @@ impl Game {
                         .count() as f64
                 })
                 .unwrap_or(0.0);
-            let influence = 1.0
+            let influence = (1.0
                 + tier
                 + economic_alliance_influence
                 + self.policy_effect(pid, "influence_per_turn")
-                + building_effect("influence_points");
+                + building_effect("influence_points"))
+                * (1.0 + self.gov_effects(pid).influence_pct / 100.0);
             let p = &mut self.players[pid];
             p.influence += influence;
             if p.influence >= 100.0 {
@@ -30119,6 +30386,66 @@ mod combat_scenarios {
             (false, false),
             "siege support applies only to melee and anti-cavalry units"
         );
+    }
+
+    #[test]
+    fn modern_support_auras_apply_range_bombard_healing_and_movement() {
+        let (mut game, _, ring) = controlled_game(31_433);
+        let siege = game.spawn_unit("catapult", 0, ring[0]);
+        let base_bombard = game.unit_bombard_strength(&game.units[&siege]);
+        assert_eq!(game.unit_attack_range(siege), 2);
+
+        let balloon = game.spawn_unit("observation_balloon", 0, ring[0]);
+        assert_eq!(game.unit_attack_range(siege), 3);
+        assert_eq!(
+            game.unit_bombard_strength(&game.units[&siege]),
+            base_bombard
+        );
+        let extended_target = game
+            .wdisk(ring[0], 3)
+            .into_iter()
+            .find(|position| game.wdist(ring[0], *position) == 3)
+            .unwrap();
+        game.spawn_unit("warrior", 1, extended_target);
+        let extended_strike = Action::Ranged {
+            unit: siege,
+            target: extended_target,
+        };
+        assert!(game.legal_actions(0).contains(&extended_strike));
+        game.remove_unit(balloon);
+        assert!(!game.legal_actions(0).contains(&extended_strike));
+        let drone = game.spawn_unit("drone", 0, ring[0]);
+        assert_eq!(game.unit_attack_range(siege), 3);
+        assert_eq!(
+            game.unit_bombard_strength(&game.units[&siege]),
+            base_bombard + 5.0
+        );
+        let mut validated = game.clone();
+        validated.apply(0, &extended_strike).unwrap();
+        game.remove_unit(drone);
+        assert_eq!(game.unit_attack_range(siege), 2);
+
+        let soldier = game.spawn_unit("warrior", 0, ring[2]);
+        game.units.get_mut(&soldier).unwrap().hp = 50;
+        let base_heal = game.unit_heal_rate(soldier);
+        let medic = game.spawn_unit("medic", 0, ring[2]);
+        assert_eq!(game.unit_heal_rate(soldier), base_heal + 20);
+        let convoy = game.spawn_unit("supply_convoy", 0, ring[2]);
+        assert_eq!(
+            game.unit_heal_rate(soldier),
+            base_heal + 20,
+            "Medic and Supply Convoy healing does not stack"
+        );
+        assert_eq!(game.unit_max_moves(soldier), 3.0);
+        assert_eq!(
+            game.unit_max_moves(convoy),
+            5.0,
+            "a Supply Convoy begins adjacent to its own aura"
+        );
+        game.remove_unit(medic);
+        game.remove_unit(convoy);
+        assert_eq!(game.unit_heal_rate(soldier), base_heal);
+        assert_eq!(game.unit_max_moves(soldier), 2.0);
     }
 
     #[test]

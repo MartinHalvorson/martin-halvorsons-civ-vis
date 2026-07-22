@@ -542,14 +542,14 @@
     "ranged_strength": 75, "range": 4, "tech": "flight", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1,
     "requires_district": "aerodrome", "domain": "air"
   },
-  "observation_balloon": {"class": "support", "cost": 240, "maintenance": 2, "moves": 2, "tech": "flight", "sight": 3},
-  "medic": {"class": "support", "cost": 370, "maintenance": 5, "moves": 2, "tech": "sanitation"},
+  "observation_balloon": {"class": "support", "cost": 240, "maintenance": 2, "moves": 2, "tech": "flight", "sight": 3, "effects": {"adjacent_siege_range": 1}},
+  "medic": {"class": "support", "cost": 370, "maintenance": 5, "moves": 2, "tech": "sanitation", "effects": {"adjacent_heal": 20}},
   "tank": {
     "class": "military", "cost": 480, "maintenance": 6, "moves": 4, "strength": 85,
     "tech": "combustion", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1, "cavalry": true,
     "promotion_class": "heavy_cavalry", "zone_of_control": true
   },
-  "supply_convoy": {"class": "support", "cost": 450, "maintenance": 2, "moves": 4, "tech": "combustion"},
+  "supply_convoy": {"class": "support", "cost": 450, "maintenance": 2, "moves": 4, "tech": "combustion", "effects": {"adjacent_heal": 20, "adjacent_movement": 1}},
   "fighter": {
     "class": "military", "cost": 520, "maintenance": 7, "moves": 8, "strength": 100,
     "ranged_strength": 100, "range": 6, "tech": "advanced_flight", "requires_resource": "aluminum", "resource_cost": 1, "resource_maintenance": 1,
@@ -572,7 +572,7 @@
     "class": "military", "cost": 400, "maintenance": 4, "moves": 2, "strength": 80,
     "tech": "chemistry", "promotion_class": "anti_cavalry", "zone_of_control": true
   },
-  "drone": {"class": "support", "cost": 420, "maintenance": 3, "moves": 3, "tech": "computers", "sight": 4},
+  "drone": {"class": "support", "cost": 420, "maintenance": 3, "moves": 3, "tech": "computers", "sight": 4, "effects": {"adjacent_siege_range": 1, "adjacent_siege_bombard": 5}},
   "modern_armor": {
     "class": "military", "cost": 680, "maintenance": 8, "moves": 4, "strength": 95,
     "tech": "composites", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1, "cavalry": true,
