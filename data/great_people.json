@@ -19,13 +19,13 @@
   "siddhartha_gautama": {"name":"Siddhartha Gautama","kind":"prophet","era":1,"cost":120,"effects":{"found_religion":1}},
   "zoroaster": {"name":"Zoroaster","kind":"prophet","era":2,"cost":240,"effects":{"found_religion":1}},
 
-  "hannibal_barca": {"name":"Hannibal Barca","kind":"general","era":1,"cost":60,"effects":{"military_promotion":1}},
-  "el_cid": {"name":"El Cid","kind":"general","era":2,"cost":180,"effects":{"military_promotion":1,"corps":1}},
-  "napoleon_bonaparte": {"name":"Napoleon Bonaparte","kind":"general","era":4,"cost":480,"effects":{"military_promotion":2}},
+  "hannibal_barca": {"name":"Hannibal Barca","kind":"general","era":1,"cost":60,"effects":{"land_unit_promotion_level":1}},
+  "el_cid": {"name":"El Cid","kind":"general","era":2,"cost":180,"effects":{"land_unit_formation":1}},
+  "napoleon_bonaparte": {"name":"Napoleon Bonaparte","kind":"general","era":4,"cost":480,"effects":{"land_unit_formation":2}},
 
-  "themistocles": {"name":"Themistocles","kind":"admiral","era":1,"cost":60,"effects":{"naval_promotion":1}},
-  "zheng_he": {"name":"Zheng He","kind":"admiral","era":2,"cost":180,"effects":{"gold":200,"trade_capacity":1}},
-  "horatio_nelson": {"name":"Horatio Nelson","kind":"admiral","era":4,"cost":480,"effects":{"naval_promotion":2}},
+  "themistocles": {"name":"Themistocles","kind":"admiral","era":1,"cost":60,"effects":{"city_loyalty_per_turn":2}},
+  "zheng_he": {"name":"Zheng He","kind":"admiral","era":2,"cost":180,"effects":{"free_trader":1,"trade_capacity":1,"destination_foreign_trade_gold":2}},
+  "horatio_nelson": {"name":"Horatio Nelson","kind":"admiral","era":4,"cost":480,"effects":{"free_lighthouse":1,"free_shipyard":1,"naval_flanking_bonus_pct":50}},
 
   "imhotep": {"name":"Imhotep","kind":"engineer","era":2,"cost":60,"charges":2,"effects":{"wonder_production":175,"ancient_classical_wonder_multiplier":2}},
   "leonardo_da_vinci": {"name":"Leonardo da Vinci","kind":"engineer","era":3,"cost":240,"effects":{"modern_tech_boosts":1,"workshops_culture":3}},

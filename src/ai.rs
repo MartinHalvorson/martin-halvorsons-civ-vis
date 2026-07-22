@@ -811,8 +811,32 @@ impl BasicAi {
                 .or_else(|| {
                     legal
                         .iter()
-                        .find(|action| matches!(action, Action::AirPatrol { unit } if *unit == uid))
-                        .cloned()
+                        .filter_map(|action| match action {
+                            Action::AirPatrol { unit, to } if *unit == uid => {
+                                let city_cover = g
+                                    .cities
+                                    .values()
+                                    .filter(|city| city.owner == pid && g.wdist(*to, city.pos) <= 1)
+                                    .map(|city| 100 + city.pop * 5)
+                                    .sum::<i32>();
+                                let unit_cover =
+                                    g.units
+                                        .values()
+                                        .filter(|other| {
+                                            other.owner == pid
+                                                && other.id != uid
+                                                && g.wdist(*to, other.pos) <= 1
+                                                && g.rules.units[other.kind.as_str()].class
+                                                    == "military"
+                                        })
+                                        .count() as i32
+                                        * 12;
+                                Some((city_cover + unit_cover, *to, action.clone()))
+                            }
+                            _ => None,
+                        })
+                        .max_by_key(|(score, to, _)| (*score, std::cmp::Reverse(*to)))
+                        .map(|(_, _, action)| action)
                 })
                 .or_else(|| {
                     legal.into_iter().find(
@@ -877,9 +901,23 @@ impl BasicAi {
                         }
                     })
                     .or_else(|| {
-                        legal.into_iter().find(
-                            |action| matches!(action, Action::AirPatrol { unit } if *unit == uid),
-                        )
+                        legal
+                            .into_iter()
+                            .filter_map(|action| match action {
+                                Action::AirPatrol { unit, to } if unit == uid => {
+                                    let nearest_city = g
+                                        .cities
+                                        .values()
+                                        .filter(|city| city.owner == pid)
+                                        .map(|city| g.wdist(to, city.pos))
+                                        .min()
+                                        .unwrap_or(i32::MAX);
+                                    Some((nearest_city, to, action))
+                                }
+                                _ => None,
+                            })
+                            .min_by_key(|(distance, to, _)| (*distance, *to))
+                            .map(|(_, _, action)| action)
                     })
             }
             _ => None,
@@ -4918,7 +4956,7 @@ mod tests {
                     Action::Pillage { unit }
                     | Action::AirRebase { unit, .. }
                     | Action::AirStrike { unit, .. }
-                    | Action::AirPatrol { unit }
+                    | Action::AirPatrol { unit, .. }
                     | Action::CoastalRaid { unit, .. } => *unit == uid,
                     _ => false,
                 })
@@ -4934,7 +4972,7 @@ mod tests {
         assert_eq!(ai.doctrine_action(&g, 0, assault), None);
         assert!(matches!(
             ai.doctrine_action(&g, 0, fighter),
-            Some(Action::AirPatrol { unit }) if unit == fighter
+            Some(Action::AirPatrol { unit, .. }) if unit == fighter
         ));
         let bomber_action = ai.doctrine_action(&g, 0, bomber);
         assert!(

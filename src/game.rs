@@ -6289,9 +6289,12 @@ pub struct Unit {
     /// as its first action, but attacking before leaving forfeits that move.
     #[serde(default)]
     pub started_turn_in_zoc: bool,
-    /// Fighters on patrol intercept the first hostile air mission in range.
+    /// Fighters on patrol can intercept hostile air missions adjacent to the
+    /// selected deployment hex. Their base remains in `pos`.
     #[serde(default)]
     pub air_patrol: bool,
+    #[serde(default)]
+    pub air_patrol_pos: Option<Pos>,
     /// Permanent movement granted when the unit is trained (for example by
     /// the Royal Navy Dockyard).
     #[serde(default)]
@@ -6600,6 +6603,10 @@ pub struct City {
     /// city-bound Great Person effects such as Marco Polo and Zheng He.
     #[serde(default)]
     pub great_person_foreign_route_gold: f64,
+    /// Permanent per-turn Loyalty granted to this city by retired Great
+    /// People. It follows the city if ownership changes.
+    #[serde(default)]
+    pub great_person_loyalty_per_turn: f64,
 }
 
 /// The priorities used by a city's automatic citizen governor.  These are
@@ -7083,6 +7090,7 @@ pub enum Action {
     },
     AirPatrol {
         unit: u32,
+        to: Pos,
     },
     Produce {
         city: u32,
@@ -10666,7 +10674,10 @@ impl Game {
             return Err("this Great Engineer requires a Wonder under construction".into());
         }
         if (spec.effects.contains_key("free_trader")
-            || spec.effects.contains_key("destination_foreign_trade_gold"))
+            || spec.effects.contains_key("destination_foreign_trade_gold")
+            || spec.effects.contains_key("city_loyalty_per_turn")
+            || spec.effects.contains_key("free_lighthouse")
+            || spec.effects.contains_key("free_shipyard"))
             && self.great_person_trade_city(pid, kind).is_none()
         {
             return Err(format!(
@@ -10682,6 +10693,19 @@ impl Game {
                     "Commercial Hub"
                 }
             ));
+        }
+        if spec.effects.contains_key("land_unit_promotion_level")
+            && self.great_person_promotion_unit(pid).is_none()
+        {
+            return Err("this Great General requires a promotable military land unit".into());
+        }
+        if let Some(formation) = spec.effects.get("land_unit_formation") {
+            if self
+                .great_person_formation_unit(pid, *formation as u8)
+                .is_none()
+            {
+                return Err("this Great General requires a military land unit".into());
+            }
         }
         let points = self.players[pid].gpp.get(kind).copied().unwrap_or(0.0);
         let missing = (spec.cost - points).max(0.0);
@@ -10776,6 +10800,20 @@ impl Game {
                     .unwrap()
                     .great_person_foreign_route_gold += *amount;
             }
+            if let Some(amount) = spec.effects.get("city_loyalty_per_turn") {
+                self.cities
+                    .get_mut(&city)
+                    .unwrap()
+                    .great_person_loyalty_per_turn += *amount;
+            }
+            for (effect, family) in [
+                ("free_lighthouse", "lighthouse"),
+                ("free_shipyard", "shipyard"),
+            ] {
+                if spec.effects.get(effect).copied().unwrap_or(0.0) > 0.0 {
+                    self.grant_free_building_family(pid, city, family);
+                }
+            }
         }
         for (effect, counter) in [
             ("oil_per_turn", "great_person:oil_per_turn"),
@@ -10783,12 +10821,32 @@ impl Game {
                 "strategic_destination_trade_gold",
                 "great_person:strategic_destination_trade_gold",
             ),
+            (
+                "naval_flanking_bonus_pct",
+                "great_person:naval_flanking_bonus_pct",
+            ),
         ] {
             if let Some(amount) = spec.effects.get(effect) {
                 *self.players[pid]
                     .counters
                     .entry(counter.to_string())
                     .or_insert(0) += amount.round() as i64;
+            }
+        }
+        if let Some(amount) = spec.effects.get("land_unit_promotion_level") {
+            for _ in 0..amount.round() as usize {
+                let Some(unit) = self.great_person_promotion_unit(pid) else {
+                    break;
+                };
+                let level = self.units[&unit].level;
+                self.units.get_mut(&unit).unwrap().xp =
+                    Self::promotion_threshold(level).max(self.units[&unit].xp);
+            }
+        }
+        if let Some(formation) = spec.effects.get("land_unit_formation") {
+            let formation = (*formation as u8).min(2);
+            if let Some(unit) = self.great_person_formation_unit(pid, formation) {
+                self.units.get_mut(&unit).unwrap().formation = formation;
             }
         }
         if let Some(amount) = spec.effects.get("tech_boosts") {
@@ -10928,6 +10986,68 @@ impl Game {
             .filter(|city| self.city_has_active_district_family(city, district))
             .max_by_key(|city| (city.pop, Reverse(city.id)))
             .map(|city| city.id)
+    }
+
+    fn great_person_land_units(&self, pid: usize) -> impl Iterator<Item = u32> + '_ {
+        self.units.values().filter_map(move |unit| {
+            let spec = &self.rules.units[unit.kind.as_str()];
+            (unit.owner == pid
+                && spec.class == "military"
+                && !matches!(spec.domain.as_deref(), Some("sea" | "air")))
+            .then_some(unit.id)
+        })
+    }
+
+    fn strongest_great_person_land_unit<I>(&self, units: I) -> Option<u32>
+    where
+        I: Iterator<Item = u32>,
+    {
+        units.max_by_key(|unit| {
+            let state = &self.units[unit];
+            let spec = &self.rules.units[state.kind.as_str()];
+            (
+                (spec.strength + self.unit_formation_bonus(state)).round() as i64,
+                Reverse(*unit),
+            )
+        })
+    }
+
+    fn great_person_promotion_unit(&self, pid: usize) -> Option<u32> {
+        self.strongest_great_person_land_unit(self.great_person_land_units(pid).filter(|unit| {
+            let state = &self.units[unit];
+            let spec = &self.rules.units[state.kind.as_str()];
+            spec.earns_xp
+                && !spec.promotion_class.is_empty()
+                && state.level < 8
+                && !self.promotion_pending(*unit)
+        }))
+    }
+
+    fn great_person_formation_unit(&self, pid: usize, formation: u8) -> Option<u32> {
+        self.strongest_great_person_land_unit(
+            self.great_person_land_units(pid)
+                .filter(|unit| self.units[unit].formation < formation),
+        )
+    }
+
+    fn grant_free_building_family(&mut self, pid: usize, city_id: u32, family: &str) {
+        if self.city_has_building_family(&self.cities[&city_id], family) {
+            return;
+        }
+        let civilization = self.players[pid].civ.as_str();
+        let building = self
+            .rules
+            .buildings
+            .iter()
+            .find(|(_, candidate)| {
+                candidate.replaces.as_deref() == Some(family)
+                    && candidate.unique_to.as_deref() == Some(civilization)
+            })
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| family.to_string());
+        let city = self.cities.get_mut(&city_id).unwrap();
+        city.buildings.push(building.clone());
+        city.building_eras.insert(building, self.world_era);
     }
 
     fn do_recruit_great_person(&mut self, pid: usize, kind: &str) -> Result<(), String> {
@@ -14280,6 +14400,7 @@ impl Game {
             zoc_stopped: false,
             started_turn_in_zoc: false,
             air_patrol: false,
+            air_patrol_pos: None,
             bonus_moves: 0.0,
             xp_bonus_pct: 0.0,
             levied_from: None,
@@ -14649,6 +14770,11 @@ impl Game {
             .filter(|unit| self.rules.units[unit.kind.as_str()].domain.as_deref() == Some("air"))
             .map(|unit| (self.rules.units[unit.kind.as_str()].moves * 2.0).floor() as i32)
             .unwrap_or(0)
+    }
+
+    fn air_operation_origin(&self, uid: u32) -> Pos {
+        let unit = &self.units[&uid];
+        unit.air_patrol_pos.unwrap_or(unit.pos)
     }
 
     pub fn unit_sight(&self, uid: u32) -> i32 {
@@ -19497,8 +19623,9 @@ impl Game {
         if spec.domain.as_deref() == Some("air") {
             if u.moves_left > 0.0 {
                 let range = self.unit_attack_range(uid);
-                for target in self.wdisk(u.pos, range) {
-                    if target != u.pos && self.enemy_combat_target_at(pid, target) {
+                let origin = self.air_operation_origin(uid);
+                for target in self.wdisk(origin, range) {
+                    if target != origin && self.enemy_air_strike_target_at(pid, uid, target) {
                         actions.push(Action::AirStrike { unit: uid, target });
                     }
                 }
@@ -19511,7 +19638,9 @@ impl Game {
                     }
                 }
                 if !spec.siege && u.attacks_left > 0 {
-                    actions.push(Action::AirPatrol { unit: uid });
+                    for to in self.wdisk(u.pos, spec.moves.floor() as i32) {
+                        actions.push(Action::AirPatrol { unit: uid, to });
+                    }
                 }
             }
             return actions;
@@ -19567,8 +19696,9 @@ impl Game {
             if spec.domain.as_deref() == Some("air") {
                 if u.moves_left > 0.0 {
                     let range = self.unit_attack_range(uid);
-                    for target in self.wdisk(u.pos, range) {
-                        if target != u.pos && self.enemy_combat_target_at(pid, target) {
+                    let origin = self.air_operation_origin(uid);
+                    for target in self.wdisk(origin, range) {
+                        if target != origin && self.enemy_air_strike_target_at(pid, uid, target) {
                             acts.push(Action::AirStrike { unit: uid, target });
                         }
                     }
@@ -19581,7 +19711,9 @@ impl Game {
                         }
                     }
                     if !spec.siege && u.attacks_left > 0 {
-                        acts.push(Action::AirPatrol { unit: uid });
+                        for to in self.wdisk(u.pos, spec.moves.floor() as i32) {
+                            acts.push(Action::AirPatrol { unit: uid, to });
+                        }
                     }
                 }
                 continue;
@@ -20442,6 +20574,7 @@ impl Game {
             if unit.owner != pid
                 && self.is_at_war(pid, unit.owner)
                 && self.rules.units[unit.kind.as_str()].class == "military"
+                && self.rules.units[unit.kind.as_str()].domain.as_deref() != Some("air")
             {
                 return true;
             }
@@ -20455,6 +20588,20 @@ impl Game {
             return owner != pid && self.is_at_war(pid, owner);
         }
         false
+    }
+
+    fn enemy_air_strike_target_at(&self, pid: usize, uid: u32, pos: Pos) -> bool {
+        if self.enemy_combat_target_at(pid, pos) {
+            return true;
+        }
+        self.rules.units[self.units[&uid].kind.as_str()].promotion_class == "air_fighter"
+            && self.units.values().any(|unit| {
+                unit.owner != pid
+                    && self.is_at_war(pid, unit.owner)
+                    && unit.air_patrol
+                    && unit.air_patrol_pos == Some(pos)
+                    && self.rules.units[unit.kind.as_str()].promotion_class == "air_fighter"
+            })
     }
 
     pub fn apply(&mut self, pid: usize, action: &Action) -> Result<(), String> {
@@ -20483,7 +20630,7 @@ impl Game {
             | Action::CoastalRaid { unit, .. }
             | Action::AirRebase { unit, .. }
             | Action::AirStrike { unit, .. }
-            | Action::AirPatrol { unit }
+            | Action::AirPatrol { unit, .. }
             | Action::Fortify { unit }
             | Action::Promote { unit, .. }
             | Action::UnlinkUnits { unit }
@@ -20528,7 +20675,7 @@ impl Game {
             Action::CoastalRaid { unit, target } => self.do_coastal_raid(pid, *unit, *target),
             Action::AirRebase { unit, to } => self.do_air_rebase(pid, *unit, *to),
             Action::AirStrike { unit, target } => self.do_air_strike(pid, *unit, *target),
-            Action::AirPatrol { unit } => self.do_air_patrol(pid, *unit),
+            Action::AirPatrol { unit, to } => self.do_air_patrol(pid, *unit, *to),
             Action::Produce { city, item } => self.do_produce(pid, *city, item),
             Action::Buy {
                 city,
@@ -21064,7 +21211,21 @@ impl Game {
         let multiplier = self
             .promotion_effect(&self.units[&uid], "flanking_multiplier")
             .max(1.0);
-        2.0 * additional as f64 * multiplier
+        let naval_multiplier = if self.rules.units[self.units[&uid].kind.as_str()]
+            .domain
+            .as_deref()
+            == Some("sea")
+        {
+            1.0 + self.players[owner]
+                .counters
+                .get("great_person:naval_flanking_bonus_pct")
+                .copied()
+                .unwrap_or(0) as f64
+                / 100.0
+        } else {
+            1.0
+        };
+        2.0 * additional as f64 * multiplier * naval_multiplier
     }
 
     /// Melee attacks pay the movement cost of entering the defender's tile.
@@ -21314,7 +21475,10 @@ impl Game {
         let military: Vec<u32> = enemy_ids
             .iter()
             .cloned()
-            .filter(|id| self.rules.units[self.units[id].kind.as_str()].class == "military")
+            .filter(|id| {
+                let spec = &self.rules.units[self.units[id].kind.as_str()];
+                spec.class == "military" && spec.domain.as_deref() != Some("air")
+            })
             .collect();
         if military.is_empty() && city_id.is_none() {
             return Err("no combat target".into());
@@ -21581,7 +21745,10 @@ impl Game {
         let military: Vec<u32> = enemy_ids
             .iter()
             .cloned()
-            .filter(|id| self.rules.units[self.units[id].kind.as_str()].class == "military")
+            .filter(|id| {
+                let spec = &self.rules.units[self.units[id].kind.as_str()];
+                spec.class == "military" && spec.domain.as_deref() != Some("air")
+            })
             .collect();
         if military.is_empty() && city_id.is_none() {
             return Err("nothing to attack".into());
@@ -21773,6 +21940,7 @@ impl Game {
             occupied_from: None,
             reactor_age: 0,
             great_person_foreign_route_gold: 0.0,
+            great_person_loyalty_per_turn: 0.0,
         };
         if !is_minor
             && self.dedication_active(pid, "hic_sunt_dracones")
@@ -22745,6 +22913,7 @@ impl Game {
         aircraft.attacks_left = 0;
         aircraft.acted = true;
         aircraft.air_patrol = false;
+        aircraft.air_patrol_pos = None;
         Ok(())
     }
 
@@ -22830,7 +22999,9 @@ impl Game {
                 if spec.domain.as_deref() == Some("air")
                     && spec.promotion_class == "air_fighter"
                     && unit.air_patrol
-                    && self.wdist(unit.pos, target) <= self.unit_attack_range(unit.id)
+                    && unit
+                        .air_patrol_pos
+                        .is_some_and(|patrol| self.wdist(patrol, target) <= 1)
                 {
                     Some(
                         self.unit_unembarked_strength(unit)
@@ -22864,7 +23035,9 @@ impl Game {
             if spec.domain.as_deref() == Some("air")
                 && spec.promotion_class == "air_fighter"
                 && unit.air_patrol
-                && self.wdist(unit.pos, target) <= self.unit_attack_range(unit.id)
+                && unit
+                    .air_patrol_pos
+                    .is_some_and(|patrol| self.wdist(patrol, target) <= 1)
             {
                 let support = self
                     .units
@@ -22875,7 +23048,9 @@ impl Game {
                             && other.air_patrol
                             && self.rules.units[other.kind.as_str()].promotion_class
                                 == "air_fighter"
-                            && self.wdist(other.pos, target) == 1
+                            && other
+                                .air_patrol_pos
+                                .is_some_and(|patrol| self.wdist(patrol, target) == 1)
                     })
                     .count() as f64
                     * 5.0;
@@ -22974,8 +23149,8 @@ impl Game {
         if spec.domain.as_deref() != Some("air")
             || attacker.moves_left <= 0.0
             || attacker.attacks_left <= 0
-            || self.wdist(attacker.pos, target) > self.unit_attack_range(uid)
-            || !self.enemy_combat_target_at(pid, target)
+            || self.wdist(self.air_operation_origin(uid), target) > self.unit_attack_range(uid)
+            || !self.enemy_air_strike_target_at(pid, uid, target)
         {
             return Err("invalid air strike".into());
         }
@@ -22985,6 +23160,10 @@ impl Game {
         }
         if fighter_engaged {
             self.consume_unit_attack(uid);
+            if let Some(aircraft) = self.units.get_mut(&uid) {
+                aircraft.air_patrol = false;
+                aircraft.air_patrol_pos = None;
+            }
             return Ok(());
         }
         let attack = effective_strength(
@@ -23011,6 +23190,10 @@ impl Game {
             self.units[id].owner != pid
                 && self.is_at_war(pid, self.units[id].owner)
                 && self.rules.units[self.units[id].kind.as_str()].class == "military"
+                && self.rules.units[self.units[id].kind.as_str()]
+                    .domain
+                    .as_deref()
+                    != Some("air")
         }) {
             let defender = self.units[&defender_id].clone();
             let anti_air = self.promotion_effect(&defender, "defend_air");
@@ -23038,24 +23221,32 @@ impl Game {
             }
         }
         self.consume_unit_attack(uid);
+        if let Some(aircraft) = self.units.get_mut(&uid) {
+            aircraft.air_patrol = false;
+            aircraft.air_patrol_pos = None;
+        }
         Ok(())
     }
 
-    fn do_air_patrol(&mut self, pid: usize, uid: u32) -> Result<(), String> {
+    fn do_air_patrol(&mut self, pid: usize, uid: u32, to: Pos) -> Result<(), String> {
         let unit = self.own_unit(pid, uid)?;
         let spec = &self.rules.units[unit.kind.as_str()];
         if spec.domain.as_deref() != Some("air")
             || spec.siege
             || unit.moves_left <= 0.0
             || unit.attacks_left <= 0
+            || self.map.get(to).is_none()
+            || self.wdist(unit.pos, to) > spec.moves.floor() as i32
         {
             return Err("aircraft cannot patrol".into());
         }
         let unit = self.units.get_mut(&uid).unwrap();
         unit.air_patrol = true;
+        unit.air_patrol_pos = Some(to);
         unit.moves_left = 0.0;
         unit.attacks_left = 0;
         unit.acted = true;
+        self.reveal(pid, to, spec.sight);
         Ok(())
     }
 
@@ -26284,6 +26475,7 @@ impl Game {
                 })
                 .sum::<f64>();
             delta += self.city_building_effect(&self.cities[&cid], "loyalty_per_turn");
+            delta += self.cities[&cid].great_person_loyalty_per_turn;
             if self.congress_effect_active("migration_treaty", "A", &pid.to_string()) {
                 delta -= 5.0;
             } else if self.congress_effect_active("migration_treaty", "B", &pid.to_string()) {
@@ -28305,7 +28497,6 @@ impl Game {
             u.attacks_left = attacks;
             u.moved = false;
             u.zoc_stopped = false;
-            u.air_patrol = false;
             u.hp = (u.hp + heal).min(100);
             if spec.class == "military"
                 && spec.domain.as_deref() != Some("sea")
@@ -31618,6 +31809,7 @@ mod combat_scenarios {
         aircraft.hp = 50;
         aircraft.acted = true;
         aircraft.air_patrol = true;
+        aircraft.air_patrol_pos = Some(ring[5]);
         // Keep the fixture out of the bankruptcy-disband path; this assertion
         // isolates Ground Crews healing rather than economy maintenance.
         game.players[0].gold = 1_000.0;
@@ -31631,7 +31823,9 @@ mod combat_scenarios {
         let victim = game.spawn_unit("warrior", 1, target);
         let attacker = game.spawn_unit("fighter", 0, ring[0]);
         let interceptor = game.spawn_unit("biplane", 1, ring[1]);
-        game.units.get_mut(&interceptor).unwrap().air_patrol = true;
+        let patrol = game.units.get_mut(&interceptor).unwrap();
+        patrol.air_patrol = true;
+        patrol.air_patrol_pos = Some(target);
 
         game.do_air_strike(0, attacker, target).unwrap();
         assert_eq!(game.units[&victim].hp, 100);
@@ -31639,6 +31833,74 @@ mod combat_scenarios {
             !game.units.contains_key(&attacker) || game.units[&attacker].hp < 100,
             "the dogfight must affect the attacking fighter"
         );
+    }
+
+    #[test]
+    fn patrols_deploy_by_movement_and_project_only_adjacent_interception() {
+        let (mut game, base, _) = controlled_game(31_442);
+        game.found_city_for(0, base, None);
+        let fighter = game.spawn_unit("fighter", 0, base);
+        let patrol = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .filter(|position| game.wdist(base, *position) <= 8)
+            .max_by_key(|position| (game.wdist(base, *position), *position))
+            .unwrap();
+        assert_eq!(game.wdist(base, patrol), 8);
+        let action = Action::AirPatrol {
+            unit: fighter,
+            to: patrol,
+        };
+        assert!(game.legal_actions(0).contains(&action));
+        game.apply(0, &action).unwrap();
+        assert_eq!(game.units[&fighter].pos, base);
+        assert_eq!(game.units[&fighter].air_patrol_pos, Some(patrol));
+
+        let bomber_position = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|position| *position != base && *position != patrol)
+            .unwrap();
+        let bomber = game.spawn_unit("bomber", 1, bomber_position);
+        let adjacent = game.nbrs(patrol)[0];
+        let outside = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|position| game.wdist(patrol, *position) == 2)
+            .unwrap();
+        assert_eq!(
+            game.air_interception_strength(&game.units[&bomber], adjacent),
+            100.0
+        );
+        assert_eq!(
+            game.air_interception_strength(&game.units[&bomber], outside),
+            0.0
+        );
+
+        let remote_target = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|position| {
+                game.wdist(base, *position) > game.unit_attack_range(fighter)
+                    && game.wdist(patrol, *position) <= game.unit_attack_range(fighter)
+            })
+            .unwrap();
+        let victim = game.spawn_unit("warrior", 1, remote_target);
+        game.begin_turn(0);
+        assert_eq!(game.units[&fighter].air_patrol_pos, Some(patrol));
+        assert!(game.legal_actions(0).contains(&Action::AirStrike {
+            unit: fighter,
+            target: remote_target,
+        }));
+        assert_eq!(game.units[&victim].hp, 100);
     }
 
     #[test]
