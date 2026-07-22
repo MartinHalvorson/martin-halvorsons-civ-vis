@@ -414,6 +414,78 @@ let VIEW = localStorage.getItem("civvis-view") || "cinematic";
 // migrate legacy mode names (performance mode lives on as headless sims)
 if (VIEW === "beautiful") VIEW = "cinematic";
 if (VIEW === "simple" || VIEW === "minimal") VIEW = "strategic";
+
+// ---------------------------------------------------- unit animation layer
+// moves: id -> tween; floats: damage numbers; sparks: hit flashes;
+// deaths: fading casualties; strike: attacker lunge. All fast (<=250ms).
+const anim = { moves: new Map(), floats: [], sparks: [], deaths: [], strike: null };
+const facing = new Map(); // unit id -> -1|1 (last horizontal direction)
+let pendingStrike = null;
+function worldXY(p) {
+  const t = TMAP.get(key(p));
+  const [x, yy] = hexXY(p[0], p[1]);
+  return [x, yy - (t ? elev(t) : 0)];
+}
+function hexDistUI(a, b) {
+  const dq = a[0] - b[0], dr = a[1] - b[1];
+  return Math.max(Math.abs(dq), Math.abs(dr), Math.abs(dq + dr));
+}
+function animateDiff(prev, next) {
+  if (!prev || !prev.units) return;
+  const now = performance.now();
+  const prevU = new Map(prev.units.map(u => [u.id, u]));
+  const nextU = new Map(next.units.map(u => [u.id, u]));
+  TMAP = new Map(next.map.tiles.map(t => [key(t.pos), t])); // for worldXY
+  for (const nu of next.units) {
+    const pu = prevU.get(nu.id);
+    if (!pu) continue;
+    if (pu.pos[0] !== nu.pos[0] || pu.pos[1] !== nu.pos[1]) {
+      const [fx, fy] = worldXY(pu.pos), [tx, ty] = worldXY(nu.pos);
+      const cur = anim.moves.get(nu.id);
+      const sx = cur ? cur.x : fx, sy = cur ? cur.y : fy;
+      const steps = Math.min(4, hexDistUI(pu.pos, nu.pos));
+      anim.moves.set(nu.id, { sx, sy, tx, ty, x: sx, y: sy, steps,
+                              t0: now, dur: 90 + 90 * steps });
+      if (Math.abs(tx - sx) > 1) facing.set(nu.id, tx > sx ? 1 : -1);
+    }
+    if (nu.hp < pu.hp) {
+      const [x, y] = worldXY(nu.pos);
+      anim.floats.push({ x, y: y - 16, txt: "-" + (pu.hp - nu.hp),
+                         col: "#ff6252", t0: now });
+      anim.sparks.push({ x, y, t0: now });
+    }
+  }
+  for (const pu of prev.units) {
+    if (nextU.has(pu.id)) continue;
+    // sudden disappearance at low HP reads as a battlefield death
+    if (pu.hp <= 55) {
+      const [x, y] = worldXY(pu.pos);
+      anim.deaths.push({ x, y, owner: pu.owner, type: pu.type, t0: now });
+      anim.floats.push({ x, y: y - 16, txt: "☠", col: "#ffd0c0", t0: now });
+    }
+  }
+  const prevC = new Map((prev.cities || []).map(c => [c.id, c]));
+  for (const nc of next.cities || []) {
+    const pc = prevC.get(nc.id);
+    if (!pc) continue;
+    const drop = (pc.hp - nc.hp) + Math.max(0, (pc.wall_hp || 0) - (nc.wall_hp || 0));
+    if (drop > 0) {
+      const [x, y] = worldXY(nc.pos);
+      anim.floats.push({ x, y: y - 20, txt: "-" + drop, col: "#ffb46a", t0: now });
+      anim.sparks.push({ x, y, t0: now });
+    }
+  }
+  if (pendingStrike) {
+    const a = nextU.get(pendingStrike.id) || prevU.get(pendingStrike.id);
+    if (a) {
+      const [sx, sy] = worldXY(a.pos), [tx, ty] = worldXY(pendingStrike.to);
+      anim.strike = { id: pendingStrike.id, sx, sy, tx, ty, t0: now };
+      if (Math.abs(tx - sx) > 1) facing.set(pendingStrike.id, tx > sx ? 1 : -1);
+    }
+    pendingStrike = null;
+  }
+}
+const easeIO = e => e < 0.5 ? 2 * e * e : 1 - (1 - e) * (2 - 2 * e);
 const cam = { x: 0, y: 0, scale: 1 };
 const cv = document.getElementById("map"), cx = cv.getContext("2d");
 const mini = document.getElementById("mini"), mx2 = mini.getContext("2d");
@@ -531,6 +603,8 @@ async function boot() {
 }
 async function send(action) {
   if (SPEC) return;
+  if ((action.type === "attack" || action.type === "ranged") && action.unit !== undefined)
+    pendingStrike = { id: action.unit, to: action.target };
   render(await fetchJSON("/action", { method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({action}) }));
@@ -686,6 +760,7 @@ function chronicle(prev, next) {
 
 function render(st) {
   chronicle(state, st);
+  animateDiff(state, st);
   state = st;
   SPEC = !!st.spectate;
   document.getElementById("endturn").style.display = SPEC ? "none" : "block";
@@ -817,6 +892,133 @@ function drawJungleTree(tx, ty, s, hv) {
   cx.fill();
   cx.fillStyle = shade(g, 1.32);
   cx.beginPath(); cx.arc(tx - 1.5 * s * LITF, ty - 7 * s, 2.6 * s, 0, 7); cx.fill();
+}
+
+// Tiny battlefield characters: a generic figure with per-kind gear, or a
+// vehicle/mount for the heavy kinds. ~20px tall, bold outlines for zoom-out.
+const MOUNTED = new Set(["horseman", "knight", "war_cart", "saka_horse_archer",
+                         "maryannu_chariot_archer"]);
+function drawUnitChar(u, x, y, now, moving) {
+  const fc = facing.get(u.id) || 1;
+  const col = pcol(u.owner), dark = "#10151d", skin = "#e8c49b";
+  const bob = moving ? 0 : Math.sin(now / 450 + u.id * 1.7) * 0.8;
+  const step = moving ? Math.sin(now / 55) * 2.2 : 0;
+  y += bob;
+  cx.save();
+  cx.translate(x, y);
+  cx.scale(fc, 1);
+  cx.lineWidth = 1.4; cx.strokeStyle = dark;
+  const k = u.type;
+  if (k === "galley") {
+    cx.fillStyle = "#6b4a2f";
+    cx.beginPath(); cx.moveTo(-11, 2); cx.quadraticCurveTo(0, 8, 11, 2);
+    cx.lineTo(8, -2); cx.lineTo(-8, -2); cx.closePath(); cx.fill(); cx.stroke();
+    cx.fillStyle = col;
+    cx.beginPath(); cx.moveTo(0, -2); cx.lineTo(0, -13); cx.lineTo(8, -6);
+    cx.closePath(); cx.fill(); cx.stroke();
+  } else if (k === "catapult" || k === "battering_ram" || k === "siege_tower") {
+    cx.fillStyle = "#7a5a38";
+    if (k === "catapult") {
+      cx.fillRect(-9, 1, 18, 4); cx.strokeRect(-9, 1, 18, 4);
+      cx.beginPath(); cx.moveTo(-5, 2); cx.lineTo(6, -11); cx.stroke();
+      cx.beginPath(); cx.arc(6, -11, 2.4, 0, 7); cx.fillStyle = "#555"; cx.fill();
+      cx.fillStyle = "#4a3826";
+      cx.beginPath(); cx.arc(-6, 6, 2.6, 0, 7); cx.fill();
+      cx.beginPath(); cx.arc(6, 6, 2.6, 0, 7); cx.fill();
+    } else if (k === "battering_ram") {
+      cx.fillRect(-10, -6, 20, 4); cx.strokeRect(-10, -6, 20, 4);
+      cx.fillStyle = "#4a3826";
+      cx.fillRect(-8, -2, 3, 8); cx.fillRect(5, -2, 3, 8);
+    } else {
+      cx.fillRect(-6, -14, 12, 20); cx.strokeRect(-6, -14, 12, 20);
+      cx.fillStyle = "#4a3826"; cx.fillRect(-6, -8, 12, 2); cx.fillRect(-6, -2, 12, 2);
+    }
+  } else if (MOUNTED.has(k)) {
+    // horse: body + neck + legs (swing while moving)
+    cx.fillStyle = "#7a5a38";
+    cx.beginPath(); cx.ellipse(0, 0, 8.5, 4.5, 0, 0, 7); cx.fill(); cx.stroke();
+    cx.beginPath(); cx.moveTo(7, -2); cx.quadraticCurveTo(11, -8, 9.5, -10);
+    cx.lineTo(12.5, -9); cx.lineTo(10, -3); cx.closePath(); cx.fill(); cx.stroke();
+    cx.lineWidth = 2; cx.strokeStyle = "#4a3826";
+    cx.beginPath(); cx.moveTo(-5, 3); cx.lineTo(-5 - step, 9); cx.stroke();
+    cx.beginPath(); cx.moveTo(5, 3); cx.lineTo(5 + step, 9); cx.stroke();
+    cx.lineWidth = 1.4; cx.strokeStyle = dark;
+    // rider
+    cx.fillStyle = col;
+    cx.beginPath(); cx.roundRect(-4, -10, 6, 7, 2); cx.fill(); cx.stroke();
+    cx.fillStyle = skin;
+    cx.beginPath(); cx.arc(-1, -12.5, 2.6, 0, 7); cx.fill(); cx.stroke();
+    if (k === "saka_horse_archer" || k === "maryannu_chariot_archer") {
+      cx.beginPath(); cx.arc(4, -8, 5, -1.2, 1.2); cx.stroke();
+    } else {
+      cx.beginPath(); cx.moveTo(3, -6); cx.lineTo(9, -14); cx.stroke();
+    }
+  } else {
+    const civil = ["settler", "builder", "trader", "missionary"].includes(k);
+    // legs (walk swing)
+    cx.lineWidth = 2.2; cx.strokeStyle = "#20242c";
+    cx.beginPath(); cx.moveTo(-1.5, 3); cx.lineTo(-1.5 - step, 9); cx.stroke();
+    cx.beginPath(); cx.moveTo(1.5, 3); cx.lineTo(1.5 + step, 9); cx.stroke();
+    cx.lineWidth = 1.4; cx.strokeStyle = dark;
+    // tunic/torso in owner color
+    cx.fillStyle = col;
+    cx.beginPath(); cx.roundRect(-4, -6, 8, 10, 3); cx.fill(); cx.stroke();
+    // head + helm
+    cx.fillStyle = skin;
+    cx.beginPath(); cx.arc(0, -9.5, 3.4, 0, 7); cx.fill(); cx.stroke();
+    if (!civil) {
+      cx.fillStyle = shade(col, 0.6);
+      cx.beginPath(); cx.arc(0, -9.8, 3.6, Math.PI, 0); cx.fill();
+    }
+    // gear per kind
+    if (["warrior", "eagle_warrior"].includes(k)) {
+      cx.fillStyle = shade(col, 1.3);
+      cx.beginPath(); cx.arc(-5.5, -2, 3.4, 0, 7); cx.fill(); cx.stroke();
+      cx.beginPath(); cx.moveTo(4, -3); cx.lineTo(8.5, -11); cx.stroke();
+    } else if (["swordsman", "legion", "musketman"].includes(k)) {
+      cx.fillStyle = shade(col, 1.3);
+      cx.fillRect(-7.5, -5, 4.5, 7); cx.strokeRect(-7.5, -5, 4.5, 7);
+      cx.beginPath(); cx.moveTo(4, -3); cx.lineTo(9.5, -12); cx.stroke();
+    } else if (["spearman", "pikeman", "hoplite"].includes(k)) {
+      cx.beginPath(); cx.moveTo(5, 6); cx.lineTo(5, -15); cx.stroke();
+      cx.fillStyle = "#c9cfd8";
+      cx.beginPath(); cx.moveTo(5, -15); cx.lineTo(3.6, -11.5); cx.lineTo(6.4, -11.5);
+      cx.closePath(); cx.fill();
+      if (k === "hoplite") { cx.fillStyle = shade(col, 1.3);
+        cx.beginPath(); cx.arc(-5.5, -2, 3.8, 0, 7); cx.fill(); cx.stroke(); }
+    } else if (["archer", "slinger", "crossbowman", "pitati_archer",
+                "crouching_tiger"].includes(k)) {
+      cx.beginPath(); cx.arc(5.5, -3, 5.5, -1.25, 1.25); cx.stroke();
+      cx.beginPath(); cx.moveTo(5.5 - 5.5, -3); cx.lineTo(5.5 + 1, -3); cx.stroke();
+    } else if (k === "scout") {
+      cx.beginPath(); cx.moveTo(5, 6); cx.lineTo(5, -12); cx.stroke();
+      cx.fillStyle = shade(col, 0.7);
+      cx.beginPath(); cx.arc(0, -10.2, 3.7, Math.PI * 0.9, Math.PI * 0.1); cx.fill();
+    } else if (k === "builder") {
+      cx.strokeStyle = "#6b4a2f"; cx.lineWidth = 2;
+      cx.beginPath(); cx.moveTo(4, -2); cx.lineTo(8, -8); cx.stroke();
+      cx.fillStyle = "#9aa2ad"; cx.fillRect(6.4, -10.5, 4.4, 3.4);
+      cx.lineWidth = 1.4; cx.strokeStyle = dark;
+    } else if (k === "settler") {
+      cx.fillStyle = "#d8cdb4";
+      cx.beginPath(); cx.roundRect(-10, -4, 8, 6, 2.5); cx.fill(); cx.stroke();
+      cx.fillStyle = "#4a3826";
+      cx.beginPath(); cx.arc(-8, 3.4, 1.8, 0, 7); cx.fill();
+      cx.beginPath(); cx.arc(-4, 3.4, 1.8, 0, 7); cx.fill();
+    } else if (k === "trader") {
+      cx.fillStyle = "#b08a55";
+      cx.beginPath(); cx.ellipse(-7, 0, 4.5, 3, 0, 0, 7); cx.fill(); cx.stroke();
+      cx.fillStyle = "#8a5f33";
+      cx.fillRect(-9.5, -4.5, 5, 3.4); cx.strokeRect(-9.5, -4.5, 5, 3.4);
+    } else if (k === "missionary") {
+      cx.fillStyle = "#f2ead2";
+      cx.beginPath(); cx.roundRect(-4, -6, 8, 11, 3); cx.fill(); cx.stroke();
+      cx.strokeStyle = "#d8b94d"; cx.lineWidth = 2;
+      cx.beginPath(); cx.arc(0, -9.5, 5.2, 0, 7); cx.stroke();
+      cx.lineWidth = 1.4; cx.strokeStyle = dark;
+    }
+  }
+  cx.restore();
 }
 
 function draw() {
@@ -1167,43 +1369,82 @@ function draw() {
   const sorted = [...state.units].sort((a, b) =>
     (hexXY(a.pos[0], a.pos[1])[1] - hexXY(b.pos[0], b.pos[1])[1]) ||
     ((a.type === "settler" || a.type === "builder") ? -1 : 1));
+  const now = performance.now();
   for (const u of sorted) {
-    const ut = TMAP.get(key(u.pos));
-    const [x, yy] = hexXY(u.pos[0], u.pos[1]);
-    const y = yy - (ut ? elev(ut) : 0);
-    const civ = (u.type === "settler" || u.type === "builder");
+    let [x, y] = worldXY(u.pos);
+    let moving = false;
+    const mv = anim.moves.get(u.id);
+    if (mv) {
+      const e = Math.min(1, (now - mv.t0) / mv.dur);
+      const ee = easeIO(e);
+      x = mv.sx + (mv.tx - mv.sx) * ee;
+      y = mv.sy + (mv.ty - mv.sy) * ee
+        - Math.abs(Math.sin(e * Math.PI * mv.steps)) * 2.4; // little hops
+      mv.x = x; mv.y = y;
+      moving = true;
+      if (e >= 1) anim.moves.delete(u.id);
+    }
+    if (anim.strike && anim.strike.id === u.id) {
+      const st2 = anim.strike;
+      const e = Math.min(1, (now - st2.t0) / 220);
+      const out = Math.sin(e * Math.PI) * 0.42; // fast lunge out and back
+      x += (st2.tx - st2.sx) * out;
+      y += (st2.ty - st2.sy) * out;
+      if (e >= 1) anim.strike = null;
+    }
     const rr = 10.5;
-    if (beau) { cx.fillStyle = "#00000035";
-      cx.beginPath(); cx.ellipse(x, y + rr - 1, rr * 1.05, 4, 0, 0, 7); cx.fill(); }
-    cx.save();
-    cx.shadowColor = "#000a"; cx.shadowBlur = 5; cx.shadowOffsetY = 2;
-    cx.fillStyle = pcol(u.owner);
-    cx.beginPath();
-    if (civ) cx.roundRect(x - rr, y - rr, rr * 2, rr * 2, 5);
-    else cx.arc(x, y, rr, 0, 7);
-    cx.fill();
-    cx.restore();
-    cx.strokeStyle = u.fortified ? "#f4f8ff" : "#10151d";
-    cx.lineWidth = u.fortified ? 2.6 : 1.6;
-    cx.beginPath();
-    if (civ) cx.roundRect(x - rr, y - rr, rr * 2, rr * 2, 5);
-    else cx.arc(x, y, rr, 0, 7);
-    cx.stroke();
-    cx.fillStyle = "#10151d"; cx.font = "11px 'Segoe UI Symbol', sans-serif";
-    cx.fillText(UNIT_ICON[u.type] || u.type[0].toUpperCase(), x, y + 0.5);
-    // hp arc
-    if (u.hp < 100) {
-      const frac = u.hp / 100;
-      cx.strokeStyle = frac > 0.5 ? "#59d15e" : (frac > 0.25 ? "#e0b02f" : "#e04f3f");
-      cx.lineWidth = 2.6;
+    if (beau) {
+      cx.fillStyle = "#00000035";
+      cx.beginPath(); cx.ellipse(x, y + 8.5, 9, 3.6, 0, 0, 7); cx.fill();
+      drawUnitChar(u, x, y, now, moving);
+      if (u.fortified) {
+        cx.strokeStyle = "#f4f8ffbb"; cx.lineWidth = 2;
+        cx.beginPath(); cx.arc(x, y - 1, rr + 2, Math.PI * 0.75, Math.PI * 0.25);
+        cx.stroke();
+      }
+    } else {
+      const civ = (u.type === "settler" || u.type === "builder");
+      cx.save();
+      cx.shadowColor = "#000a"; cx.shadowBlur = 5; cx.shadowOffsetY = 2;
+      cx.fillStyle = pcol(u.owner);
       cx.beginPath();
-      cx.arc(x, y, rr + 2.6, -Math.PI / 2, -Math.PI / 2 + frac * 6.283);
+      if (civ) cx.roundRect(x - rr, y - rr, rr * 2, rr * 2, 5);
+      else cx.arc(x, y, rr, 0, 7);
+      cx.fill();
+      cx.restore();
+      cx.strokeStyle = u.fortified ? "#f4f8ff" : "#10151d";
+      cx.lineWidth = u.fortified ? 2.6 : 1.6;
+      cx.beginPath();
+      if (civ) cx.roundRect(x - rr, y - rr, rr * 2, rr * 2, 5);
+      else cx.arc(x, y, rr, 0, 7);
       cx.stroke();
+      cx.fillStyle = "#10151d"; cx.font = "11px 'Segoe UI Symbol', sans-serif";
+      cx.fillText(UNIT_ICON[u.type] || u.type[0].toUpperCase(), x, y + 0.5);
+    }
+    // chunky health bar — sized against zoom so it stays readable far out
+    if (u.hp < 100) {
+      const bw = 24 / Math.min(1, Math.max(cam.scale, 0.45));
+      const bh = 4.5 / Math.min(1, Math.max(cam.scale, 0.55));
+      const frac = u.hp / 100;
+      const fc2 = frac > 0.5 ? "#4fd45c" : (frac > 0.25 ? "#f0b429" : "#f04f3f");
+      cx.fillStyle = "#10151dd8";
+      cx.beginPath(); cx.roundRect(x - bw / 2 - 1, y - 18 - 1, bw + 2, bh + 2, 2);
+      cx.fill();
+      cx.fillStyle = fc2;
+      cx.beginPath(); cx.roundRect(x - bw / 2, y - 18, bw * frac, bh, 1.5);
+      cx.fill();
+      if (frac <= 0.25) { // low health pulses for attention
+        cx.globalAlpha = 0.35 + 0.3 * Math.sin(now / 160);
+        cx.strokeStyle = "#ff7060"; cx.lineWidth = 1.6;
+        cx.strokeRect(x - bw / 2 - 2, y - 19 - 1, bw + 4, bh + 4);
+        cx.globalAlpha = 1;
+      }
     }
     if (u.level > 1) {
       cx.fillStyle = "#ffd700";
       for (let i = 0; i < u.level - 1; i++) {
-        cx.beginPath(); cx.arc(x - 6 + i * 6, y - rr - 4, 2, 0, 7); cx.fill();
+        cx.beginPath(); cx.arc(x - 6 + i * 6, y - rr - (u.hp < 100 ? 12 : 4), 2, 0, 7);
+        cx.fill();
       }
     }
     if (sel && sel.id === u.id) {
@@ -1212,6 +1453,51 @@ function draw() {
       cx.beginPath(); cx.arc(x, y, rr + 6, 0, 7); cx.stroke();
       cx.setLineDash([]);
     }
+  }
+  // --- combat effects: hit sparks, casualties, damage numbers (fast)
+  for (let i = anim.deaths.length - 1; i >= 0; i--) {
+    const d = anim.deaths[i];
+    const e = (now - d.t0) / 260;
+    if (e >= 1) { anim.deaths.splice(i, 1); continue; }
+    cx.globalAlpha = 1 - e;
+    cx.save();
+    cx.translate(d.x, d.y + e * 5);
+    cx.rotate((d.owner % 2 ? 1 : -1) * e * 1.2);
+    cx.translate(-d.x, -d.y);
+    drawUnitChar({ id: 0, type: d.type, owner: d.owner, hp: 0 }, d.x, d.y, now, false);
+    cx.restore();
+    cx.globalAlpha = 1;
+  }
+  for (let i = anim.sparks.length - 1; i >= 0; i--) {
+    const sp = anim.sparks[i];
+    const e = (now - sp.t0) / 200;
+    if (e >= 1) { anim.sparks.splice(i, 1); continue; }
+    cx.globalAlpha = 1 - e;
+    cx.strokeStyle = "#ffd977"; cx.lineWidth = 2.2;
+    for (let a = 0; a < 6; a++) {
+      const ang = a * 1.047 + 0.3;
+      const r1 = 4 + e * 12, r2 = 8 + e * 15;
+      cx.beginPath();
+      cx.moveTo(sp.x + Math.cos(ang) * r1, sp.y + Math.sin(ang) * r1 * 0.7);
+      cx.lineTo(sp.x + Math.cos(ang) * r2, sp.y + Math.sin(ang) * r2 * 0.7);
+      cx.stroke();
+    }
+    cx.strokeStyle = "#fff6"; cx.lineWidth = 1.6;
+    cx.beginPath(); cx.ellipse(sp.x, sp.y, 5 + e * 14, (5 + e * 14) * 0.7, 0, 0, 7);
+    cx.stroke();
+    cx.globalAlpha = 1;
+  }
+  cx.font = "bold 13px sans-serif"; cx.textAlign = "center";
+  for (let i = anim.floats.length - 1; i >= 0; i--) {
+    const f = anim.floats[i];
+    const e = (now - f.t0) / 700;
+    if (e >= 1) { anim.floats.splice(i, 1); continue; }
+    cx.globalAlpha = e < 0.75 ? 1 : (1 - e) * 4;
+    const fy = f.y - e * 16;
+    cx.lineWidth = 3; cx.strokeStyle = "#10151d";
+    cx.strokeText(f.txt, f.x, fy);
+    cx.fillStyle = f.col; cx.fillText(f.txt, f.x, fy);
+    cx.globalAlpha = 1;
   }
 }
 
@@ -1806,6 +2092,21 @@ document.getElementById("newgame").onclick = async () => {
 setRot(parseFloat(localStorage.getItem("civvis-rot") || "0"));
 resize();
 boot();
+
+// --- animation ticker: 60fps while anything animates, gentle idle cadence
+// for the character bob otherwise (cinematic only).
+let lastIdleDraw = 0;
+function animTick(now) {
+  requestAnimationFrame(animTick);
+  if (!state) return;
+  const active = anim.moves.size > 0 || anim.floats.length > 0 ||
+    anim.sparks.length > 0 || anim.deaths.length > 0 || anim.strike;
+  if (active || (VIEW === "cinematic" && now - lastIdleDraw > 90)) {
+    lastIdleDraw = now;
+    draw();
+  }
+}
+requestAnimationFrame(animTick);
 </script>
 </body>
 </html>
