@@ -1514,6 +1514,17 @@ impl Game {
                     bonus += 0.15; // Egypt: Iteru (river cities)
                 }
             }
+            Some(Item::Project { project }) => {
+                // The compact tech/building roster omits the late-era factory,
+                // power, governor and policy production stack of a full Civ VI
+                // game. Preserve stock project costs while modeling that stack
+                // so a focused Spaceport can finish the race before turn 500.
+                if self.rules.projects.get(project)
+                    .and_then(|spec| spec.district.as_deref()) == Some("spaceport")
+                {
+                    bonus += 1.0;
+                }
+            }
             _ => {}
         }
         1.0 + bonus
@@ -4771,6 +4782,24 @@ impl Game {
             .floor() as i64
     }
 
+    /// Tourism proxy for the compact ruleset. Theater infrastructure stands
+    /// in for Great Works and their slots until individual works are modeled;
+    /// wonders and a culture-derived baseline provide the remaining output.
+    fn tourism_output(&self, pid: usize, culture: f64) -> f64 {
+        let cities: Vec<_> = self.cities.values().filter(|city| city.owner == pid).collect();
+        let wonders = cities.iter()
+            .flat_map(|city| city.buildings.iter())
+            .filter(|building| self.rules.buildings[building.as_str()].wonder)
+            .count() as f64;
+        let theaters = cities.iter()
+            .filter(|city| city.districts.contains_key("theater_square"))
+            .count() as f64;
+        let amphitheaters = cities.iter()
+            .filter(|city| city.buildings.iter().any(|building| building == "amphitheater"))
+            .count() as f64;
+        0.4 * culture + 4.0 * wonders + 3.0 * theaters + 4.0 * amphitheaters
+    }
+
     /// Culture victory: visiting tourists must exceed the largest rival
     /// domestic-tourist count.
     fn check_culture_victory(&mut self) {
@@ -4925,14 +4954,10 @@ impl Game {
             faith += ys.faith;
         }
         if !self.players[pid].is_minor {
-            let wonders = self.cities.values()
-                .filter(|c| c.owner == pid)
-                .flat_map(|c| c.buildings.iter())
-                .filter(|b| self.rules.buildings[b.as_str()].wonder)
-                .count() as f64;
+            let tourism = self.tourism_output(pid, cul);
             let p = &mut self.players[pid];
             p.culture_lifetime += cul;
-            p.tourism_lifetime += 2.0 * wonders + 0.15 * cul;
+            p.tourism_lifetime += tourism;
         }
         if let Some(r) = self.players[pid].religion.clone() {
             let following = self.cities.values()
@@ -6122,6 +6147,22 @@ mod victory_conditions {
     }
 
     #[test]
+    fn spaceport_projects_model_the_missing_late_game_production_stack() {
+        let g = game_with_capitals(2, 410, 300);
+        let cid = g.player_city_ids(0)[0];
+        let launch = Item::Project {
+            project: "launch_earth_satellite".to_string(),
+        };
+        let repair = Item::Project {
+            project: "repair_outer_defenses".to_string(),
+        };
+
+        assert_eq!(g.item_prod_mult(0, cid, Some(&launch)), 2.0);
+        assert_eq!(g.item_prod_mult(0, cid, Some(&repair)), 1.0,
+                   "the production stack applies only to Spaceport projects");
+    }
+
+    #[test]
     fn domination_requires_every_foreign_original_capital() {
         let mut g = game_with_capitals(3, 402, 300);
         let capital = |g: &Game, original_owner: usize| {
@@ -6179,6 +6220,24 @@ mod victory_conditions {
         g.check_culture_victory();
         assert_eq!(g.winner, Some(0));
         assert_eq!(g.victory_type.as_deref(), Some("culture"));
+    }
+
+    #[test]
+    fn theaters_and_wonders_supply_the_compact_ruleset_tourism_proxy() {
+        let mut g = game_with_capitals(2, 411, 300);
+        let cid = g.player_city_ids(0)[0];
+        let theater = g.cities[&cid].owned_tiles[1];
+        let wonder = g.rules.buildings.iter()
+            .find_map(|(id, spec)| spec.wonder.then_some(id.clone()))
+            .unwrap();
+        let city = g.cities.get_mut(&cid).unwrap();
+        city.buildings.clear();
+        city.districts.clear();
+        city.districts.insert("theater_square".to_string(), theater);
+        city.buildings.push("amphitheater".to_string());
+        city.buildings.push(wonder);
+
+        assert!((g.tourism_output(0, 10.0) - 15.0).abs() < 1e-9);
     }
 
     #[test]
