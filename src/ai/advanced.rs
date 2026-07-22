@@ -1204,8 +1204,8 @@ impl AdvancedAi {
                 best = Some((score, pos));
             }
         }
+        let threshold = if unit.hp < 55 { 12.0 } else { -2.0 };
         if let Some((score, pos)) = best {
-            let threshold = if unit.hp < 55 { 12.0 } else { -2.0 };
             if score > threshold {
                 let action = if ranged {
                     Action::Ranged {
@@ -1237,12 +1237,14 @@ impl AdvancedAi {
                 plan.target_city
                     .and_then(|cid| g.cities.get(&cid).map(|c| c.pos))
             })
-            .or_else(|| self.base.nearest_enemy(g, pid, unit.pos, &enemies));
+            .or_else(|| self.base.nearest_enemy(g, pid, uid, &enemies, threshold));
         match campaign {
             Some(target) => self
                 .base
                 .tactical_step(g, pid, uid, target, &enemies, radius),
-            None => self.base.fortify_or_stop(g, pid, uid),
+            // Nothing this unit is willing to fight: explore or garrison
+            // rather than shadowing a raider it will never strike.
+            None => self.base.peacetime_step(g, pid, uid),
         }
     }
 

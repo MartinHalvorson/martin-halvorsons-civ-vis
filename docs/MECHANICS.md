@@ -4,7 +4,7 @@ Tracked against the [Civilization Wiki](https://civilization.fandom.com/wiki/Civ
 Status: ✅ implemented · 🟡 simplified · ❌ not yet.
 
 > **In progress** (claimed by parallel sessions — check before starting a batch):
-> - AI barbarian pursuit/attack fix (src/ai.rs exchange/nearest_enemy/military_step, src/ai/advanced.rs military step) — session F
+> - (none currently claimed)
 
 | System | Status | Notes |
 |---|---|---|

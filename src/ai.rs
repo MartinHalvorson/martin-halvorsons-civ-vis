@@ -1184,13 +1184,24 @@ impl BasicAi {
                 s -= 35.0; // don't suicide into a counter
             }
         }
+        // Even trades against barbarians are worth taking: civs heal at home
+        // while raiders respawn from camps, and a mirror matchup would
+        // otherwise score exactly 0 and stall at the attack floor.
+        if !self.barb && g.players[o.owner].is_barbarian {
+            s += 10.0;
+        }
         s
     }
 
-    fn nearest_enemy(&self, g: &Game, pid: usize, pos: Pos,
-                     enemy_ids: &[usize]) -> Option<Pos> {
+    fn nearest_enemy(&self, g: &Game, pid: usize, uid: u32,
+                     enemy_ids: &[usize], barb_floor: f64) -> Option<Pos> {
         // Majors chase barbarians (and their camps) only near their own
-        // territory; wars against civs have no leash.
+        // territory; wars against civs have no leash. A barbarian target
+        // this unit would then decline to attack (score at or below
+        // `barb_floor`) is skipped entirely — pursuing it produces the
+        // endless chase-without-striking pattern.
+        let pos = g.units[&uid].pos;
+        let ranged = g.rules.units[g.units[&uid].kind.as_str()].has_ranged_attack();
         let my_cities: Vec<Pos> = g.cities.values()
             .filter(|c| c.owner == pid).map(|c| c.pos).collect();
         let near_home = |tpos: Pos| -> bool {
@@ -1210,7 +1221,10 @@ impl BasicAi {
         }
         for u in g.units.values() {
             if enemy_ids.contains(&u.owner) {
-                if Some(u.owner) == g.barb_pid && !near_home(u.pos) {
+                if Some(u.owner) == g.barb_pid
+                    && (!near_home(u.pos)
+                        || self.exchange_score(g, uid, u.pos, ranged) <= barb_floor)
+                {
                     continue;
                 }
                 let d = g.wdist(pos, u.pos);
@@ -1223,7 +1237,9 @@ impl BasicAi {
             if let Some(bp) = g.barb_pid {
                 if enemy_ids.contains(&bp) {
                     for cpos in g.barb_camps.keys() {
-                        if near_home(*cpos) {
+                        if near_home(*cpos)
+                            && self.exchange_score(g, uid, *cpos, ranged) > barb_floor
+                        {
                             let d = g.wdist(pos, *cpos);
                             if best.map(|b| (d, *cpos) < b).unwrap_or(true) {
                                 best = Some((d, *cpos));
@@ -1350,12 +1366,19 @@ impl BasicAi {
                     }
                 }
             }
-            return match self.nearest_enemy(g, pid, upos, &enemy_ids) {
-                Some(t) => self.tactical_step(g, pid, uid, t, &enemy_ids, radius),
-                None => self.fortify_or_stop(g, pid, uid),
-            };
+            if let Some(t) = self.nearest_enemy(g, pid, uid, &enemy_ids,
+                                                self.w.attack_floor) {
+                return self.tactical_step(g, pid, uid, t, &enemy_ids, radius);
+            }
+            // No worthwhile war target in reach (every game has the
+            // permanent barbarian war): behave as in peacetime below.
         }
-        // peace: minors guard home; majors explore, then garrison
+        self.peacetime_step(g, pid, uid)
+    }
+
+    /// Minors guard home; majors explore, then garrison the nearest city.
+    fn peacetime_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
+        let upos = g.units[&uid].pos;
         if self.minor {
             let cities = g.player_city_ids(pid);
             if cities.is_empty() {
@@ -1474,6 +1497,68 @@ mod tests {
         g.units.get_mut(&warrior).unwrap().hp = 80;
         assert_eq!(ai.healing_step(&mut g, 0, warrior), None);
         assert!(!ai.recovering_units.contains(&warrior));
+    }
+
+    /// One major with a capital, plus a fabricated barbarian warrior on an
+    /// open tile adjacent to the major's warrior. Returns (game, warrior,
+    /// barb warrior).
+    fn barb_skirmish_game(seed: u64) -> (Game, u32, u32) {
+        let mut g = Game::new_full(1, 20, 14, seed, 60, 0, true);
+        let settler = g.player_unit_ids(0).into_iter()
+            .find(|id| g.units[id].kind == "settler").unwrap();
+        g.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let warrior = g.player_unit_ids(0).into_iter()
+            .find(|id| g.units[id].kind == "warrior").unwrap();
+        let wpos = g.units[&warrior].pos;
+        let open = g.nbrs(wpos).into_iter()
+            .find(|p| {
+                let t = &g.map.tiles[p];
+                g.rules.is_passable(t) && !g.rules.is_water(t)
+                    && g.units_at(*p).is_empty() && g.city_at(*p).is_none()
+            })
+            .expect("open land tile next to the warrior");
+        let mut barb = g.units[&warrior].clone();
+        barb.id = g.next_id;
+        g.next_id += 1;
+        barb.owner = g.barb_pid.unwrap();
+        barb.pos = open;
+        let bid = barb.id;
+        g.units.insert(bid, barb);
+        // Round-trip to rebuild occupancy after the manual insert.
+        let snapshot = serde_json::to_value(&g).unwrap();
+        let g: Game = serde_json::from_value(snapshot).unwrap();
+        (g, warrior, bid)
+    }
+
+    #[test]
+    fn even_barbarian_trades_are_taken_not_shadowed() {
+        let (mut g, warrior, barb) = barb_skirmish_game(33);
+        let mut ai = BasicAi::new();
+        assert!(ai.military_step(&mut g, 0, warrior));
+        assert!(
+            g.units.get(&barb).map(|b| b.hp < 100).unwrap_or(true),
+            "adjacent equal-strength barbarian should be attacked, not shadowed"
+        );
+    }
+
+    #[test]
+    fn outmatched_units_stop_chasing_barbarians() {
+        let (mut g, uid, barb) = barb_skirmish_game(34);
+        let ai = BasicAi::new();
+        let bp = g.units[&barb].owner;
+        let bpos = g.units[&barb].pos;
+        // A warrior takes the even fight, so the raider is a valid target...
+        assert_eq!(
+            ai.nearest_enemy(&g, 0, uid, &[bp], ai.w.attack_floor),
+            Some(bpos)
+        );
+        // ...but a scout would decline the attack, so it must not pick the
+        // raider as a pursuit target either (the chase-without-striking bug).
+        g.units.get_mut(&uid).unwrap().kind = "scout".to_string();
+        assert_ne!(
+            ai.nearest_enemy(&g, 0, uid, &[bp], ai.w.attack_floor),
+            Some(bpos)
+        );
     }
 
     #[test]
