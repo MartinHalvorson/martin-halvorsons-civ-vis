@@ -1,6 +1,7 @@
 //! Tiles and the world map (mirrors civvis/world.py).
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::ops::{Deref, DerefMut};
 
 use crate::{hex, Pos};
 
@@ -65,6 +66,54 @@ pub struct Tile {
     /// Turn through which a nuclear accident's fallout makes the tile yieldless.
     #[serde(default)]
     pub fallout_until: u32,
+}
+
+/// Last tile state actually observed by one player. `owner` is snapshotted
+/// separately because a tile stores its owning city ID, while ownership of
+/// that city can change outside the observer's current vision.
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
+pub struct RememberedTile {
+    pub tile: Tile,
+    pub owner: Option<usize>,
+    #[serde(default)]
+    pub seen_turn: u32,
+}
+
+/// JSON cannot directly encode tuple-keyed maps. Keep fast position lookup at
+/// runtime while serializing player map memory as a stable list of snapshots.
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(from = "Vec<RememberedTile>", into = "Vec<RememberedTile>")]
+pub struct TileMemory(BTreeMap<Pos, RememberedTile>);
+
+impl Deref for TileMemory {
+    type Target = BTreeMap<Pos, RememberedTile>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for TileMemory {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl From<Vec<RememberedTile>> for TileMemory {
+    fn from(tiles: Vec<RememberedTile>) -> Self {
+        Self(
+            tiles
+                .into_iter()
+                .map(|remembered| (remembered.tile.pos, remembered))
+                .collect(),
+        )
+    }
+}
+
+impl From<TileMemory> for Vec<RememberedTile> {
+    fn from(memory: TileMemory) -> Self {
+        memory.0.into_values().collect()
+    }
 }
 
 impl Tile {

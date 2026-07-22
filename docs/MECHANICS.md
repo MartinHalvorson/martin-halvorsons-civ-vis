@@ -7,7 +7,7 @@ Status: ✅ implemented · 🟡 intentionally scoped relative to the full commer
 
 | System | Status | Notes |
 |---|---|---|
-| Hex map, fog of war, terrain/features/resources | ✅ | all six stock Civ VI map-size profiles; connected rivers follow shared hex edges |
+| Hex map, fog of war, terrain/features/resources | ✅ | all six stock Civ VI map-size profiles; connected rivers follow shared hex edges. Current sight uses each unit's stock range plus terrain elevation, Woods/Rainforest/Mountain/Natural-Wonder blockers, sight promotions, aircraft vision, City Center/Encampment vantage, and unconditional empire borders plus their one-tile outer ring. Explored tiles and cities retain serialized last-seen state under fog, while units and barbarian alerts appear only in current visibility; level-2 Military Alliances share live sight and newest map memory |
 | Leaders & civ uniques | ✅ | all 8 civs: Trajan, Cleopatra, Pericles, Qin Shi Huang, Gilgamesh, Montezuma, Amanitore, Tomyris — signature ability each + 8 unique units (legion, hoplite, eagle warrior, war cart, pítati archer, maryannu chariot archer, saka horse archer, crouching tiger) replacing/blocking their base units |
 | Rivers & fresh water housing (5/3/2) | ✅ | water values plus Palace, Aqueduct normalization, coastal Lighthouse bonus, and +0.5 from owned Farms, Pastures, Plantations, Camps, and Fishing Boats within 3 tiles |
 | City growth curve, border expansion | ✅ | exact Housing headroom bands: 100% at +2, 50% at +1, 25% through -4, and no growth at -5 |

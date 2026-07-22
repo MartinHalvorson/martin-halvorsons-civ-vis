@@ -3,7 +3,8 @@
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::game::{growth_threshold, Game};
+use crate::game::{growth_threshold, City, Game, RememberedCity};
+use crate::world::Tile;
 use crate::Pos;
 
 pub fn observation(g: &Game, pid: usize) -> Value {
@@ -32,23 +33,11 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool, interactive: bool) -> Value 
                 .then_some(*partner)
         }));
     }
-    let mut vis: BTreeSet<Pos> = BTreeSet::new();
-    if omniscient {
-        vis.extend(g.map.tiles.keys().cloned());
+    let vis: BTreeSet<Pos> = if omniscient {
+        g.map.tiles.keys().copied().collect()
     } else {
-        for viewer in &viewers {
-            for uid in g.player_unit_ids(*viewer) {
-                let u = &g.units[&uid];
-                let sight = g.unit_sight(uid);
-                vis.extend(g.wdisk(u.pos, sight));
-            }
-            for cid in g.player_city_ids(*viewer) {
-                let c = &g.cities[&cid];
-                vis.extend(g.wdisk(c.pos, 2));
-                vis.extend(c.owned_tiles.iter().cloned());
-            }
-        }
-    }
+        g.player_visibility(pid)
+    };
     let mut explored = if omniscient {
         vis.clone()
     } else {
@@ -64,38 +53,31 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool, interactive: bool) -> Value 
     let tiles: Vec<Value> = explored
         .iter()
         .filter_map(|pos| {
-            let t = g.map.get(*pos)?;
-            let owner = t
-                .owner_city
-                .and_then(|oc| g.cities.get(&oc))
-                .map(|c| c.owner);
-            let resource = t
-                .resource
-                .as_ref()
-                .filter(|resource| omniscient || g.resource_visible_to(pid, resource));
-            Some(json!({
-                "pos": [pos.0, pos.1], "terrain": t.terrain, "feature": t.feature,
-                "hills": t.hills, "resource": resource,
-                "improvement": t.improvement, "pillaged": t.pillaged,
-                "district": t.district,
-                "wonder": t.wonder,
-                "owner": owner, "river": t.has_river(),
-                "river_edges": t.river_edges, "road": t.road,
-                "cliff_edges": t.cliff_edges,
-                "continent": t.continent,
-                "coastal_lowland": t.coastal_lowland,
-                "flooded": t.flooded,
-                "submerged": t.submerged,
-            }))
+            let (tile, owner) = if omniscient || vis.contains(pos) {
+                let tile = g.map.get(*pos)?;
+                let owner = tile
+                    .owner_city
+                    .and_then(|city| g.cities.get(&city))
+                    .map(|city| city.owner);
+                (tile, owner)
+            } else {
+                let memory = viewers
+                    .iter()
+                    .filter_map(|viewer| g.players[*viewer].remembered_tiles.get(pos))
+                    .max_by_key(|memory| memory.seen_turn)?;
+                (&memory.tile, memory.owner)
+            };
+            Some(tile_json(g, pid, tile, owner, omniscient))
         })
         .collect();
     let units: Vec<Value> = g
         .units
         .values()
         .filter(|u| {
-            (u.owner == pid || vis.contains(&u.pos))
-                && (omniscient
-                    || viewers
+            omniscient
+                || u.owner == pid
+                || (vis.contains(&u.pos)
+                    && viewers
                         .iter()
                         .any(|viewer| g.unit_visible_to(u.id, *viewer)))
         })
@@ -123,68 +105,55 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool, interactive: bool) -> Value 
         .map(|spy| serde_json::to_value(spy).unwrap())
         .collect();
     let mut empire = [0.0f64; 6]; // food, prod, gold, sci, cul, faith
-    let mut cities: Vec<Value> = Vec::new();
-    for c in g.cities.values() {
-        if !explored.contains(&c.pos) {
-            continue;
-        }
-        let mut d = json!({
-            "id": c.id, "name": c.name, "owner": c.owner,
-            "pos": [c.pos.0, c.pos.1], "pop": c.pop, "hp": c.hp,
-            "is_capital": c.is_capital,
-            "original_owner": c.original_owner,
-            "captured_from": c.captured_from,
-            "occupied_from": c.occupied_from,
-            "wall_hp": c.wall_hp, "wall_max": g.city_max_wall_hp(c),
-            "encampment_hp": c.encampment_hp,
-            "encampment_wall_hp": c.encampment_wall_hp,
-            "encampment_pillaged": c.encampment_pillaged,
-            "religion": g.city_religion(c),
-        });
-        if c.owner == pid {
-            let citizens = g.city_citizen_plan(c.id);
-            let ys = g.city_yields(c.id);
-            empire[0] += ys.food;
-            empire[1] += ys.production;
-            empire[2] += ys.gold;
-            empire[3] += ys.science;
-            empire[4] += ys.culture;
-            empire[5] += ys.faith;
-            let ext = json!({
-                "food": round1(c.food), "production": round1(c.production),
-                "queue": c.queue, "buildings": c.buildings,
-                "products": c.products,
-                "product_capacity": g.product_capacity(c),
-                "districts": c.districts,
-                "wonders": c.wonders,
-                "owned_tiles": c.owned_tiles.iter()
-                    .map(|t| json!([t.0, t.1])).collect::<Vec<_>>(),
-                "yields": yields_json(&ys),
-                "housing": g.city_housing(c),
-                "amenity_surplus": g.city_amenity_surplus(c),
-                "power_demand": g.city_power_demand(c),
-                "power_supply": g.city_power_supply(c),
-                "powered": g.city_is_powered(c),
-                "reactor_age": c.reactor_age,
-                "reactor_accident_risk": round1(100.0 * g.reactor_accident_risk(c.id)),
-                "growth_need": growth_threshold(c.pop),
-                "queue_cost": c.queue.first().map(|it| g.item_cost_for_city(c.owner, c.id, it)),
-                "can_strike": g.city_can_strike(c),
-                "loyalty": round1(c.loyalty),
-                "governor": g.players[c.owner].governors.contains(&c.id),
-                "citizens": {
-                    "focus": citizens.strategy.focus,
-                    "weights": yields_json(&citizens.strategy.weights),
-                    "food_target": round1(citizens.strategy.food_target),
-                    "worked_tiles": citizens.worked_tiles.iter()
-                        .map(|t| json!([t.0, t.1])).collect::<Vec<_>>(),
-                    "specialists": citizens.specialists,
-                },
-            });
-            merge(&mut d, ext);
-        }
-        cities.push(d);
+    for city in g.cities.values().filter(|city| city.owner == pid) {
+        let yields = g.city_yields(city.id);
+        empire[0] += yields.food;
+        empire[1] += yields.production;
+        empire[2] += yields.gold;
+        empire[3] += yields.science;
+        empire[4] += yields.culture;
+        empire[5] += yields.faith;
     }
+
+    enum KnownCity<'a> {
+        Live(&'a City),
+        Remembered(&'a RememberedCity),
+    }
+    let mut known_cities: BTreeMap<u32, KnownCity<'_>> = BTreeMap::new();
+    if !omniscient {
+        for viewer in &viewers {
+            for memory in g.players[*viewer].remembered_cities.values() {
+                if explored.contains(&memory.pos) && !vis.contains(&memory.pos) {
+                    known_cities
+                        .entry(memory.id)
+                        .and_modify(|known| {
+                            if matches!(known, KnownCity::Remembered(old) if memory.seen_turn > old.seen_turn)
+                            {
+                                *known = KnownCity::Remembered(memory);
+                            }
+                        })
+                        .or_insert(KnownCity::Remembered(memory));
+                }
+            }
+        }
+    }
+    for city in g.cities.values() {
+        if omniscient || city.owner == pid || vis.contains(&city.pos) {
+            known_cities.insert(city.id, KnownCity::Live(city));
+        }
+    }
+    let cities: Vec<Value> = known_cities
+        .into_values()
+        .map(|known| match known {
+            KnownCity::Remembered(city) => remembered_city_json(city),
+            KnownCity::Live(city) => live_city_json(g, pid, city),
+        })
+        .collect();
+    let camps: Vec<Value> = tiles
+        .iter()
+        .filter(|tile| tile["improvement"] == "barbarian_camp")
+        .map(|tile| tile["pos"].clone())
+        .collect();
     json!({
         "turn": g.turn,
         "seed": g.seed,
@@ -209,8 +178,7 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool, interactive: bool) -> Value 
         },
         "visible": vis.iter().filter(|v| g.map.tiles.contains_key(v))
             .map(|v| json!([v.0, v.1])).collect::<Vec<_>>(),
-        "camps": g.barb_camps.keys().filter(|cp| explored.contains(cp))
-            .map(|cp| json!([cp.0, cp.1])).collect::<Vec<_>>(),
+        "camps": camps,
         "units": units,
         "spies": spies,
         "cities": cities,
@@ -367,7 +335,7 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool, interactive: bool) -> Value 
         "pending_emergencies": g.pending_emergencies,
         "active_emergencies": g.active_emergencies,
         "barbarian_alerts": g.barb_alerted_until.iter()
-            .filter(|(camp, _)| explored.contains(camp))
+            .filter(|(camp, _)| vis.contains(camp))
             .map(|(camp, until)| json!({
                 "camp": [camp.0, camp.1],
                 "target": g.barb_camp_targets.get(camp).map(|target| [target.0, target.1]),
@@ -377,6 +345,157 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool, interactive: bool) -> Value 
         "winner": g.winner,
         "victory_type": g.victory_type,
     })
+}
+
+fn tile_json(g: &Game, pid: usize, tile: &Tile, owner: Option<usize>, omniscient: bool) -> Value {
+    let resource = tile
+        .resource
+        .as_ref()
+        .filter(|resource| omniscient || g.resource_visible_to(pid, resource));
+    json!({
+        "pos": [tile.pos.0, tile.pos.1],
+        "terrain": tile.terrain,
+        "feature": tile.feature,
+        "hills": tile.hills,
+        "resource": resource,
+        "improvement": tile.improvement,
+        "pillaged": tile.pillaged,
+        "district": tile.district,
+        "wonder": tile.wonder,
+        "owner": owner,
+        "river": tile.has_river(),
+        "river_edges": tile.river_edges,
+        "road": tile.road,
+        "cliff_edges": tile.cliff_edges,
+        "continent": tile.continent,
+        "coastal_lowland": tile.coastal_lowland,
+        "flooded": tile.flooded,
+        "submerged": tile.submerged,
+    })
+}
+
+struct PublicCity<'a> {
+    id: u32,
+    name: &'a str,
+    owner: usize,
+    pos: Pos,
+    pop: i32,
+    hp: i32,
+    is_capital: bool,
+    original_owner: usize,
+    captured_from: Option<usize>,
+    occupied_from: Option<usize>,
+    wall_hp: i32,
+    wall_max: i32,
+    encampment_hp: i32,
+    encampment_wall_hp: i32,
+    encampment_pillaged: bool,
+    religion: Option<&'a str>,
+}
+
+fn public_city_json(city: PublicCity<'_>) -> Value {
+    json!({
+        "id": city.id,
+        "name": city.name,
+        "owner": city.owner,
+        "pos": [city.pos.0, city.pos.1],
+        "pop": city.pop,
+        "hp": city.hp,
+        "is_capital": city.is_capital,
+        "original_owner": city.original_owner,
+        "captured_from": city.captured_from,
+        "occupied_from": city.occupied_from,
+        "wall_hp": city.wall_hp,
+        "wall_max": city.wall_max,
+        "encampment_hp": city.encampment_hp,
+        "encampment_wall_hp": city.encampment_wall_hp,
+        "encampment_pillaged": city.encampment_pillaged,
+        "religion": city.religion,
+    })
+}
+
+fn remembered_city_json(city: &RememberedCity) -> Value {
+    public_city_json(PublicCity {
+        id: city.id,
+        name: &city.name,
+        owner: city.owner,
+        pos: city.pos,
+        pop: city.pop,
+        hp: city.hp,
+        is_capital: city.is_capital,
+        original_owner: city.original_owner,
+        captured_from: city.captured_from,
+        occupied_from: city.occupied_from,
+        wall_hp: city.wall_hp,
+        wall_max: city.wall_max,
+        encampment_hp: city.encampment_hp,
+        encampment_wall_hp: city.encampment_wall_hp,
+        encampment_pillaged: city.encampment_pillaged,
+        religion: city.religion.as_deref(),
+    })
+}
+
+fn live_city_json(g: &Game, pid: usize, city: &City) -> Value {
+    let mut value = public_city_json(PublicCity {
+        id: city.id,
+        name: &city.name,
+        owner: city.owner,
+        pos: city.pos,
+        pop: city.pop,
+        hp: city.hp,
+        is_capital: city.is_capital,
+        original_owner: city.original_owner,
+        captured_from: city.captured_from,
+        occupied_from: city.occupied_from,
+        wall_hp: city.wall_hp,
+        wall_max: g.city_max_wall_hp(city),
+        encampment_hp: city.encampment_hp,
+        encampment_wall_hp: city.encampment_wall_hp,
+        encampment_pillaged: city.encampment_pillaged,
+        religion: g.city_religion(city),
+    });
+    if city.owner != pid {
+        return value;
+    }
+
+    let citizens = g.city_citizen_plan(city.id);
+    let yields = g.city_yields(city.id);
+    let private = json!({
+        "food": round1(city.food),
+        "production": round1(city.production),
+        "queue": city.queue,
+        "buildings": city.buildings,
+        "products": city.products,
+        "product_capacity": g.product_capacity(city),
+        "districts": city.districts,
+        "wonders": city.wonders,
+        "owned_tiles": city.owned_tiles.iter()
+            .map(|tile| json!([tile.0, tile.1])).collect::<Vec<_>>(),
+        "yields": yields_json(&yields),
+        "housing": g.city_housing(city),
+        "amenity_surplus": g.city_amenity_surplus(city),
+        "power_demand": g.city_power_demand(city),
+        "power_supply": g.city_power_supply(city),
+        "powered": g.city_is_powered(city),
+        "reactor_age": city.reactor_age,
+        "reactor_accident_risk": round1(100.0 * g.reactor_accident_risk(city.id)),
+        "growth_need": growth_threshold(city.pop),
+        "queue_cost": city.queue.first()
+            .map(|item| g.item_cost_for_city(city.owner, city.id, item)),
+        "can_strike": g.city_can_strike(city),
+        "loyalty": round1(city.loyalty),
+        "governor": g.players[city.owner].governors.contains(&city.id),
+        "citizens": {
+            "focus": citizens.strategy.focus,
+            "weights": yields_json(&citizens.strategy.weights),
+            "food_target": round1(citizens.strategy.food_target),
+            "worked_tiles": citizens.worked_tiles.iter()
+                .map(|tile| json!([tile.0, tile.1])).collect::<Vec<_>>(),
+            "specialists": citizens.specialists,
+        },
+    });
+    merge(&mut value, private);
+    value
 }
 
 fn round1(v: f64) -> f64 {

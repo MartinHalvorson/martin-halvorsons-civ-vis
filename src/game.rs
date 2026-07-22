@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDequ
 use crate::rng::Rng;
 use crate::rules::{Rules, Yields};
 use crate::setup::MapSize;
-use crate::world::{DistrictFoundation, WorldMap};
+use crate::world::{DistrictFoundation, RememberedTile, TileMemory, WorldMap};
 use crate::{hex, mapgen, Pos};
 
 pub const CIV_NAMES: [&str; 8] = [
@@ -6010,6 +6010,21 @@ fn pair(a: usize, b: usize) -> (usize, usize) {
     (a.min(b), a.max(b))
 }
 
+fn cube_round(q: f64, r: f64, s: f64) -> Pos {
+    let mut rq = q.round();
+    let mut rr = r.round();
+    let rs = s.round();
+    let q_delta = (rq - q).abs();
+    let r_delta = (rr - r).abs();
+    let s_delta = (rs - s).abs();
+    if q_delta > r_delta && q_delta > s_delta {
+        rq = -rr - rs;
+    } else if r_delta > s_delta {
+        rr = -rq - rs;
+    }
+    (rq as i32, rr as i32)
+}
+
 impl Game {
     /// Stock setup profile governing this world. Exact stock dimensions win;
     /// custom maps fall back to the profile for their major-player count.
@@ -6441,6 +6456,30 @@ pub struct City {
     pub great_person_foreign_route_gold: f64,
 }
 
+/// Public city information frozen at the moment a player last had sight of
+/// the City Center. Private production and citizen state are never copied.
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
+pub struct RememberedCity {
+    pub id: u32,
+    pub name: String,
+    pub owner: usize,
+    pub pos: Pos,
+    pub pop: i32,
+    pub hp: i32,
+    pub is_capital: bool,
+    pub original_owner: usize,
+    pub captured_from: Option<usize>,
+    pub occupied_from: Option<usize>,
+    pub wall_hp: i32,
+    pub wall_max: i32,
+    pub encampment_hp: i32,
+    pub encampment_wall_hp: i32,
+    pub encampment_pillaged: bool,
+    pub religion: Option<String>,
+    #[serde(default)]
+    pub seen_turn: u32,
+}
+
 /// The priorities used by a city's automatic citizen governor.  These are
 /// deliberately observable: agents and the browser can explain why a tile is
 /// being worked instead of treating city yields as a hidden heuristic.
@@ -6674,6 +6713,14 @@ pub struct Player {
     #[serde(default)]
     pub co2_emissions: f64,
     pub explored: BTreeSet<Pos>,
+    /// Per-tile last-known state. Unlike `explored`, this does not update
+    /// while a tile is under fog, so improvements, ownership, disasters, and
+    /// other changes cannot leak through a player observation.
+    #[serde(default)]
+    pub remembered_tiles: TileMemory,
+    /// Last public City Center state observed by this player.
+    #[serde(default)]
+    pub remembered_cities: BTreeMap<u32, RememberedCity>,
     pub alive: bool,
     pub is_minor: bool,
     #[serde(default)]
@@ -6801,6 +6848,8 @@ impl Player {
             power_fuel_consumed: BTreeMap::new(),
             co2_emissions: 0.0,
             explored: BTreeSet::new(),
+            remembered_tiles: TileMemory::default(),
+            remembered_cities: BTreeMap::new(),
             alive: true,
             is_minor,
             is_barbarian: false,
@@ -7373,6 +7422,11 @@ impl From<GameSer> for Game {
             }
         }
         g.refresh_great_person_offers();
+        // Legacy saves know which tiles were explored but predate last-seen
+        // snapshots. Seed those once from the loaded world, then refresh only
+        // what is currently visible.
+        g.backfill_visibility_memory();
+        g.refresh_all_visibility();
         g
     }
 }
@@ -7531,6 +7585,7 @@ impl Game {
             }
         }
         g.refresh_great_person_offers();
+        g.refresh_all_visibility();
         g
     }
 
@@ -14519,41 +14574,13 @@ impl Game {
     }
 
     fn reveal(&mut self, pid: usize, pos: Pos, radius: i32) {
-        let mut wonders: BTreeSet<String> = BTreeSet::new();
-        for p in self.wdisk(pos, radius) {
-            if let Some(t) = self.map.tiles.get(&p) {
-                let new = self.players[pid].explored.insert(p);
-                if new && !self.players[pid].is_minor {
-                    if let Some(feature) = t
-                        .feature
-                        .as_ref()
-                        .filter(|feature| self.rules.features[feature.as_str()].natural_wonder)
-                    {
-                        wonders.insert(feature.clone());
-                    }
-                }
-            }
+        if pid >= self.players.len() || !self.map.tiles.contains_key(&pos) {
+            return;
         }
-        for wonder in wonders {
-            if !self.players[pid]
-                .discovered_natural_wonders
-                .insert(wonder.clone())
-            {
-                continue;
-            }
-            // +1 era score on discovery, +2 more for the world's first finder
-            let first = !self
-                .players
-                .iter()
-                .any(|o| o.id != pid && o.discovered_natural_wonders.contains(&wonder));
-            self.add_era_score(pid, if first { 3 } else { 1 });
-            if self.grants_city_state_unique_bonus(pid, "Kandy") {
-                *self.players[pid]
-                    .counters
-                    .entry("great_work:relic".to_string())
-                    .or_insert(0) += 1;
-            }
-        }
+        let mut visible = self.player_visibility(pid);
+        let height = self.map.tiles[&pos].hills as i32 + self.district_viewpoint_bonus(pos);
+        visible.extend(self.visible_tiles_from(pos, radius, height, false, false));
+        self.refresh_visibility_snapshot(pid, visible);
     }
 
     /// Terrain MP to step between adjacent tiles. The unit-aware wrapper
@@ -14677,10 +14704,150 @@ impl Game {
 
     fn sight_height(&self, pos: Pos) -> i32 {
         let t = &self.map.tiles[&pos];
-        if t.terrain == "mountain" {
+        if t.terrain == "mountain"
+            || t.feature.as_ref().is_some_and(|feature| {
+                self.rules
+                    .features
+                    .get(feature)
+                    .is_some_and(|feature| feature.natural_wonder)
+            })
+        {
             return 3;
         }
         t.hills as i32 + matches!(t.feature.as_deref(), Some("forest" | "jungle")) as i32
+    }
+
+    fn blocker_height(&self, pos: Pos, see_through_woods: bool) -> i32 {
+        let tile = &self.map.tiles[&pos];
+        if tile.terrain == "mountain"
+            || tile.feature.as_ref().is_some_and(|feature| {
+                self.rules
+                    .features
+                    .get(feature)
+                    .is_some_and(|feature| feature.natural_wonder)
+            })
+        {
+            return 3;
+        }
+        tile.hills as i32
+            + i32::from(
+                !see_through_woods && matches!(tile.feature.as_deref(), Some("forest" | "jungle")),
+            )
+    }
+
+    /// The two small cube-coordinate nudges produce both direct corridors
+    /// when a ray lies exactly on a hex edge. A target is visible when either
+    /// corridor is open, matching Civ VI's "half-hidden" hex behavior.
+    fn sight_corridors(&self, from: Pos, to: Pos) -> Vec<Vec<Pos>> {
+        let width = self.map.width;
+        let unwrapped = [-width, 0, width]
+            .into_iter()
+            .map(|shift| (to.0 + shift, to.1))
+            .min_by_key(|candidate| hex::distance(from, *candidate))
+            .unwrap_or(to);
+        let distance = hex::distance(from, unwrapped);
+        if distance == 0 {
+            return vec![vec![from]];
+        }
+        let from_cube = (from.0 as f64, from.1 as f64, (-from.0 - from.1) as f64);
+        let to_cube = (
+            unwrapped.0 as f64,
+            unwrapped.1 as f64,
+            (-unwrapped.0 - unwrapped.1) as f64,
+        );
+        let mut corridors = Vec::new();
+        for nudge in [(1e-6, 1e-6, -2e-6), (-1e-6, -1e-6, 2e-6)] {
+            let mut corridor = Vec::new();
+            for step in 0..=distance {
+                let t = step as f64 / distance as f64;
+                let q = from_cube.0 + (to_cube.0 - from_cube.0) * t + nudge.0;
+                let r = from_cube.1 + (to_cube.1 - from_cube.1) * t + nudge.1;
+                let s = from_cube.2 + (to_cube.2 - from_cube.2) * t + nudge.2;
+                let position = hex::canon(cube_round(q, r, s), width);
+                if corridor.last() != Some(&position) {
+                    corridor.push(position);
+                }
+            }
+            if !corridors.contains(&corridor) {
+                corridors.push(corridor);
+            }
+        }
+        corridors
+    }
+
+    fn tile_has_visibility_line(
+        &self,
+        from: Pos,
+        to: Pos,
+        viewer_height: i32,
+        see_through_woods: bool,
+    ) -> bool {
+        if self.wdist(from, to) <= 1 {
+            return true;
+        }
+        let target_height = self.sight_height(to);
+        self.sight_corridors(from, to).into_iter().any(|corridor| {
+            corridor
+                .iter()
+                .skip(1)
+                .take(corridor.len().saturating_sub(2))
+                .all(|position| {
+                    let blocker = self.blocker_height(*position, see_through_woods);
+                    blocker <= viewer_height || blocker < target_height
+                })
+        })
+    }
+
+    fn district_viewpoint_bonus(&self, pos: Pos) -> i32 {
+        if self.city_at(pos).is_some() {
+            return 1;
+        }
+        let Some(tile) = self.map.get(pos) else {
+            return 0;
+        };
+        if !tile
+            .district
+            .as_deref()
+            .is_some_and(|district| self.district_is_family(district, "encampment"))
+        {
+            return 0;
+        }
+        i32::from(self.cities.values().any(|city| {
+            city.districts.iter().any(|(_, district)| *district == pos) && !city.encampment_pillaged
+        }))
+    }
+
+    fn visible_tiles_from(
+        &self,
+        from: Pos,
+        radius: i32,
+        viewer_height: i32,
+        see_through_woods: bool,
+        flying: bool,
+    ) -> BTreeSet<Pos> {
+        let mut visible = BTreeSet::new();
+        for target in self.wdisk(from, radius) {
+            if flying
+                || self.tile_has_visibility_line(from, target, viewer_height, see_through_woods)
+            {
+                visible.insert(target);
+            }
+        }
+        if !flying && radius > 0 {
+            // Elevated terrain one tile beyond nominal sight is itself
+            // visible when it rises above the intervening terrain.
+            for target in self
+                .wdisk(from, radius + 1)
+                .into_iter()
+                .filter(|target| self.wdist(from, *target) == radius + 1)
+                .filter(|target| self.sight_height(*target) > 0)
+            {
+                if self.tile_has_visibility_line(from, target, viewer_height, see_through_woods) {
+                    visible.insert(target);
+                }
+            }
+        }
+        visible
     }
 
     /// Civ VI line of sight for the ranges represented by this ruleset. At
@@ -14896,6 +15063,269 @@ impl Game {
             .fold(own_sight, i32::max)
     }
 
+    /// Terrain-aware tiles currently observed by one unit. Air units ignore
+    /// terrain obstruction; ground and naval units use their data-defined
+    /// sight, promotions, elevation, and City Center/Encampment vantage.
+    pub fn unit_visible_tiles(&self, uid: u32) -> BTreeSet<Pos> {
+        let Some(unit) = self.units.get(&uid) else {
+            return BTreeSet::new();
+        };
+        let spec = &self.rules.units[unit.kind.as_str()];
+        let origin = unit.air_patrol_pos.unwrap_or(unit.pos);
+        let viewer_height =
+            self.map.tiles[&origin].hills as i32 + self.district_viewpoint_bonus(origin);
+        self.visible_tiles_from(
+            origin,
+            self.unit_sight(uid),
+            viewer_height,
+            self.promotion_effect(unit, "see_through_woods") > 0.0,
+            spec.domain.as_deref() == Some("air"),
+        )
+    }
+
+    fn base_player_visibility(&self, pid: usize) -> BTreeSet<Pos> {
+        let mut visible = BTreeSet::new();
+        for uid in self.player_unit_ids(pid) {
+            visible.extend(self.unit_visible_tiles(uid));
+        }
+        // Civ VI grants unconditional visibility to every owned border tile
+        // and the one-tile ring beyond it, regardless of terrain blockers.
+        for city in self.cities.values().filter(|city| city.owner == pid) {
+            for position in &city.owned_tiles {
+                visible.insert(*position);
+                visible.extend(self.nbrs(*position));
+            }
+        }
+        // Spies are city-based rather than map Units in this engine, but have
+        // the stock three-tile sight while established and uncaptured.
+        for spy in self.spies.values().filter(|spy| {
+            spy.owner == pid && spy.captured_by.is_none() && spy.ready_turn <= self.turn
+        }) {
+            let Some(position) = spy
+                .city
+                .and_then(|city| self.cities.get(&city).map(|city| city.pos))
+            else {
+                continue;
+            };
+            let height =
+                self.map.tiles[&position].hills as i32 + self.district_viewpoint_bonus(position);
+            visible.extend(self.visible_tiles_from(position, 3, height, false, false));
+        }
+        visible
+    }
+
+    /// Authoritative current visibility for a player, including level-two
+    /// Military Alliance shared vision. Explored/remembered tiles are not
+    /// included here.
+    pub fn player_visibility(&self, pid: usize) -> BTreeSet<Pos> {
+        let mut visible = self.base_player_visibility(pid);
+        for partner in self.players[pid]
+            .alliances
+            .iter()
+            .filter_map(|(partner, alliance)| {
+                (alliance.ends > self.turn && alliance.kind == "military" && alliance.level >= 2)
+                    .then_some(*partner)
+            })
+        {
+            visible.extend(self.base_player_visibility(partner));
+        }
+        visible
+    }
+
+    fn remember_city(&self, city: &City) -> RememberedCity {
+        RememberedCity {
+            id: city.id,
+            name: city.name.clone(),
+            owner: city.owner,
+            pos: city.pos,
+            pop: city.pop,
+            hp: city.hp,
+            is_capital: city.is_capital,
+            original_owner: city.original_owner,
+            captured_from: city.captured_from,
+            occupied_from: city.occupied_from,
+            wall_hp: city.wall_hp,
+            wall_max: self.city_max_wall_hp(city),
+            encampment_hp: city.encampment_hp,
+            encampment_wall_hp: city.encampment_wall_hp,
+            encampment_pillaged: city.encampment_pillaged,
+            religion: self.city_religion(city).map(str::to_string),
+            seen_turn: self.turn,
+        }
+    }
+
+    fn snapshot_tile(&self, position: Pos) -> Option<RememberedTile> {
+        let tile = self.map.get(position)?.clone();
+        let owner = tile
+            .owner_city
+            .and_then(|city| self.cities.get(&city))
+            .map(|city| city.owner);
+        Some(RememberedTile {
+            tile,
+            owner,
+            seen_turn: self.turn,
+        })
+    }
+
+    /// Refresh one player's last-known map from exactly the tiles currently
+    /// visible to that player. Nothing under fog is touched.
+    fn refresh_player_visibility(&mut self, pid: usize) {
+        if pid >= self.players.len() {
+            return;
+        }
+        let visible = self.player_visibility(pid);
+        self.refresh_visibility_snapshot(pid, visible);
+    }
+
+    fn refresh_visibility_snapshot(&mut self, pid: usize, visible: BTreeSet<Pos>) {
+        let newly_explored: Vec<Pos> = visible
+            .difference(&self.players[pid].explored)
+            .copied()
+            .collect();
+        let tiles: Vec<(Pos, RememberedTile)> = visible
+            .iter()
+            .filter_map(|position| self.snapshot_tile(*position).map(|tile| (*position, tile)))
+            .collect();
+        let cities: Vec<RememberedCity> = self
+            .cities
+            .values()
+            .filter(|city| visible.contains(&city.pos))
+            .map(|city| self.remember_city(city))
+            .collect();
+        let live_city_ids: BTreeSet<u32> = self.cities.keys().copied().collect();
+        {
+            let player = &mut self.players[pid];
+            player.explored.extend(visible.iter().copied());
+            for (position, tile) in tiles {
+                player.remembered_tiles.insert(position, tile);
+            }
+            player.remembered_cities.retain(|city, memory| {
+                !visible.contains(&memory.pos) || live_city_ids.contains(city)
+            });
+            for city in cities {
+                player.remembered_cities.insert(city.id, city);
+            }
+        }
+
+        if self.players[pid].is_minor || self.players[pid].is_barbarian {
+            return;
+        }
+
+        let wonders: BTreeSet<String> = newly_explored
+            .into_iter()
+            .filter_map(|position| self.map.get(position))
+            .filter_map(|tile| tile.feature.as_ref())
+            .filter(|feature| {
+                self.rules
+                    .features
+                    .get(*feature)
+                    .is_some_and(|feature| feature.natural_wonder)
+            })
+            .cloned()
+            .collect();
+        for wonder in wonders {
+            if !self.players[pid]
+                .discovered_natural_wonders
+                .insert(wonder.clone())
+            {
+                continue;
+            }
+            let first = !self
+                .players
+                .iter()
+                .any(|other| other.id != pid && other.discovered_natural_wonders.contains(&wonder));
+            self.add_era_score(pid, if first { 3 } else { 1 });
+            if self.grants_city_state_unique_bonus(pid, "Kandy") {
+                *self.players[pid]
+                    .counters
+                    .entry("great_work:relic".to_string())
+                    .or_insert(0) += 1;
+            }
+        }
+    }
+
+    fn refresh_all_visibility(&mut self) {
+        for pid in 0..self.players.len() {
+            self.refresh_player_visibility(pid);
+        }
+    }
+
+    /// Permanently exchange the newest last-seen map state among players who
+    /// share explored-map knowledge. Current visibility is still calculated
+    /// separately and units are deliberately never copied into memory.
+    fn share_visibility_memories(&mut self, members: &[usize]) {
+        let explored: BTreeSet<Pos> = members
+            .iter()
+            .flat_map(|member| self.players[*member].explored.iter().copied())
+            .collect();
+        let mut tiles: BTreeMap<Pos, RememberedTile> = BTreeMap::new();
+        let mut cities: BTreeMap<u32, RememberedCity> = BTreeMap::new();
+        for member in members {
+            for (position, memory) in self.players[*member].remembered_tiles.iter() {
+                let replace = tiles
+                    .get(position)
+                    .is_none_or(|old| memory.seen_turn > old.seen_turn);
+                if replace {
+                    tiles.insert(*position, memory.clone());
+                }
+            }
+            for (city, memory) in &self.players[*member].remembered_cities {
+                let replace = cities
+                    .get(city)
+                    .is_none_or(|old| memory.seen_turn > old.seen_turn);
+                if replace {
+                    cities.insert(*city, memory.clone());
+                }
+            }
+        }
+        for member in members {
+            let player = &mut self.players[*member];
+            player.explored.extend(explored.iter().copied());
+            for (position, memory) in &tiles {
+                let replace = player
+                    .remembered_tiles
+                    .get(position)
+                    .is_none_or(|old| memory.seen_turn > old.seen_turn);
+                if replace {
+                    player.remembered_tiles.insert(*position, memory.clone());
+                }
+            }
+            for (city, memory) in &cities {
+                let replace = player
+                    .remembered_cities
+                    .get(city)
+                    .is_none_or(|old| memory.seen_turn > old.seen_turn);
+                if replace {
+                    player.remembered_cities.insert(*city, memory.clone());
+                }
+            }
+        }
+    }
+
+    fn backfill_visibility_memory(&mut self) {
+        for pid in 0..self.players.len() {
+            let missing_tiles: Vec<(Pos, RememberedTile)> = self.players[pid]
+                .explored
+                .iter()
+                .filter(|position| !self.players[pid].remembered_tiles.contains_key(position))
+                .filter_map(|position| self.snapshot_tile(*position).map(|tile| (*position, tile)))
+                .collect();
+            let missing_cities: Vec<RememberedCity> = self
+                .cities
+                .values()
+                .filter(|city| self.players[pid].explored.contains(&city.pos))
+                .filter(|city| !self.players[pid].remembered_cities.contains_key(&city.id))
+                .map(|city| self.remember_city(city))
+                .collect();
+            for (position, tile) in missing_tiles {
+                self.players[pid].remembered_tiles.insert(position, tile);
+            }
+            for city in missing_cities {
+                self.players[pid].remembered_cities.insert(city.id, city);
+            }
+        }
+    }
+
     /// Camouflaged recon and Naval Raider units are hidden unless an
     /// adjacent unit, Naval Raider, or Destroyer detects them.
     pub fn unit_visible_to(&self, uid: u32, viewer: usize) -> bool {
@@ -14915,7 +15345,7 @@ impl Game {
             let distance = self.wdist(other.pos, unit.pos);
             distance <= 1
                 || (raider
-                    && distance <= self.unit_sight(other_id)
+                    && self.unit_visible_tiles(other_id).contains(&unit.pos)
                     && (other.kind == "destroyer"
                         || self.rules.units[other.kind.as_str()].promotion_class == "naval_raider"))
         })
@@ -20985,6 +21415,11 @@ impl Game {
             }
         };
         if r.is_ok() {
+            if matches!(action, Action::EndTurn) {
+                self.refresh_all_visibility();
+            } else {
+                self.refresh_player_visibility(pid);
+            }
             self.log.push((pid, action.clone()));
         }
         r
@@ -26340,13 +26775,7 @@ impl Game {
                 self.share_research_alliance_boosts(pid, partner);
             }
             if alliance.kind == "military" && alliance.level >= 2 {
-                let shared = self.players[pid]
-                    .explored
-                    .union(&self.players[partner].explored)
-                    .copied()
-                    .collect::<BTreeSet<_>>();
-                self.players[pid].explored.extend(shared.iter().copied());
-                self.players[partner].explored.extend(shared);
+                self.share_visibility_memories(&[pid, partner]);
             }
         }
 
@@ -27691,14 +28120,7 @@ impl Game {
 
     fn share_emergency_visibility(&mut self) {
         for emergency in self.active_emergencies.clone() {
-            let shared: BTreeSet<Pos> = emergency
-                .members
-                .iter()
-                .flat_map(|member| self.players[*member].explored.iter().copied())
-                .collect();
-            for member in emergency.members {
-                self.players[member].explored.extend(shared.iter().copied());
-            }
+            self.share_visibility_memories(&emergency.members.iter().copied().collect::<Vec<_>>());
         }
     }
 
@@ -30735,6 +31157,328 @@ impl Game {
             self.winner = Some(pid);
             self.victory_type = Some(vtype.to_string());
         }
+    }
+}
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn controlled_game(seed: u64) -> (Game, Pos) {
+        let mut game = Game::new_full(2, 20, 14, seed, 40, 0, false);
+        for unit in game.units.keys().copied().collect::<Vec<_>>() {
+            game.remove_unit(unit);
+        }
+        for player in &mut game.players {
+            player.explored.clear();
+            player.remembered_tiles.clear();
+            player.remembered_cities.clear();
+        }
+        game.map.clear_rivers();
+        for tile in game.map.tiles.values_mut() {
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.district = None;
+            tile.owner_city = None;
+            tile.hills = false;
+            tile.road = false;
+        }
+        let center = *game
+            .map
+            .tiles
+            .keys()
+            .find(|position| game.wdisk(**position, 4).len() == 61)
+            .expect("controlled map has an interior tile");
+        game.current = 0;
+        (game, center)
+    }
+
+    fn along(game: &Game, origin: Pos, distance: i32) -> Pos {
+        hex::canon((origin.0 + distance, origin.1), game.map.width)
+    }
+
+    fn observed_tile(observation: &serde_json::Value, position: Pos) -> &serde_json::Value {
+        observation["map"]["tiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tile| tile["pos"] == json!([position.0, position.1]))
+            .expect("tile is in the observation")
+    }
+
+    #[test]
+    fn stock_unit_sight_ranges_match_civilization_vi() {
+        let rules = Rules::embedded();
+        let sight_three: BTreeSet<&str> = [
+            "settler",
+            "spy",
+            "caravel",
+            "ironclad",
+            "destroyer",
+            "missile_cruiser",
+            "observation_balloon",
+            "rocket_artillery",
+            "helicopter",
+            "giant_death_robot",
+            "naturalist",
+        ]
+        .into_iter()
+        .collect();
+        let sight_four: BTreeSet<&str> = ["biplane", "fighter", "bomber"].into_iter().collect();
+        let sight_five: BTreeSet<&str> =
+            ["drone", "jet_fighter", "jet_bomber"].into_iter().collect();
+
+        for (unit, spec) in &rules.units {
+            let expected = if sight_three.contains(unit.as_str()) {
+                3
+            } else if sight_four.contains(unit.as_str()) {
+                4
+            } else if sight_five.contains(unit.as_str()) {
+                5
+            } else {
+                2
+            };
+            assert_eq!(spec.sight, expected, "incorrect stock sight for {unit}");
+        }
+    }
+
+    #[test]
+    fn terrain_elevation_features_and_promotions_control_live_sight() {
+        let (mut game, origin) = controlled_game(91_001);
+        let blocker = along(&game, origin, 1);
+        let target = along(&game, origin, 2);
+        let beyond = along(&game, origin, 3);
+        let warrior = game.spawn_unit("warrior", 0, origin);
+
+        assert!(game.unit_visible_tiles(warrior).contains(&target));
+        assert!(!game.unit_visible_tiles(warrior).contains(&beyond));
+
+        game.map.tiles.get_mut(&blocker).unwrap().feature = Some("forest".to_string());
+        let visible = game.unit_visible_tiles(warrior);
+        assert!(
+            visible.contains(&blocker),
+            "adjacent tiles are always visible"
+        );
+        assert!(!visible.contains(&target), "flat Woods block a flat viewer");
+        let hidden_enemy = game.spawn_unit("warrior", 1, target);
+        assert!(
+            !crate::obs::observation(&game, 0)["units"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|unit| unit["id"] == hidden_enemy),
+            "an enemy behind blocking terrain must not leak into the player view"
+        );
+
+        game.map.tiles.get_mut(&target).unwrap().hills = true;
+        game.map.tiles.get_mut(&target).unwrap().feature = Some("forest".to_string());
+        assert!(
+            game.unit_visible_tiles(warrior).contains(&target),
+            "a wooded Hill rises above intervening flat Woods"
+        );
+        assert!(crate::obs::observation(&game, 0)["units"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|unit| unit["id"] == hidden_enemy));
+
+        game.map.tiles.get_mut(&target).unwrap().hills = false;
+        game.map.tiles.get_mut(&target).unwrap().feature = None;
+        game.map.tiles.get_mut(&origin).unwrap().hills = true;
+        assert!(
+            game.unit_visible_tiles(warrior).contains(&target),
+            "a Hill gives enough elevation to see over flat Woods"
+        );
+        game.map.tiles.get_mut(&blocker).unwrap().hills = true;
+        assert!(
+            !game.unit_visible_tiles(warrior).contains(&target),
+            "wooded Hills still block a unit standing on a bare Hill"
+        );
+
+        game.units
+            .get_mut(&warrior)
+            .unwrap()
+            .promotions
+            .insert("sentry".to_string());
+        assert!(
+            game.unit_visible_tiles(warrior).contains(&target),
+            "Sentry sees through Woods and Rainforest"
+        );
+        game.map.tiles.get_mut(&blocker).unwrap().terrain = "mountain".to_string();
+        assert!(
+            !game.unit_visible_tiles(warrior).contains(&target),
+            "Sentry cannot see through Mountains"
+        );
+        let aircraft = game.spawn_unit("biplane", 0, origin);
+        assert!(
+            game.unit_visible_tiles(aircraft).contains(&target),
+            "aircraft sight ignores terrain obstruction"
+        );
+        game.units
+            .get_mut(&warrior)
+            .unwrap()
+            .promotions
+            .insert("spyglass".to_string());
+        game.map.tiles.get_mut(&blocker).unwrap().terrain = "plains".to_string();
+        game.map.tiles.get_mut(&blocker).unwrap().feature = None;
+        game.map.tiles.get_mut(&blocker).unwrap().hills = false;
+        assert!(game.unit_visible_tiles(warrior).contains(&beyond));
+    }
+
+    #[test]
+    fn owned_borders_and_their_outer_ring_are_always_visible() {
+        let (mut game, center) = controlled_game(91_002);
+        let city = game.found_city_for(0, center, Some("Border Test".to_string()));
+        let owned = game.cities[&city].owned_tiles.clone();
+        for position in &owned {
+            let tile = game.map.tiles.get_mut(position).unwrap();
+            tile.terrain = "mountain".to_string();
+            tile.feature = Some("forest".to_string());
+        }
+
+        let visible = game.player_visibility(0);
+        for position in &owned {
+            assert!(visible.contains(position));
+            for neighbor in game.nbrs(*position) {
+                assert!(
+                    visible.contains(&neighbor),
+                    "the tile immediately outside an empire border is visible"
+                );
+            }
+        }
+        let outside = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|position| {
+                owned
+                    .iter()
+                    .all(|border| game.wdist(*border, *position) > 1)
+            })
+            .expect("map has a tile beyond the border ring");
+        assert!(!visible.contains(&outside));
+    }
+
+    #[test]
+    fn shared_exploration_keeps_the_newest_memory_without_copying_units() {
+        let (mut game, position) = controlled_game(91_004);
+        game.turn = 1;
+        game.map.tiles.get_mut(&position).unwrap().improvement = Some("farm".to_string());
+        game.reveal(0, position, 0);
+
+        game.turn = 2;
+        game.map.tiles.get_mut(&position).unwrap().improvement = Some("mine".to_string());
+        game.reveal(1, position, 0);
+        let hidden_unit = game.spawn_unit("warrior", 1, position);
+        game.remove_unit(hidden_unit);
+
+        game.share_visibility_memories(&[0, 1]);
+        let shared = &game.players[0].remembered_tiles[&position];
+        assert_eq!(shared.seen_turn, 2);
+        assert_eq!(shared.tile.improvement.as_deref(), Some("mine"));
+        assert!(
+            game.units.is_empty(),
+            "map memory never contains unit state"
+        );
+    }
+
+    #[test]
+    fn fog_uses_last_seen_tiles_and_cities_and_never_remembers_units() {
+        let (mut game, origin) = controlled_game(91_003);
+        let remembered_position = along(&game, origin, 2);
+        let city_position = along(&game, origin, -2);
+        game.map
+            .tiles
+            .get_mut(&remembered_position)
+            .unwrap()
+            .improvement = Some("farm".to_string());
+        let scout = game.spawn_unit("warrior", 0, origin);
+        let enemy = game.spawn_unit("warrior", 1, remembered_position);
+        let city = game.found_city_for(1, city_position, Some("Last Seen".to_string()));
+        game.cities.get_mut(&city).unwrap().pop = 4;
+        game.refresh_player_visibility(0);
+
+        let visible = crate::obs::observation(&game, 0);
+        assert_eq!(
+            observed_tile(&visible, remembered_position)["improvement"],
+            "farm"
+        );
+        assert!(visible["units"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|unit| unit["id"] == enemy));
+        assert_eq!(
+            visible["cities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|known| known["id"] == city)
+                .unwrap()["pop"],
+            4
+        );
+
+        game.remove_unit(scout);
+        game.map
+            .tiles
+            .get_mut(&remembered_position)
+            .unwrap()
+            .improvement = Some("mine".to_string());
+        game.cities.get_mut(&city).unwrap().pop = 9;
+        game.cities.get_mut(&city).unwrap().name = "Changed Under Fog".to_string();
+
+        let fogged = crate::obs::observation(&game, 0);
+        assert!(!game.player_visibility(0).contains(&remembered_position));
+        assert_eq!(
+            observed_tile(&fogged, remembered_position)["improvement"],
+            "farm"
+        );
+        assert!(!fogged["units"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|unit| unit["id"] == enemy));
+        let remembered_city = fogged["cities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|known| known["id"] == city)
+            .unwrap();
+        assert_eq!(remembered_city["name"], "Last Seen");
+        assert_eq!(remembered_city["pop"], 4);
+
+        let mut restored: Game =
+            serde_json::from_value(serde_json::to_value(&game).unwrap()).unwrap();
+        let restored_fog = crate::obs::observation(&restored, 0);
+        assert_eq!(
+            observed_tile(&restored_fog, remembered_position)["improvement"],
+            "farm",
+            "serialized memory must not refresh a fogged tile while loading"
+        );
+
+        restored.spawn_unit("warrior", 0, origin);
+        let revealed = crate::obs::observation(&restored, 0);
+        assert_eq!(
+            observed_tile(&revealed, remembered_position)["improvement"],
+            "mine"
+        );
+        assert!(revealed["units"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|unit| unit["id"] == enemy));
+        let revealed_city = revealed["cities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|known| known["id"] == city)
+            .unwrap();
+        assert_eq!(revealed_city["name"], "Changed Under Fog");
+        assert_eq!(revealed_city["pop"], 9);
     }
 }
 
