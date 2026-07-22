@@ -1,4 +1,46 @@
 {
+  "campus_research_grants": {
+    "cost": 25, "district": "campus", "repeatable": true,
+    "cost_progression_max_pct": 1500,
+    "ongoing_yields": {"science": 15},
+    "completion_gpp": {"scientist": 10}
+  },
+  "holy_site_prayers": {
+    "cost": 25, "district": "holy_site", "repeatable": true,
+    "cost_progression_max_pct": 1500,
+    "ongoing_yields": {"faith": 15},
+    "completion_gpp": {"prophet": 10}
+  },
+  "commercial_hub_investment": {
+    "cost": 25, "district": "commercial_hub", "repeatable": true,
+    "cost_progression_max_pct": 1500,
+    "ongoing_yields": {"gold": 30},
+    "completion_gpp": {"merchant": 10}
+  },
+  "harbor_shipping": {
+    "cost": 25, "district": "harbor", "repeatable": true,
+    "cost_progression_max_pct": 1500,
+    "ongoing_yields": {"gold": 15},
+    "completion_gpp": {"admiral": 10}
+  },
+  "encampment_training": {
+    "cost": 25, "district": "encampment", "repeatable": true,
+    "cost_progression_max_pct": 1500,
+    "ongoing_yields": {"gold": 15},
+    "completion_gpp": {"general": 10}
+  },
+  "industrial_zone_logistics": {
+    "cost": 25, "district": "industrial_zone", "repeatable": true,
+    "cost_progression_max_pct": 1500,
+    "completion_gpp": {"engineer": 10},
+    "full_power_while_active": true
+  },
+  "theater_square_festival": {
+    "cost": 25, "district": "theater_square", "repeatable": true,
+    "cost_progression_max_pct": 1500,
+    "ongoing_yields": {"culture": 15},
+    "completion_gpp": {"writer": 5, "artist": 5, "musician": 5}
+  },
   "repair_outer_defenses": {
     "cost": 1,
     "repeatable": true

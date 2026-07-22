@@ -51,7 +51,11 @@ non-peace pact with the rival it is trying to deny.
 Congress ballots follow the same plan: Diplomatic agents back themselves for
 World Leader, other strategies steer target rewards toward the civilization
 furthest from victory, and competition votes predict the strongest public
-candidate instead of mechanically voting for the current player.
+candidate instead of mechanically voting for the current player. Military and
+City-State Emergency votes additionally price the target's victory pressure,
+Grievances, relative military strength, and the voter's city-state interest.
+Supporting agents accept the mandated coalition war, retarget their campaign
+at the captured objective, and prefer liberation over keeping or razing it.
 District production is family-aware: unique replacements inherit the strategic
 role of their standard district, while candidate sites are compared using
 their actual adjacency, specialist and Great Person yields, housing, amenities,
@@ -156,6 +160,12 @@ can secure it immediately with free Envoys, already controls it as Suzerain, or
 would discard a valuable type bonus. Major wars prefer an available low-cost
 casus belli; otherwise the planner denounces and waits for Formal War, except
 when an imminent rival victory makes the five-turn delay strategically fatal.
+Within the selected rival, city move ordering combines live Garrison and wall
+health, approach width, staged local force, reinforcement distance, post-capture
+Loyalty pressure, development, liberation value, Spaceport denial, and the
+Domination value of an original Capital. A breached front can therefore be
+taken before a poisoned Capital, while the Capital becomes the principal
+objective as soon as its defenses and approach make the line forcing.
 Positional ties favor taking at least one useful step each turn; remaining in
 place is reserved for recovery, attacks, explicit defensive/muster positions,
 or cases where every legal move is materially worse. At peace, troops that

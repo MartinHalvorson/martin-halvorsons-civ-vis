@@ -2231,6 +2231,121 @@ mod strategic_resource_tests {
 }
 
 #[cfg(test)]
+mod project_runtime_tests {
+    use super::*;
+
+    fn project_game() -> (Game, u32, Vec<Pos>) {
+        let mut game = Game::new_full(1, 24, 16, 774_255, 120, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.found_city_for(0, game.units[&settler].pos, None);
+        let city = game.player_city_ids(0)[0];
+        let positions = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .filter(|position| *position != game.cities[&city].pos)
+            .collect();
+        (game, city, positions)
+    }
+
+    fn install_district(game: &mut Game, city: u32, position: Pos, district: &str) {
+        let tile = game.map.tiles.get_mut(&position).unwrap();
+        tile.district = Some(district.to_string());
+        tile.pillaged = false;
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert(district.to_string(), position);
+    }
+
+    #[test]
+    fn stock_district_projects_scale_cost_and_completion_points_with_tree_progress() {
+        let mut game = Game::new_full(1, 24, 16, 774_251, 120, 0, false);
+        let project = Item::Project {
+            project: "campus_research_grants".to_string(),
+        };
+        assert_eq!(game.item_cost_for(0, &project), 25.0);
+        for technology in game.rules.techs.keys().take(5).cloned().collect::<Vec<_>>() {
+            game.players[0].techs.insert(technology);
+        }
+        assert_eq!(game.game_progress_ratio(0), 0.06);
+        assert_eq!(game.item_cost_for(0, &project), 46.0);
+
+        game.players[0].techs = game.rules.techs.keys().cloned().collect();
+        assert_eq!(game.item_cost_for(0, &project), 375.0);
+        assert_eq!(
+            game.item_cost_for(
+                0,
+                &Item::Project {
+                    project: "launch_earth_satellite".to_string()
+                }
+            ),
+            900.0,
+            "fixed city projects must not inherit district-project scaling"
+        );
+
+        let (mut completion, city, positions) = project_game();
+        install_district(&mut completion, city, positions[0], "campus");
+        let before = completion.players[0]
+            .gpp
+            .get("scientist")
+            .copied()
+            .unwrap_or(0.0);
+        assert!(completion.complete_item(0, city, &project));
+        assert_eq!(completion.players[0].gpp["scientist"] - before, 10.0);
+    }
+
+    #[test]
+    fn district_projects_convert_live_production_and_stop_when_the_district_is_pillaged() {
+        let (mut game, city, positions) = project_game();
+        install_district(&mut game, city, positions[0], "campus");
+        let project = Item::Project {
+            project: "campus_research_grants".to_string(),
+        };
+        assert!(game.can_produce(0, city, &project));
+        game.cities.get_mut(&city).unwrap().queue = vec![project.clone()];
+        let base = game.city_yields(city);
+        let observed = game.process_city(0, city);
+        assert!((observed.science - base.science - 0.15 * base.production).abs() < 1e-9);
+
+        game.cities.get_mut(&city).unwrap().production = 0.0;
+        game.map.tiles.get_mut(&positions[0]).unwrap().pillaged = true;
+        assert!(!game.can_produce(0, city, &project));
+        let stalled = game.process_city(0, city);
+        assert_eq!(game.cities[&city].production, 0.0);
+        assert_eq!(stalled.science, game.city_yields(city).science);
+    }
+
+    #[test]
+    fn industrial_zone_logistics_supplies_full_power_without_burning_fuel() {
+        let (mut game, city, positions) = project_game();
+        install_district(&mut game, city, positions[0], "industrial_zone");
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("factory".to_string());
+        game.cities.get_mut(&city).unwrap().queue = vec![Item::Project {
+            project: "industrial_zone_logistics".to_string(),
+        }];
+        game.process_power(0);
+        let demand = game.city_power_demand(&game.cities[&city]);
+        assert!(demand > 0.0);
+        assert_eq!(game.city_power_supply(&game.cities[&city]), demand);
+        assert!(game.players[0].power_fuel_consumed.is_empty());
+
+        game.map.tiles.get_mut(&positions[0]).unwrap().pillaged = true;
+        game.process_power(0);
+        assert!(!game.city_is_powered(&game.cities[&city]));
+    }
+}
+
+#[cfg(test)]
 mod specialist_tests {
     use super::*;
 
@@ -4970,6 +5085,37 @@ pub struct CongressEffect {
     pub expires: u32,
 }
 
+/// A city-capture Emergency eligible for a World Congress Special Session.
+/// The proposal remains queued while another session is voting, so a valid
+/// trigger cannot silently disappear merely because it happened on the same
+/// turn as the regular Congress.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct EmergencyProposal {
+    pub id: u32,
+    pub kind: String,
+    pub target: usize,
+    pub city: u32,
+    pub original_owner: usize,
+    pub eligible: BTreeSet<usize>,
+    pub requested: u32,
+}
+
+/// A passed Military or City-State Emergency. Contributions are deterministic
+/// participation points earned by maintaining military units in the target's
+/// territory and by liberating the objective city.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct Emergency {
+    pub id: u32,
+    pub kind: String,
+    pub target: usize,
+    pub city: u32,
+    pub original_owner: usize,
+    pub members: BTreeSet<usize>,
+    pub contributions: BTreeMap<usize, i64>,
+    pub started: u32,
+    pub ends: u32,
+}
+
 /// A pre-negotiated, one-click offer for the human/AI Quick Deals surface.
 /// Values are expressed in equivalent lump Gold and are positive for both
 /// parties by construction.
@@ -5509,6 +5655,8 @@ pub struct Game {
     pub next_deal_id: u32,
     pub congress: Option<CongressSession>,
     pub active_congress_effects: Vec<CongressEffect>,
+    pub pending_emergencies: Vec<EmergencyProposal>,
+    pub active_emergencies: Vec<Emergency>,
     occ: BTreeMap<Pos, Vec<u32>>,
     city_by_pos: BTreeMap<Pos, u32>,
     /// Every successfully applied action, in order — the game is exactly
@@ -5566,6 +5714,10 @@ struct GameSer {
     congress: Option<CongressSession>,
     #[serde(default)]
     active_congress_effects: Vec<CongressEffect>,
+    #[serde(default)]
+    pending_emergencies: Vec<EmergencyProposal>,
+    #[serde(default)]
+    active_emergencies: Vec<Emergency>,
     map: WorldMap,
     players: Vec<Player>,
     units: Vec<Unit>,
@@ -5604,6 +5756,8 @@ impl From<GameSer> for Game {
             next_deal_id: s.next_deal_id,
             congress: s.congress,
             active_congress_effects: s.active_congress_effects,
+            pending_emergencies: s.pending_emergencies,
+            active_emergencies: s.active_emergencies,
             occ: BTreeMap::new(),
             city_by_pos: BTreeMap::new(),
             log: Vec::new(),
@@ -5710,6 +5864,8 @@ impl From<Game> for GameSer {
             next_deal_id: g.next_deal_id,
             congress: g.congress,
             active_congress_effects: g.active_congress_effects,
+            pending_emergencies: g.pending_emergencies,
+            active_emergencies: g.active_emergencies,
             map: g.map,
             players: g.players,
             units: g.units.into_values().collect(),
@@ -5791,6 +5947,8 @@ impl Game {
             next_deal_id: 1,
             congress: None,
             active_congress_effects: Vec::new(),
+            pending_emergencies: Vec::new(),
+            active_emergencies: Vec::new(),
             occ: BTreeMap::new(),
             city_by_pos: BTreeMap::new(),
             log: Vec::new(),
@@ -6197,6 +6355,21 @@ impl Game {
         {
             return 100;
         }
+        let emergency_heal = if spec.class == "military" {
+            self.map
+                .get(unit.pos)
+                .and_then(|tile| tile.owner_city)
+                .and_then(|city| self.cities.get(&city))
+                .and_then(|city| {
+                    self.players[unit.owner]
+                        .counters
+                        .get(&format!("emergency_heal_in:{}", city.owner))
+                })
+                .copied()
+                .unwrap_or(0) as i32
+        } else {
+            0
+        };
         let location = self.healing_location(unit.owner, unit.pos);
         let naval_or_embarked = spec.domain.as_deref() == Some("sea") || self.is_embarked(unit);
         if naval_or_embarked {
@@ -6209,9 +6382,9 @@ impl Game {
                     city.owner == unit.owner || self.suzerain_of(city.owner) == Some(unit.owner)
                 });
             if friendly || self.promotion_effect(unit, "heal_anywhere") > 0.0 {
-                20
+                20 + emergency_heal
             } else {
-                0
+                emergency_heal
             }
         } else {
             location.rate()
@@ -6220,6 +6393,7 @@ impl Game {
                 } else {
                     0
                 }
+                + emergency_heal
         }
     }
 
@@ -9442,6 +9616,23 @@ impl Game {
             let city = &self.cities[&city_id];
             let demand = self.city_power_demand(city);
             let mut supply = self.city_renewable_power(city);
+            let project_fully_powers = city.queue.first().is_some_and(|item| {
+                let Item::Project { project } = item else {
+                    return false;
+                };
+                self.rules.projects.get(project).is_some_and(|spec| {
+                    spec.full_power_while_active
+                        && spec.district.as_deref().is_none_or(|district| {
+                            self.city_has_active_district_family(city, district)
+                        })
+                })
+            });
+            if project_fully_powers {
+                self.players[pid]
+                    .city_power
+                    .insert(city_id, supply.max(demand));
+                continue;
+            }
             let mut remaining = (demand - supply).max(0.0);
             let mut candidates: Vec<(&str, f64, f64, i32)> = fuel_specs
                 .iter()
@@ -11300,6 +11491,17 @@ impl Game {
         if self.dedication_active(u.owner, "exodus_of_the_evangelists") && spec.class == "religious"
         {
             moves += 2.0;
+        }
+        let territory_owner = tile
+            .owner_city
+            .and_then(|city| self.cities.get(&city))
+            .map(|city| city.owner);
+        if self.active_emergencies.iter().any(|emergency| {
+            emergency.ends > self.turn
+                && emergency.members.contains(&u.owner)
+                && territory_owner == Some(emergency.target)
+        }) {
+            moves += 1.0;
         }
         moves
     }
@@ -13857,6 +14059,12 @@ impl Game {
                 .map(|(_, count)| *count)
                 .sum();
             ys.gold += envoys as f64 * self.policy_effect(city.owner, "gold_per_envoy");
+            ys.gold += envoys as f64
+                * self.players[city.owner]
+                    .counters
+                    .get("emergency_gold_per_envoy")
+                    .copied()
+                    .unwrap_or(0) as f64;
             let suzerains = self
                 .players
                 .iter()
@@ -13932,6 +14140,11 @@ impl Game {
                 }
                 if self.players[dc.owner].is_minor {
                     rys.gold += self.policy_effect(city.owner, "city_state_route_gold");
+                    rys.gold += self.players[city.owner]
+                        .counters
+                        .get("emergency_city_state_route_gold")
+                        .copied()
+                        .unwrap_or(0) as f64;
                 }
                 if domestic {
                     rys.gold += self.city_building_effect(city, "domestic_route_gold");
@@ -14966,6 +15179,16 @@ impl Game {
                         .copied()
                         .unwrap_or(0) as f64
             }
+            Item::Project { project } => {
+                let maximum = self.rules.projects[project].cost_progression_max_pct;
+                if maximum <= 0.0 {
+                    base
+                } else {
+                    // GAME_PROGRESS linearly interpolates from the base to
+                    // Param1 percent of base; 1500 therefore caps at 15x.
+                    (base * (1.0 + (maximum / 100.0 - 1.0) * self.game_progress_ratio(pid))).floor()
+                }
+            }
             _ => base,
         }
     }
@@ -15062,11 +15285,9 @@ impl Game {
         }
     }
 
-    fn district_cost_for_placement(&self, pid: usize, district: &str, purchased: bool) -> f64 {
-        let spec = &self.rules.districts[district];
-        if self.district_is_family(district, "spaceport") {
-            return spec.cost;
-        }
+    /// COST_PROGRESSION_GAME_PROGRESS and district scaling both use the
+    /// civilization's farther-advanced tree, truncated to a whole percent.
+    fn game_progress_ratio(&self, pid: usize) -> f64 {
         let researched_techs = self.players[pid]
             .techs
             .iter()
@@ -15079,10 +15300,18 @@ impl Game {
             .count();
         let progress = (researched_techs as f64 / self.rules.techs.len().max(1) as f64)
             .max(researched_civics as f64 / self.rules.civics.len().max(1) as f64);
+        (100.0 * progress).floor() / 100.0
+    }
+
+    fn district_cost_for_placement(&self, pid: usize, district: &str, purchased: bool) -> f64 {
+        let spec = &self.rules.districts[district];
+        if self.district_is_family(district, "spaceport") {
+            return spec.cost;
+        }
         // COST_PROGRESSION_NUM_UNDER_AVG_PLUS_TECH truncates the leading
         // tree ratio to a whole percentage point before applying the 1x-10x
         // multiplier (for example, 5/77 = 6%, not 6.49%).
-        let progress = (100.0 * progress).floor() / 100.0;
+        let progress = self.game_progress_ratio(pid);
         let scaled = (spec.cost * (1.0 + 9.0 * progress)).floor();
         (scaled * (1.0 - self.district_underbuilt_discount(pid, district, purchased))).floor()
     }
@@ -15584,7 +15813,7 @@ impl Game {
                 if spec
                     .district
                     .as_ref()
-                    .is_some_and(|d| !self.city_has_district_family(city, d))
+                    .is_some_and(|d| !self.city_has_active_district_family(city, d))
                 {
                     return false;
                 }
@@ -16653,6 +16882,18 @@ impl Game {
                         continue;
                     }
                     for choice in &resolution.choices {
+                        if let Some(proposal) =
+                            self.emergency_proposal_for_resolution(&resolution.id)
+                        {
+                            let (outcome, target) = Self::congress_choice_parts(choice);
+                            let allowed = (proposal.eligible.contains(&pid)
+                                && ((outcome, target) == ("A", "support")
+                                    || (outcome, target) == ("B", "oppose")))
+                                || (proposal.target == pid && (outcome, target) == ("B", "oppose"));
+                            if !allowed {
+                                continue;
+                            }
+                        }
                         acts.push(Action::CongressVote {
                             resolution: resolution.id.clone(),
                             choice: choice.clone(),
@@ -16670,7 +16911,9 @@ impl Game {
                         // Suzerain is. That derived war must be ended with the
                         // Suzerain, not through an inapplicable bilateral
                         // peace action against the city-state itself.
-                        if self.at_war.contains(&pair(pid, o.id)) {
+                        if self.at_war.contains(&pair(pid, o.id))
+                            && !self.emergency_war_pair(pid, o.id)
+                        {
                             acts.push(Action::MakePeace { player: o.id });
                         }
                     } else if !p.is_minor && !o.is_minor {
@@ -17134,6 +17377,13 @@ impl Game {
         let spec = &self.rules.units[u.kind.as_str()];
         let other = &self.rules.units[opponent.kind.as_str()];
         let mut bonus = 0.0;
+        if self.active_emergencies.iter().any(|emergency| {
+            emergency.ends > self.turn
+                && emergency.target == opponent.owner
+                && emergency.members.contains(&u.owner)
+        }) {
+            bonus += 2.0;
+        }
         bonus += 3.0
             * (self.tree_effect(u.owner, "diplomatic_visibility")
                 - self.tree_effect(opponent.owner, "diplomatic_visibility"))
@@ -18002,7 +18252,7 @@ impl Game {
         Ok(())
     }
 
-    fn found_city_for(&mut self, pid: usize, pos: Pos, name: Option<String>) -> u32 {
+    pub(crate) fn found_city_for(&mut self, pid: usize, pos: Pos, name: Option<String>) -> u32 {
         let p_civ = self.players[pid].civ.clone();
         let is_minor = self.players[pid].is_minor;
         let name = name.unwrap_or_else(|| {
@@ -19914,7 +20164,12 @@ impl Game {
             d.hp,
         ) + self.tile_defense_bonus(target);
         let naval = self.rules.units[d.kind.as_str()].domain.as_deref() == Some("sea");
-        let att = self.city_ranged_strength(cid) - if naval { 17.0 } else { 0.0 };
+        let emergency_bonus = self.players[pid]
+            .counters
+            .get(&format!("emergency_city_strike_vs:{}", d.owner))
+            .copied()
+            .unwrap_or(0) as f64;
+        let att = self.city_ranged_strength(cid) + emergency_bonus - if naval { 17.0 } else { 0.0 };
         let dmg = damage(att, ds, &mut self.rng);
         self.units.get_mut(&did).unwrap().hp -= dmg;
         if self.units[&did].hp > 0 {
@@ -19979,7 +20234,13 @@ impl Game {
             defender.hp,
         ) + self.tile_defense_bonus(target);
         let naval = self.rules.units[defender.kind.as_str()].domain.as_deref() == Some("sea");
-        let attack = self.city_ranged_strength(cid) - if naval { 17.0 } else { 0.0 };
+        let emergency_bonus = self.players[pid]
+            .counters
+            .get(&format!("emergency_city_strike_vs:{}", defender.owner))
+            .copied()
+            .unwrap_or(0) as f64;
+        let attack =
+            self.city_ranged_strength(cid) + emergency_bonus - if naval { 17.0 } else { 0.0 };
         let dealt = damage(attack, defense, &mut self.rng);
         self.units.get_mut(&defender_id).unwrap().hp -= dealt;
         if self.units[&defender_id].hp > 0 {
@@ -21353,6 +21614,9 @@ impl Game {
     }
 
     fn do_make_peace(&mut self, pid: usize, other: usize) -> Result<(), String> {
+        if self.emergency_war_pair(pid, other) {
+            return Err("active Emergency members cannot make peace with its target".into());
+        }
         if !self.at_war.remove(&pair(pid, other)) {
             return Err("not at war".into());
         }
@@ -21722,6 +21986,11 @@ impl Game {
             } else if self.congress_effect_active("migration_treaty", "B", &pid.to_string()) {
                 delta += 5.0;
             }
+            if self.active_emergencies.iter().any(|emergency| {
+                emergency.ends > self.turn && emergency.target == pid && emergency.city == cid
+            }) {
+                delta += 20.0;
+            }
             let c = self.cities.get_mut(&cid).unwrap();
             c.loyalty = (c.loyalty + delta).clamp(0.0, 100.0);
             if c.loyalty <= 0.0 {
@@ -21751,6 +22020,46 @@ impl Game {
     fn congress_vote_cost(votes: u32) -> f64 {
         let paid_votes = votes.saturating_sub(1) as f64;
         5.0 * paid_votes * (paid_votes + 1.0)
+    }
+
+    fn emergency_resolution_id(id: u32) -> String {
+        format!("emergency:{id}")
+    }
+
+    fn emergency_id_from_resolution(resolution: &str) -> Option<u32> {
+        resolution.strip_prefix("emergency:")?.parse().ok()
+    }
+
+    pub(crate) fn emergency_proposal_for_resolution(
+        &self,
+        resolution: &str,
+    ) -> Option<&EmergencyProposal> {
+        let id = Self::emergency_id_from_resolution(resolution)?;
+        self.pending_emergencies
+            .iter()
+            .find(|proposal| proposal.id == id)
+    }
+
+    pub(crate) fn emergency_war_pair(&self, first: usize, second: usize) -> bool {
+        self.active_emergencies.iter().any(|emergency| {
+            emergency.ends > self.turn
+                && ((emergency.target == first && emergency.members.contains(&second))
+                    || (emergency.target == second && emergency.members.contains(&first)))
+        })
+    }
+
+    pub(crate) fn emergency_objective(&self, member: usize) -> Option<&Emergency> {
+        self.active_emergencies
+            .iter()
+            .filter(|emergency| {
+                emergency.ends > self.turn
+                    && emergency.members.contains(&member)
+                    && self
+                        .cities
+                        .get(&emergency.city)
+                        .is_some_and(|city| city.owner == emergency.target)
+            })
+            .min_by_key(|emergency| (emergency.ends, emergency.id))
     }
 
     pub(crate) fn congress_effect_active(
@@ -21968,6 +22277,9 @@ impl Game {
         if votes == 0 {
             return Err("at least one vote is required".into());
         }
+        let emergency_voters = self
+            .emergency_proposal_for_resolution(resolution)
+            .map(|proposal| (proposal.target, proposal.eligible.clone()));
         let congress = self
             .congress
             .as_mut()
@@ -21982,6 +22294,18 @@ impl Game {
             .ok_or_else(|| "no such World Congress resolution".to_string())?;
         if !ballot.choices.iter().any(|candidate| candidate == choice) {
             return Err("invalid resolution choice".into());
+        }
+        if let Some((emergency_target, eligible)) = emergency_voters {
+            let (outcome, target) = Self::congress_choice_parts(choice);
+            let eligible_member = eligible.contains(&pid);
+            let target_vote = emergency_target == pid;
+            if target != "support" && target != "oppose"
+                || (outcome == "A" && (target != "support" || !eligible_member))
+                || (outcome == "B" && (target != "oppose" || (!eligible_member && !target_vote)))
+                || !matches!(outcome, "A" | "B")
+            {
+                return Err("civilization is not eligible for that Emergency vote".into());
+            }
         }
         if ballot.ballots.contains_key(&pid) {
             return Err("this civilization has already voted on that resolution".into());
@@ -22003,6 +22327,12 @@ impl Game {
         let Some(session) = self.congress.take() else {
             return;
         };
+        if session.resolutions.len() == 1
+            && Self::emergency_id_from_resolution(&session.resolutions[0].id).is_some()
+        {
+            self.resolve_emergency_session(&session.resolutions[0]);
+            return;
+        }
         // Reconstruct each voter's Favor at the start of the session. Ballots
         // store vote counts rather than a redundant snapshot, and voting has
         // already deducted the corresponding escalating cost.
@@ -22224,8 +22554,312 @@ impl Game {
         {
             self.resolve_congress();
         }
-        if self.world_era >= 2 && self.turn.is_multiple_of(30) && self.congress.is_none() {
+        if self.congress.is_none() && !self.pending_emergencies.is_empty() {
+            self.convene_pending_emergency();
+        } else if self.world_era >= 2 && self.turn.is_multiple_of(30) && self.congress.is_none() {
             self.convene_congress();
+        }
+    }
+
+    fn convene_pending_emergency(&mut self) {
+        while self.congress.is_none() && !self.pending_emergencies.is_empty() {
+            let mut proposal = self.pending_emergencies[0].clone();
+            proposal.eligible.retain(|player| {
+                self.players.get(*player).is_some_and(|candidate| {
+                    candidate.alive && !candidate.is_minor && !candidate.is_barbarian
+                })
+            });
+            let valid = !proposal.eligible.is_empty()
+                && self
+                    .players
+                    .get(proposal.target)
+                    .is_some_and(|target| target.alive && !target.is_minor && !target.is_barbarian)
+                && self
+                    .cities
+                    .get(&proposal.city)
+                    .is_some_and(|city| city.owner == proposal.target);
+            if !valid {
+                self.pending_emergencies.remove(0);
+                continue;
+            }
+            self.pending_emergencies[0].eligible = proposal.eligible;
+            let title = if proposal.kind == "city_state" {
+                "City-State Emergency"
+            } else {
+                "Military Emergency"
+            };
+            self.congress = Some(CongressSession {
+                convened: self.turn,
+                closes: self.turn + 5,
+                resolutions: vec![CongressResolution {
+                    id: Self::emergency_resolution_id(proposal.id),
+                    title: title.to_string(),
+                    choices: vec!["A:support".to_string(), "B:oppose".to_string()],
+                    ballots: BTreeMap::new(),
+                }],
+            });
+        }
+    }
+
+    fn request_city_capture_emergency(&mut self, target: usize, city: u32, defeated: usize) {
+        if self.world_era < 2
+            || self.players[target].is_minor
+            || self.players[target].is_barbarian
+            || self
+                .pending_emergencies
+                .iter()
+                .any(|proposal| proposal.city == city)
+            || self
+                .active_emergencies
+                .iter()
+                .any(|emergency| emergency.city == city)
+        {
+            return;
+        }
+
+        let city_state = self.players[defeated].is_minor && !self.players[defeated].is_barbarian;
+        if !city_state {
+            let leading_score = self
+                .players
+                .iter()
+                .filter(|player| player.alive && !player.is_minor && !player.is_barbarian)
+                .map(|player| self.score(player.id))
+                .max();
+            if leading_score != Some(self.score(target)) {
+                return;
+            }
+        }
+
+        let eligible: BTreeSet<usize> = self
+            .players
+            .iter()
+            .filter(|player| {
+                player.id != target
+                    && player.alive
+                    && !player.is_minor
+                    && !player.is_barbarian
+                    && !self.are_friends(player.id, target)
+                    && self.alliance_with(player.id, target).is_none()
+            })
+            .filter(|player| {
+                !city_state
+                    || player
+                        .envoys
+                        .iter()
+                        .any(|(minor, count)| *minor == defeated && *count > 0)
+            })
+            .map(|player| player.id)
+            .collect();
+        if eligible.is_empty() {
+            return;
+        }
+
+        let id = self.next_id;
+        self.next_id += 1;
+        self.pending_emergencies.push(EmergencyProposal {
+            id,
+            kind: if city_state { "city_state" } else { "military" }.to_string(),
+            target,
+            city,
+            original_owner: self.cities[&city].original_owner,
+            eligible,
+            requested: self.turn,
+        });
+        if self.congress.is_none() {
+            self.convene_pending_emergency();
+        }
+    }
+
+    fn resolve_emergency_session(&mut self, resolution: &CongressResolution) {
+        let Some(id) = Self::emergency_id_from_resolution(&resolution.id) else {
+            return;
+        };
+        let Some(index) = self
+            .pending_emergencies
+            .iter()
+            .position(|proposal| proposal.id == id)
+        else {
+            return;
+        };
+        let proposal = self.pending_emergencies.remove(index);
+        let support = resolution
+            .ballots
+            .values()
+            .filter(|(choice, _)| Self::congress_choice_parts(choice) == ("A", "support"))
+            .map(|(_, votes)| *votes)
+            .sum::<u32>();
+        let oppose = resolution
+            .ballots
+            .values()
+            .filter(|(choice, _)| Self::congress_choice_parts(choice) == ("B", "oppose"))
+            .map(|(_, votes)| *votes)
+            .sum::<u32>();
+        let passed = support > oppose;
+        for (voter, (choice, votes)) in &resolution.ballots {
+            let supported = Self::congress_choice_parts(choice) == ("A", "support");
+            if supported != passed {
+                self.players[*voter].diplomatic_favor += Self::congress_vote_cost(*votes);
+            }
+        }
+        if !passed
+            || !self
+                .cities
+                .get(&proposal.city)
+                .is_some_and(|city| city.owner == proposal.target)
+        {
+            return;
+        }
+        let members: BTreeSet<usize> = resolution
+            .ballots
+            .iter()
+            .filter(|(voter, (choice, _))| {
+                proposal.eligible.contains(voter)
+                    && Self::congress_choice_parts(choice) == ("A", "support")
+            })
+            .map(|(voter, _)| *voter)
+            .collect();
+        if members.is_empty() {
+            return;
+        }
+        let ends = self.turn + 30;
+        for member in &members {
+            self.players[*member].friends_until.remove(&proposal.target);
+            self.players[proposal.target].friends_until.remove(member);
+            self.players[*member].alliances.remove(&proposal.target);
+            self.players[proposal.target].alliances.remove(member);
+            self.players[*member]
+                .open_borders_until
+                .remove(&proposal.target);
+            self.players[proposal.target]
+                .open_borders_until
+                .remove(member);
+            self.cancel_routes_with(*member, proposal.target);
+            self.cancel_trade_deals_with(*member, proposal.target);
+            self.at_war.insert(pair(*member, proposal.target));
+        }
+        let members_vec: Vec<usize> = members.iter().copied().collect();
+        for (index, member) in members_vec.iter().enumerate() {
+            for peer in members_vec.iter().skip(index + 1) {
+                self.at_war.remove(&pair(*member, *peer));
+                self.players[*member].open_borders_until.insert(*peer, ends);
+                self.players[*peer].open_borders_until.insert(*member, ends);
+            }
+        }
+        self.active_emergencies.push(Emergency {
+            id,
+            kind: proposal.kind,
+            target: proposal.target,
+            city: proposal.city,
+            original_owner: proposal.original_owner,
+            members,
+            contributions: BTreeMap::new(),
+            started: self.turn,
+            ends,
+        });
+        self.share_emergency_visibility();
+    }
+
+    fn share_emergency_visibility(&mut self) {
+        for emergency in self.active_emergencies.clone() {
+            let shared: BTreeSet<Pos> = emergency
+                .members
+                .iter()
+                .flat_map(|member| self.players[*member].explored.iter().copied())
+                .collect();
+            for member in emergency.members {
+                self.players[member].explored.extend(shared.iter().copied());
+            }
+        }
+    }
+
+    fn record_emergency_presence(&mut self, member: usize) {
+        let points: Vec<(u32, i64)> = self
+            .active_emergencies
+            .iter()
+            .filter(|emergency| emergency.members.contains(&member))
+            .map(|emergency| {
+                let count = self
+                    .units
+                    .values()
+                    .filter(|unit| {
+                        unit.owner == member
+                            && self.rules.units[unit.kind.as_str()].class == "military"
+                            && self.map.tiles[&unit.pos]
+                                .owner_city
+                                .and_then(|city| self.cities.get(&city))
+                                .is_some_and(|city| city.owner == emergency.target)
+                    })
+                    .count() as i64;
+                (emergency.id, count)
+            })
+            .collect();
+        for (id, points) in points {
+            if points > 0 {
+                let emergency = self
+                    .active_emergencies
+                    .iter_mut()
+                    .find(|emergency| emergency.id == id)
+                    .unwrap();
+                *emergency.contributions.entry(member).or_insert(0) += points;
+            }
+        }
+    }
+
+    fn resolve_emergency(&mut self, id: u32, success: bool) {
+        let Some(index) = self
+            .active_emergencies
+            .iter()
+            .position(|emergency| emergency.id == id)
+        else {
+            return;
+        };
+        let emergency = self.active_emergencies.remove(index);
+        if success {
+            for member in emergency.members.iter().filter(|member| {
+                emergency
+                    .contributions
+                    .get(member)
+                    .is_some_and(|points| *points > 0)
+            }) {
+                self.players[*member].diplomatic_favor += 100.0;
+                let key = if emergency.kind == "city_state" {
+                    "emergency_gold_per_envoy".to_string()
+                } else {
+                    format!("emergency_heal_in:{}", emergency.target)
+                };
+                *self.players[*member].counters.entry(key).or_insert(0) +=
+                    if emergency.kind == "city_state" { 1 } else { 5 };
+            }
+        } else {
+            self.players[emergency.target].diplomatic_favor += 200.0;
+            if emergency.kind == "city_state" {
+                *self.players[emergency.target]
+                    .counters
+                    .entry("emergency_city_state_route_gold".to_string())
+                    .or_insert(0) += 2;
+            } else {
+                for member in emergency.members {
+                    *self.players[emergency.target]
+                        .counters
+                        .entry(format!("emergency_city_strike_vs:{member}"))
+                        .or_insert(0) += 2;
+                }
+            }
+        }
+    }
+
+    fn process_emergencies(&mut self) {
+        self.share_emergency_visibility();
+        let expired: Vec<(u32, bool)> = self
+            .active_emergencies
+            .iter()
+            .filter_map(|emergency| {
+                (self.turn >= emergency.ends || !self.cities.contains_key(&emergency.city))
+                    .then_some((emergency.id, false))
+            })
+            .collect();
+        for (id, success) in expired {
+            self.resolve_emergency(id, success);
         }
     }
 
@@ -23231,6 +23865,7 @@ impl Game {
             self.process_climate();
             self.barbarian_phase();
             self.process_eras();
+            self.process_emergencies();
             self.process_congress();
             self.check_culture_victory();
             // A score victory is only a turn-limit tiebreak, never an
@@ -23297,6 +23932,7 @@ impl Game {
         self.process_great_people(pid);
         self.process_pressure(pid);
         self.process_loyalty(pid);
+        self.record_emergency_presence(pid);
         if !self.players[pid].is_minor {
             // influence points scale with government tier; 100 points = 1 envoy
             let tier = match self.players[pid].government.as_deref() {
@@ -23620,7 +24256,7 @@ impl Game {
         city.extra_strikes_used = 0;
         city.encampment_struck = false;
         city.encampment_extra_strikes_used = 0;
-        let ys = self.city_yields(cid);
+        let mut ys = self.city_yields(cid);
         let housing = self.city_housing(&self.cities[&cid]);
         let am = self.city_amenity_surplus(&self.cities[&cid]);
         let repair_project = matches!(
@@ -23633,6 +24269,41 @@ impl Game {
             let city = &self.cities[&cid];
             self.item_prod_mult(pid, cid, city.queue.first())
         };
+        let active_project = self.cities[&cid].queue.first().and_then(|item| {
+            let Item::Project { project } = item else {
+                return None;
+            };
+            let spec = self.rules.projects.get(project)?;
+            let district_active = spec.district.as_deref().is_none_or(|district| {
+                self.city_has_active_district_family(&self.cities[&cid], district)
+            });
+            district_active.then_some(spec)
+        });
+        if let Some(project) = active_project {
+            let invested = base_produced * production_multiplier;
+            for (kind, percent) in &project.ongoing_yields {
+                let amount = invested * percent / 100.0;
+                match kind.as_str() {
+                    "science" => ys.science += amount,
+                    "culture" => ys.culture += amount,
+                    "gold" => ys.gold += amount,
+                    "faith" => ys.faith += amount,
+                    "food" => ys.food += amount,
+                    "production" => ys.production += amount,
+                    _ => {}
+                }
+            }
+        }
+        let district_project_stalled = matches!(
+            self.cities[&cid].queue.first(),
+            Some(Item::Project { project })
+                if self.rules.projects[project]
+                    .district
+                    .as_deref()
+                    .is_some_and(|district| {
+                        !self.city_has_active_district_family(&self.cities[&cid], district)
+                    })
+        );
         let mut growth_bonus = self.empire_building_sum(pid, |b| b.growth_pct);
         growth_bonus += self.empire_wonder_effect(pid, "empire_growth_pct");
         growth_bonus += self.governor_effect(pid, cid, "growth_pct");
@@ -23698,7 +24369,7 @@ impl Game {
                         city.queue.remove(0);
                     }
                 }
-            } else if !self.cities[&cid].queue.is_empty() {
+            } else if !district_project_stalled && !self.cities[&cid].queue.is_empty() {
                 self.cities.get_mut(&cid).unwrap().production += produced;
             }
         }
@@ -24332,6 +25003,27 @@ impl Game {
                 } else {
                     self.players[pid].science_projects.insert(project.clone());
                 }
+                if !spec.completion_gpp.is_empty() {
+                    let progress = self.game_progress_ratio(pid);
+                    let city_multiplier =
+                        1.0 + self.governor_effect(pid, cid, "great_people_pct") / 100.0;
+                    let empire_multiplier = 1.0 + self.gov_effects(pid).great_people_pct / 100.0;
+                    for (kind, base_points) in &spec.completion_gpp {
+                        // PointProgressionParam1=800: interpolate from the
+                        // base award to eight times that award, then floor.
+                        let points = (base_points * (1.0 + 7.0 * progress)).floor();
+                        let congress_multiplier =
+                            if self.congress_effect_active("patronage", "A", kind) {
+                                2.0
+                            } else if self.congress_effect_active("patronage", "B", kind) {
+                                0.0
+                            } else {
+                                1.0
+                            };
+                        *self.players[pid].gpp.entry(kind.clone()).or_insert(0.0) +=
+                            points * city_multiplier * empire_multiplier * congress_multiplier;
+                    }
+                }
                 for (effect, amount) in &spec.effects {
                     *self.players[pid]
                         .counters
@@ -24906,6 +25598,7 @@ impl Game {
         let defeated = self.pending_city_capture(pid, cid)?;
         self.cities.get_mut(&cid).unwrap().captured_from = None;
         self.capture_rewards(pid, defeated, 50.0);
+        self.request_city_capture_emergency(pid, cid, defeated);
         self.check_elimination(defeated);
         self.city_state_elimination_grievances(defeated, pid, false);
         self.civilization_elimination_grievances(defeated, pid);
@@ -24956,6 +25649,17 @@ impl Game {
         if original_owner == pid || original_owner == defeated {
             return Err("this city cannot be liberated".into());
         }
+        let emergency_ids: Vec<u32> = self
+            .active_emergencies
+            .iter_mut()
+            .filter(|emergency| emergency.city == cid && emergency.target == defeated)
+            .map(|emergency| {
+                if emergency.members.contains(&pid) {
+                    *emergency.contributions.entry(pid).or_insert(0) += 1;
+                }
+                emergency.id
+            })
+            .collect();
         let restored_to_game = !self.players[original_owner].alive;
         {
             let city = self.cities.get_mut(&cid).unwrap();
@@ -24986,6 +25690,9 @@ impl Game {
         }
         self.check_elimination(defeated);
         self.check_domination();
+        for emergency in emergency_ids {
+            self.resolve_emergency(emergency, true);
+        }
         Ok(())
     }
 
@@ -28897,6 +29604,19 @@ mod great_work_tests {
 mod district_mechanics {
     use super::*;
 
+    fn emergency_game_with_capitals(players: usize, seed: u64, max_turns: u32) -> Game {
+        let mut game = Game::new_full(players, 26, 16, seed, max_turns, 0, false);
+        for player in 0..players {
+            let settler = game
+                .player_unit_ids(player)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.found_city_for(player, game.units[&settler].pos, None);
+        }
+        game
+    }
+
     fn controlled_game() -> (Game, u32, Pos, Vec<Pos>) {
         let mut game = Game::new_full(1, 20, 14, 5150, 300, 0, false);
         let settler = game
@@ -29943,5 +30663,217 @@ mod district_mechanics {
         assert_eq!(game.players[0].alliances[&1].level, 2);
         assert!(game.has_open_borders(0, 1));
         assert!(game.do_declare_war(0, 1).is_err());
+    }
+
+    #[test]
+    fn emergencies_wait_for_medieval_and_queue_behind_a_regular_session() {
+        let make_objective = |game: &mut Game| {
+            let position = game
+                .map
+                .tiles
+                .keys()
+                .copied()
+                .find(|position| game.city_at(*position).is_none())
+                .unwrap();
+            game.found_city_for(1, position, Some("Emergency Trigger".to_string()))
+        };
+        let mut ancient = emergency_game_with_capitals(3, 88_103, 300);
+        let city = make_objective(&mut ancient);
+        ancient.capture_city(city, 0);
+        ancient.do_keep_city(0, city).unwrap();
+        assert!(ancient.pending_emergencies.is_empty());
+        assert!(ancient.congress.is_none());
+
+        let mut medieval = emergency_game_with_capitals(3, 88_106, 300);
+        medieval.world_era = 2;
+        medieval.congress = Some(CongressSession {
+            convened: medieval.turn,
+            closes: medieval.turn + 5,
+            resolutions: vec![CongressResolution {
+                id: "regular_test".to_string(),
+                title: "Regular Session".to_string(),
+                choices: vec!["A:test".to_string(), "B:test".to_string()],
+                ballots: BTreeMap::new(),
+            }],
+        });
+        let city = make_objective(&mut medieval);
+        medieval.capture_city(city, 0);
+        medieval.do_keep_city(0, city).unwrap();
+        assert_eq!(
+            medieval.congress.as_ref().unwrap().resolutions[0].id,
+            "regular_test"
+        );
+        assert_eq!(medieval.pending_emergencies.len(), 1);
+        medieval.turn = medieval.congress.as_ref().unwrap().closes;
+        medieval.process_congress();
+        assert!(medieval.congress.as_ref().unwrap().resolutions[0]
+            .id
+            .starts_with("emergency:"));
+    }
+
+    #[test]
+    fn city_state_emergency_votes_form_a_coalition_and_reward_liberation() {
+        let mut game = emergency_game_with_capitals(4, 88_104, 300);
+        game.world_era = 2;
+        game.players[1].is_minor = true;
+        game.players[2].envoys.push((1, 3));
+        game.players[3].envoys.push((1, 1));
+        game.players[2].diplomatic_favor = 10.0;
+        let objective = game.player_city_ids(1)[0];
+        let first_sight = *game.map.tiles.keys().next().unwrap();
+        let last_sight = *game.map.tiles.keys().next_back().unwrap();
+        game.players[2].explored = [first_sight].into_iter().collect();
+        game.players[3].explored = [last_sight].into_iter().collect();
+
+        game.capture_city(objective, 0);
+        game.do_keep_city(0, objective).unwrap();
+        assert!(!game.players[1].alive);
+        assert_eq!(game.pending_emergencies.len(), 1);
+        let queued: Game = serde_json::from_str(&serde_json::to_string(&game).unwrap()).unwrap();
+        assert_eq!(queued.pending_emergencies, game.pending_emergencies);
+        assert_eq!(queued.congress, game.congress);
+        let resolution = game.congress.as_ref().unwrap().resolutions[0].id.clone();
+        assert_eq!(game.pending_emergencies[0].kind, "city_state");
+        assert!(game.legal_actions(0).contains(&Action::CongressVote {
+            resolution: resolution.clone(),
+            choice: "B:oppose".to_string(),
+            votes: 1,
+        }));
+        assert!(!game.legal_actions(0).iter().any(
+            |action| matches!(action, Action::CongressVote { choice, .. } if choice == "A:support")
+        ));
+        game.do_congress_vote(0, &resolution, "B:oppose", 1)
+            .unwrap();
+        game.do_congress_vote(2, &resolution, "A:support", 2)
+            .unwrap();
+        game.do_congress_vote(3, &resolution, "A:support", 1)
+            .unwrap();
+        game.at_war.insert(pair(2, 3));
+        game.turn = game.congress.as_ref().unwrap().closes;
+        game.process_congress();
+
+        assert!(game.pending_emergencies.is_empty());
+        assert_eq!(game.active_emergencies.len(), 1);
+        assert_eq!(
+            game.active_emergencies[0].members,
+            [2, 3].into_iter().collect()
+        );
+        assert!(game.is_at_war(0, 2));
+        assert!(game.is_at_war(0, 3));
+        assert!(!game.is_at_war(2, 3));
+        assert!(game.players[2].open_borders_until[&3] > game.turn);
+        assert!(game.players[3].open_borders_until[&2] > game.turn);
+        assert!(game.players[2].explored.contains(&last_sight));
+        assert!(game.players[3].explored.contains(&first_sight));
+        assert_eq!(game.players[0].grievances.get(&2), None);
+        assert!(game.do_make_peace(2, 0).is_err());
+
+        game.cities.get_mut(&objective).unwrap().loyalty = 20.0;
+        let mut loyalty_baseline = game.clone();
+        loyalty_baseline.active_emergencies.clear();
+        game.process_loyalty(0);
+        loyalty_baseline.process_loyalty(0);
+        assert_eq!(
+            game.cities[&objective].loyalty,
+            loyalty_baseline.cities[&objective].loyalty + 20.0
+        );
+
+        let target_position = game.cities[&objective].pos;
+        let member = game.spawn_test_unit("warrior", 2, target_position);
+        let target_position_2 = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|position| game.wdist(*position, target_position) >= 2)
+            .unwrap();
+        let target = game.spawn_test_unit("warrior", 0, target_position_2);
+        let mut baseline = game.clone();
+        baseline.active_emergencies.clear();
+        assert_eq!(
+            game.unit_base_max_moves(member),
+            baseline.unit_base_max_moves(member) + 1.0
+        );
+        assert_eq!(
+            game.matchup_bonus(member, &game.units[&target], true),
+            baseline.matchup_bonus(member, &baseline.units[&target], true) + 2.0
+        );
+
+        let restored: Game = serde_json::from_str(&serde_json::to_string(&game).unwrap()).unwrap();
+        assert_eq!(restored.active_emergencies, game.active_emergencies);
+        let mut failed = game.clone();
+        failed.turn = failed.active_emergencies[0].ends;
+        failed.process_emergencies();
+        assert_eq!(
+            failed.players[0].counters["emergency_city_state_route_gold"],
+            2
+        );
+        game.capture_city(objective, 2);
+        game.do_liberate_city(2, objective).unwrap();
+        assert!(game.active_emergencies.is_empty());
+        assert_eq!(game.cities[&objective].owner, 1);
+        assert_eq!(game.players[2].diplomatic_favor, 200.0);
+        assert_eq!(game.players[2].counters["emergency_gold_per_envoy"], 1);
+        assert_eq!(game.players[3].diplomatic_favor, 0.0);
+        let member_capital = game.player_city_ids(2)[0];
+        let mut without_reward = game.clone();
+        without_reward.players[2]
+            .counters
+            .remove("emergency_gold_per_envoy");
+        assert_eq!(
+            game.city_yields(member_capital).gold,
+            without_reward.city_yields(member_capital).gold + 3.0
+        );
+    }
+
+    #[test]
+    fn military_emergency_times_out_into_target_favor_and_city_strike_strength() {
+        let mut game = emergency_game_with_capitals(3, 88_105, 300);
+        game.world_era = 2;
+        game.players[2].diplomatic_favor = 10.0;
+        let position = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|position| game.city_at(*position).is_none())
+            .unwrap();
+        let objective = game.found_city_for(1, position, Some("Emergency City".to_string()));
+        game.capture_city(objective, 0);
+        game.do_keep_city(0, objective).unwrap();
+        assert_eq!(game.pending_emergencies[0].kind, "military");
+        let resolution = game.congress.as_ref().unwrap().resolutions[0].id.clone();
+        game.do_congress_vote(0, &resolution, "B:oppose", 1)
+            .unwrap();
+        game.do_congress_vote(2, &resolution, "A:support", 2)
+            .unwrap();
+        game.turn = game.congress.as_ref().unwrap().closes;
+        game.process_congress();
+        let end = game.active_emergencies[0].ends;
+        assert!(game.is_at_war(0, 2));
+        assert!(game.do_make_peace(0, 2).is_err());
+
+        let mut success = game.clone();
+        success.capture_city(objective, 2);
+        success.do_liberate_city(2, objective).unwrap();
+        assert_eq!(success.players[2].diplomatic_favor, 150.0);
+        assert_eq!(success.players[2].counters["emergency_heal_in:0"], 5);
+        let enemy_city = success.player_city_ids(0)[0];
+        let healer = success.spawn_test_unit("warrior", 2, success.cities[&enemy_city].pos);
+        let mut without_reward = success.clone();
+        without_reward.players[2]
+            .counters
+            .remove("emergency_heal_in:0");
+        assert_eq!(
+            success.unit_heal_rate(healer),
+            without_reward.unit_heal_rate(healer) + 5
+        );
+
+        game.turn = end;
+        game.process_emergencies();
+        assert!(game.active_emergencies.is_empty());
+        assert_eq!(game.players[0].diplomatic_favor, 200.0);
+        assert_eq!(game.players[0].counters["emergency_city_strike_vs:2"], 2);
+        assert!(game.do_make_peace(0, 2).is_ok());
     }
 }
