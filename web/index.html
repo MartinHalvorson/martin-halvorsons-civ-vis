@@ -2084,6 +2084,8 @@ mini.addEventListener("click", ev => {
 // ---------------------------------------------------------------- panels
 function drawTopbar() {
   const me = state.me, y = me.yields;
+  const goldPerTurn = Number.isFinite(+me.gold_per_turn) ? +me.gold_per_turn : +y.gold;
+  const goldFlow = `${goldPerTurn >= 0 ? "+" : ""}${compactStat(goldPerTurn)}`;
   const actor = state.players[SPEC ? state.current : 0] || state.players[state.player];
   const eraRaw = state.world_era;
   const era = typeof eraRaw === "number"
@@ -2094,7 +2096,7 @@ function drawTopbar() {
     (SPEC ? `<div class="hud-stat hud-watch">◉ <strong>${actor.civ}</strong><i>acting</i></div>` : "") +
     `<div class="hud-stat">🔬 <strong>${y.science}</strong><i>science</i></div>` +
     `<div class="hud-stat">🎭 <strong>${y.culture}</strong><i>culture</i></div>` +
-    `<div class="hud-stat">🪙 <strong>${Math.round(me.gold)}</strong><i>+${y.gold}</i></div>` +
+    `<div class="hud-stat" title="Net Gold after maintenance and active deals">🪙 <strong>${Math.round(me.gold)}</strong><i>${goldFlow}</i></div>` +
     `<div class="hud-stat">✦ <strong>${Math.round(me.faith)}</strong><i>+${y.faith}</i></div>` +
     `<div class="hud-stat">⚜ <strong>${Math.round(me.diplomatic_favor || 0)}</strong><i>favor</i></div>` +
     ((Number(me.global_co2) || 0) !== 0 || Number(eraRaw) >= 4
@@ -2155,6 +2157,7 @@ function drawPlayerHud() {
       const color = pcol(p.id);
       const leader = p.leader || "Unknown leader";
       const rank = rankById.get(p.id);
+      const goldPerTurn = Number.isFinite(+p.gold_per_turn) ? +p.gold_per_turn : +(y.gold || 0);
       const initial = (leader === "Unknown leader" ? p.civ : leader).trim().charAt(0).toUpperCase();
       const stateClass = `${p.id === acting ? "active" : ""} ${p.at_war_with_me ? "at-war" : ""} ${p.alive ? "" : "dead"}`;
       const relation = !p.alive ? "Defeated" : p.at_war_with_me ? "At war" : "Standing";
@@ -2163,7 +2166,7 @@ function drawPlayerHud() {
         ["science", "SCI", y.science, `Science: ${compactStat(y.science)} per turn`],
         ["culture", "CUL", y.culture, `Culture: ${compactStat(y.culture)} per turn`],
         ["faith", "FPT", y.faith, `Faith: ${compactStat(y.faith)} per turn · ${compactStat(p.faith)} banked`],
-        ["gold", "GPT", y.gold, `Gold: ${compactStat(y.gold)} per turn · ${compactStat(p.gold)} banked`],
+        ["gold", "GPT", goldPerTurn, `Net Gold: ${compactStat(goldPerTurn)} per turn · ${compactStat(p.gold)} banked`],
         ["military", "MIL", p.military, `Military strength: ${compactStat(p.military)}`],
         ["score", "SCORE", p.score, `Score: ${compactStat(p.score)} · rank ${rank}`],
       ];

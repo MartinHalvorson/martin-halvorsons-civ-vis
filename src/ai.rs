@@ -2443,6 +2443,7 @@ impl BasicAi {
                 let acted = match kind.as_str() {
                     "settler" => self.settler_step(g, pid, uid),
                     "builder" => self.builder_step(g, pid, uid),
+                    "naturalist" => self.naturalist_step(g, pid, uid),
                     "trader" => self.trader_step(g, pid, uid),
                     "missionary" => self.missionary_step(g, pid, uid),
                     "battering_ram" | "siege_tower" => self.siege_support_step(g, pid, uid),
@@ -2933,7 +2934,7 @@ impl BasicAi {
             .keys()
             .copied()
             .filter_map(|position| {
-                let tourism = g.rock_concert_venue(pid, position)?;
+                let tourism = g.rock_concert_ai_value(pid, uid, position)?;
                 g.route_step(uid, position, 0)?;
                 Some((tourism, g.wdist(current, position), position))
             })
@@ -2995,7 +2996,11 @@ impl BasicAi {
                 .apply(pid, &Action::RepairImprovement { unit: uid })
                 .is_ok();
         }
-        let imps = g.valid_improvements(pid, upos);
+        let imps: Vec<String> = g
+            .valid_improvements(pid, upos)
+            .into_iter()
+            .filter(|improvement| g.rules.improvements[improvement].builder_buildable)
+            .collect();
         if !imps.is_empty() {
             return g
                 .apply(
@@ -3010,7 +3015,10 @@ impl BasicAi {
         let mut best: Option<(i32, Pos)> = None;
         for cid in g.player_city_ids(pid) {
             for pos in g.cities[&cid].owned_tiles.clone() {
-                if !g.valid_improvements(pid, pos).is_empty() {
+                if g.valid_improvements(pid, pos)
+                    .iter()
+                    .any(|improvement| g.rules.improvements[improvement].builder_buildable)
+                {
                     let d = g.wdist(upos, pos);
                     if best.map(|b| (d, pos) < b).unwrap_or(true) {
                         best = Some((d, pos));
@@ -3022,6 +3030,46 @@ impl BasicAi {
             Some((_, pos)) => self.step_toward(g, pid, uid, pos),
             None => false,
         }
+    }
+
+    fn naturalist_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
+        let current = g.units[&uid].pos;
+        if g.valid_improvements(pid, current)
+            .iter()
+            .any(|improvement| improvement == "national_park")
+        {
+            return g
+                .apply(
+                    pid,
+                    &Action::Improve {
+                        unit: uid,
+                        improvement: "national_park".to_string(),
+                    },
+                )
+                .is_ok();
+        }
+        let target = g
+            .national_park_sites(pid)
+            .into_iter()
+            .filter_map(|site| {
+                let appeal = site
+                    .iter()
+                    .map(|position| g.tile_appeal(*position).max(0))
+                    .sum::<i32>();
+                site.into_iter()
+                    .filter(|position| g.rules.is_passable(&g.map.tiles[position]))
+                    .filter(|position| g.route_step(uid, *position, 0).is_some())
+                    .min_by_key(|position| (g.wdist(current, *position), *position))
+                    .map(|position| {
+                        (
+                            appeal,
+                            std::cmp::Reverse(g.wdist(current, position)),
+                            position,
+                        )
+                    })
+            })
+            .max();
+        target.is_some_and(|(_, _, position)| self.step_toward(g, pid, uid, position))
     }
 
     fn is_enemy_tile(&self, g: &Game, pos: Pos, enemy_ids: &[usize]) -> bool {
@@ -4800,5 +4848,84 @@ mod tests {
         assert!(ai.builder_step(&mut g, 0, builder));
         assert!(!g.units.contains_key(&builder));
         assert_eq!(g.cities[&city].production, 54.0);
+    }
+
+    #[test]
+    fn headless_naturalist_routes_to_and_establishes_a_complete_park() {
+        let mut g = Game::new_full(1, 20, 14, 36, 40, 0, false);
+        let settler = g
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|id| g.units[id].kind == "settler")
+            .unwrap();
+        g.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = g.player_city_ids(0)[0];
+        let center = g.cities[&city].pos;
+        let positions = g
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .filter(|top| g.wdist(center, *top) > 4)
+            .find_map(|top| {
+                let positions = [
+                    top,
+                    crate::hex::canon((top.0 - 1, top.1 + 1), g.map.width),
+                    crate::hex::canon((top.0, top.1 + 1), g.map.width),
+                    crate::hex::canon((top.0 - 1, top.1 + 2), g.map.width),
+                ];
+                positions
+                    .iter()
+                    .all(|position| g.map.tiles.contains_key(position))
+                    .then_some(positions)
+            })
+            .unwrap();
+
+        let old_owned = g.cities[&city].owned_tiles.clone();
+        for position in old_owned {
+            g.map.tiles.get_mut(&position).unwrap().owner_city = None;
+        }
+        g.cities.get_mut(&city).unwrap().owned_tiles = positions.to_vec();
+        for position in positions
+            .iter()
+            .flat_map(|position| g.nbrs(*position))
+            .chain(positions)
+            .collect::<std::collections::BTreeSet<_>>()
+        {
+            let tile = g.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.hills = false;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.pillaged = false;
+            tile.district = None;
+            tile.wonder = None;
+            tile.flooded = false;
+            tile.submerged = false;
+        }
+        for position in positions {
+            let tile = g.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "mountain".to_string();
+            tile.owner_city = Some(city);
+        }
+        g.map.tiles.get_mut(&positions[0]).unwrap().terrain = "grassland".to_string();
+        g.players[0].civics.insert("conservation".to_string());
+        assert_eq!(g.national_park_sites(0), vec![positions]);
+
+        let start = g
+            .nbrs(positions[0])
+            .into_iter()
+            .find(|position| !positions.contains(position))
+            .unwrap();
+        let naturalist = g.spawn_test_unit("naturalist", 0, start);
+        let ai = BasicAi::new();
+        assert!(ai.naturalist_step(&mut g, 0, naturalist));
+        assert_eq!(g.units[&naturalist].pos, positions[0]);
+        assert!(ai.naturalist_step(&mut g, 0, naturalist));
+        assert!(!g.units.contains_key(&naturalist));
+        assert!(positions.iter().all(|position| {
+            g.map.tiles[position].improvement.as_deref() == Some("national_park")
+        }));
     }
 }

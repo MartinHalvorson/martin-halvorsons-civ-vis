@@ -1901,6 +1901,30 @@ impl AdvancedAi {
     }
 
     fn culture_spending(&self, g: &mut Game, pid: usize) {
+        let active_naturalists = g
+            .units
+            .values()
+            .filter(|unit| unit.owner == pid && unit.kind == "naturalist")
+            .count();
+        if active_naturalists == 0
+            && !g.national_park_sites(pid).is_empty()
+            && g.players[pid].faith + f64::EPSILON >= g.naturalist_purchase_cost(pid)
+        {
+            for city in g.player_city_ids(pid) {
+                if g.apply(
+                    pid,
+                    &Action::Buy {
+                        city,
+                        unit: "naturalist".to_string(),
+                        currency: "faith".to_string(),
+                    },
+                )
+                .is_ok()
+                {
+                    return;
+                }
+            }
+        }
         let active_bands = g
             .units
             .values()
@@ -1931,6 +1955,9 @@ impl AdvancedAi {
     fn faith_building_spending(&self, g: &mut Game, pid: usize, strategy: GrandStrategy) {
         let reserve = match strategy {
             GrandStrategy::Religion => 180.0,
+            GrandStrategy::Culture if !g.national_park_sites(pid).is_empty() => {
+                g.naturalist_purchase_cost(pid)
+            }
             GrandStrategy::Culture if g.players[pid].civics.contains("cold_war") => 700.0,
             _ => 80.0,
         };
@@ -2785,13 +2812,18 @@ impl AdvancedAi {
     ) -> f64 {
         let tile = &g.map.tiles[&pos];
         let spec = &g.rules.improvements[improvement];
-        let mut value = self.yield_value(spec.yields, strategy);
+        let appeal = g.tile_appeal(pos).max(0) as f64;
+        let mut yields = spec.yields;
+        yields.gold += spec.effects.get("appeal_gold").copied().unwrap_or(0.0) * appeal;
+        let mut value = self.yield_value(yields, strategy);
         if strategy == GrandStrategy::Culture {
             // Tourism is cumulative: delaying a resort or national park by
             // dozens of turns loses visitors that cannot be recovered by an
             // equivalent late-game yield. Treat it as a durable strategic
             // yield so builders seek tourist sites as soon as they unlock.
-            value += spec.effects.get("tourism").copied().unwrap_or(0.0) * 35.0;
+            let tourism = spec.effects.get("tourism").copied().unwrap_or(0.0)
+                + spec.effects.get("appeal_tourism").copied().unwrap_or(0.0) * appeal;
+            value += tourism * 35.0;
         }
         if let Some(resource) = &tile.resource {
             value += match g.rules.resources[resource].class.as_str() {
@@ -2823,7 +2855,8 @@ impl AdvancedAi {
             .valid_improvements(pid, pos)
             .into_iter()
             .filter(|improvement| {
-                self.improvement_value(g, pos, improvement, strategy) > current_value + 0.5
+                g.rules.improvements[improvement].builder_buildable
+                    && self.improvement_value(g, pos, improvement, strategy) > current_value + 0.5
             })
             .collect();
         choices.sort_by(|a, b| {
@@ -3948,6 +3981,13 @@ impl AdvancedAi {
                 "sight" | "see_through_woods" => 15.0,
                 "pillage_cost" | "scale_cliffs" | "amphibious" => 14.0,
                 "woods_move_cost" | "hills_move_cost" => 12.0,
+                name if name.starts_with("rock_") && name.ends_with("_levels") => 110.0,
+                "rock_nature_venue" | "rock_space_venue" | "rock_surf_venue" => 150.0,
+                "rock_nearby_tourism_pct" => 6.0,
+                "rock_gold_pct" => 2.5,
+                "rock_loyalty_loss" => 1.5,
+                "rock_convert_city" if strategy == GrandStrategy::Religion => 350.0,
+                "rock_convert_city" => 50.0,
                 "combat_all" => 4.0,
                 name if name.starts_with("attack_")
                     || name.starts_with("ranged_")
@@ -4163,6 +4203,7 @@ impl AdvancedAi {
             let order = match u.kind.as_str() {
                 "settler" => 0,
                 "builder" => 1,
+                "naturalist" => 1,
                 "trader" => 2,
                 "missionary" => 3,
                 "rock_band" => 3,
@@ -4182,6 +4223,7 @@ impl AdvancedAi {
                 let acted = match kind.as_str() {
                     "settler" => self.advanced_settler_step(g, pid, uid),
                     "builder" => self.advanced_builder_step(g, pid, uid, plan.strategy),
+                    "naturalist" => self.base.naturalist_step(g, pid, uid),
                     "trader" => self.advanced_trader_step(g, pid, uid, plan.strategy),
                     "missionary" if self.victory_planning => {
                         self.advanced_missionary_step(g, pid, uid)
@@ -5407,8 +5449,18 @@ mod tests {
 
     #[test]
     fn culture_strategy_treats_tourism_as_a_builder_yield() {
-        let g = Game::new(2, 24, 16, 73, 80, 0);
+        let mut g = Game::new(2, 24, 16, 73, 80, 0);
         let pos = *g.map.tiles.keys().next().unwrap();
+        for neighbor in g.nbrs(pos) {
+            let tile = g.map.tiles.get_mut(&neighbor).unwrap();
+            tile.terrain = "coast".to_string();
+            tile.feature = None;
+            tile.district = None;
+            tile.wonder = None;
+            tile.improvement = None;
+            tile.pillaged = false;
+        }
+        assert!(g.tile_appeal(pos) >= 4);
         let ai = AdvancedAi::targeting(VictoryTarget::Culture);
 
         let resort = ai.improvement_value(&g, pos, "seaside_resort", GrandStrategy::Culture);
@@ -5440,6 +5492,17 @@ mod tests {
         tile.resource = None;
         tile.hills = false;
         tile.improvement = Some("farm".to_string());
+        for neighbor in g.nbrs(pos) {
+            let tile = g.map.tiles.get_mut(&neighbor).unwrap();
+            tile.terrain = "coast".to_string();
+            tile.feature = None;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.district = None;
+            tile.wonder = None;
+            tile.pillaged = false;
+        }
+        assert!(g.tile_appeal(pos) >= 4);
 
         let ai = AdvancedAi::targeting(VictoryTarget::Culture);
         let upgrades = ai.worthwhile_improvements(&g, 0, pos, GrandStrategy::Culture);

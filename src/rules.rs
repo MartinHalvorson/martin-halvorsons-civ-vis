@@ -1302,9 +1302,14 @@ mod tests {
             .filter(|unit| !unit.promotion_class.is_empty())
             .map(|unit| unit.promotion_class.as_str())
             .collect();
+        let promotion_count = |class: &str| match class {
+            "religious_apostle" => 9,
+            "rock_band" => 12,
+            _ => 7,
+        };
         let expected_promotions = classes
             .iter()
-            .map(|class| if *class == "religious_apostle" { 9 } else { 7 })
+            .map(|class| promotion_count(class))
             .sum::<usize>();
         assert_eq!(rules.promotions.len(), expected_promotions);
         for class in classes {
@@ -1313,7 +1318,7 @@ mod tests {
                 .iter()
                 .filter(|(_, promotion)| promotion.class == class)
                 .collect();
-            let expected = if class == "religious_apostle" { 9 } else { 7 };
+            let expected = promotion_count(class);
             assert_eq!(nodes.len(), expected, "{class} promotion tree");
             for (name, promotion) in nodes {
                 assert!((1..=4).contains(&promotion.tier), "{name} tier");

@@ -616,7 +616,7 @@
     "buildable": false, "promotion_class": "warrior_monk", "zone_of_control": true
   },
   "naturalist": {
-    "class": "civilian", "cost": 400, "moves": 2, "charges": 1,
+    "class": "civilian", "cost": 600, "moves": 4, "charges": 1, "buildable": false,
     "civic": "conservation", "builds": ["national_park"]
   },
   "archaeologist": {
@@ -625,7 +625,7 @@
     "builds": ["archaeological_dig", "shipwreck_excavation"]
   },
   "rock_band": {
-    "class": "civilian", "cost": 600, "moves": 4, "charges": 3,
-    "civic": "cold_war", "builds": ["rock_concert"]
+    "class": "civilian", "cost": 600, "moves": 4, "charges": 0,
+    "civic": "cold_war", "promotion_class": "rock_band", "builds": ["rock_concert"]
   }
 }

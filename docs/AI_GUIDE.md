@@ -63,8 +63,9 @@ use the lightweight agent.
 The six pipelines are concrete rather than score labels. Science reserves a
 Spaceport and completes the launch chain; Culture builds a Theater Square
 network, recruits cultural Great People, reaches the Conservation/Professional
-Sports tourism unlocks, and improves tourism tiles; Religion founds, enhances,
-defends, and spreads its faith while reconverting its own core first;
+Sports tourism unlocks, improves tourism tiles, and sends promoted Rock Bands
+to the best risk-adjusted foreign venues; Religion founds, enhances, defends,
+and spreads its faith while reconverting its own core first;
 Diplomacy prioritizes Favor, envoys, alliances, city-state liberation, and
 World Congress; Domination coordinates production and force objectives; Score
 balances expansion and near-term empire value. Society choice supports the

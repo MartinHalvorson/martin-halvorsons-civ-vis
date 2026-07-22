@@ -181,6 +181,8 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
         "cities": cities,
         "me": {
             "gold": round1(p.gold), "faith": round1(p.faith),
+            "gold_per_turn": round1(p.gold_per_turn),
+            "bankruptcy_amenity_penalty": p.bankruptcy_amenity_penalty,
             "techs": p.techs, "research": p.research,
             "research_progress": round1(p.research_progress),
             "civics": p.civics, "civic": p.civic,
@@ -300,6 +302,8 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
                 "score": g.score(o.id),
                 "cities": g.player_city_ids(o.id).len(),
                 "gold": round1(o.gold),
+                "gold_per_turn": round1(o.gold_per_turn),
+                "bankruptcy_amenity_penalty": o.bankruptcy_amenity_penalty,
                 "faith": round1(o.faith),
                 "yields": yields_json(&output),
                 "military": military,

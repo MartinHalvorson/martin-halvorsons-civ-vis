@@ -311,6 +311,246 @@ mod corporation_tests {
 }
 
 #[cfg(test)]
+mod national_park_tests {
+    use super::*;
+
+    fn controlled_park_game() -> (Game, u32, [Pos; 4]) {
+        let mut game = Game::new_full(1, 24, 16, 91_741, 200, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        let city = game.found_city_for(0, game.units[&settler].pos, None);
+        let center = game.cities[&city].pos;
+        let positions = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .filter(|top| game.wdist(center, *top) > 4)
+            .find_map(|top| game.national_park_diamond(top))
+            .expect("map has room for a four-tile park away from the capital");
+
+        let nearby: BTreeSet<Pos> = positions
+            .iter()
+            .flat_map(|position| game.nbrs(*position))
+            .chain(positions)
+            .collect();
+        for position in nearby {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.hills = false;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.pillaged = false;
+            tile.district = None;
+            tile.wonder = None;
+            tile.flooded = false;
+            tile.submerged = false;
+        }
+        for position in positions {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "mountain".to_string();
+            tile.owner_city = Some(city);
+            if !game.cities[&city].owned_tiles.contains(&position) {
+                game.cities
+                    .get_mut(&city)
+                    .unwrap()
+                    .owned_tiles
+                    .push(position);
+            }
+        }
+        // The top tile is the one traversable tile. Its two park neighbors are
+        // Mountains, so it is Charming and the complete diamond is legal.
+        game.map.tiles.get_mut(&positions[0]).unwrap().terrain = "grassland".to_string();
+        game.players[0].civics.insert("conservation".to_string());
+        assert!(game.valid_national_park_site(0, &positions));
+        (game, city, positions)
+    }
+
+    #[test]
+    fn naturalists_are_progressive_faith_only_purchases() {
+        let (mut game, city, _) = controlled_park_game();
+        let item = Item::Unit {
+            unit: "naturalist".to_string(),
+        };
+        assert!(!game.can_produce(0, city, &item));
+        assert_eq!(game.naturalist_purchase_cost(0), 600.0);
+
+        game.players[0].gold = 10_000.0;
+        game.players[0].faith = 599.0;
+        assert!(game
+            .apply(
+                0,
+                &Action::Buy {
+                    city,
+                    unit: "naturalist".to_string(),
+                    currency: "gold".to_string(),
+                },
+            )
+            .is_err());
+        assert!(game
+            .apply(
+                0,
+                &Action::Buy {
+                    city,
+                    unit: "naturalist".to_string(),
+                    currency: "faith".to_string(),
+                },
+            )
+            .is_err());
+
+        game.players[0].faith = 600.0;
+        game.apply(
+            0,
+            &Action::Buy {
+                city,
+                unit: "naturalist".to_string(),
+                currency: "faith".to_string(),
+            },
+        )
+        .unwrap();
+        assert_eq!(game.players[0].faith, 0.0);
+        assert_eq!(game.players[0].counters["purchased:naturalist"], 1);
+        assert_eq!(game.naturalist_purchase_cost(0), 700.0);
+
+        let restored: Game = serde_json::from_str(&serde_json::to_string(&game).unwrap()).unwrap();
+        assert_eq!(restored.naturalist_purchase_cost(0), 700.0);
+    }
+
+    #[test]
+    fn national_parks_use_four_tiles_live_appeal_and_exact_city_amenities() {
+        let (mut game, city, positions) = controlled_park_game();
+
+        let mut other_cities = Vec::new();
+        for position in game.map.tiles.keys().copied().collect::<Vec<_>>() {
+            if other_cities.len() == 5 {
+                break;
+            }
+            if positions.contains(&position)
+                || game.map.tiles[&position].owner_city.is_some()
+                || game
+                    .cities
+                    .values()
+                    .any(|candidate| game.wdist(candidate.pos, position) < 3)
+            {
+                continue;
+            }
+            game.map.tiles.get_mut(&position).unwrap().terrain = "plains".to_string();
+            other_cities.push(game.found_city_for(0, position, None));
+        }
+        assert_eq!(other_cities.len(), 5);
+
+        let city_ids: Vec<u32> = std::iter::once(city)
+            .chain(other_cities.iter().copied())
+            .collect();
+        let amenity_before: BTreeMap<u32, i64> = city_ids
+            .iter()
+            .map(|city_id| (*city_id, game.city_local_amenities(&game.cities[city_id])))
+            .collect();
+        let tourism_before = game.tourism_per_turn(0);
+        let culture_before = game
+            .player_city_ids(0)
+            .into_iter()
+            .map(|city_id| game.city_yields(city_id).culture)
+            .sum::<f64>();
+        let global_multiplier =
+            1.0 + (game.tree_effect(0, "tourism_pct") + game.monopoly_bonuses(0).1) / 100.0;
+        let initial_appeal: i32 = positions
+            .iter()
+            .map(|position| game.tile_appeal(*position))
+            .sum();
+        let naturalist = game.spawn_unit("naturalist", 0, positions[0]);
+        assert!(game
+            .valid_improvements(0, positions[0])
+            .contains(&"national_park".to_string()));
+        game.apply(
+            0,
+            &Action::Improve {
+                unit: naturalist,
+                improvement: "national_park".to_string(),
+            },
+        )
+        .unwrap();
+        assert!(!game.units.contains_key(&naturalist));
+        assert!(positions.iter().all(|position| {
+            game.map.tiles[position].improvement.as_deref() == Some("national_park")
+        }));
+        let culture_with_park = game
+            .player_city_ids(0)
+            .into_iter()
+            .map(|city_id| game.city_yields(city_id).culture)
+            .sum::<f64>();
+        let tourism_with_park = game.tourism_per_turn(0);
+        let expected_gain = (initial_appeal as f64 + 0.15 * (culture_with_park - culture_before))
+            * global_multiplier;
+        assert!((tourism_with_park - tourism_before - expected_gain).abs() < 1e-9);
+
+        let mut nearest = other_cities.clone();
+        nearest.sort_by_key(|city_id| {
+            (
+                positions
+                    .iter()
+                    .map(|position| game.wdist(game.cities[city_id].pos, *position))
+                    .min()
+                    .unwrap(),
+                *city_id,
+            )
+        });
+        let nearest: BTreeSet<u32> = nearest.into_iter().take(4).collect();
+        for city_id in city_ids {
+            let expected = if city_id == city {
+                2
+            } else if nearest.contains(&city_id) {
+                1
+            } else {
+                0
+            };
+            assert_eq!(
+                game.city_local_amenities(&game.cities[&city_id]) - amenity_before[&city_id],
+                expected
+            );
+        }
+
+        // Degrading the surroundings changes the already-established park's
+        // Tourism immediately, including negative Appeal rather than a clamp.
+        let outside: BTreeSet<Pos> = positions
+            .iter()
+            .flat_map(|position| game.nbrs(*position))
+            .filter(|position| !positions.contains(position))
+            .collect();
+        for position in outside {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.improvement = Some("mine".to_string());
+            tile.pillaged = false;
+        }
+        let degraded_appeal: i32 = positions
+            .iter()
+            .map(|position| game.tile_appeal(*position))
+            .sum();
+        assert!(degraded_appeal < initial_appeal);
+        let degraded_culture = game
+            .player_city_ids(0)
+            .into_iter()
+            .map(|city_id| game.city_yields(city_id).culture)
+            .sum::<f64>();
+        let expected_change = ((degraded_appeal - initial_appeal) as f64
+            + 0.15 * (degraded_culture - culture_with_park))
+            * global_multiplier;
+        assert!((game.tourism_per_turn(0) - tourism_with_park - expected_change).abs() < 1e-9);
+
+        let restored: Game = serde_json::from_str(&serde_json::to_string(&game).unwrap()).unwrap();
+        assert_eq!(
+            restored.established_national_parks(0),
+            vec![(city, positions)]
+        );
+        assert!((restored.tourism_per_turn(0) - game.tourism_per_turn(0)).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
 mod trade_deal_tests {
     use super::*;
     use crate::ai::BasicAi;
@@ -1393,6 +1633,135 @@ mod maintenance_tests {
             .insert("second_strike_capability".to_string());
         assert_eq!(game.nuclear_gold_maintenance(0), 22.0);
     }
+
+    #[test]
+    fn bankruptcy_thresholds_apply_amenities_disbanding_and_recovery() {
+        let (mut game, city) = one_city();
+        for unit in game.player_unit_ids(0) {
+            game.remove_unit(unit);
+        }
+        let archer = game.spawn_unit("archer", 0, game.cities[&city].pos);
+        let swordsman = game.spawn_unit("swordsman", 0, game.cities[&city].pos);
+        let crossbowman = game.spawn_unit("crossbowman", 0, game.cities[&city].pos);
+        let amenity_before = game.city_amenity_surplus(&game.cities[&city]);
+        let mut twenty_deficit = game.clone();
+
+        game.settle_gold_budget(0, -9.0);
+        assert_eq!(game.players[0].gold, 0.0);
+        assert_eq!(game.players[0].gold_per_turn, -9.0);
+        assert_eq!(game.players[0].bankruptcy_amenity_penalty, 0);
+        assert_eq!(game.player_unit_ids(0).len(), 3);
+
+        game.settle_gold_budget(0, -10.0);
+        assert_eq!(game.players[0].bankruptcy_amenity_penalty, 1);
+        assert_eq!(
+            game.city_amenity_surplus(&game.cities[&city]),
+            amenity_before - 1
+        );
+        assert!(game.units.contains_key(&archer));
+        assert!(game.units.contains_key(&swordsman));
+        assert!(
+            !game.units.contains_key(&crossbowman),
+            "the highest-maintenance unit is deterministically disbanded first"
+        );
+
+        twenty_deficit.settle_gold_budget(0, -20.0);
+        assert_eq!(twenty_deficit.players[0].bankruptcy_amenity_penalty, 2);
+        assert_eq!(twenty_deficit.player_unit_ids(0), vec![archer]);
+
+        let encoded = serde_json::to_value(&game).unwrap();
+        let mut legacy = encoded.clone();
+        legacy["players"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("gold_per_turn");
+        legacy["players"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("bankruptcy_amenity_penalty");
+        let legacy: Game = serde_json::from_value(legacy).unwrap();
+        assert_eq!(legacy.players[0].gold_per_turn, 0.0);
+        assert_eq!(legacy.players[0].bankruptcy_amenity_penalty, 0);
+
+        let mut restored: Game = serde_json::from_value(encoded).unwrap();
+        assert_eq!(restored.players[0].gold_per_turn, -10.0);
+        assert_eq!(restored.players[0].bankruptcy_amenity_penalty, 1);
+        restored.settle_gold_budget(0, 4.0);
+        assert_eq!(restored.players[0].gold, 4.0);
+        assert_eq!(restored.players[0].gold_per_turn, 4.0);
+        assert_eq!(restored.players[0].bankruptcy_amenity_penalty, 0);
+        assert_eq!(
+            restored.city_amenity_surplus(&restored.cities[&city]),
+            amenity_before
+        );
+    }
+
+    #[test]
+    fn begin_turn_records_net_gold_and_exposes_bankruptcy_state() {
+        let (mut game, city) = one_city();
+        for unit in game.player_unit_ids(0) {
+            game.remove_unit(unit);
+        }
+        for position in game.cities[&city].owned_tiles.clone() {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.hills = false;
+            tile.resource = None;
+            tile.improvement = None;
+        }
+        let robot = game.spawn_unit("giant_death_robot", 0, game.cities[&city].pos);
+        assert_eq!(game.city_yields(city).gold, 5.0);
+        assert_eq!(game.unit_gold_maintenance(0), 15.0);
+
+        game.players[0].gold = 0.0;
+        game.begin_turn(0);
+        assert_eq!(game.players[0].gold, 0.0);
+        assert_eq!(game.players[0].gold_per_turn, -10.0);
+        assert_eq!(game.players[0].bankruptcy_amenity_penalty, 1);
+        assert!(!game.units.contains_key(&robot));
+
+        let observed = crate::obs::observation(&game, 0);
+        assert_eq!(observed["me"]["gold_per_turn"], serde_json::json!(-10.0));
+        assert_eq!(
+            observed["me"]["bankruptcy_amenity_penalty"],
+            serde_json::json!(1)
+        );
+        assert_eq!(
+            observed["players"][0]["gold_per_turn"],
+            serde_json::json!(-10.0)
+        );
+    }
+
+    #[test]
+    fn recurring_trade_contracts_are_part_of_each_players_budget() {
+        let mut game = Game::new_full(2, 24, 16, 73_102, 120, 0, false);
+        game.turn = 10;
+        game.active_trade_deals.push(ActiveTradeDeal {
+            id: 1,
+            from: 0,
+            to: 1,
+            offer: DealItems {
+                gold_per_turn: 7.0,
+                ..DealItems::default()
+            },
+            request: DealItems {
+                gold_per_turn: 2.0,
+                ..DealItems::default()
+            },
+            started: 9,
+            ends: 40,
+        });
+        assert_eq!(game.contracted_gold_per_turn(0), -5.0);
+        assert_eq!(game.contracted_gold_per_turn(1), 5.0);
+
+        game.players[0].gold = 1.0;
+        game.settle_gold_budget(0, 0.0);
+        game.settle_gold_budget(1, 0.0);
+        assert_eq!(game.players[0].gold_per_turn, -5.0);
+        assert_eq!(game.players[1].gold_per_turn, 5.0);
+        assert_eq!(game.players[0].bankruptcy_amenity_penalty, 0);
+    }
 }
 
 #[cfg(test)]
@@ -1570,6 +1939,21 @@ mod district_building_wonder_runtime_tests {
         tile.hills = false;
         tile.feature = None;
         assert_eq!(game.tile_defense_bonus(position), 4.0);
+        let tile = game.map.tiles.get_mut(&position).unwrap();
+        tile.wonder = None;
+        tile.improvement = Some("fort".to_string());
+        assert_eq!(game.tile_defense_bonus(position), 4.0);
+        game.map.tiles.get_mut(&position).unwrap().pillaged = true;
+        assert_eq!(game.tile_defense_bonus(position), 0.0);
+
+        let warrior = game.spawn_unit("warrior", 0, game.cities[&city].pos);
+        let tile = game.map.tiles.get_mut(&position).unwrap();
+        tile.terrain = "mountain".to_string();
+        tile.improvement = Some("mountain_tunnel".to_string());
+        tile.pillaged = false;
+        assert!(game.unit_can_traverse(warrior, position));
+        game.map.tiles.get_mut(&position).unwrap().pillaged = true;
+        assert!(!game.unit_can_traverse(warrior, position));
     }
 
     #[test]
@@ -1795,15 +2179,34 @@ mod district_building_wonder_runtime_tests {
             .into_iter()
             .find(|unit| game.units[unit].kind == "rock_band")
             .unwrap();
+        assert_eq!(game.units[&band].charges, 0);
+        assert_eq!(game.rock_concert_tourism(0, band), None);
+        assert!(game
+            .apply(0, &Action::PerformConcert { unit: band })
+            .is_err());
+        let offers = game.available_promotions(band);
+        assert_eq!(offers.len(), 3);
+        assert_eq!(offers, game.available_promotions(band));
+        game.apply(
+            0,
+            &Action::Promote {
+                unit: band,
+                promotion: offers[0].clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(game.units[&band].level, 1);
+        assert_eq!(game.units[&band].xp, 0);
+        game.units.get_mut(&band).unwrap().moves_left = 4.0;
 
         game.players.push(Player::new(1, "Concert Rival", false));
         game.cities.get_mut(&city).unwrap().owner = 1;
         install_district(&mut game, city, position, "theater_square");
-        game.cities
-            .get_mut(&city)
-            .unwrap()
-            .buildings
-            .push("broadcast_center".to_string());
+        game.cities.get_mut(&city).unwrap().buildings.extend(
+            ["amphitheater", "art_museum", "broadcast_center"]
+                .into_iter()
+                .map(str::to_string),
+        );
         for _ in 0..4 {
             if game.units[&band].pos == position {
                 break;
@@ -1822,9 +2225,620 @@ mod district_building_wonder_runtime_tests {
         assert_eq!(game.rock_concert_tourism(0, band), Some(750.0));
         game.apply(0, &Action::PerformConcert { unit: band })
             .unwrap();
-        assert_eq!(game.players[0].tourism_lifetime, 750.0);
-        assert_eq!(game.units[&band].charges, 2);
-        assert_eq!(game.rock_concert_tourism(0, band), None);
+        let tier = game.players[0].counters[&format!("rock_concert_tier:{band}")];
+        let (multiplier, albums, survives) = match tier {
+            1 => (0.75, 0, false),
+            2 => (2.0, 0, false),
+            3 => (0.75, 50, true),
+            4 => (2.5, 100, true),
+            5 => (1.0, 150, true),
+            6 => (3.0, 200, true),
+            _ => unreachable!(),
+        };
+        assert_eq!(game.players[0].tourism_lifetime, 750.0 * multiplier);
+        assert_eq!(game.players[0].targeted_tourism[&1], 750.0 * multiplier);
+        assert_eq!(game.units.contains_key(&band), survives);
+        if survives {
+            assert_eq!(game.units[&band].album_sales, albums);
+            assert_eq!(game.rock_concert_tourism(0, band), None);
+        }
+    }
+
+    #[test]
+    fn resorts_scale_with_appeal_and_ski_resorts_are_spaced_and_unpillageable() {
+        let (mut game, city, resort) = one_city(774_4061);
+        game.players[0].techs.insert("radio".to_string());
+        let city_pos = game.cities[&city].pos;
+        for neighbor in game.nbrs(resort) {
+            let tile = game.map.tiles.get_mut(&neighbor).unwrap();
+            tile.terrain = "mountain".to_string();
+            tile.feature = None;
+            tile.improvement = None;
+        }
+        let coast = game
+            .nbrs(resort)
+            .into_iter()
+            .find(|position| *position != city_pos)
+            .unwrap();
+        game.map.tiles.get_mut(&coast).unwrap().terrain = "coast".to_string();
+        let tile = game.map.tiles.get_mut(&resort).unwrap();
+        tile.terrain = "plains".to_string();
+        tile.feature = None;
+        tile.hills = false;
+        tile.resource = None;
+        tile.improvement = None;
+        tile.district = None;
+        tile.wonder = None;
+        tile.pillaged = false;
+        let appeal = game.tile_appeal(resort);
+        assert!(appeal >= 4);
+        assert!(game
+            .valid_improvements(0, resort)
+            .contains(&"seaside_resort".to_string()));
+        let gold_before = game
+            .player_tile_yields(0, resort, &game.map.tiles[&resort])
+            .gold;
+        let tourism_before = game.tourism_per_turn(0);
+        game.map.tiles.get_mut(&resort).unwrap().improvement = Some("seaside_resort".to_string());
+        assert_eq!(
+            game.player_tile_yields(0, resort, &game.map.tiles[&resort])
+                .gold
+                - gold_before,
+            appeal as f64
+        );
+        assert_eq!(game.tourism_per_turn(0) - tourism_before, appeal as f64);
+        game.map.tiles.get_mut(&resort).unwrap().pillaged = true;
+        assert_eq!(game.tourism_per_turn(0), tourism_before);
+
+        game.players[0]
+            .civics
+            .insert("professional_sports".to_string());
+        let ski = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|position| {
+                *position != city_pos
+                    && *position != resort
+                    && game.wdist(*position, city_pos) <= 3
+                    && game
+                        .nbrs(*position)
+                        .iter()
+                        .any(|neighbor| *neighbor != city_pos && *neighbor != resort)
+            })
+            .unwrap();
+        let adjacent = game
+            .nbrs(ski)
+            .into_iter()
+            .find(|position| *position != city_pos && *position != resort)
+            .unwrap();
+        for position in [ski, adjacent] {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.owner_city = Some(city);
+            tile.terrain = "mountain".to_string();
+            tile.feature = None;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.district = None;
+            tile.wonder = None;
+            tile.pillaged = false;
+            if !game.cities[&city].owned_tiles.contains(&position) {
+                game.cities
+                    .get_mut(&city)
+                    .unwrap()
+                    .owned_tiles
+                    .push(position);
+            }
+        }
+        assert!(game
+            .valid_improvements(0, ski)
+            .contains(&"ski_resort".to_string()));
+        let amenities_before = game.city_local_amenities(&game.cities[&city]);
+        game.map.tiles.get_mut(&ski).unwrap().improvement = Some("ski_resort".to_string());
+        assert!(!game
+            .valid_improvements(0, adjacent)
+            .contains(&"ski_resort".to_string()));
+        assert_eq!(
+            game.city_local_amenities(&game.cities[&city]),
+            amenities_before + 1
+        );
+        game.players.push(Player::new(1, "Pillager", false));
+        game.at_war.insert(pair(0, 1));
+        assert!(!game.pillageable_at(1, ski));
+    }
+
+    #[test]
+    fn naturalists_are_escalating_faith_purchases_that_establish_four_tile_parks() {
+        let (mut game, city, _) = one_city(774_4062);
+        game.players[0].civics.insert("conservation".to_string());
+        let city_pos = game.cities[&city].pos;
+        let site = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .filter(|top| game.wdist(*top, city_pos) >= 4)
+            .find_map(|top| game.national_park_diamond(top))
+            .unwrap();
+        for position in game.nbrs(site[0]) {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "mountain".to_string();
+            tile.feature = None;
+            tile.improvement = None;
+            tile.district = None;
+            tile.wonder = None;
+        }
+        for position in site {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.owner_city = Some(city);
+            tile.terrain = "mountain".to_string();
+            tile.feature = None;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.district = None;
+            tile.wonder = None;
+            tile.pillaged = false;
+            if !game.cities[&city].owned_tiles.contains(&position) {
+                game.cities
+                    .get_mut(&city)
+                    .unwrap()
+                    .owned_tiles
+                    .push(position);
+            }
+        }
+        game.map.tiles.get_mut(&site[0]).unwrap().terrain = "plains".to_string();
+        assert!(game.tile_appeal(site[0]) >= 2);
+        assert!(game.national_park_sites(0).contains(&site));
+        assert!(!game.can_produce(
+            0,
+            city,
+            &Item::Unit {
+                unit: "naturalist".to_string()
+            }
+        ));
+        assert!(game.do_buy(0, city, "naturalist", "gold").is_err());
+        game.players[0].faith = 2_200.0;
+        assert_eq!(game.naturalist_purchase_cost(0), 600.0);
+        game.do_buy(0, city, "naturalist", "faith").unwrap();
+        assert_eq!(game.players[0].faith, 1_600.0);
+        assert_eq!(game.naturalist_purchase_cost(0), 700.0);
+        let naturalist = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "naturalist")
+            .unwrap();
+        game.units.get_mut(&naturalist).unwrap().pos = site[0];
+        let builder = game.spawn_unit("builder", 0, site[0]);
+        assert!(game
+            .apply(
+                0,
+                &Action::Improve {
+                    unit: builder,
+                    improvement: "national_park".to_string(),
+                },
+            )
+            .is_err());
+        let tourism_before = game.tourism_per_turn(0);
+        let amenities_before = game.city_local_amenities(&game.cities[&city]);
+        let park_appeal = site
+            .iter()
+            .map(|position| game.tile_appeal(*position).max(0) as f64)
+            .sum::<f64>();
+        game.apply(
+            0,
+            &Action::Improve {
+                unit: naturalist,
+                improvement: "national_park".to_string(),
+            },
+        )
+        .unwrap();
+        assert!(site.iter().all(|position| {
+            game.map.tiles[position].improvement.as_deref() == Some("national_park")
+        }));
+        assert_eq!(game.tourism_per_turn(0) - tourism_before, park_appeal);
+        assert_eq!(
+            game.city_local_amenities(&game.cities[&city]),
+            amenities_before + 2
+        );
+        assert!(game.district_sites(city, "campus").iter().all(|position| {
+            game.map.tiles[position].improvement.as_deref() != Some("national_park")
+        }));
+        let restored: Game = serde_json::from_str(&serde_json::to_string(&game).unwrap()).unwrap();
+        assert_eq!(restored.tourism_per_turn(0), game.tourism_per_turn(0));
+        assert_eq!(
+            restored.city_local_amenities(&restored.cities[&city]),
+            game.city_local_amenities(&game.cities[&city])
+        );
+    }
+
+    #[test]
+    fn rock_band_offers_three_promotions_unless_hallyu_is_active() {
+        let (mut game, city, _) = one_city(774_4061);
+        let band = game.spawn_test_unit("rock_band", 0, game.cities[&city].pos);
+        let default_offers = game.available_promotions(band);
+        assert_eq!(default_offers.len(), 3);
+        assert_eq!(default_offers, game.available_promotions(band));
+
+        game.players[0]
+            .policies
+            .insert("future_victory_culture".to_string());
+        let hallyu_offers = game.available_promotions(band);
+        assert_eq!(hallyu_offers.len(), 12);
+        assert!(hallyu_offers.contains(&"religious_rock".to_string()));
+        game.apply(
+            0,
+            &Action::Promote {
+                unit: band,
+                promotion: "religious_rock".to_string(),
+            },
+        )
+        .unwrap();
+        assert_eq!(game.units[&band].level, 1);
+        assert_eq!(game.units[&band].xp, 0);
+        assert!(!game.promotion_pending(band));
+    }
+
+    #[test]
+    fn rock_band_probabilities_match_the_six_stock_performance_tables() {
+        for level in 1..=6 {
+            let weights = Game::rock_performance_weights(level);
+            assert!((weights.iter().sum::<f64>() - 100.0).abs() < 0.101);
+        }
+        assert_eq!(Game::rock_performance_tier_for_roll(1, 0.0), 1);
+        assert_eq!(Game::rock_performance_tier_for_roll(1, 18.39), 1);
+        assert_eq!(Game::rock_performance_tier_for_roll(1, 18.4), 2);
+        assert_eq!(Game::rock_performance_tier_for_roll(1, 44.89), 2);
+        assert_eq!(Game::rock_performance_tier_for_roll(1, 44.9), 3);
+        assert_eq!(Game::rock_performance_tier_for_roll(6, 0.49), 1);
+        assert_eq!(Game::rock_performance_tier_for_roll(6, 0.5), 2);
+        assert_eq!(Game::rock_performance_tier_for_roll(6, 99.99), 6);
+    }
+
+    #[test]
+    fn targeted_tourism_only_pressures_its_intended_rival_and_survives_saves() {
+        let mut game = Game::new_full(3, 24, 16, 774_4062, 120, 0, false);
+        game.players[0].tourism_lifetime = 2_000.0;
+        game.players[0].targeted_tourism.insert(1, 1_000.0);
+        assert_eq!(game.foreign_tourists(0), 5);
+
+        let restored: Game = serde_json::from_str(&serde_json::to_string(&game).unwrap()).unwrap();
+        assert_eq!(restored.players[0].targeted_tourism[&1], 1_000.0);
+        assert_eq!(restored.foreign_tourists(0), 5);
+    }
+
+    #[test]
+    fn rock_band_promotions_unlock_venues_and_raise_matching_venue_levels() {
+        let (mut game, city, theater) = one_city(774_4063);
+        game.players.push(Player::new(1, "Venue Rival", false));
+        game.cities.get_mut(&city).unwrap().owner = 1;
+        install_district(&mut game, city, theater, "theater_square");
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("broadcast_center".to_string());
+
+        let theater_band = game.spawn_test_unit("rock_band", 0, theater);
+        game.units
+            .get_mut(&theater_band)
+            .unwrap()
+            .promotions
+            .insert("roadies".to_string());
+        let ordinary = game
+            .rock_concert_ai_value(0, theater_band, theater)
+            .unwrap();
+        game.units
+            .get_mut(&theater_band)
+            .unwrap()
+            .promotions
+            .insert("glam_rock".to_string());
+        assert!(
+            game.rock_concert_ai_value(0, theater_band, theater)
+                .unwrap()
+                > ordinary
+        );
+
+        let resort = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != theater && *position != game.cities[&city].pos)
+            .unwrap();
+        {
+            let tile = game.map.tiles.get_mut(&resort).unwrap();
+            tile.district = None;
+            tile.improvement = Some("seaside_resort".to_string());
+            tile.pillaged = false;
+        }
+        let surf_band = game.spawn_test_unit("rock_band", 0, resort);
+        game.units
+            .get_mut(&surf_band)
+            .unwrap()
+            .promotions
+            .insert("roadies".to_string());
+        assert_eq!(game.rock_concert_tourism(0, surf_band), None);
+        game.units
+            .get_mut(&surf_band)
+            .unwrap()
+            .promotions
+            .insert("surf_band".to_string());
+        assert_eq!(game.rock_concert_tourism(0, surf_band), Some(500.0));
+    }
+
+    #[test]
+    fn concert_promotions_apply_gold_loyalty_religion_and_nearby_tourism() {
+        let (mut game, host_city, venue) = one_city(774_4064);
+        game.players.push(Player::new(1, "Host Rival", false));
+        game.players.push(Player::new(2, "Nearby Rival", false));
+        game.cities.get_mut(&host_city).unwrap().owner = 1;
+        install_district(&mut game, host_city, venue, "theater_square");
+        game.cities
+            .get_mut(&host_city)
+            .unwrap()
+            .buildings
+            .push("broadcast_center".to_string());
+
+        let nearby_position = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .filter(|position| game.map.tiles[position].owner_city.is_none())
+            .filter(|position| game.rules.is_passable(&game.map.tiles[position]))
+            .find(|position| game.wdist(venue, *position) <= 10)
+            .unwrap();
+        game.found_city_for(2, nearby_position, Some("Nearby City".to_string()));
+
+        let religion = "touring_faith".to_string();
+        game.players[0].religion = Some(religion.clone());
+        game.cities
+            .get_mut(&host_city)
+            .unwrap()
+            .pressure
+            .insert("host_faith".to_string(), 1_000.0);
+        let band = game.spawn_test_unit("rock_band", 0, venue);
+        game.units.get_mut(&band).unwrap().promotions.extend(
+            [
+                "glam_rock",
+                "goes_to_11",
+                "indie",
+                "pop_star",
+                "religious_rock",
+            ]
+            .into_iter()
+            .map(str::to_string),
+        );
+
+        game.apply(0, &Action::PerformConcert { unit: band })
+            .unwrap();
+        let host_tourism = game.players[0].targeted_tourism[&1];
+        assert!(host_tourism > 0.0);
+        assert_eq!(game.players[0].targeted_tourism[&2], host_tourism * 0.5);
+        assert_eq!(game.players[0].gold, host_tourism * 0.25);
+        assert_eq!(game.cities[&host_city].loyalty, 60.0);
+        assert_eq!(
+            game.city_religion(&game.cities[&host_city]),
+            Some(religion.as_str())
+        );
+    }
+
+    #[test]
+    fn national_parks_use_total_appeal_and_supply_the_five_correct_cities() {
+        let (mut game, host_city, _) = one_city(774_4066);
+        for tile in game.map.tiles.values_mut() {
+            tile.terrain = "plains".to_string();
+            tile.feature = Some("forest".to_string());
+            tile.resource = None;
+            tile.improvement = None;
+            tile.district = None;
+            tile.wonder = None;
+            tile.hills = false;
+            tile.pillaged = false;
+        }
+        let park = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find_map(|top| {
+                game.national_park_diamond(top).filter(|positions| {
+                    positions
+                        .iter()
+                        .all(|position| *position != game.cities[&host_city].pos)
+                })
+            })
+            .unwrap();
+        for position in park {
+            game.map.tiles.get_mut(&position).unwrap().owner_city = Some(host_city);
+            if !game.cities[&host_city].owned_tiles.contains(&position) {
+                game.cities
+                    .get_mut(&host_city)
+                    .unwrap()
+                    .owned_tiles
+                    .push(position);
+            }
+        }
+
+        let extra_positions: Vec<Pos> = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .filter(|position| game.city_at(*position).is_none())
+            .filter(|position| {
+                park.iter()
+                    .all(|park_position| game.wdist(*position, *park_position) > 1)
+            })
+            .take(5)
+            .collect();
+        assert_eq!(extra_positions.len(), 5);
+        for (index, position) in extra_positions.into_iter().enumerate() {
+            game.found_city_for(0, position, Some(format!("Park Neighbor {index}")));
+        }
+
+        let city_ids = game.player_city_ids(0);
+        // Keep every city in the same Amenities yield band so this test
+        // isolates the park's direct Tourism from its separate Amenity grant.
+        for city_id in &city_ids {
+            game.cities.get_mut(city_id).unwrap().pop = 30;
+        }
+        let amenities_before: BTreeMap<u32, i64> = city_ids
+            .iter()
+            .map(|city_id| (*city_id, game.city_local_amenities(&game.cities[city_id])))
+            .collect();
+        let tourism_before = game.tourism_per_turn(0);
+        let culture_before = game
+            .player_city_ids(0)
+            .into_iter()
+            .map(|city_id| game.city_yields(city_id).culture)
+            .sum::<f64>();
+        let park_appeal: f64 = park
+            .iter()
+            .map(|position| game.tile_appeal(*position).max(0) as f64)
+            .sum();
+        for position in park {
+            game.map.tiles.get_mut(&position).unwrap().improvement =
+                Some("national_park".to_string());
+        }
+        let culture_after = game
+            .player_city_ids(0)
+            .into_iter()
+            .map(|city_id| game.city_yields(city_id).culture)
+            .sum::<f64>();
+        let expected_tourism = park_appeal + 0.15 * (culture_after - culture_before);
+        assert!((game.tourism_per_turn(0) - tourism_before - expected_tourism).abs() < 1e-9);
+        assert_eq!(
+            game.city_local_amenities(&game.cities[&host_city]) - amenities_before[&host_city],
+            2
+        );
+
+        let mut nearest: Vec<(i32, u32)> = city_ids
+            .iter()
+            .copied()
+            .filter(|city_id| *city_id != host_city)
+            .map(|city_id| {
+                (
+                    park.iter()
+                        .map(|position| game.wdist(game.cities[&city_id].pos, *position))
+                        .min()
+                        .unwrap(),
+                    city_id,
+                )
+            })
+            .collect();
+        nearest.sort();
+        for (index, (_, city_id)) in nearest.into_iter().enumerate() {
+            assert_eq!(
+                game.city_local_amenities(&game.cities[&city_id]) - amenities_before[&city_id],
+                i64::from(index < 4)
+            );
+        }
+
+        let mut bridge_without_park = game.clone();
+        for position in park {
+            bridge_without_park
+                .map
+                .tiles
+                .get_mut(&position)
+                .unwrap()
+                .improvement = None;
+        }
+        let mut bridge_with_park = game.clone();
+        for variant in [&mut bridge_without_park, &mut bridge_with_park] {
+            let city_pos = variant.cities[&host_city].pos;
+            variant
+                .cities
+                .get_mut(&host_city)
+                .unwrap()
+                .wonders
+                .insert("golden_gate_bridge".to_string(), city_pos);
+        }
+        let bridge_appeal: f64 = park
+            .iter()
+            .map(|position| bridge_with_park.tile_appeal(*position).max(0) as f64)
+            .sum();
+        assert_eq!(
+            bridge_with_park.tourism_per_turn(0) - bridge_without_park.tourism_per_turn(0),
+            bridge_appeal * 2.0
+        );
+    }
+
+    #[test]
+    fn ski_resorts_are_unworkable_but_national_park_tiles_remain_workable() {
+        let (mut game, city, ski) = one_city(774_4067);
+        let park = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != game.cities[&city].pos && *position != ski)
+            .unwrap();
+        game.map.tiles.get_mut(&ski).unwrap().improvement = Some("ski_resort".to_string());
+        game.map.tiles.get_mut(&park).unwrap().improvement = Some("national_park".to_string());
+        game.cities.get_mut(&city).unwrap().pop = 100;
+
+        let plan = game.city_citizen_plan(city);
+        assert!(!plan.worked_tiles.contains(&ski));
+        assert!(plan.worked_tiles.contains(&park));
+    }
+
+    #[test]
+    fn appeal_improvements_drive_gold_tourism_and_cristo_from_rules_data() {
+        let (mut game, city, position) = one_city(774_4065);
+        {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "grassland".to_string();
+            tile.feature = None;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.district = None;
+            tile.wonder = None;
+            tile.hills = false;
+            tile.pillaged = false;
+        }
+        for neighbor in game.nbrs(position) {
+            let tile = game.map.tiles.get_mut(&neighbor).unwrap();
+            tile.terrain = "coast".to_string();
+            tile.feature = None;
+            tile.improvement = None;
+            tile.district = None;
+            tile.wonder = None;
+            tile.pillaged = false;
+        }
+        let appeal = game.tile_appeal(position).max(0) as f64;
+        assert!(appeal >= 4.0);
+        let bare_yields = game.player_tile_yields(0, position, &game.map.tiles[&position]);
+        let tourism_without_resort = game.tourism_per_turn(0);
+
+        game.map.tiles.get_mut(&position).unwrap().improvement = Some("seaside_resort".to_string());
+        let resort_yields = game.player_tile_yields(0, position, &game.map.tiles[&position]);
+        assert_eq!(resort_yields.gold - bare_yields.gold, appeal);
+        assert_eq!(game.tourism_per_turn(0) - tourism_without_resort, appeal);
+
+        let mut cristo_without_resort = game.clone();
+        cristo_without_resort
+            .map
+            .tiles
+            .get_mut(&position)
+            .unwrap()
+            .improvement = None;
+        cristo_without_resort
+            .cities
+            .get_mut(&city)
+            .unwrap()
+            .wonders
+            .insert("cristo_redentor".to_string(), game.cities[&city].pos);
+        let mut cristo_with_resort = cristo_without_resort.clone();
+        cristo_with_resort
+            .map
+            .tiles
+            .get_mut(&position)
+            .unwrap()
+            .improvement = Some("seaside_resort".to_string());
+        assert_eq!(
+            cristo_with_resort.tourism_per_turn(0) - cristo_without_resort.tourism_per_turn(0),
+            appeal * 2.0
+        );
     }
 
     #[test]
@@ -2149,6 +3163,10 @@ pub struct Unit {
     pub charges: i32,
     #[serde(default)]
     pub xp: i64,
+    /// Cumulative album sales from successful Rock Band concerts. This is
+    /// added to the next concert's Tourism multiplier.
+    #[serde(default)]
+    pub album_sales: i64,
     #[serde(default = "lvl1")]
     pub level: i32,
     /// Chosen nodes from this unit class's promotion tree.
@@ -2588,6 +3606,14 @@ pub struct Player {
     pub civic_progress: f64,
     pub civic_overflow: f64,
     pub gold: f64,
+    /// Net recurring Gold budget from the most recently processed turn,
+    /// including active Gold-per-turn deals and all modeled maintenance.
+    #[serde(default)]
+    pub gold_per_turn: f64,
+    /// Empire-wide Amenity loss while the treasury is empty and the recurring
+    /// budget is negative: one per complete 10 Gold of deficit.
+    #[serde(default)]
+    pub bankruptcy_amenity_penalty: i64,
     pub faith: f64,
     /// Gathering Storm strategic-resource stockpiles. Luxuries remain copy
     /// based and are intentionally not represented here.
@@ -2682,6 +3708,11 @@ pub struct Player {
     pub culture_lifetime: f64,
     #[serde(default)]
     pub tourism_lifetime: f64,
+    /// One-time Tourism pressure aimed at a specific civilization, chiefly
+    /// from Rock Band concerts. `tourism_lifetime` remains the public total;
+    /// this ledger prevents directed bursts from affecting every rival.
+    #[serde(default)]
+    pub targeted_tourism: BTreeMap<usize, f64>,
     /// Portion of lifetime Tourism produced by Relics and controlled Holy
     /// Cities. Enlightenment and Cristo Redentor apply only to this portion.
     #[serde(default)]
@@ -2716,6 +3747,8 @@ impl Player {
             civic_progress: 0.0,
             civic_overflow: 0.0,
             gold: 0.0,
+            gold_per_turn: 0.0,
+            bankruptcy_amenity_penalty: 0,
             faith: 0.0,
             strategic_resources: BTreeMap::new(),
             strategic_resource_shortages: BTreeMap::new(),
@@ -2759,6 +3792,7 @@ impl Player {
             age: "normal".to_string(),
             culture_lifetime: 0.0,
             tourism_lifetime: 0.0,
+            targeted_tourism: BTreeMap::new(),
             religious_tourism_lifetime: 0.0,
             science_projects: BTreeSet::new(),
             exoplanet_distance: 0.0,
@@ -5677,8 +6711,23 @@ impl Game {
     pub fn promotion_pending(&self, uid: u32) -> bool {
         self.units.get(&uid).is_some_and(|unit| {
             let class = &self.rules.units[unit.kind.as_str()].promotion_class;
-            !class.is_empty() && unit.level < 8 && unit.xp >= Self::promotion_threshold(unit.level)
+            let level_cap = if class == "rock_band" { 4 } else { 8 };
+            !class.is_empty()
+                && (unit.promotions.is_empty() || unit.level < level_cap)
+                && unit.xp >= Self::promotion_threshold(unit.level)
         })
+    }
+
+    fn rock_promotion_offer_key(uid: u32, level: i32, name: &str) -> u64 {
+        // Stable FNV-1a ranking gives every promotion event a deterministic
+        // three-card offer without consuming the simulation RNG merely by
+        // opening the action list.
+        let mut hash = 0xcbf29ce484222325_u64 ^ uid as u64 ^ ((level as u64) << 32);
+        for byte in name.bytes() {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash
     }
 
     fn promotion_effect(&self, unit: &Unit, effect: &str) -> f64 {
@@ -5705,7 +6754,8 @@ impl Game {
         let class = self.rules.units[unit.kind.as_str()]
             .promotion_class
             .as_str();
-        self.rules
+        let mut available: Vec<String> = self
+            .rules
             .promotions
             .iter()
             .filter(|(name, spec)| {
@@ -5718,7 +6768,17 @@ impl Game {
                             .any(|req| unit.promotions.contains(req)))
             })
             .map(|(name, _)| name.clone())
-            .collect()
+            .collect();
+        if class == "rock_band" && !self.rock_band_choose_any_promotion(unit.owner) {
+            available.sort_by_key(|name| {
+                (
+                    Self::rock_promotion_offer_key(unit.id, unit.level, name),
+                    name.clone(),
+                )
+            });
+            available.truncate(3);
+        }
+        available
     }
 
     fn unit_formation_bonus(&self, unit: &Unit) -> f64 {
@@ -6063,9 +7123,16 @@ impl Game {
                         &self.rules.improvements["mountain_tunnel"].tech,
                         &self.rules.improvements["mountain_tunnel"].civic,
                     )));
-        let mountain_tunnel =
-            tile.improvement.as_deref() == Some("mountain_tunnel") && !tile.pillaged;
-        if !self.rules.is_passable(tile) && !mountain_worker && !mountain_tunnel {
+        let improvement_passage = !tile.pillaged
+            && tile.improvement.as_deref().is_some_and(|improvement| {
+                self.rules.improvements[improvement]
+                    .effects
+                    .get("passage")
+                    .copied()
+                    .unwrap_or(0.0)
+                    > 0.0
+            });
+        if !self.rules.is_passable(tile) && !mountain_worker && !improvement_passage {
             return false;
         }
         let spec = &self.rules.units[unit.kind.as_str()];
@@ -6084,11 +7151,23 @@ impl Game {
             // lets naval melee units attack and capture coastal cities.
             water
                 || self.city_at(pos).is_some()
-                || tile
-                    .district
-                    .as_deref()
-                    .is_some_and(|district| self.district_is_family(district, "canal"))
-                || tile.wonder.as_deref() == Some("panama_canal")
+                || (!tile.pillaged
+                    && tile.district.as_deref().is_some_and(|district| {
+                        self.rules.districts[district]
+                            .effects
+                            .get("naval_passage")
+                            .copied()
+                            .unwrap_or(0.0)
+                            > 0.0
+                    }))
+                || tile.wonder.as_deref().is_some_and(|wonder| {
+                    self.rules.wonders[wonder]
+                        .effects
+                        .get("naval_passage")
+                        .copied()
+                        .unwrap_or(0.0)
+                        > 0.0
+                })
         } else {
             !water
                 || tile.wonder.as_deref() == Some("golden_gate_bridge")
@@ -6484,6 +7563,30 @@ impl Game {
         demand <= 0.0 || self.city_power_supply(city) + 1e-9 >= demand
     }
 
+    /// Stock fuel conversion and emissions read from the power-plant data.
+    /// `*_per_power` is fuel consumed per point of Power, while
+    /// `co2_per_power` is the Gathering Storm emissions intensity.
+    fn fuel_resource_profile(&self, resource: &str) -> Option<(&'static str, f64, f64, i32)> {
+        let (plant, consumption_key, priority) = match resource {
+            "coal" => ("coal_power_plant", "coal_per_power", 1),
+            "oil" => ("oil_power_plant", "oil_per_power", 2),
+            "uranium" => ("nuclear_power_plant", "uranium_per_power", 3),
+            _ => return None,
+        };
+        let effects = &self.rules.buildings[plant].effects;
+        let fuel_per_power = effects.get(consumption_key).copied().unwrap_or(0.0);
+        let power_per_resource = effects.get("power_generated").copied().unwrap_or(0.0);
+        let co2_per_power = effects.get("co2_per_power").copied().unwrap_or(0.0);
+        if fuel_per_power <= 0.0 || power_per_resource <= 0.0 || co2_per_power < 0.0 {
+            return None;
+        }
+        debug_assert!(
+            (fuel_per_power * power_per_resource - 1.0).abs() <= 1e-9,
+            "{plant} declares inconsistent fuel conversion"
+        );
+        Some((plant, power_per_resource, co2_per_power, priority))
+    }
+
     /// Allocate renewable Power first, then burn the most efficient reachable
     /// fuel. Equal-efficiency fuels follow the Civilopedia tie breakers:
     /// largest stockpile, highest income, then most advanced resource.
@@ -6495,11 +7598,13 @@ impl Game {
         }
 
         let city_ids = self.player_city_ids(pid);
-        let fuel_specs = [
-            ("uranium", "nuclear_power_plant", 16.0, 48.0, 3_i32),
-            ("oil", "oil_power_plant", 4.0, 490.0, 2_i32),
-            ("coal", "coal_power_plant", 4.0, 820.0, 1_i32),
-        ];
+        let fuel_specs: Vec<(&str, &str, f64, f64, i32)> = ["uranium", "oil", "coal"]
+            .into_iter()
+            .filter_map(|resource| {
+                self.fuel_resource_profile(resource)
+                    .map(|(plant, power, co2, priority)| (resource, plant, power, co2, priority))
+            })
+            .collect();
         let mut emitted = 0.0;
         let mut total_consumed = 0.0;
 
@@ -7207,6 +8312,42 @@ impl Game {
                     .unwrap_or(0.0);
             }
         }
+        for (source_city, positions) in self.established_national_parks(city.owner) {
+            let effects = &self.rules.improvements["national_park"].effects;
+            if source_city == city.id {
+                supply += effects.get("host_city_amenity").copied().unwrap_or(0.0);
+                continue;
+            }
+            let mut nearest: Vec<(i32, u32)> = self
+                .cities
+                .values()
+                .filter(|candidate| candidate.owner == city.owner && candidate.id != source_city)
+                .map(|candidate| {
+                    (
+                        positions
+                            .iter()
+                            .map(|position| self.wdist(candidate.pos, *position))
+                            .min()
+                            .unwrap_or(i32::MAX),
+                        candidate.id,
+                    )
+                })
+                .collect();
+            nearest.sort();
+            if nearest
+                .into_iter()
+                .take(
+                    effects
+                        .get("nearby_city_count")
+                        .copied()
+                        .unwrap_or(0.0)
+                        .max(0.0) as usize,
+                )
+                .any(|(_, candidate)| candidate == city.id)
+            {
+                supply += effects.get("nearby_city_amenity").copied().unwrap_or(0.0);
+            }
+        }
         if city.pop >= 10 {
             supply += self.policy_effect(city.owner, "large_city_amenity");
         }
@@ -7270,7 +8411,9 @@ impl Game {
             .get(&city.id)
             .copied()
             .unwrap_or(0);
-        self.city_local_amenities(city) + luxury - Self::city_amenities_required(city)
+        self.city_local_amenities(city) + luxury
+            - Self::city_amenities_required(city)
+            - self.players[city.owner].bankruptcy_amenity_penalty
     }
 
     fn amenity_yield_mult(&self, city: &City) -> f64 {
@@ -7554,17 +8697,22 @@ impl Game {
             .collect();
         let unit_co2_mult =
             (1.0 - self.tree_effect(pid, "unit_co2_reduction_pct") / 100.0).max(0.0);
+        let fuel_emissions_per_resource: BTreeMap<String, f64> = resources
+            .iter()
+            .filter_map(|resource| {
+                self.fuel_resource_profile(resource)
+                    .map(|(_, power, co2, _)| (resource.clone(), power * co2))
+            })
+            .collect();
         let player = &mut self.players[pid];
         let mut maintenance_emissions = 0.0;
         player.strategic_resource_shortages.clear();
         for (resource, accumulated, demand) in updates {
             let paid = accumulated.min(demand);
-            let plant_emissions_per_resource = match resource.as_str() {
-                "coal" => 4.0 * 820.0,
-                "oil" => 4.0 * 490.0,
-                "uranium" => 16.0 * 48.0,
-                _ => 0.0,
-            };
+            let plant_emissions_per_resource = fuel_emissions_per_resource
+                .get(&resource)
+                .copied()
+                .unwrap_or(0.0);
             maintenance_emissions += paid * plant_emissions_per_resource * 0.5 * unit_co2_mult;
             player
                 .strategic_resources
@@ -7870,6 +9018,7 @@ impl Game {
             moves_left: spec.moves,
             charges,
             xp: 0,
+            album_sales: 0,
             level: 1,
             promotions: BTreeSet::new(),
             formation: 0,
@@ -7888,12 +9037,13 @@ impl Game {
             levied_from: None,
             levied_until: 0,
         };
-        if kind == "apostle" {
-            // Apostles choose one promotion immediately after purchase.
+        if matches!(kind, "apostle" | "rock_band") {
+            // Apostles and Rock Bands choose one promotion immediately after
+            // purchase instead of first earning combat experience.
             u.xp = Self::promotion_threshold(1);
-            if self.empire_wonder_effect(owner, "apostles_gain_martyr") > 0.0 {
-                u.promotions.insert("martyr".to_string());
-            }
+        }
+        if kind == "apostle" && self.empire_wonder_effect(owner, "apostles_gain_martyr") > 0.0 {
+            u.promotions.insert("martyr".to_string());
         }
         self.next_id += 1;
         let id = u.id;
@@ -9244,6 +10394,137 @@ impl Game {
         appeal
     }
 
+    fn national_park_diamond(&self, top: Pos) -> Option<[Pos; 4]> {
+        let positions = [
+            top,
+            (top.0 - 1, top.1 + 1),
+            (top.0, top.1 + 1),
+            (top.0 - 1, top.1 + 2),
+        ]
+        .map(|position| hex::canon(position, self.map.width));
+        let distinct = positions.iter().copied().collect::<BTreeSet<_>>().len() == 4;
+        (distinct
+            && positions
+                .iter()
+                .all(|position| self.map.tiles.contains_key(position)))
+        .then_some(positions)
+    }
+
+    fn valid_national_park_site(&self, pid: usize, positions: &[Pos; 4]) -> bool {
+        let Some(city_id) = self.map.tiles[&positions[0]].owner_city else {
+            return false;
+        };
+        self.cities
+            .get(&city_id)
+            .is_some_and(|city| city.owner == pid)
+            && positions.iter().all(|position| {
+                let tile = &self.map.tiles[position];
+                let natural_wonder = tile.feature.as_ref().is_some_and(|feature| {
+                    self.rules
+                        .features
+                        .get(feature.as_str())
+                        .is_some_and(|feature| feature.natural_wonder)
+                });
+                tile.owner_city == Some(city_id)
+                    && !tile.flooded
+                    && !tile.submerged
+                    && tile.improvement.is_none()
+                    && tile.district.is_none()
+                    && tile.wonder.is_none()
+                    && self.city_at(*position).is_none()
+                    && (tile.terrain == "mountain"
+                        || natural_wonder
+                        || self.tile_appeal(*position) >= 2)
+            })
+            && positions
+                .iter()
+                .any(|position| self.rules.is_passable(&self.map.tiles[position]))
+    }
+
+    pub fn national_park_sites(&self, pid: usize) -> Vec<[Pos; 4]> {
+        if self.tree_effect(pid, "national_parks") <= 0.0 {
+            return Vec::new();
+        }
+        let mut sites: Vec<[Pos; 4]> = self
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .filter_map(|top| self.national_park_diamond(top))
+            .filter(|positions| self.valid_national_park_site(pid, positions))
+            .collect();
+        sites.sort();
+        sites.dedup();
+        sites
+    }
+
+    fn national_park_site_at(&self, pid: usize, position: Pos) -> Option<[Pos; 4]> {
+        let possible_tops = [
+            position,
+            (position.0 + 1, position.1 - 1),
+            (position.0, position.1 - 1),
+            (position.0 + 1, position.1 - 2),
+        ];
+        possible_tops
+            .into_iter()
+            .filter_map(|top| self.national_park_diamond(top))
+            .filter(|positions| self.valid_national_park_site(pid, positions))
+            .max_by_key(|positions| {
+                (
+                    positions
+                        .iter()
+                        .map(|position| self.tile_appeal(*position).max(0))
+                        .sum::<i32>(),
+                    std::cmp::Reverse(*positions),
+                )
+            })
+    }
+
+    fn established_national_parks(&self, pid: usize) -> Vec<(u32, [Pos; 4])> {
+        let mut parks = Vec::new();
+        let mut used = BTreeSet::new();
+        // A valid park has four owned tiles already marked as parkland. Scan
+        // that sparse set instead of testing every tile on the world map each
+        // time a city computes Amenities; the latter sits on a very hot AI
+        // yield-evaluation path even in games with no parks at all.
+        let park_tiles: Vec<Pos> = self
+            .player_city_ids(pid)
+            .into_iter()
+            .flat_map(|city_id| self.cities[&city_id].owned_tiles.iter().copied())
+            .filter(|position| {
+                self.map.tiles[position].improvement.as_deref() == Some("national_park")
+            })
+            .collect();
+        if park_tiles.len() < 4 {
+            return parks;
+        }
+        for top in park_tiles {
+            let Some(positions) = self.national_park_diamond(top) else {
+                continue;
+            };
+            let Some(city_id) = self.map.tiles[&positions[0]].owner_city else {
+                continue;
+            };
+            if self
+                .cities
+                .get(&city_id)
+                .is_some_and(|city| city.owner == pid)
+                && positions.iter().all(|position| {
+                    let tile = &self.map.tiles[position];
+                    tile.owner_city == Some(city_id)
+                        && tile.improvement.as_deref() == Some("national_park")
+                })
+                && positions.iter().all(|position| !used.contains(position))
+            {
+                used.extend(positions);
+                parks.push((city_id, positions));
+            }
+        }
+        parks.sort();
+        parks.dedup();
+        parks
+    }
+
     fn district_housing(&self, district: &str, position: Pos) -> f64 {
         let spec = &self.rules.districts[district];
         let Some(maximum) = spec.effects.get("appeal_housing_max").copied() else {
@@ -9810,6 +11091,16 @@ impl Game {
                 if tile.district.is_some() || tile.wonder.is_some() {
                     return None;
                 }
+                if tile.improvement.as_deref().is_some_and(|improvement| {
+                    self.rules.improvements[improvement]
+                        .effects
+                        .get("unworkable")
+                        .copied()
+                        .unwrap_or(0.0)
+                        > 0.0
+                }) {
+                    return None;
+                }
                 let ys = self.workable_tile_yields(*pos);
                 Some(Job {
                     key: format!("tile:{:+06}:{:+06}", pos.0, pos.1),
@@ -10044,6 +11335,16 @@ impl Game {
                 yields.culture += adjacent * self.tree_effect(pid, "great_wall_culture_adjacency");
             }
             _ => {}
+        }
+        if !tile.pillaged {
+            if let Some(improvement) = tile.improvement.as_deref() {
+                yields.gold += self.rules.improvements[improvement]
+                    .effects
+                    .get("appeal_gold")
+                    .copied()
+                    .unwrap_or(0.0)
+                    * self.tile_appeal(pos).max(0) as f64;
+            }
         }
 
         let Some(city) = tile
@@ -10881,7 +12182,12 @@ impl Game {
             Some(t) => t,
             None => return vec![],
         };
-        if t.flooded || t.district.is_some() || t.wonder.is_some() || self.city_at(pos).is_some() {
+        if t.flooded
+            || t.district.is_some()
+            || t.wonder.is_some()
+            || t.improvement.as_deref() == Some("national_park")
+            || self.city_at(pos).is_some()
+        {
             return vec![];
         }
         let oc = match t.owner_city {
@@ -10899,6 +12205,14 @@ impl Game {
         let civ = self.players[pid].civ.as_str();
         let mut out = Vec::new();
         for (name, spec) in &self.rules.improvements {
+            if name == "national_park" {
+                if self.tree_effect(pid, "national_parks") > 0.0
+                    && self.national_park_site_at(pid, pos).is_some()
+                {
+                    out.push(name.clone());
+                }
+                continue;
+            }
             if name == "industry" {
                 if self.can_establish_industry(pid, pos) {
                     out.push(name.clone());
@@ -10910,9 +12224,21 @@ impl Game {
             {
                 continue;
             }
+            let seaside_volcanic =
+                name == "seaside_resort" && t.feature.as_deref() == Some("volcanic_soil");
+            let seaside_invalid = name == "seaside_resort"
+                && (self.tile_appeal(pos) < 4
+                    || !self.nbrs(pos).iter().any(|neighbor| {
+                        self.map
+                            .get(*neighbor)
+                            .is_some_and(|tile| self.rules.is_water(tile))
+                    }));
+            let adjacent_ski_resort = name == "ski_resort"
+                && self.nbrs(pos).iter().any(|neighbor| {
+                    self.map.tiles[neighbor].improvement.as_deref() == Some("ski_resort")
+                });
             if spec.unbuildable
                 || !self.unlocked(pid, &spec.tech, &spec.civic)
-                || (name == "national_park" && self.tree_effect(pid, "national_parks") <= 0.0)
                 || spec.unique_to.as_deref().is_some_and(|owner| owner != civ)
                 || water != spec.water
                 || t.improvement.as_deref() == Some(name)
@@ -10920,17 +12246,22 @@ impl Game {
                 || (spec.hills_or_resource && !t.hills && visible_resource.is_none())
                 || (spec.requires_flat
                     && t.hills
+                    && !seaside_volcanic
                     && !(name == "farm" && self.tree_effect(pid, "hill_farms") > 0.0))
                 || (spec.removes_feature
                     && t.feature
                         .as_deref()
                         .is_some_and(|feature| !self.feature_removal_unlocked(pid, feature)))
-                || (!spec.terrain.is_empty() && !spec.terrain.contains(&t.terrain))
+                || (!spec.terrain.is_empty()
+                    && !spec.terrain.contains(&t.terrain)
+                    && !seaside_volcanic)
                 || (!spec.feature.is_empty()
                     && !t
                         .feature
                         .as_ref()
                         .is_some_and(|feature| spec.feature.contains(feature)))
+                || seaside_invalid
+                || adjacent_ski_resort
             {
                 continue;
             }
@@ -11009,7 +12340,11 @@ impl Game {
                 continue;
             }
             let t = &self.map.tiles[pos];
-            if t.flooded || t.district.is_some() || t.wonder.is_some() || !self.rules.is_passable(t)
+            if t.flooded
+                || t.district.is_some()
+                || t.wonder.is_some()
+                || t.improvement.as_deref() == Some("national_park")
+                || !self.rules.is_passable(t)
             {
                 continue;
             }
@@ -11184,6 +12519,7 @@ impl Game {
             if tile.flooded
                 || tile.district.is_some()
                 || tile.wonder.is_some()
+                || tile.improvement.as_deref() == Some("national_park")
                 || (!self.rules.is_passable(tile) && spec.placement != "mountain")
                 || tile
                     .feature
@@ -11559,7 +12895,7 @@ impl Game {
                     Some(s) => s,
                     None => return false,
                 };
-                if unit == "rock_band" {
+                if matches!(unit.as_str(), "rock_band" | "naturalist") {
                     return false; // Faith purchase only (Civ VI)
                 }
                 if !spec.buildable || !self.unlocked(pid, &spec.tech, &spec.civic) {
@@ -12492,6 +13828,16 @@ impl Game {
                     currency: "faith".to_string(),
                 });
             }
+            let naturalist = &self.rules.units["naturalist"];
+            if self.unlocked(pid, &naturalist.tech, &naturalist.civic)
+                && p.faith + f64::EPSILON >= self.naturalist_purchase_cost(pid)
+            {
+                acts.push(Action::Buy {
+                    city: cid,
+                    unit: "naturalist".to_string(),
+                    currency: "faith".to_string(),
+                });
+            }
         }
         for city_state in self.players.iter().filter(|player| {
             player.is_minor
@@ -13181,7 +14527,7 @@ impl Game {
                 .as_deref()
                 .is_some_and(|domain| domain != "land")
             || self.tree_effect(pid, "airport_transfer") <= 0.0
-            || !self.city_has_building_family(origin, "airport")
+            || self.city_building_effect(origin, "airlift") <= 0.0
         {
             return vec![];
         }
@@ -13190,7 +14536,7 @@ impl Game {
             .filter(|city| {
                 city.owner == pid
                     && city.id != origin.id
-                    && self.city_has_building_family(city, "airport")
+                    && self.city_building_effect(city, "airlift") > 0.0
                     && !self.units_at(city.pos).into_iter().any(|other| {
                         let other = &self.units[&other];
                         other.owner == pid
@@ -13305,6 +14651,15 @@ impl Game {
         }) {
             // Alhambra functions as a Fort for an occupying land unit.
             bonus += 4.0;
+        }
+        if !t.pillaged {
+            bonus += t
+                .improvement
+                .as_deref()
+                .and_then(|improvement| self.rules.improvements.get(improvement))
+                .and_then(|improvement| improvement.effects.get("defense"))
+                .copied()
+                .unwrap_or(0.0);
         }
         bonus
     }
@@ -13687,9 +15042,9 @@ impl Game {
             })
         };
         let ram = adjacent_support("battering_ram")
-            && !self.city_has_building_family(city, "medieval_walls");
+            && self.city_building_effect(city, "battering_ram_immunity") <= 0.0;
         let tower = adjacent_support("siege_tower")
-            && !self.city_has_building_family(city, "renaissance_walls");
+            && self.city_building_effect(city, "siege_support_immunity") <= 0.0;
         (ram, tower)
     }
 
@@ -14414,21 +15769,35 @@ impl Game {
         if !self.valid_improvements(pid, u.pos).iter().any(|i| i == imp) {
             return Err("invalid improvement here".into());
         }
+        let national_park = (imp == "national_park")
+            .then(|| self.national_park_site_at(pid, u.pos))
+            .flatten();
+        if imp == "national_park" && national_park.is_none() {
+            return Err("no valid four-tile National Park here".into());
+        }
         let removes = self.rules.improvements[imp].removes_feature;
         let excavates_artifact = matches!(imp, "archaeological_dig" | "shipwreck_excavation");
-        let t = self.map.tiles.get_mut(&u.pos).unwrap();
-        // Excavation consumes the Antiquity Site/Shipwreck and immediately
-        // transfers its Artifact to an active compatible Great Work slot. It
-        // is an Archaeologist action, not a persistent tile improvement.
-        if excavates_artifact {
-            t.resource = None;
-            t.improvement = None;
+        if let Some(positions) = national_park {
+            for position in positions {
+                let tile = self.map.tiles.get_mut(&position).unwrap();
+                tile.improvement = Some("national_park".to_string());
+                tile.pillaged = false;
+            }
         } else {
-            t.improvement = Some(imp.to_string());
-        }
-        t.pillaged = false;
-        if removes {
-            t.feature = None;
+            let t = self.map.tiles.get_mut(&u.pos).unwrap();
+            // Excavation consumes the Antiquity Site/Shipwreck and immediately
+            // transfers its Artifact to an active compatible Great Work slot. It
+            // is an Archaeologist action, not a persistent tile improvement.
+            if excavates_artifact {
+                t.resource = None;
+                t.improvement = None;
+            } else {
+                t.improvement = Some(imp.to_string());
+            }
+            t.pillaged = false;
+            if removes {
+                t.feature = None;
+            }
         }
         let mu = self.units.get_mut(&uid).unwrap();
         mu.charges -= 1;
@@ -14525,15 +15894,25 @@ impl Game {
         Ok(())
     }
 
-    pub(crate) fn rock_concert_venue(&self, pid: usize, position: Pos) -> Option<f64> {
-        if self.players[pid]
-            .counters
-            .get(&format!("rock_concert:{},{}", position.0, position.1))
-            .copied()
-            .unwrap_or(0)
-            > 0
-        {
-            return None;
+    fn rock_concert_venue_details(
+        &self,
+        pid: usize,
+        band: Option<&Unit>,
+        position: Pos,
+    ) -> Option<(f64, i32, u32)> {
+        if let Some(unit) = band {
+            if self.players[pid]
+                .counters
+                .get(&format!(
+                    "rock_concert:{}:{},{}",
+                    unit.id, position.0, position.1
+                ))
+                .copied()
+                .unwrap_or(0)
+                > 0
+            {
+                return None;
+            }
         }
         let tile = self.map.get(position)?;
         let city = tile
@@ -14543,11 +15922,34 @@ impl Game {
         {
             return None;
         }
+        let effect = |name| band.map_or(0.0, |unit| self.promotion_effect(unit, name));
         if tile.wonder.is_some() {
-            return Some(1_000.0);
+            return Some((1_000.0, effect("rock_wonder_levels") as i32, city.id));
+        }
+        let natural_wonder = tile.feature.as_ref().is_some_and(|feature| {
+            self.rules
+                .features
+                .get(feature)
+                .is_some_and(|spec| spec.natural_wonder)
+        });
+        if (natural_wonder || tile.improvement.as_deref() == Some("national_park"))
+            && effect("rock_nature_venue") > 0.0
+        {
+            return Some((1_000.0, effect("rock_nature_levels") as i32, city.id));
+        }
+        if !tile.pillaged
+            && tile.improvement.as_deref() == Some("seaside_resort")
+            && effect("rock_surf_venue") > 0.0
+        {
+            return Some((500.0, effect("rock_surf_levels") as i32, city.id));
         }
         let district = tile.district.as_deref()?;
-        city.buildings
+        if tile.pillaged {
+            return None;
+        }
+        let family = self.district_family(district);
+        let building_tourism = city
+            .buildings
             .iter()
             .filter(|building| !city.pillaged_buildings.contains(*building))
             .filter(|building| {
@@ -14562,36 +15964,194 @@ impl Game {
                     .get("rock_concert_tourism")
                     .copied()
             })
-            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .fold(0.0_f64, f64::max);
+        let (base, level_bonus) = match family {
+            "entertainment_complex" if building_tourism > 0.0 => {
+                (building_tourism, effect("rock_entertainment_levels"))
+            }
+            "theater_square" if building_tourism > 0.0 => {
+                (building_tourism, effect("rock_theater_levels"))
+            }
+            "water_park" if building_tourism > 0.0 => {
+                (building_tourism, effect("rock_water_park_levels"))
+            }
+            "campus" if effect("rock_space_venue") > 0.0 => {
+                (500.0 + building_tourism, effect("rock_space_levels"))
+            }
+            "spaceport" if effect("rock_space_venue") > 0.0 => (500.0, effect("rock_space_levels")),
+            "harbor" if effect("rock_surf_venue") > 0.0 => {
+                (500.0 + building_tourism, effect("rock_surf_levels"))
+            }
+            _ => return None,
+        };
+        Some((base, level_bonus as i32, city.id))
+    }
+
+    fn rock_performance_weights(effective_level: i32) -> [f64; 6] {
+        match effective_level.clamp(1, 6) {
+            1 => [18.4, 26.5, 26.5, 18.4, 8.2, 2.0],
+            2 => [12.1, 22.3, 26.2, 22.3, 12.1, 4.9],
+            3 => [7.6, 17.0, 24.5, 24.5, 17.0, 9.4],
+            4 => [4.2, 11.6, 21.4, 25.1, 21.4, 16.3],
+            5 => [1.9, 7.4, 16.7, 24.1, 24.1, 25.9],
+            _ => [0.5, 4.2, 11.6, 21.3, 25.0, 37.5],
+        }
+    }
+
+    fn rock_performance_tier_for_roll(effective_level: i32, roll: f64) -> u8 {
+        let mut cumulative = 0.0;
+        for (index, weight) in Self::rock_performance_weights(effective_level)
+            .into_iter()
+            .enumerate()
+        {
+            cumulative += weight;
+            if roll < cumulative {
+                return index as u8 + 1;
+            }
+        }
+        6
+    }
+
+    pub(crate) fn rock_concert_ai_value(&self, pid: usize, uid: u32, position: Pos) -> Option<f64> {
+        let unit = self.units.get(&uid)?;
+        if unit.owner != pid || unit.kind != "rock_band" || unit.promotions.is_empty() {
+            return None;
+        }
+        let (base, venue_levels, _) = self.rock_concert_venue_details(pid, Some(unit), position)?;
+        let effective_level = (unit.level + venue_levels).clamp(1, 6);
+        let bombs = [-25.0, 100.0, -25.0, 150.0, 0.0, 200.0];
+        let weights = Self::rock_performance_weights(effective_level);
+        let album_multiplier = unit.album_sales as f64 / 100.0;
+        let expected_multiplier = weights
+            .iter()
+            .zip(bombs)
+            .map(|(probability, bomb)| {
+                probability / 100.0 * (1.0 + bomb / 100.0 + album_multiplier)
+            })
+            .sum::<f64>();
+        let survival = 1.0 - (weights[0] + weights[1]) / 100.0;
+        Some(base * (expected_multiplier + 2.0 * survival))
     }
 
     pub(crate) fn rock_concert_tourism(&self, pid: usize, uid: u32) -> Option<f64> {
         let unit = self.units.get(&uid)?;
         if unit.owner != pid
             || unit.kind != "rock_band"
-            || unit.charges <= 0
+            || unit.promotions.is_empty()
             || unit.moves_left <= 0.0
         {
             return None;
         }
-        self.rock_concert_venue(pid, unit.pos)
+        self.rock_concert_venue_details(pid, Some(unit), unit.pos)
+            .map(|(tourism, _, _)| tourism)
+    }
+
+    fn add_targeted_tourism(&mut self, pid: usize, target: usize, tourism: f64) {
+        if tourism <= 0.0 || pid == target {
+            return;
+        }
+        self.players[pid].tourism_lifetime += tourism;
+        *self.players[pid]
+            .targeted_tourism
+            .entry(target)
+            .or_insert(0.0) += tourism;
     }
 
     fn do_perform_concert(&mut self, pid: usize, uid: u32) -> Result<(), String> {
-        let tourism = self
-            .rock_concert_tourism(pid, uid)
+        let band = self
+            .units
+            .get(&uid)
+            .filter(|unit| {
+                unit.owner == pid
+                    && unit.kind == "rock_band"
+                    && !unit.promotions.is_empty()
+                    && unit.moves_left > 0.0
+            })
+            .cloned()
+            .ok_or_else(|| "rock band cannot perform now".to_string())?;
+        let position = band.pos;
+        let (venue_tourism, venue_levels, host_city) = self
+            .rock_concert_venue_details(pid, Some(&band), position)
             .ok_or_else(|| "rock band has no valid concert venue here".to_string())?;
-        let position = self.units[&uid].pos;
-        self.players[pid].tourism_lifetime += tourism;
+        let host = self.cities[&host_city].owner;
+        let effective_level = (band.level + venue_levels).clamp(1, 6);
+        let tier =
+            Self::rock_performance_tier_for_roll(effective_level, self.rng.uniform(0.0, 100.0));
+        let (tourism_bomb, album_sales, promotes, retires) = match tier {
+            1 => (-25.0, 0, false, true),
+            2 => (100.0, 0, false, true),
+            3 => (-25.0, 50, false, false),
+            4 => (150.0, 100, false, false),
+            5 => (0.0, 150, true, false),
+            _ => (200.0, 200, true, false),
+        };
+        let tourism =
+            venue_tourism * (1.0 + tourism_bomb / 100.0 + band.album_sales as f64 / 100.0);
+        self.add_targeted_tourism(pid, host, tourism);
+        self.players[pid].counters.insert(
+            format!("rock_concert:{uid}:{},{}", position.0, position.1),
+            1,
+        );
         self.players[pid]
             .counters
-            .insert(format!("rock_concert:{},{}", position.0, position.1), 1);
-        let unit = self.units.get_mut(&uid).unwrap();
-        unit.charges -= 1;
-        unit.moves_left = 0.0;
-        unit.acted = true;
-        if unit.charges <= 0 {
+            .insert(format!("rock_concert_tier:{uid}"), tier as i64);
+
+        let nearby_pct = self.promotion_effect(&band, "rock_nearby_tourism_pct") / 100.0;
+        if nearby_pct > 0.0 {
+            let nearby: BTreeSet<usize> = self
+                .cities
+                .values()
+                .filter(|city| {
+                    city.owner != pid
+                        && city.owner != host
+                        && self.players[city.owner].alive
+                        && !self.players[city.owner].is_minor
+                        && !self.players[city.owner].is_barbarian
+                        && self.wdist(position, city.pos) <= 10
+                })
+                .map(|city| city.owner)
+                .collect();
+            for target in nearby {
+                self.add_targeted_tourism(pid, target, tourism * nearby_pct);
+            }
+        }
+        self.players[pid].gold += tourism * self.promotion_effect(&band, "rock_gold_pct") / 100.0;
+        let loyalty_loss = self.promotion_effect(&band, "rock_loyalty_loss");
+        if loyalty_loss > 0.0 {
+            let loyalty = (self.cities[&host_city].loyalty - loyalty_loss).max(0.0);
+            self.cities.get_mut(&host_city).unwrap().loyalty = loyalty;
+        }
+        let converts_religion = self.promotion_effect(&band, "rock_convert_city") > 0.0;
+        if converts_religion {
+            if let Some(religion) = self.players[pid].religion.clone() {
+                let strongest_other = self.cities[&host_city]
+                    .pressure
+                    .iter()
+                    .filter(|(faith, _)| **faith != religion)
+                    .map(|(_, pressure)| *pressure)
+                    .fold(49.0, f64::max);
+                self.cities
+                    .get_mut(&host_city)
+                    .unwrap()
+                    .pressure
+                    .insert(religion, strongest_other + 1.0);
+            }
+        }
+        if converts_religion {
+            self.check_religious_victory();
+        }
+
+        if retires {
             self.remove_unit(uid);
+        } else {
+            let unit = self.units.get_mut(&uid).unwrap();
+            unit.album_sales += album_sales;
+            unit.moves_left = 0.0;
+            unit.acted = true;
+            if promotes && unit.level < 4 {
+                unit.level += 1;
+                unit.xp = Self::promotion_threshold(unit.level);
+            }
         }
         Ok(())
     }
@@ -14613,7 +16173,10 @@ impl Game {
             return false;
         }
         // Corporations may be pillaged by natural disasters, never by units.
-        if tile.improvement.as_deref() == Some("corporation") {
+        if matches!(
+            tile.improvement.as_deref(),
+            Some("corporation" | "national_park" | "ski_resort")
+        ) {
             return false;
         }
         if tile.improvement.is_some() && !tile.pillaged {
@@ -15083,6 +16646,16 @@ impl Game {
                     .unwrap_or(0) as f64
     }
 
+    pub(crate) fn naturalist_purchase_cost(&self, pid: usize) -> f64 {
+        self.rules.units["naturalist"].cost
+            + 100.0
+                * self.players[pid]
+                    .counters
+                    .get("purchased:naturalist")
+                    .copied()
+                    .unwrap_or(0) as f64
+    }
+
     fn do_buy(&mut self, pid: usize, cid: u32, unit: &str, currency: &str) -> Result<(), String> {
         match self.cities.get(&cid) {
             Some(c) if c.owner == pid => {}
@@ -15098,10 +16671,11 @@ impl Game {
             return Err("unknown purchase currency".into());
         }
         let rock_band = unit == "rock_band";
-        if rock_band {
+        let naturalist = unit == "naturalist";
+        if rock_band || naturalist {
             let spec = &self.rules.units[unit];
             if currency != "faith" || !self.unlocked(pid, &spec.tech, &spec.civic) {
-                return Err("rock bands are unlocked and purchased with faith".into());
+                return Err(format!("{unit} is unlocked and purchased with faith"));
             }
         } else if religious {
             // Religious units adopt the majority religion of their purchase city.
@@ -15164,7 +16738,7 @@ impl Game {
         if unit == "settler" && self.cities[&cid].pop < 2 {
             return Err("city too small for settler".into());
         }
-        let mult = if rock_band {
+        let mult = if rock_band || naturalist {
             1.0
         } else if currency == "gold" {
             4.0
@@ -15196,6 +16770,8 @@ impl Game {
         }
         let base_cost = if rock_band {
             self.rock_band_purchase_cost(pid)
+        } else if naturalist {
+            self.naturalist_purchase_cost(pid)
         } else {
             self.item_cost_for(pid, &item)
         };
@@ -15253,6 +16829,9 @@ impl Game {
         }
         if rock_band {
             bump(&mut self.players[pid], "purchased:rock_band");
+        }
+        if naturalist {
+            bump(&mut self.players[pid], "purchased:naturalist");
         }
         Ok(())
     }
@@ -15423,10 +17002,19 @@ impl Game {
                 .get("natural_wonder_charges")
                 .copied()
                 .unwrap_or(0.0);
+        let rock_band = unit.kind == "rock_band";
         let unit = self.units.get_mut(&uid).unwrap();
         unit.promotions.insert(promotion.to_string());
         unit.charges += extra_charges as i32;
-        unit.level = (unit.level + 1).min(8);
+        if rock_band {
+            // Concert outcomes raise Cultural Communicator level before the
+            // newly earned promotion is chosen. Consuming the choice must not
+            // raise it a second time; the initial promotion likewise leaves a
+            // new band at level 1.
+            unit.xp = 0;
+        } else {
+            unit.level = (unit.level + 1).min(8);
+        }
         unit.hp = (unit.hp + 50).min(100);
         unit.moves_left = 0.0;
         unit.attacks_left = 0;
@@ -16016,19 +17604,21 @@ impl Game {
     /// Civ VI charges each unit its own upkeep. Corps/Fleets cost 150% of a
     /// base unit and Armies/Armadas cost 200%; policy reductions then apply
     /// once because each formation is a single unit on the map.
+    fn unit_gold_maintenance_cost(&self, pid: usize, unit: &Unit) -> f64 {
+        let formation = match unit.formation {
+            1 => 1.5,
+            2.. => 2.0,
+            _ => 1.0,
+        };
+        (self.rules.units[unit.kind.as_str()].maintenance * formation
+            - self.policy_effect(pid, "unit_maintenance_discount"))
+        .max(0.0)
+    }
+
     fn unit_gold_maintenance(&self, pid: usize) -> f64 {
-        let discount = self.policy_effect(pid, "unit_maintenance_discount");
         self.player_unit_ids(pid)
             .into_iter()
-            .map(|uid| {
-                let unit = &self.units[&uid];
-                let formation = match unit.formation {
-                    1 => 1.5,
-                    2.. => 2.0,
-                    _ => 1.0,
-                };
-                (self.rules.units[unit.kind.as_str()].maintenance * formation - discount).max(0.0)
-            })
+            .map(|uid| self.unit_gold_maintenance_cost(pid, &self.units[&uid]))
             .sum()
     }
 
@@ -16095,6 +17685,74 @@ impl Game {
             .max(0) as f64;
         (14.0 * nuclear + 16.0 * thermonuclear)
             * (1.0 - self.policy_effect(pid, "nuclear_maintenance_discount_pct") / 100.0)
+    }
+
+    fn contracted_gold_per_turn(&self, pid: usize) -> f64 {
+        self.active_trade_deals
+            .iter()
+            .filter(|deal| deal.ends > self.turn)
+            .map(|deal| {
+                let outgoing = if deal.from == pid {
+                    deal.offer.gold_per_turn
+                } else if deal.to == pid {
+                    deal.request.gold_per_turn
+                } else {
+                    0.0
+                };
+                let incoming = if deal.to == pid {
+                    deal.offer.gold_per_turn
+                } else if deal.from == pid {
+                    deal.request.gold_per_turn
+                } else {
+                    0.0
+                };
+                incoming - outgoing
+            })
+            .sum()
+    }
+
+    /// Apply the recurring budget after city income and maintenance have been
+    /// calculated. Civ VI never stores a negative treasury: at zero Gold, one
+    /// Amenity and one maintained unit are lost for each complete -10 GPT.
+    fn settle_gold_budget(&mut self, pid: usize, local_gold: f64) {
+        let budget = local_gold + self.contracted_gold_per_turn(pid);
+        let treasury = (self.players[pid].gold + local_gold).max(0.0);
+        let penalty = if !self.players[pid].is_barbarian && treasury <= f64::EPSILON && budget < 0.0
+        {
+            ((-budget) / 10.0).floor() as i64
+        } else {
+            0
+        };
+        {
+            let player = &mut self.players[pid];
+            player.gold = treasury;
+            player.gold_per_turn = budget;
+            player.bankruptcy_amenity_penalty = penalty;
+        }
+        if penalty <= 0 {
+            return;
+        }
+
+        // The commercial game does not expose a player choice here. Pick the
+        // costliest maintained units first, then by ID, so saves and replays
+        // remain deterministic while each disband materially relieves upkeep.
+        let mut candidates: Vec<(u32, f64)> = self
+            .player_unit_ids(pid)
+            .into_iter()
+            .filter_map(|uid| {
+                let maintenance = self.unit_gold_maintenance_cost(pid, &self.units[&uid]);
+                (maintenance > 0.0).then_some((uid, maintenance))
+            })
+            .collect();
+        candidates.sort_by(|left, right| {
+            right
+                .1
+                .total_cmp(&left.1)
+                .then_with(|| left.0.cmp(&right.0))
+        });
+        for (unit, _) in candidates.into_iter().take(penalty as usize) {
+            self.remove_unit(unit);
+        }
     }
 
     fn primary_resource_value(&self, pid: usize, resource: &str) -> f64 {
@@ -17457,7 +19115,12 @@ impl Game {
         let religious = self.players[pid]
             .religious_tourism_lifetime
             .clamp(0.0, self.players[pid].tourism_lifetime);
-        let secular = (self.players[pid].tourism_lifetime - religious).max(0.0);
+        let targeted_total = self.players[pid]
+            .targeted_tourism
+            .values()
+            .copied()
+            .sum::<f64>();
+        let secular = (self.players[pid].tourism_lifetime - religious - targeted_total).max(0.0);
         let cristo = self.empire_wonder_effect(pid, "religious_tourism_unreduced") > 0.0;
         let exposure = self
             .players
@@ -17485,7 +19148,12 @@ impl Game {
                 let secular_modifier = (1.0 + (general + trade) / 100.0).max(0.0);
                 let religious_modifier =
                     (1.0 + (general + trade + religious_only) / 100.0).max(0.0);
-                secular * secular_modifier + religious * religious_modifier
+                let targeted = self.players[pid]
+                    .targeted_tourism
+                    .get(&rival.id)
+                    .copied()
+                    .unwrap_or(0.0);
+                (secular + targeted) * secular_modifier + religious * religious_modifier
             })
             .sum::<f64>();
         (exposure / (starting_majors as f64 * TOURISM_PER_VISITOR)).floor() as i64
@@ -17918,14 +19586,25 @@ impl Game {
                 tourism += building_tourism;
             }
             for pos in &city.owned_tiles {
-                let Some(improvement) = self.map.tiles[pos].improvement.as_deref() else {
+                let tile = &self.map.tiles[pos];
+                let Some(improvement) = tile.improvement.as_deref() else {
                     continue;
                 };
-                let mut improvement_tourism = self.rules.improvements[improvement]
-                    .effects
-                    .get("tourism")
-                    .copied()
-                    .unwrap_or(0.0);
+                if tile.pillaged {
+                    continue;
+                }
+                let effects = &self.rules.improvements[improvement].effects;
+                let appeal = self.tile_appeal(*pos);
+                // National Park Tourism follows its tiles' live Appeal even
+                // after later surroundings drag that value below zero. Other
+                // appeal-based improvements are only legal at positive Appeal.
+                let tourism_appeal = if improvement == "national_park" {
+                    appeal
+                } else {
+                    appeal.max(0)
+                };
+                let mut improvement_tourism = effects.get("tourism").copied().unwrap_or(0.0)
+                    + effects.get("appeal_tourism").copied().unwrap_or(0.0) * tourism_appeal as f64;
                 if improvement == "seaside_resort" {
                     improvement_tourism *=
                         1.0 + self.empire_wonder_effect(pid, "seaside_resort_tourism_pct") / 100.0;
@@ -18247,11 +19926,8 @@ impl Game {
         gold -= self.unit_gold_maintenance(pid);
         gold -= self.infrastructure_gold_maintenance(pid);
         gold -= self.nuclear_gold_maintenance(pid);
-        {
-            let p = &mut self.players[pid];
-            p.gold = (p.gold + gold).max(0.0);
-            p.faith += faith;
-        }
+        self.settle_gold_budget(pid, gold);
+        self.players[pid].faith += faith;
         let research = self.players[pid].research.clone();
         let mut completed_tech = None;
         if let Some(tech) = research {
@@ -21595,6 +23271,17 @@ mod victory_conditions {
             .push("airport".to_string());
         g.players[0].civics.insert("rapid_deployment".to_string());
         let airlifted = g.spawn_unit("builder", 0, g.cities[&cid].pos);
+        g.cities
+            .get_mut(&second_city)
+            .unwrap()
+            .pillaged_buildings
+            .insert("airport".to_string());
+        assert!(g.airlift_destinations(0, airlifted).is_empty());
+        g.cities
+            .get_mut(&second_city)
+            .unwrap()
+            .pillaged_buildings
+            .remove("airport");
         assert!(g
             .airlift_destinations(0, airlifted)
             .contains(&second_city_position));
@@ -23161,6 +24848,25 @@ mod district_mechanics {
         assert_eq!(game.tile_appeal(position), 4);
         assert_eq!(game.district_housing("neighborhood", position), 6.0);
         assert_eq!(game.district_housing("preserve", position), 3.0);
+    }
+
+    #[test]
+    fn naval_passage_uses_active_district_and_wonder_effects() {
+        let (mut game, city, position, _) = controlled_game();
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert("canal".to_string(), position);
+        game.map.tiles.get_mut(&position).unwrap().district = Some("canal".to_string());
+        let galley = game.spawn_unit("galley", 0, position);
+        assert!(game.unit_can_traverse(galley, position));
+
+        game.map.tiles.get_mut(&position).unwrap().pillaged = true;
+        assert!(!game.unit_can_traverse(galley, position));
+        game.map.tiles.get_mut(&position).unwrap().district = None;
+        game.map.tiles.get_mut(&position).unwrap().wonder = Some("panama_canal".to_string());
+        assert!(game.unit_can_traverse(galley, position));
     }
 
     #[test]
