@@ -91,7 +91,9 @@ pub struct Weights {
     pub war_margin: f64,
     pub peace_ratio: f64,       // sue for peace if my power < ratio*theirs
     pub war_min_turn: f64,
-    pub attack_margin: f64,     // attack if my strength >= theirs - margin
+    pub attack_floor: f64,      // minimum exchange score to attack (SEE-style)
+    pub kill_bonus: f64,        // exchange bonus for a killing blow
+    pub trade_caution: f64,     // weight on expected counter-damage
     pub settle_food: f64,       // settle-site yield weights
     pub settle_prod: f64,
     pub settle_gold: f64,
@@ -111,7 +113,7 @@ impl Default for Weights {
             city_target: 4.0, settler_min_pop: 2.0, settler_stop_turn: 150.0,
             mil_per_city: 1.0, builder_per_city: 0.5,
             war_ratio: 1.8, war_margin: 20.0, peace_ratio: 0.6, war_min_turn: 40.0,
-            attack_margin: 8.0,
+            attack_floor: 0.0, kill_bonus: 25.0, trade_caution: 1.0,
             settle_food: 1.2, settle_prod: 1.0, settle_gold: 0.3, settle_dist: 0.4,
             min_city_dist: 4.0, wonder_min_bld: 3.0, faith_builder: 120.0,
             d_campus: 4.0, d_commercial: 3.0, d_holy: 2.0, d_theater: 1.0,
@@ -124,7 +126,8 @@ impl Weights {
         vec![self.city_target, self.settler_min_pop, self.settler_stop_turn,
              self.mil_per_city, self.builder_per_city, self.war_ratio,
              self.war_margin, self.peace_ratio, self.war_min_turn,
-             self.attack_margin, self.settle_food, self.settle_prod,
+             self.attack_floor, self.kill_bonus, self.trade_caution,
+             self.settle_food, self.settle_prod,
              self.settle_gold, self.settle_dist, self.min_city_dist,
              self.wonder_min_bld, self.faith_builder,
              self.d_campus, self.d_commercial, self.d_holy, self.d_theater]
@@ -135,17 +138,19 @@ impl Weights {
             city_target: v[0], settler_min_pop: v[1], settler_stop_turn: v[2],
             mil_per_city: v[3], builder_per_city: v[4], war_ratio: v[5],
             war_margin: v[6], peace_ratio: v[7], war_min_turn: v[8],
-            attack_margin: v[9], settle_food: v[10], settle_prod: v[11],
-            settle_gold: v[12], settle_dist: v[13], min_city_dist: v[14],
-            wonder_min_bld: v[15], faith_builder: v[16],
-            d_campus: v[17], d_commercial: v[18], d_holy: v[19], d_theater: v[20],
+            attack_floor: v[9], kill_bonus: v[10], trade_caution: v[11],
+            settle_food: v[12], settle_prod: v[13],
+            settle_gold: v[14], settle_dist: v[15], min_city_dist: v[16],
+            wonder_min_bld: v[17], faith_builder: v[18],
+            d_campus: v[19], d_commercial: v[20], d_holy: v[21], d_theater: v[22],
         }
     }
 
     /// (lo, hi) clamp per gene, same order as to_vec.
-    pub fn bounds() -> [(f64, f64); 21] {
+    pub fn bounds() -> [(f64, f64); 23] {
         [(2.0, 12.0), (1.0, 5.0), (60.0, 400.0), (0.3, 4.0), (0.2, 2.0),
-         (0.8, 5.0), (-20.0, 80.0), (0.2, 1.2), (10.0, 200.0), (-10.0, 30.0),
+         (0.8, 5.0), (-20.0, 80.0), (0.2, 1.2), (10.0, 200.0),
+         (-25.0, 25.0), (0.0, 80.0), (0.2, 3.0),
          (0.2, 3.0), (0.2, 3.0), (0.0, 2.0), (0.0, 2.0), (3.0, 7.0),
          (0.0, 8.0), (40.0, 400.0),
          (0.0, 8.0), (0.0, 8.0), (0.0, 8.0), (0.0, 8.0)]
@@ -677,22 +682,49 @@ impl BasicAi {
         false
     }
 
-    fn worth_attacking(&self, g: &Game, uid: u32, pos: Pos) -> bool {
-        if let Some(cid) = g.city_at(pos) {
-            if g.cities[&cid].owner != g.units[&uid].owner {
-                return true;
-            }
-        }
+    /// Chess-style static exchange evaluation: expected damage traded if we
+    /// attack `pos` (combat model: 30·e^((att−def)/25), sans rng).
+    fn exchange_score(&self, g: &Game, uid: u32, pos: Pos, ranged: bool) -> f64 {
         let u = &g.units[&uid];
-        let mine = effective_strength(g.unit_strength(u, false), u.hp);
-        for oid in g.units_at(pos) {
-            let o = &g.units[&oid];
-            if g.rules.units[o.kind.as_str()].class == "military" {
-                let theirs = effective_strength(g.unit_strength(o, true), o.hp);
-                return mine >= theirs - self.w.attack_margin;
+        let att = effective_strength(g.unit_strength(u, false), u.hp);
+        if let Some(cid) = g.city_at(pos) {
+            let c = &g.cities[&cid];
+            if c.owner != u.owner {
+                // cities: press wounded ones, big bonus on a capturable one
+                let mut s = 20.0 + 0.5 * (100 - c.hp) as f64;
+                if !ranged && c.hp <= 40 && c.wall_hp <= 0 {
+                    s += self.w.kill_bonus;
+                }
+                return s;
             }
         }
-        true
+        let defender = g.units_at(pos).into_iter()
+            .map(|oid| &g.units[&oid])
+            .filter(|o| g.rules.units[o.kind.as_str()].class == "military")
+            .max_by(|a, b| {
+                effective_strength(g.unit_strength(a, true), a.hp)
+                    .partial_cmp(&effective_strength(g.unit_strength(b, true), b.hp))
+                    .unwrap()
+            });
+        let o = match defender {
+            None => return 15.0 + self.w.kill_bonus * 0.5, // undefended civilians
+            Some(o) => o,
+        };
+        let def = effective_strength(g.unit_strength(o, true), o.hp);
+        let deal = 30.0 * ((att - def) / 25.0).exp();
+        let mut s = deal.min(o.hp as f64);
+        if deal >= o.hp as f64 {
+            s += self.w.kill_bonus;
+        } else if !ranged {
+            let their_att = effective_strength(g.unit_strength(o, false), o.hp);
+            let my_def = effective_strength(g.unit_strength(u, true), u.hp);
+            let recv = 30.0 * ((their_att - my_def) / 25.0).exp();
+            s -= self.w.trade_caution * recv.min(u.hp as f64);
+            if recv >= u.hp as f64 {
+                s -= 35.0; // don't suicide into a counter
+            }
+        }
+        s
     }
 
     fn nearest_enemy(&self, g: &Game, pid: usize, pos: Pos,
@@ -768,24 +800,29 @@ impl BasicAi {
             .map(|o| o.id)
             .collect();
         if !enemy_ids.is_empty() {
-            if spec.ranged_strength > 0.0 {
-                for pos in g.wdisk(upos, spec.range.max(1)) {
-                    if pos == upos || g.map.get(pos).is_none() {
-                        continue;
-                    }
-                    if self.is_enemy_tile(g, pos, &enemy_ids) {
-                        return g.apply(pid, &Action::Ranged { unit: uid, target: pos }).is_ok();
-                    }
+            // pick the best exchange among all attackable tiles, not the first
+            let ranged = spec.ranged_strength > 0.0;
+            let radius = if ranged { spec.range.max(1) } else { 1 };
+            let mut best: Option<(f64, Pos)> = None;
+            for pos in g.wdisk(upos, radius) {
+                if pos == upos || g.map.get(pos).is_none()
+                    || !self.is_enemy_tile(g, pos, &enemy_ids) {
+                    continue;
                 }
-            } else {
-                for pos in g.nbrs(upos) {
-                    if g.map.get(pos).is_none() {
-                        continue;
-                    }
-                    if self.is_enemy_tile(g, pos, &enemy_ids)
-                        && self.worth_attacking(g, uid, pos)
-                    {
-                        return g.apply(pid, &Action::Attack { unit: uid, target: pos }).is_ok();
+                let s = self.exchange_score(g, uid, pos, ranged);
+                if best.map(|(b, bp)| (s, pos) > (b, bp)).unwrap_or(true) {
+                    best = Some((s, pos));
+                }
+            }
+            if let Some((s, pos)) = best {
+                if s > self.w.attack_floor {
+                    let act = if ranged {
+                        Action::Ranged { unit: uid, target: pos }
+                    } else {
+                        Action::Attack { unit: uid, target: pos }
+                    };
+                    if g.apply(pid, &act).is_ok() {
+                        return true;
                     }
                 }
             }

@@ -47,7 +47,8 @@ pub fn load_champion(dir: &str) -> Option<Weights> {
 
 /// Fitness of one game: 50 * major-score share (+100 on outright win).
 /// 50 ≈ parity with the champion opponents filling the other seats.
-fn eval_game(w: &Weights, champ: &Weights, seat: usize, cfg: &EvoCfg, seed: u64) -> f64 {
+fn eval_game(w: &Weights, champ: &Weights, seat: usize, cfg: &EvoCfg, seed: u64)
+    -> (f64, bool) {
     let mut g = Game::new(cfg.players, cfg.width, cfg.height, seed,
                           cfg.max_turns, 2);
     let mut ais: Vec<BasicAi> = g.players.iter().map(|p| {
@@ -68,10 +69,34 @@ fn eval_game(w: &Weights, champ: &Weights, seat: usize, cfg: &EvoCfg, seed: u64)
     } else {
         0.0
     };
-    if g.winner == Some(seat) {
+    let won = g.winner == Some(seat);
+    if won {
         fit += 100.0;
     }
-    fit
+    (fit, won)
+}
+
+/// Fishtest-style SPRT match vs the champion: H0 win rate 0.25 (parity at a
+/// 4-seat table), H1 0.40, α=β≈0.05. Returns (accepted, wins, losses).
+fn sprt_confirm(cand: &Weights, champ: &Weights, cfg: &EvoCfg, gen: u32)
+    -> (bool, u32, u32) {
+    let (p0, p1) = (1.0 / cfg.players as f64, 0.40f64.max(1.6 / cfg.players as f64));
+    let (lw, ll) = ((p1 / p0).ln(), ((1.0 - p1) / (1.0 - p0)).ln());
+    let bound = 2.94;
+    let (mut llr, mut w, mut l) = (0.0, 0u32, 0u32);
+    for i in 0..200u64 {
+        let seat = (i as usize) % cfg.players;
+        let seed = 7_000_000 + gen as u64 * 10_000 + i;
+        let (_, won) = eval_game(cand, champ, seat, cfg, seed);
+        if won { w += 1; llr += lw; } else { l += 1; llr += ll; }
+        if llr >= bound {
+            return (true, w, l);
+        }
+        if llr <= -bound {
+            return (false, w, l);
+        }
+    }
+    (false, w, l)
 }
 
 fn evaluate_all(pop: &[Weights], champ: &Weights, cfg: &EvoCfg, gen: u32) -> Vec<f64> {
@@ -87,7 +112,7 @@ fn evaluate_all(pop: &[Weights], champ: &Weights, cfg: &EvoCfg, gen: u32) -> Vec
                         let seat = gm % cfg.players;
                         // same seeds for every genome → paired comparison
                         let seed = cfg.seed + gen as u64 * 1_000 + gm as u64;
-                        f += eval_game(w, champ, seat, cfg, seed);
+                        f += eval_game(w, champ, seat, cfg, seed).0;
                     }
                     fi[j] = f / cfg.games as f64;
                 }
@@ -97,7 +122,7 @@ fn evaluate_all(pop: &[Weights], champ: &Weights, cfg: &EvoCfg, gen: u32) -> Vec
     fits
 }
 
-fn mutate(w: &Weights, rng: &mut Rng, bounds: &[(f64, f64); 21]) -> Weights {
+fn mutate(w: &Weights, rng: &mut Rng, bounds: &[(f64, f64); 23]) -> Weights {
     let mut v = w.to_vec();
     for (i, g) in v.iter_mut().enumerate() {
         let (lo, hi) = bounds[i];
@@ -150,10 +175,17 @@ pub fn evolve(cfg: &EvoCfg) {
         let mut idx: Vec<usize> = (0..pop.len()).collect();
         idx.sort_by(|a, b| fits[*b].partial_cmp(&fits[*a]).unwrap());
         let (best, mean) = (idx[0], fits.iter().sum::<f64>() / fits.len() as f64);
-        // parity vs the champion table ≈ 75 (50 score-share + 25% win rate)
-        let promoted = fits[best] > 85.0;
-        println!("gen {gen}: best {:.1} mean {:.1}{}", fits[best], mean,
-                 if promoted { "  → NEW CHAMPION" } else { "" });
+        // parity vs the champion table ≈ 75 (50 score-share + 25% win rate);
+        // screening only — promotion requires winning an SPRT match
+        let mut promoted = false;
+        let mut sprt_note = String::new();
+        if fits[best] > 78.0 {
+            let (ok, w, l) = sprt_confirm(&pop[best], &champ, cfg, gen);
+            promoted = ok;
+            sprt_note = format!("  SPRT {w}-{l} {}", if ok { "ACCEPT → NEW CHAMPION" }
+                                                     else { "reject" });
+        }
+        println!("gen {gen}: best {:.1} mean {:.1}{sprt_note}", fits[best], mean);
         if promoted {
             champ = pop[best].clone();
             save_champ(dir, gen, fits[best], &champ);
