@@ -116,10 +116,11 @@ impl Session {
             let g = &self.game;
             // Observe from the current player's seat (fall back to the first
             // living major when a minor/barbarian is up).
-            let pid = if g.players[g.current].is_minor {
+            let current = &g.players[g.current];
+            let pid = if current.is_minor || current.is_barbarian || !current.alive {
                 g.players
                     .iter()
-                    .find(|p| !p.is_minor && p.alive)
+                    .find(|p| !p.is_minor && !p.is_barbarian && p.alive)
                     .map(|p| p.id)
                     .unwrap_or(0)
             } else {
@@ -577,6 +578,27 @@ mod tests {
         assert!(session.state()["players"][0]["ai_strategy"].is_null());
         session.step();
         assert_eq!(session.state()["players"][0]["ai_strategy"], "expansion");
+    }
+
+    #[test]
+    fn spectator_state_uses_a_major_viewpoint_during_barbarian_turns() {
+        let mut params = current();
+        params.spectate = true;
+        let mut session = Session::new(params);
+        let barbarian = session
+            .game
+            .players
+            .iter()
+            .find(|player| player.is_barbarian)
+            .unwrap()
+            .id;
+        session.game.current = barbarian;
+
+        let state = session.state();
+        let viewer = state["player"].as_u64().unwrap() as usize;
+        assert!(!session.game.players[viewer].is_minor);
+        assert!(!session.game.players[viewer].is_barbarian);
+        assert!(session.game.players[viewer].alive);
     }
 
     #[test]
