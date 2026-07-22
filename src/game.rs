@@ -4549,17 +4549,18 @@ mod district_building_wonder_runtime_tests {
         game.players[0].gold = 100.0;
 
         assert_eq!(game.levy_cost(0, minor), Some(20.0));
-        assert_eq!(game.unit_unembarked_strength(&game.units[&warrior]), 24.0);
+        assert_eq!(game.unit_unembarked_strength(&game.units[&warrior]), 23.0);
         game.do_levy_military(0, minor).unwrap();
         assert_eq!(game.units[&warrior].owner, 0);
         assert_eq!(game.units[&warrior].levied_from, Some(minor));
         assert_eq!(game.players[0].gold, 80.0);
-        assert_eq!(game.unit_unembarked_strength(&game.units[&warrior]), 24.0);
+        assert_eq!(game.unit_unembarked_strength(&game.units[&warrior]), 27.0);
 
         game.turn += STANDARD_DEAL_TURNS;
         game.process_levies(0);
         assert_eq!(game.units[&warrior].owner, minor);
         assert_eq!(game.units[&warrior].levied_from, None);
+        assert_eq!(game.unit_unembarked_strength(&game.units[&warrior]), 23.0);
     }
 
     #[test]
@@ -10253,6 +10254,15 @@ impl Game {
             .count()
     }
 
+    fn city_state_envoy_strength(&self, minor: usize) -> f64 {
+        self.players
+            .get(minor)
+            .filter(|state| state.alive && state.is_minor && !state.is_barbarian)
+            .and_then(|_| self.suzerain_of(minor))
+            .map(|suzerain| self.envoys_at(suzerain, minor) as f64)
+            .unwrap_or(0.0)
+    }
+
     /// Kilwa grants 15% in its own city for one Suzerain of a type and a
     /// further empire-wide 15% once the civilization controls two of that
     /// same type. Production types retain their unit versus infrastructure
@@ -10397,6 +10407,11 @@ impl Game {
         match p.envoys.iter_mut().find(|(m, _)| *m == minor) {
             Some(e) => e.1 += amount,
             None => p.envoys.push((minor, amount)),
+        }
+        // The Civilopedia grants one border tile for every Envoy placement;
+        // the first placement and placements that create a tie are included.
+        if let Some(city) = self.player_city_ids(minor).first().copied() {
+            self.expand_borders(city);
         }
         Ok(())
     }
@@ -11251,15 +11266,10 @@ impl Game {
         if self.has_ability(u.owner, "gifts_for_the_tlatoani") {
             s += self.empire_luxuries(u.owner) as f64; // Montezuma
         }
-        let city_state_patron = if u.levied_from.is_some() {
-            // While levied, `owner` is the Suzerain and `levied_from` is the
-            // city-state that must regain the unit when the contract ends.
-            Some(u.owner)
-        } else if self.players[u.owner].is_minor {
-            self.suzerain_of(u.owner)
-        } else {
-            None
-        };
+        // Foreign Ministry applies only after a unit is actually levied.
+        // While levied, `owner` is the Suzerain and `levied_from` is the
+        // city-state that must regain the unit when the contract ends.
+        let city_state_patron = u.levied_from.map(|_| u.owner);
         if let Some(patron) = city_state_patron {
             s += self.empire_building_sum(patron, |building| {
                 building
@@ -11268,6 +11278,12 @@ impl Game {
                     .copied()
                     .unwrap_or(0.0)
             });
+        }
+        let city_state_origin = u
+            .levied_from
+            .or_else(|| self.players[u.owner].is_minor.then_some(u.owner));
+        if let Some(minor) = city_state_origin {
+            s += self.city_state_envoy_strength(minor);
         }
         let spec = &self.rules.units[u.kind.as_str()];
         if spec.resource_maintenance > 0.0 {
@@ -14355,6 +14371,7 @@ impl Game {
 
     pub fn city_strength(&self, cid: u32) -> f64 {
         let city = &self.cities[&cid];
+        let city_state_bonus = self.city_state_envoy_strength(city.owner);
         let current_best = self
             .units
             .values()
@@ -14372,7 +14389,7 @@ impl Game {
             .filter_map(|id| {
                 let u = &self.units[&id];
                 (u.owner == city.owner && self.rules.units[u.kind.as_str()].class == "military")
-                    .then(|| self.unit_unembarked_strength(u))
+                    .then(|| self.unit_unembarked_strength(u) - city_state_bonus)
             })
             .fold(0.0, f64::max);
         let mut s = (strongest_built - 10.0).max(garrison).max(10.0);
@@ -14392,11 +14409,7 @@ impl Game {
         }
         s += self.policy_effect(city.owner, "city_defense");
         s += self.governor_effect(city.owner, city.id, "garrison_strength");
-        if self.players[city.owner].is_minor {
-            if let Some(suzerain) = self.suzerain_of(city.owner) {
-                s += self.envoys_at(suzerain, city.owner) as f64;
-            }
-        }
+        s += city_state_bonus;
         let damaged_penalty = (10.0 - city.hp.clamp(0, 200) as f64 / 20.0).round();
         (s - damaged_penalty).max(0.0)
     }
@@ -14431,6 +14444,7 @@ impl Game {
             strength += 3.0;
         }
         strength += self.policy_effect(city.owner, "city_defense");
+        strength += self.city_state_envoy_strength(city.owner);
         let damaged = (10.0 - city.encampment_hp.clamp(0, 100) as f64 / 10.0).round();
         (strength - damaged).max(0.0)
     }
@@ -19574,7 +19588,16 @@ impl Game {
             return vec![];
         };
         let spec = &self.rules.units[unit.kind.as_str()];
-        let Some(origin) = self.city_at(unit.pos).and_then(|cid| self.cities.get(&cid)) else {
+        let Some(origin_tile) = self.map.get(unit.pos) else {
+            return vec![];
+        };
+        let Some(origin) = origin_tile
+            .owner_city
+            .and_then(|city| self.cities.get(&city))
+        else {
+            return vec![];
+        };
+        let Some(origin_district) = origin_tile.district.as_deref() else {
             return vec![];
         };
         if unit.owner != pid
@@ -19585,23 +19608,28 @@ impl Game {
                 .as_deref()
                 .is_some_and(|domain| domain != "land")
             || self.tree_effect(pid, "airport_transfer") <= 0.0
+            || !self.district_is_family(origin_district, "aerodrome")
+            || !self.district_is_active(origin, origin_district, unit.pos)
             || self.city_building_effect(origin, "airlift") <= 0.0
         {
             return vec![];
         }
         self.cities
             .values()
-            .filter(|city| {
-                city.owner == pid
-                    && city.id != origin.id
-                    && self.city_building_effect(city, "airlift") > 0.0
-                    && !self.units_at(city.pos).into_iter().any(|other| {
-                        let other = &self.units[&other];
-                        other.owner == pid
-                            && self.rules.units[other.kind.as_str()].class == spec.class
-                    })
+            .filter_map(|city| {
+                if city.owner != pid
+                    || city.id == origin.id
+                    || self.city_building_effect(city, "airlift") <= 0.0
+                {
+                    return None;
+                }
+                let destination = self.city_active_district_family_position(city, "aerodrome")?;
+                (!self.units_at(destination).into_iter().any(|other| {
+                    let other = &self.units[&other];
+                    other.owner != pid || self.rules.units[other.kind.as_str()].class == spec.class
+                }))
+                .then_some(destination)
             })
-            .map(|city| city.pos)
             .collect()
     }
 
@@ -30707,7 +30735,7 @@ mod victory_conditions {
     }
 
     #[test]
-    fn late_tree_abilities_and_repeatable_nodes_execute_from_rules_data() {
+    fn late_tree_airlifts_and_repeatable_nodes_execute_from_rules_data() {
         let mut g = game_with_capitals(2, 404, 500);
         let cid = g.player_city_ids(0)[0];
         for civic in ["diplomatic_service", "nationalism", "ideology", "cold_war"] {
@@ -30729,8 +30757,8 @@ mod victory_conditions {
             .next()
             .unwrap();
         let second_city = g.found_city_for(0, second_city_position, None);
-        install_test_district(&mut g, cid, "aerodrome");
-        install_test_district(&mut g, second_city, "aerodrome");
+        let origin_aerodrome = install_test_district(&mut g, cid, "aerodrome");
+        let destination_aerodrome = install_test_district(&mut g, second_city, "aerodrome");
         g.cities
             .get_mut(&cid)
             .unwrap()
@@ -30742,7 +30770,12 @@ mod victory_conditions {
             .buildings
             .push("airport".to_string());
         g.players[0].civics.insert("rapid_deployment".to_string());
-        let airlifted = g.spawn_unit("builder", 0, g.cities[&cid].pos);
+        let center_builder = g.spawn_unit("builder", 0, g.cities[&cid].pos);
+        assert!(g.airlift_destinations(0, center_builder).is_empty());
+        let airlifted = g.spawn_unit("builder", 0, origin_aerodrome);
+        g.map.tiles.get_mut(&origin_aerodrome).unwrap().pillaged = true;
+        assert!(g.airlift_destinations(0, airlifted).is_empty());
+        g.map.tiles.get_mut(&origin_aerodrome).unwrap().pillaged = false;
         g.cities
             .get_mut(&second_city)
             .unwrap()
@@ -30754,11 +30787,25 @@ mod victory_conditions {
             .unwrap()
             .pillaged_buildings
             .remove("airport");
-        assert!(g
+        assert!(!g
             .airlift_destinations(0, airlifted)
             .contains(&second_city_position));
-        g.do_move(0, airlifted, second_city_position).unwrap();
-        assert_eq!(g.units[&airlifted].pos, second_city_position);
+        assert!(g
+            .airlift_destinations(0, airlifted)
+            .contains(&destination_aerodrome));
+        g.map
+            .tiles
+            .get_mut(&destination_aerodrome)
+            .unwrap()
+            .pillaged = true;
+        assert!(g.airlift_destinations(0, airlifted).is_empty());
+        g.map
+            .tiles
+            .get_mut(&destination_aerodrome)
+            .unwrap()
+            .pillaged = false;
+        g.do_move(0, airlifted, destination_aerodrome).unwrap();
+        assert_eq!(g.units[&airlifted].pos, destination_aerodrome);
 
         let position = g.cities[&cid]
             .owned_tiles
