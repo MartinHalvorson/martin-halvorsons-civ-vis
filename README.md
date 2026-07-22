@@ -21,8 +21,9 @@ Firaxis or 2K; no assets, art, text, or code from Civilization VI are used.
 - Tech tree **and civics tree** (28 early-game techs plus 5 space-race techs,
   and 14 civics)
   with **Eureka/Inspiration boosts** (data-driven triggers)
-- Units with **XP, promotions, fortify**, per-unit sight; melee/ranged combat
-  with Civ 6 damage math; city sieges, capture, **city ranged strikes**
+- Units with **XP/levels and fortify**, per-unit sight; melee/ranged/bombard
+  combat and **zone of control** with Civ 6 math; city sieges, capture, and
+  **city ranged strikes**
 - **Barbarians** (camps, era-scaled raiders), **city-states**, **governments**
 - War/peace; all six Civ VI victory paths: **domination, science, culture,
   religious, diplomatic, and score**
@@ -59,7 +60,8 @@ observations under `citizens` and shown in the city panel.
 ./target/release/civvis simulate --players 4 --seed 42   # AI self-play
 ./target/release/civvis soak --games 20 --turns 150      # many games, flag anomalies
 ./target/release/civvis benchmark --games 100            # turns/sec
-./target/release/civvis tournament --ais basic,random --games 40   # Elo ratings
+./target/release/civvis tournament --ais advanced,basic --games 40 # Elo ratings
+cargo run --release --bin ai_eval -- advanced basic --pairs 100   # paired seats
 ```
 
 In-process Rust agents implement one trait:

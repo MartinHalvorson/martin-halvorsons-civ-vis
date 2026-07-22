@@ -767,7 +767,7 @@ impl Game {
                     city.owner == unit.owner || self.suzerain_of(city.owner) == Some(unit.owner)
                 });
             if friendly {
-                location.rate()
+                20
             } else {
                 0
             }
@@ -3073,7 +3073,19 @@ impl Game {
 
     pub fn district_sites(&self, cid: u32, dname: &str) -> Vec<Pos> {
         let city = &self.cities[&cid];
-        let want_water = self.rules.districts[dname].water;
+        let spec = &self.rules.districts[dname];
+        if spec.specialty {
+            let capacity = 1 + (city.pop.max(1) - 1) as usize / 3;
+            let built = city
+                .districts
+                .keys()
+                .filter(|name| self.rules.districts[name.as_str()].specialty)
+                .count();
+            if built >= capacity {
+                return Vec::new();
+            }
+        }
+        let want_water = spec.water;
         let mut out = Vec::new();
         for pos in &city.owned_tiles {
             if *pos == city.pos || self.wdist(*pos, city.pos) > 3 {
@@ -3362,6 +3374,7 @@ impl Game {
                     let hit = self.units_at(pos).into_iter().any(|oid| {
                         let o = &self.units[&oid];
                         o.owner != pid && self.is_at_war(pid, o.owner)
+                            && self.rules.units[o.kind.as_str()].class == "military"
                     });
                     if hit
                         && self.city_at(pos).is_none()
@@ -3806,6 +3819,11 @@ impl Game {
                 }
             }
             let attacker_dead = self.units[&uid].hp <= 0;
+            if attacker_dead && !d_dead && self.has_ability(downer, "killer_of_cyrus") {
+                if let Some(defender) = self.units.get_mut(&did) {
+                    defender.hp = (defender.hp + 30).min(100);
+                }
+            }
             if !attacker_dead {
                 self.award_unit_combat_xp(uid, &d, false, true, d_dead);
             }
@@ -4056,6 +4074,7 @@ impl Game {
                 self.on_unit_lost(downer);
             }
         } else if let Some(cid) = city_id {
+            let starting_hp = self.cities[&cid].hp;
             let mut att_base = self.unit_ranged_attack_strength(&self.units[&uid])
                 + self.vs_bonus(pid, self.cities[&cid].owner);
             if spec.ranged_strength > 0.0
@@ -4068,10 +4087,21 @@ impl Game {
             let dmg = damage(att, cs, &mut self.rng);
             let mult = if spec.siege { 1.0 } else { 0.5 };
             self.city_take_damage(cid, dmg, mult, false);
-            // Ranged and Bombard attacks can breach defenses but cannot
-            // capture a city or reduce its Garrison Health below 1.
-            self.cities.get_mut(&cid).unwrap().hp = self.cities[&cid].hp.max(1);
-            self.award_xp(uid, 3.0);
+            if starting_hp <= 0 {
+                // Shots after a Bombard attack has depleted the garrison
+                // grant no XP and must not revive the city.
+                self.cities.get_mut(&cid).unwrap().hp = 0;
+            } else if self.cities[&cid].hp <= 0 && spec.siege {
+                // Bombard-class shots may deplete a city, but still cannot
+                // capture it. The depleting shot earns the city final-blow XP.
+                self.cities.get_mut(&cid).unwrap().hp = 0;
+                self.award_xp(uid, 10.0);
+            } else {
+                // Ordinary ranged attacks cannot reduce Garrison Health
+                // below 1 and earn the normal city-attack XP.
+                self.cities.get_mut(&cid).unwrap().hp = self.cities[&cid].hp.max(1);
+                self.award_xp(uid, 3.0);
+            }
         }
         Ok(())
     }
@@ -5010,16 +5040,16 @@ impl Game {
             if matches!(&item, Item::Project { project } if project == "repair_outer_defenses") {
                 // Repair applies Production directly to wall HP above.
             } else {
-            let cost = self.item_cost(&item);
-            let stalled = matches!(&item, Item::Unit { unit } if unit == "settler")
-                && self.cities[&cid].pop < 2;
-            if !stalled && self.cities[&cid].production >= cost {
-                if self.complete_item(pid, cid, &item) {
-                    let city = self.cities.get_mut(&cid).unwrap();
-                    city.production -= cost;
-                    city.queue.remove(0);
+                let cost = self.item_cost(&item);
+                let stalled = matches!(&item, Item::Unit { unit } if unit == "settler")
+                    && self.cities[&cid].pop < 2;
+                if !stalled && self.cities[&cid].production >= cost {
+                    if self.complete_item(pid, cid, &item) {
+                        let city = self.cities.get_mut(&cid).unwrap();
+                        city.production -= cost;
+                        city.queue.remove(0);
+                    }
                 }
-            }
             }
         }
         {
@@ -5442,6 +5472,28 @@ mod combat_scenarios {
     }
 
     #[test]
+    fn naval_and_embarked_units_only_heal_in_friendly_territory() {
+        let (mut g, center, ring) = controlled_game(3001);
+        let cid = g.found_city_for(0, center, None);
+        let friendly = ring[0];
+        g.map.tiles.get_mut(&friendly).unwrap().owner_city = Some(cid);
+        g.map.tiles.get_mut(&friendly).unwrap().terrain = "coast".to_string();
+        let neutral = g
+            .wdisk(center, 2)
+            .into_iter()
+            .find(|pos| g.wdist(center, *pos) == 2 && g.map.tiles[pos].owner_city.is_none())
+            .unwrap();
+        g.map.tiles.get_mut(&neutral).unwrap().terrain = "coast".to_string();
+
+        let galley_home = g.spawn_unit("galley", 0, friendly);
+        let galley_away = g.spawn_unit("galley", 0, neutral);
+        let embarked = g.spawn_unit("warrior", 0, friendly);
+        assert_eq!(g.unit_heal_rate(galley_home), 20);
+        assert_eq!(g.unit_heal_rate(embarked), 20);
+        assert_eq!(g.unit_heal_rate(galley_away), 0);
+    }
+
+    #[test]
     fn unit_class_matchups_feed_the_real_melee_damage_roll() {
         let (mut g, target, ring) = controlled_game(301);
         let attacker = g.spawn_unit("spearman", 0, ring[0]);
@@ -5677,6 +5729,48 @@ mod combat_scenarios {
     }
 
     #[test]
+    fn religious_layer_and_undefended_unit_capture_follow_civ6_targeting() {
+        let (mut g, target, ring) = controlled_game(3131);
+        g.at_war.clear();
+        let missionary = g.spawn_unit("missionary", 1, target);
+        let warrior = g.spawn_unit("warrior", 0, ring[0]);
+        g.apply(0, &Action::Move { unit: warrior, to: target }).unwrap();
+        assert_eq!(g.units[&missionary].pos, target);
+        assert_eq!(g.units[&warrior].pos, target,
+                   "military and religious units use separate map layers");
+
+        let (mut g, target, ring) = controlled_game(3132);
+        let builder = g.spawn_unit("builder", 1, target);
+        let warrior = g.spawn_unit("warrior", 0, ring[0]);
+        let archer = g.spawn_unit("archer", 0, ring[1]);
+        assert!(g.apply(0, &Action::Ranged { unit: archer, target }).is_err(),
+                "ranged attacks cannot target undefended civilians");
+        assert!(!g.legal_actions(0).into_iter().any(|action| {
+            matches!(action, Action::Attack { unit, target: to }
+                if unit == warrior && to == target)
+                || matches!(action, Action::Ranged { unit, target: to }
+                    if unit == archer && to == target)
+        }));
+        g.apply(0, &Action::Move { unit: warrior, to: target }).unwrap();
+        assert_eq!(g.units[&builder].owner, 0);
+
+        let (mut g, city_pos, ring) = controlled_game(3133);
+        let cid = g.found_city_for(0, city_pos, None);
+        g.cities.get_mut(&cid).unwrap().buildings.push("walls".to_string());
+        g.cities.get_mut(&cid).unwrap().wall_hp = 100;
+        let civilian_pos = ring[0];
+        g.spawn_unit("builder", 1, civilian_pos);
+        assert!(!g.legal_actions(0).into_iter().any(|action| {
+            matches!(action, Action::CityStrike { city, target }
+                if city == cid && target == civilian_pos)
+        }));
+        assert!(g.apply(0, &Action::CityStrike {
+            city: cid,
+            target: civilian_pos,
+        }).is_err());
+    }
+
+    #[test]
     fn city_garrisons_are_protected_and_a_siege_ring_prevents_healing() {
         let (mut g, city_pos, ring) = controlled_game(314);
         let cid = g.found_city_for(1, city_pos, Some("Test".to_string()));
@@ -5695,6 +5789,95 @@ mod combat_scenarios {
         assert!(g.city_under_siege(cid));
         g.process_city(1, cid);
         assert_eq!(g.cities[&cid].hp, 100);
+    }
+
+    #[test]
+    fn ranged_and_bombard_city_final_blows_and_scythia_healing_follow_civ6() {
+        let (mut g, city_pos, ring) = controlled_game(3141);
+        let cid = g.found_city_for(1, city_pos, None);
+        g.cities.get_mut(&cid).unwrap().hp = 1;
+        let archer = g.spawn_unit("archer", 0, ring[0]);
+        g.apply(0, &Action::Ranged { unit: archer, target: city_pos }).unwrap();
+        assert_eq!(g.cities[&cid].hp, 1);
+        assert_eq!(g.units[&archer].xp, 3);
+
+        let catapult = g.spawn_unit("catapult", 0, ring[1]);
+        g.apply(0, &Action::Ranged { unit: catapult, target: city_pos }).unwrap();
+        assert_eq!(g.cities[&cid].hp, 0,
+                   "Bombard attacks may deplete but cannot capture cities");
+        assert_eq!(g.cities[&cid].owner, 1);
+        assert_eq!(g.units[&catapult].xp, 10);
+
+        let second_catapult = g.spawn_unit("catapult", 0, ring[2]);
+        g.apply(0, &Action::Ranged { unit: second_catapult, target: city_pos }).unwrap();
+        assert_eq!(g.cities[&cid].hp, 0);
+        assert_eq!(g.units[&second_catapult].xp, 0,
+                   "attacks after city depletion grant no XP");
+
+        let (mut g, target, ring) = controlled_game(3142);
+        g.players[0].civ = "Scythia".to_string();
+        let archer = g.spawn_unit("archer", 0, ring[0]);
+        g.units.get_mut(&archer).unwrap().hp = 50;
+        let defender = g.spawn_unit("warrior", 1, target);
+        g.units.get_mut(&defender).unwrap().hp = 1;
+        g.apply(0, &Action::Ranged { unit: archer, target }).unwrap();
+        assert!(!g.units.contains_key(&defender));
+        assert_eq!(g.units[&archer].hp, 80);
+
+        let (mut g, target, ring) = controlled_game(3145);
+        g.players[1].civ = "Scythia".to_string();
+        let attacker = g.spawn_unit("warrior", 0, ring[0]);
+        g.units.get_mut(&attacker).unwrap().hp = 1;
+        let defender = g.spawn_unit("warrior", 1, target);
+        g.units.get_mut(&defender).unwrap().hp = 50;
+        let mut expected_rng = g.rng.clone();
+        let expected_damage = damage(10.0, 15.0, &mut expected_rng);
+        g.apply(0, &Action::Attack { unit: attacker, target }).unwrap();
+        assert!(!g.units.contains_key(&attacker));
+        assert_eq!(g.units[&defender].hp, (50 - expected_damage + 30).min(100),
+                   "Scythian defenders also heal after eliminating an attacker");
+    }
+
+    #[test]
+    fn gathering_storm_walls_require_explicit_repair_and_land_units_to_fortify() {
+        let (mut g, city_pos, _) = controlled_game(3143);
+        let cid = g.found_city_for(0, city_pos, None);
+        g.cities.get_mut(&cid).unwrap().buildings.push("walls".to_string());
+        g.cities.get_mut(&cid).unwrap().wall_hp = 50;
+        assert_eq!(g.city_max_wall_hp(&g.cities[&cid]), 100);
+
+        let medieval = Item::Building { building: "medieval_walls".to_string() };
+        g.players[0].techs.insert("castles".to_string());
+        assert!(!g.can_produce(0, cid, &medieval),
+                "damaged Ancient Walls must be repaired before upgrading");
+
+        g.turn = 3;
+        g.process_city(0, cid);
+        assert_eq!(g.cities[&cid].wall_hp, 50,
+                   "Outer Defenses never regenerate passively");
+        let repair = Item::Project { project: "repair_outer_defenses".to_string() };
+        assert!(g.can_produce(0, cid, &repair));
+        g.cities.get_mut(&cid).unwrap().queue.push(repair);
+        g.process_city(0, cid);
+        assert!(g.cities[&cid].wall_hp > 50);
+
+        let galley = g.spawn_unit("galley", 0, city_pos);
+        assert!(!g.unit_can_fortify(&g.units[&galley]));
+        assert!(g.apply(0, &Action::Fortify { unit: galley }).is_err());
+    }
+
+    #[test]
+    fn eagle_warrior_conversion_uses_base_strength_probability() {
+        let (mut g, target, ring) = controlled_game(3144);
+        let eagle = g.spawn_unit("eagle_warrior", 0, ring[0]);
+        let warrior = g.spawn_unit("warrior", 1, target);
+        let scout = g.spawn_unit("scout", 1, ring[1]);
+        let horse = g.spawn_unit("horseman", 1, ring[2]);
+        assert_eq!(g.eagle_capture_chance(eagle, &g.units[&warrior]), 70.0);
+        assert_eq!(g.eagle_capture_chance(eagle, &g.units[&scout]), 95.0);
+        assert_eq!(g.eagle_capture_chance(eagle, &g.units[&horse]), 30.0);
+        g.players[1].is_barbarian = true;
+        assert_eq!(g.eagle_capture_chance(eagle, &g.units[&warrior]), 0.0);
     }
 
     #[test]
@@ -5935,5 +6118,47 @@ mod victory_conditions {
         assert_eq!(g.turn, 4);
         assert_eq!(g.winner, Some(0));
         assert_eq!(g.victory_type.as_deref(), Some("score"));
+    }
+
+    #[test]
+    fn specialty_district_capacity_unlocks_at_population_one_four_and_seven() {
+        let mut g = game_with_capitals(2, 407, 300);
+        let cid = g.player_city_ids(0)[0];
+        let center = g.cities[&cid].pos;
+        let owned = g.cities[&cid].owned_tiles.clone();
+        for pos in owned.iter().copied().filter(|pos| *pos != center) {
+            let tile = g.map.tiles.get_mut(&pos).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.resource = None;
+            tile.district = None;
+            tile.hills = false;
+        }
+        g.players[0].techs.extend([
+            "writing".to_string(),
+            "astrology".to_string(),
+            "rocketry".to_string(),
+        ]);
+        g.players[0].civics.insert("drama_poetry".to_string());
+
+        let campus_site = g.district_sites(cid, "campus")[0];
+        assert!(g.complete_item(0, cid, &Item::District {
+            district: "campus".to_string(), pos: campus_site,
+        }));
+        assert!(g.district_sites(cid, "holy_site").is_empty(),
+                "population 1 supports only one specialty district");
+        assert!(!g.district_sites(cid, "spaceport").is_empty(),
+                "Spaceports ignore the specialty-district population cap");
+
+        g.cities.get_mut(&cid).unwrap().pop = 4;
+        let holy_site = g.district_sites(cid, "holy_site")[0];
+        assert!(g.complete_item(0, cid, &Item::District {
+            district: "holy_site".to_string(), pos: holy_site,
+        }));
+        assert!(g.district_sites(cid, "theater_square").is_empty(),
+                "population 4 supports exactly two specialty districts");
+
+        g.cities.get_mut(&cid).unwrap().pop = 7;
+        assert!(!g.district_sites(cid, "theater_square").is_empty());
     }
 }

@@ -53,21 +53,14 @@ impl Session {
         let game = Game::new_full(params.num_players, params.width, params.height,
                                   params.seed, params.max_turns,
                                   params.num_city_states, true);
-        // Major civilizations use the coordinated strategic agent. A trained
-        // value net remains the most specialized available agent; without one,
-        // paired evaluation favors the advanced defaults over evolved weights.
-        let champ = crate::evolve::load_champion("evolved");
-        let net = crate::valuenet::ValueNet::load("evolved");
+        // Paired and multiplayer evaluation make the hierarchical agent the
+        // strongest built-in default. Minors/barbarians retain the cheaper
+        // baseline because they do not need empire-level planning.
         let ais: Vec<Box<dyn Ai + Send>> = game.players.iter().map(|p| -> Box<dyn Ai + Send> {
             if p.is_minor || p.is_barbarian {
                 return Box::new(BasicAi::new());
             }
-            match (&champ, &net) {
-                (Some(w), Some(n)) =>
-                    Box::new(crate::neural::NeuralAi::new(w.clone(), n.clone())),
-                (Some(_), None) => Box::new(AdvancedAi::new()),
-                _ => Box::new(AdvancedAi::new()),
-            }
+            Box::new(AdvancedAi::new())
         }).collect();
         Session { params, game, ais }
     }

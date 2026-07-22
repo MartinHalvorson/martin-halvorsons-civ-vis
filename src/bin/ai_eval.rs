@@ -126,9 +126,9 @@ fn main() {
             run_game(&mut g, &mut ais);
             total_turns += g.turn as u64;
             let winner = g.winner.unwrap();
-            for pid in 0..2 {
+            for (pid, name) in seats.iter().enumerate() {
                 totals
-                    .get_mut(seats[pid])
+                    .get_mut(*name)
                     .unwrap()
                     .record(&g, pid, winner == pid);
             }

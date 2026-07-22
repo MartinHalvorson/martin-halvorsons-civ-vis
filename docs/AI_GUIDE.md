@@ -9,7 +9,7 @@ Implement the `Ai` trait; you get the full `Game` API (`legal_actions`,
 `apply`, all queries):
 
 ```rust
-use civvis::{ai::{Ai, run_game, BasicAi}, game::{Action, Game}};
+use civvis::{ai::{Ai, run_game, AdvancedAi}, game::{Action, Game}};
 
 struct MyBot;
 impl Ai for MyBot {
@@ -20,17 +20,29 @@ impl Ai for MyBot {
 }
 
 let mut g = Game::new(4, 28, 18, 1, 250, 2);
-let mut ais = BasicAi::fleet(&g);
+let mut ais = AdvancedAi::fleet(&g);
 run_game(&mut g, &mut ais);
 ```
 
-The scripted `BasicAi` reads full state (cheats on fog); fair-play agents
+`AdvancedAi` is the default major-civilization agent. It maintains persistent
+grand strategy, campaign and threat state; coordinates research, diplomacy,
+recovery production, settlement, improvements, trade, and military focus; and
+falls back to the stable city governor for routine production. `BasicAi`
+remains the frozen deterministic control and the lightweight agent for
+city-states/barbarians. Both read full state (cheat on fog); fair-play agents
 should restrict themselves to `civvis::obs::observation(&game, pid)`.
 
 ## Elo tournaments
 
 ```bash
-civvis tournament --ais basic,random --games 40 --players 4
+civvis tournament --ais advanced,basic --games 40 --players 4
+```
+
+For lower-variance two-player measurement, the paired evaluator runs every map
+twice with seats swapped and reports outcome plus economy/army diagnostics:
+
+```bash
+cargo run --release --bin ai_eval -- advanced basic --pairs 100 --seed 4000
 ```
 
 ```rust
@@ -66,6 +78,8 @@ in-process Rust agents are the fast path for self-play at scale.
 
 ## Evaluation tips
 
-- Fix a seed set; report Elo vs `basic` plus mean score at turn N.
+- Fix multiple seed sets; report paired win rate vs `basic` plus multiplayer Elo.
+- Use `ai_eval` to catch regressions hidden by wins (stalled settlers, obsolete
+  armies, unfinished queues, or weak science/culture output).
 - Keep `random` in the pool as a sanity floor.
 - `soak` flags anomalies (no tech progress, minor winners) across seeds.

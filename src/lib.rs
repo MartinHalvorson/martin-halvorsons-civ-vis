@@ -748,7 +748,7 @@ mod tests {
         let cid = g.player_city_ids(0)[0];
         let cpos = g.cities[&cid].pos;
         g.cities.get_mut(&cid).unwrap().buildings.push("walls".to_string());
-        g.cities.get_mut(&cid).unwrap().wall_hp = 50;
+        g.cities.get_mut(&cid).unwrap().wall_hp = 100;
         let mine = g.player_unit_ids(0).into_iter()
             .find(|id| g.units[id].kind == "warrior").unwrap();
         let far = g.map.tiles.values()
@@ -778,7 +778,7 @@ mod tests {
         g4.apply(0, &Action::EndTurn).unwrap();
         g4.apply(1, &Action::Attack { unit: foe, target: cpos }).unwrap();
         // full-strength wall damage (>= 8) instead of the 15% trickle (<= 6)
-        assert!(50 - g4.cities[&cid].wall_hp >= 8,
+        assert!(100 - g4.cities[&cid].wall_hp >= 8,
                 "ram should breach: wall_hp {}", g4.cities[&cid].wall_hp);
     }
 

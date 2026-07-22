@@ -58,21 +58,22 @@ points; score is used only after `max_turns`.
 
 Civ 6 math: effective strength drops 1 per 10 HP lost; damage =
 `30·e^(diff/25)·U(0.8,1.2)` clamped to [1,100]. Defenders get +3 on
-hills/forest/jungle. Melee draws a counterattack; ranged does not. Cities have
-strength from pop/walls/encampment/garrison, 200 HP, and can only be captured
-by melee (ranged floors city HP at 1). Melee capture converts the city
-(pop -1, walls razed) and captures civilians.
+hills/forest/jungle. Melee draws a counterattack; ranged does not. City strength
+uses the strongest unit built (or a stronger garrison), walls, districts,
+terrain, and capital/policy modifiers. Cities have 200 HP and can only be
+captured by melee. Ordinary ranged attacks floor city HP at 1; Bombard attacks
+may deplete it to 0 but cannot capture it. Melee capture converts the city (pop
+-1, walls razed), destroys the garrison, and captures eligible civilians.
 
 ## Determinism & serialization
 
-One `random.Random(seed)` drives mapgen and combat; scripted AIs use their own
-seeded RNGs. Same seed + same action sequence = same game. `Game.to_dict()` /
-`from_dict()` round-trip the complete state including RNG, so saves can resume
-mid-game bit-exactly (tested).
+One serialized `Rng` drives map generation and combat; scripted AIs use their
+own seeded RNGs. Same seed + same action sequence = the same game, and JSON
+saves round-trip the complete state including RNG.
 
-## Fidelity notes (v0.1 simplifications)
+## Fidelity notes
 
-Districts/adjacency, dual tech+civic trees, settler pop cost, and the combat
-curve follow Civ 6. Not yet modeled: housing/amenities, rivers, eurekas,
-promotions/ZOC, embarkation, policy cards, religion beyond faith yields, great
-people, trade routes, barbarians, city-states, per-civ uniques. See ROADMAP.md.
+The combat curve, ZOC, embarkation, XP/levels, fortification, and early-game
+siege support follow Civ VI rules. Class-specific promotion choices/effects,
+linked formations/corps/armies, and independent Encampment combat remain
+unmodeled. See ROADMAP.md.
