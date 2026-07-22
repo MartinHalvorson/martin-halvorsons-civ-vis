@@ -100,7 +100,7 @@
     }
   },
   "medieval_walls": {
-    "cost": 225,
+    "cost": 220,
     "tech": "castles",
     "yields": {}
   },

@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::ai::{run_game, Ai, BasicAi, Weights};
 use crate::game::{Action, Game};
 use crate::rng::Rng;
+use crate::setup::MapSize;
 
 pub struct EvoCfg {
     pub generations: u32,
@@ -51,7 +52,10 @@ fn eval_game(w: &Weights, champ: &Weights, seat: usize, cfg: &EvoCfg, seed: u64,
              long: bool) -> (f64, bool) {
     // mix game lengths so champions aren't tuned only for short score races
     let turns = if long { cfg.max_turns * 2 } else { cfg.max_turns };
-    let mut g = Game::new(cfg.players, cfg.width, cfg.height, seed, turns, 2);
+    let city_states = MapSize::from_dimensions(cfg.width, cfg.height)
+        .map(|size| size.default_city_states)
+        .unwrap_or(2);
+    let mut g = Game::new(cfg.players, cfg.width, cfg.height, seed, turns, city_states);
     let mut ais = make_table(&g, w, champ, seat);
     run_game(&mut g, &mut ais);
     let total: i64 = g.players.iter().filter(|p| !p.is_minor)
@@ -132,7 +136,10 @@ pub fn features(g: &Game, pid: usize) -> Vec<f32> {
 fn play_sampled(w: &Weights, champ: &Weights, seat: usize, cfg: &EvoCfg,
                 seed: u64, long: bool, rows: &mut Vec<(Vec<f32>, bool)>) -> bool {
     let turns = if long { cfg.max_turns * 2 } else { cfg.max_turns };
-    let mut g = Game::new(cfg.players, cfg.width, cfg.height, seed, turns, 2);
+    let city_states = MapSize::from_dimensions(cfg.width, cfg.height)
+        .map(|size| size.default_city_states)
+        .unwrap_or(2);
+    let mut g = Game::new(cfg.players, cfg.width, cfg.height, seed, turns, city_states);
     let mut ais = make_table(&g, w, champ, seat);
     let mut pending: Vec<(Vec<f32>, usize)> = Vec::new();
     let mut last_sample = 0;

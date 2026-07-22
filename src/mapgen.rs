@@ -7,13 +7,14 @@ use crate::world::WorldMap;
 use crate::{hex, Pos};
 
 pub fn generate(rules: &Rules, width: i32, height: i32, num_spawns: usize,
+                num_natural_wonders: usize, num_continents: usize,
                 rng: &mut Rng) -> (WorldMap, Vec<Pos>) {
     let mut wm = WorldMap::new(width, height);
 
     // --- landmass via random frontier growth
     let land_target = (0.42 * (width * height) as f64) as usize;
     let mut land: BTreeSet<Pos> = BTreeSet::new();
-    for _ in 0..2.max(num_spawns / 2 + 1) {
+    for _ in 0..2.max(num_continents * 2) {
         let col = rng.randint(width / 5, width - 1 - width / 5);
         let row = rng.randint(height / 5, height - 1 - height / 5);
         land.insert(hex::offset_to_axial(col, row));
@@ -180,27 +181,53 @@ pub fn generate(rules: &Rules, width: i32, height: i32, num_spawns: usize,
         }
     }
 
-    // --- natural wonders: one water, up to two land, on plausible tiles
-    {
-        let reef: Vec<Pos> = wm.tiles.iter()
-            .filter(|(_, t)| t.terrain == "coast" && t.feature.is_none())
-            .map(|(p, _)| *p).collect();
-        if !reef.is_empty() {
-            let p = reef[rng.below(reef.len())];
-            wm.tiles.get_mut(&p).unwrap().feature = Some("great_barrier_reef".into());
-        }
-        for wonder in ["crater_lake", "pantanal"] {
-            let cands: Vec<Pos> = wm.tiles.iter()
+    // --- natural wonders: use the stock per-map-size count. The engine's
+    // wonders are single-tile simplifications, but remain unique and favor
+    // the same broad terrain families as their Civ VI counterparts.
+    let wonder_names = [
+        "great_barrier_reef",
+        "crater_lake",
+        "pantanal",
+        "uluru",
+        "yosemite",
+        "dead_sea",
+        "mount_everest",
+    ];
+    for wonder in wonder_names.iter().take(num_natural_wonders) {
+        let mut cands: Vec<Pos> = wm.tiles.iter()
+            .filter(|(_, t)| {
+                if t.feature.is_some() || t.resource.is_some() {
+                    return false;
+                }
+                match *wonder {
+                    "great_barrier_reef" => t.terrain == "coast",
+                    "crater_lake" => matches!(t.terrain.as_str(),
+                        "grassland" | "plains" | "tundra") && !t.hills && !t.river,
+                    "pantanal" => matches!(t.terrain.as_str(),
+                        "grassland" | "plains") && !t.hills,
+                    "uluru" => t.terrain == "desert" && !t.hills,
+                    "yosemite" | "mount_everest" => t.terrain == "mountain",
+                    "dead_sea" => matches!(t.terrain.as_str(), "desert" | "plains")
+                        && !t.hills && !t.river,
+                    _ => false,
+                }
+            })
+            .map(|(p, _)| *p)
+            .collect();
+        // Very unusual seeds can lack a preferred biome. Preserve the stock
+        // wonder count by falling back to an otherwise empty land tile.
+        if cands.is_empty() {
+            cands = wm.tiles.iter()
                 .filter(|(_, t)| {
-                    (t.terrain == "grassland" || t.terrain == "plains"
-                        || t.terrain == "tundra")
-                        && t.feature.is_none() && !t.hills && !t.river
+                    t.terrain != "ocean" && t.terrain != "coast"
+                        && t.feature.is_none() && t.resource.is_none()
                 })
-                .map(|(p, _)| *p).collect();
-            if !cands.is_empty() {
-                let p = cands[rng.below(cands.len())];
-                wm.tiles.get_mut(&p).unwrap().feature = Some(wonder.into());
-            }
+                .map(|(p, _)| *p)
+                .collect();
+        }
+        if !cands.is_empty() {
+            let p = cands[rng.below(cands.len())];
+            wm.tiles.get_mut(&p).unwrap().feature = Some((*wonder).into());
         }
     }
 
@@ -212,7 +239,11 @@ pub fn generate(rules: &Rules, width: i32, height: i32, num_spawns: usize,
             let t = &wm.tiles[&pos];
             (t.terrain.clone(), t.feature.clone())
         };
-        if terrain == "mountain"
+        let natural_wonder = feature.as_ref()
+            .and_then(|f| rules.features.get(f))
+            .map(|f| f.natural_wonder)
+            .unwrap_or(false);
+        if terrain == "mountain" || natural_wonder
             || feature.as_deref() == Some("oasis")
             || feature.as_deref() == Some("marsh")
         {
@@ -237,6 +268,8 @@ pub fn generate(rules: &Rules, width: i32, height: i32, num_spawns: usize,
             }
         }
     }
+
+    assign_continents(&mut wm, &land, width, num_continents, rng);
 
     // --- spawns on the largest connected passable landmass
     let passable: BTreeSet<Pos> = land
@@ -278,6 +311,39 @@ pub fn generate(rules: &Rules, width: i32, height: i32, num_spawns: usize,
         t.resource = None;
     }
     (wm, spawns)
+}
+
+/// Divide land into the stock number of named geographic regions. Civ VI's
+/// continent count is not a promise of disconnected landmasses; a large
+/// landmass can span several continents, so farthest-point Voronoi regions
+/// are a closer model than equating one flood-fill component to one continent.
+fn assign_continents(wm: &mut WorldMap, land: &BTreeSet<Pos>, width: i32,
+                     requested: usize, rng: &mut Rng) {
+    if land.is_empty() || requested == 0 {
+        return;
+    }
+    let count = requested.min(land.len());
+    let land_vec: Vec<Pos> = land.iter().cloned().collect();
+    let mut centers = vec![land_vec[rng.below(land_vec.len())]];
+    while centers.len() < count {
+        let next = *land_vec.iter()
+            .filter(|p| !centers.contains(p))
+            .max_by_key(|p| {
+                let nearest = centers.iter()
+                    .map(|c| hex::wdistance(**p, *c, width))
+                    .min()
+                    .unwrap_or(0);
+                (nearest, **p)
+            })
+            .unwrap();
+        centers.push(next);
+    }
+    for pos in land {
+        let continent = centers.iter().enumerate()
+            .min_by_key(|(id, center)| (hex::wdistance(*pos, **center, width), *id))
+            .map(|(id, _)| id);
+        wm.tiles.get_mut(pos).unwrap().continent = continent;
+    }
 }
 
 fn largest_component(cells: &BTreeSet<Pos>, width: i32) -> BTreeSet<Pos> {

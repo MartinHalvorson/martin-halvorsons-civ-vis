@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDequ
 
 use crate::rng::Rng;
 use crate::rules::{Rules, Yields};
+use crate::setup::MapSize;
 use crate::world::WorldMap;
 use crate::{hex, mapgen, Pos};
 
@@ -53,6 +54,20 @@ fn pair(a: usize, b: usize) -> (usize, usize) {
 }
 
 impl Game {
+    /// Stock setup profile governing this world. Exact stock dimensions win;
+    /// custom maps fall back to the profile for their major-player count.
+    pub fn map_size(&self) -> &'static MapSize {
+        MapSize::from_dimensions(self.map.width, self.map.height)
+            .unwrap_or_else(|| {
+                let majors = self.players.iter().filter(|p| !p.is_minor).count();
+                MapSize::for_players(majors)
+            })
+    }
+
+    pub fn max_religions(&self) -> usize {
+        self.map_size().max_religions
+    }
+
     /// Wrapped hex distance (the world is an east-west cylinder).
     pub fn wdist(&self, a: Pos, b: Pos) -> i32 {
         hex::wdistance(a, b, self.map.width)
@@ -117,10 +132,10 @@ pub struct Unit {
     pub zoc_stopped: bool,
 }
 
-/// The four territory classes used for passive unit healing.
+/// The four location classes used for passive unit healing.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HealingLocation {
-    City,
+    District,
     FriendlyTerritory,
     NeutralTerritory,
     EnemyTerritory,
@@ -129,7 +144,7 @@ pub enum HealingLocation {
 impl HealingLocation {
     pub fn rate(self) -> i32 {
         match self {
-            HealingLocation::City => 20,
+            HealingLocation::District => 20,
             HealingLocation::FriendlyTerritory => 15,
             HealingLocation::NeutralTerritory => 10,
             HealingLocation::EnemyTerritory => 5,
@@ -497,7 +512,17 @@ impl Game {
         let rules = Rules::embedded();
         let mut rng = Rng::new(seed);
         let total = num_players + num_city_states;
-        let (map, spawns) = mapgen::generate(&rules, width, height, total, &mut rng);
+        let map_size = MapSize::from_dimensions(width, height)
+            .unwrap_or_else(|| MapSize::for_players(num_players));
+        let (map, spawns) = mapgen::generate(
+            &rules,
+            width,
+            height,
+            total,
+            map_size.natural_wonders,
+            map_size.continents,
+            &mut rng,
+        );
         let mut g = Game {
             rules,
             rng,
@@ -701,34 +726,54 @@ impl Game {
     }
 
     /// Classify a tile from a unit owner's perspective for passive healing.
-    /// Only a friendly City Center receives the city rate; other districts
-    /// are ordinary friendly territory. Another civilization's land is
-    /// enemy territory only while the two owners are at war.
+    /// Districts use the district rate, while any foreign civilization's
+    /// territory is rival territory even when Open Borders or peace applies.
     pub fn healing_location(&self, owner: usize, pos: Pos) -> HealingLocation {
         let tile = self.map.get(pos);
         let territory_owner = tile
             .and_then(|tile| tile.owner_city)
             .and_then(|cid| self.cities.get(&cid))
             .map(|city| city.owner);
-        if territory_owner == Some(owner) && self.city_at(pos).is_some() {
-            return HealingLocation::City;
+        if self.city_at(pos).is_some()
+            || tile.and_then(|tile| tile.district.as_ref()).is_some()
+        {
+            return HealingLocation::District;
         }
         match territory_owner {
             Some(tile_owner) if tile_owner == owner => HealingLocation::FriendlyTerritory,
             Some(tile_owner) if self.suzerain_of(tile_owner) == Some(owner) => {
                 HealingLocation::FriendlyTerritory
             }
-            Some(tile_owner) if self.is_at_war(owner, tile_owner) => {
-                HealingLocation::EnemyTerritory
-            }
-            Some(_) => HealingLocation::NeutralTerritory,
+            Some(_) => HealingLocation::EnemyTerritory,
             None => HealingLocation::NeutralTerritory,
         }
     }
 
     pub fn unit_heal_rate(&self, uid: u32) -> i32 {
         let unit = &self.units[&uid];
-        self.healing_location(unit.owner, unit.pos).rate()
+        let location = self.healing_location(unit.owner, unit.pos);
+        let naval_or_embarked = self.rules.units[unit.kind.as_str()]
+            .domain
+            .as_deref()
+            == Some("sea")
+            || self.is_embarked(unit);
+        if naval_or_embarked {
+            let friendly = self
+                .map
+                .get(unit.pos)
+                .and_then(|tile| tile.owner_city)
+                .and_then(|cid| self.cities.get(&cid))
+                .is_some_and(|city| {
+                    city.owner == unit.owner || self.suzerain_of(city.owner) == Some(unit.owner)
+                });
+            if friendly {
+                location.rate()
+            } else {
+                0
+            }
+        } else {
+            location.rate()
+        }
     }
 
     pub fn gov_effects(&self, pid: usize) -> crate::rules::GovEffects {
@@ -949,6 +994,9 @@ impl Game {
                          founder: &str) -> Result<(), String> {
         if !self.players[pid].prophet_pending {
             return Err("no great prophet available".into());
+        }
+        if self.religions_founded() >= self.max_religions() {
+            return Err("this map has reached its religion limit".into());
         }
         if !self.rules.beliefs.follower.contains_key(follower)
             || !self.rules.beliefs.founder.contains_key(founder) {
@@ -1175,7 +1223,7 @@ impl Game {
             }
             "prophet" => {
                 let can_found = self.players[pid].religion.is_none()
-                    && self.religions_founded() < 4
+                    && self.religions_founded() < self.max_religions()
                     && self.cities.values().any(|c| {
                         c.owner == pid && c.districts.contains_key("holy_site")
                     });
@@ -1567,6 +1615,13 @@ impl Game {
             s += 3.0 * u.fortify_turns.clamp(0, 2) as f64;
         }
         s
+    }
+
+    fn unit_can_fortify(&self, u: &Unit) -> bool {
+        let spec = &self.rules.units[u.kind.as_str()];
+        spec.class == "military"
+            && spec.domain.as_deref() != Some("sea")
+            && !self.is_embarked(u)
     }
 
     pub fn unit_ranged_strength(&self, u: &Unit) -> f64 {
@@ -2096,6 +2151,11 @@ impl Game {
             let o = &self.units[&oid];
             let ospec = &self.rules.units[o.kind.as_str()];
             if o.owner != u.owner {
+                // Religious units occupy their own layer and may share a tile
+                // with any non-religious unit, regardless of diplomacy.
+                if (spec.class == "religious") != (ospec.class == "religious") {
+                    continue;
+                }
                 if ospec.class == "military" || spec.class != "military" {
                     return false;
                 }
@@ -2420,9 +2480,9 @@ impl Game {
         true
     }
 
-    /// 50 HP of outer defenses per level of walls built (Civ 6).
+    /// Gathering Storm grants 100 HP of Outer Defenses per wall level.
     pub fn city_max_wall_hp(&self, city: &City) -> i32 {
-        50 * city.buildings.iter()
+        100 * city.buildings.iter()
             .filter(|b| *b == "walls" || *b == "medieval_walls").count() as i32
     }
 
@@ -3092,6 +3152,12 @@ impl Game {
                 if city.buildings.contains(building) || !self.unlocked(pid, &spec.tech, &spec.civic) {
                     return false;
                 }
+                if building == "medieval_walls"
+                    && (!city.buildings.iter().any(|built| built == "walls")
+                        || city.wall_hp < self.city_max_wall_hp(city))
+                {
+                    return false;
+                }
                 if spec.wonder && self.wonder_built(building) {
                     return false; // one per world
                 }
@@ -3121,6 +3187,12 @@ impl Game {
                 self.district_sites(cid, district).contains(pos)
             }
             Item::Project { project } => {
+                if project == "repair_outer_defenses" {
+                    let max = self.city_max_wall_hp(city);
+                    return max > 0
+                        && city.wall_hp < max
+                        && self.turn.saturating_sub(city.last_attacked) >= 3;
+                }
                 let spec = match self.rules.projects.get(project) {
                     Some(s) => s,
                     None => return false,
@@ -3211,7 +3283,7 @@ impl Game {
                                 if pos == u.pos || !self.map.tiles.contains_key(&pos) {
                                     continue;
                                 }
-                                if self.enemy_target_at(pid, pos)
+                                if self.enemy_combat_target_at(pid, pos)
                                     && self.has_line_of_sight(u.pos, pos, true)
                                 {
                                     acts.push(Action::Ranged { unit: uid, target: pos });
@@ -3221,7 +3293,7 @@ impl Game {
                     } else {
                         for pos in self.nbrs(u.pos) {
                             if self.map.tiles.contains_key(&pos)
-                                && self.enemy_target_at(pid, pos)
+                                && self.enemy_combat_target_at(pid, pos)
                                 && self.can_pay_melee_entry(uid, pos)
                             {
                                 acts.push(Action::Attack { unit: uid, target: pos });
@@ -3276,9 +3348,7 @@ impl Game {
         }
         for uid in self.player_unit_ids(pid) {
             let u = self.units[&uid].clone();
-            let spec = &self.rules.units[u.kind.as_str()];
-            if spec.class == "military" && u.moves_left > 0.0 && !u.fortified
-                && !self.is_embarked(&u) {
+            if self.unit_can_fortify(&u) && u.moves_left > 0.0 && !u.fortified {
                 acts.push(Action::Fortify { unit: uid });
             }
         }
@@ -3356,7 +3426,7 @@ impl Game {
                     }
                 }
             }
-            if p.prophet_pending {
+            if p.prophet_pending && self.religions_founded() < self.max_religions() {
                 let taken = |b: &str| self.players.iter()
                     .any(|o| o.religion_beliefs.iter().any(|x| x == b));
                 for fo in self.rules.beliefs.follower.keys().filter(|b| !taken(b)) {
@@ -3410,10 +3480,13 @@ impl Game {
         acts
     }
 
-    fn enemy_target_at(&self, pid: usize, pos: Pos) -> bool {
+    fn enemy_combat_target_at(&self, pid: usize, pos: Pos) -> bool {
         for oid in self.units_at(pos) {
-            let owner = self.units[&oid].owner;
-            if owner != pid && self.is_at_war(pid, owner) {
+            let unit = &self.units[&oid];
+            if unit.owner != pid
+                && self.is_at_war(pid, unit.owner)
+                && self.rules.units[unit.kind.as_str()].class == "military"
+            {
                 return true;
             }
         }
@@ -3677,6 +3750,9 @@ impl Game {
             .cloned()
             .filter(|id| self.rules.units[self.units[id].kind.as_str()].class == "military")
             .collect();
+        if military.is_empty() && city_id.is_none() {
+            return Err("no combat target".into());
+        }
         {
             let mu = self.units.get_mut(&uid).unwrap();
             mu.moves_left = 0.0;
@@ -3830,8 +3906,6 @@ impl Game {
                 self.capture_city(cid, pid);
                 self.enter_tile(uid, target);
             }
-        } else {
-            self.enter_tile(uid, target); // undefended civilians: capture
         }
         Ok(())
     }
@@ -3916,7 +3990,12 @@ impl Game {
                 city_id = None;
             }
         }
-        if enemy_ids.is_empty() && city_id.is_none() {
+        let military: Vec<u32> = enemy_ids
+            .iter()
+            .cloned()
+            .filter(|id| self.rules.units[self.units[id].kind.as_str()].class == "military")
+            .collect();
+        if military.is_empty() && city_id.is_none() {
             return Err("nothing to attack".into());
         }
         {
@@ -3926,11 +4005,6 @@ impl Game {
             mu.fortify_turns = 0;
             mu.acted = true;
         }
-        let military: Vec<u32> = enemy_ids
-            .iter()
-            .cloned()
-            .filter(|id| self.rules.units[self.units[id].kind.as_str()].class == "military")
-            .collect();
         // City Center garrisons are protected while the city stands.
         if city_id.is_none() && !military.is_empty() {
             let did = *military
@@ -3972,34 +4046,16 @@ impl Game {
             }
             if defender_dead {
                 bump(&mut self.players[pid], "kills");
-                let downer = self.units[&did].owner;
-                self.remove_unit(did);
-                self.on_unit_lost(downer);
-            }
-        } else if city_id.is_none() && !enemy_ids.is_empty() {
-            let did = enemy_ids[0];
-            let defender = self.units[&did].clone();
-            let mut att_base = self.unit_ranged_attack_strength(&self.units[&uid])
-                + self.vs_bonus(pid, defender.owner);
-            if spec.bombard_strength > 0.0
-                && self.rules.units[defender.kind.as_str()]
-                    .domain
-                    .as_deref()
-                    != Some("sea")
-            {
-                att_base -= 17.0;
-            }
-            let att = effective_strength(att_base, self.units[&uid].hp);
-            let dmg = damage(att, 1.0, &mut self.rng);
-            self.units.get_mut(&did).unwrap().hp -= dmg;
-            if self.units[&did].hp <= 0 {
-                bump(&mut self.players[pid], "kills");
+                if self.has_ability(pid, "killer_of_cyrus") {
+                    if let Some(attacker) = self.units.get_mut(&uid) {
+                        attacker.hp = (attacker.hp + 30).min(100);
+                    }
+                }
                 let downer = self.units[&did].owner;
                 self.remove_unit(did);
                 self.on_unit_lost(downer);
             }
         } else if let Some(cid) = city_id {
-            let hp_before = self.cities[&cid].hp;
             let mut att_base = self.unit_ranged_attack_strength(&self.units[&uid])
                 + self.vs_bonus(pid, self.cities[&cid].owner);
             if spec.ranged_strength > 0.0
@@ -4011,15 +4067,11 @@ impl Game {
             let cs = self.city_strength(cid);
             let dmg = damage(att, cs, &mut self.rng);
             let mult = if spec.siege { 1.0 } else { 0.5 };
-            if hp_before > 0 {
-                self.city_take_damage(cid, dmg, mult, false);
-                if self.cities[&cid].hp <= 0 {
-                    self.cities.get_mut(&cid).unwrap().hp = 0;
-                    self.award_xp(uid, 10.0);
-                } else {
-                    self.award_xp(uid, 3.0);
-                }
-            }
+            self.city_take_damage(cid, dmg, mult, false);
+            // Ranged and Bombard attacks can breach defenses but cannot
+            // capture a city or reduce its Garrison Health below 1.
+            self.cities.get_mut(&cid).unwrap().hp = self.cities[&cid].hp.max(1);
+            self.award_xp(uid, 3.0);
         }
         Ok(())
     }
@@ -4242,11 +4294,8 @@ impl Game {
 
     fn do_fortify(&mut self, pid: usize, uid: u32) -> Result<(), String> {
         let u = self.own_unit(pid, uid)?;
-        if self.rules.units[u.kind.as_str()].class != "military" {
-            return Err("only military units fortify".into());
-        }
-        if self.is_embarked(&u) {
-            return Err("embarked units cannot fortify".into());
+        if !self.unit_can_fortify(&u) {
+            return Err("only unembarked land military units can fortify".into());
         }
         let mu = self.units.get_mut(&uid).unwrap();
         mu.fortified = true;
@@ -4328,21 +4377,21 @@ impl Game {
         let military: Vec<u32> = enemies.iter().cloned()
             .filter(|id| self.rules.units[self.units[id].kind.as_str()].class == "military")
             .collect();
-        let did = if military.is_empty() {
-            enemies[0]
-        } else {
-            *military.iter().max_by(|a, b| {
+        if military.is_empty() {
+            return Err("no enemy military target".into());
+        }
+        let did = *military.iter().max_by(|a, b| {
                 let ea = effective_strength(
                     self.unit_strength(&self.units[*a], true), self.units[*a].hp);
                 let eb = effective_strength(
                     self.unit_strength(&self.units[*b], true), self.units[*b].hp);
                 ea.partial_cmp(&eb).unwrap()
-            }).unwrap()
-        };
+            }).unwrap();
         let d = self.units[&did].clone();
         let ds = effective_strength(self.unit_strength(&d, true), d.hp)
             + self.tile_defense_bonus(target);
-        let att = self.city_ranged_strength(cid);
+        let naval = self.rules.units[d.kind.as_str()].domain.as_deref() == Some("sea");
+        let att = self.city_ranged_strength(cid) - if naval { 17.0 } else { 0.0 };
         let dmg = damage(att, ds, &mut self.rng);
         self.units.get_mut(&did).unwrap().hp -= dmg;
         if self.units[&did].hp > 0 {
@@ -4719,7 +4768,11 @@ impl Game {
             u.moves_left = moves;
             u.zoc_stopped = false;
             u.hp = (u.hp + heal).min(100);
-            if spec.class == "military" && !embarked && (u.fortified || !acted) {
+            if spec.class == "military"
+                && spec.domain.as_deref() != Some("sea")
+                && !embarked
+                && (u.fortified || !acted)
+            {
                 u.fortify_turns = (u.fortify_turns + 1).min(2);
             } else if acted {
                 u.fortify_turns = 0;
@@ -4895,6 +4948,10 @@ impl Game {
         let ys = self.city_yields(cid);
         let housing = self.city_housing(&self.cities[&cid]);
         let am = self.city_amenity_surplus(&self.cities[&cid]);
+        let repair_project = matches!(
+            self.cities[&cid].queue.first(),
+            Some(Item::Project { project }) if project == "repair_outer_defenses"
+        );
         let mut growth_bonus = self.empire_building_sum(pid, |b| b.growth_pct);
         if self.players[pid].pantheon.as_deref() == Some("fertility_rites") {
             growth_bonus += 10.0;
@@ -4924,11 +4981,35 @@ impl Game {
                 let c = &self.cities[&cid];
                 self.item_prod_mult(pid, cid, c.queue.first())
             };
-            let city = self.cities.get_mut(&cid).unwrap();
-            city.production += ys.production * mult;
+            let produced = ys.production * mult;
+            if repair_project {
+                let can_repair = {
+                    let city = &self.cities[&cid];
+                    let max = self.city_max_wall_hp(city);
+                    max > 0
+                        && city.wall_hp < max
+                        && self.turn.saturating_sub(city.last_attacked) >= 3
+                };
+                if can_repair {
+                    let max = self.city_max_wall_hp(&self.cities[&cid]);
+                    let city = self.cities.get_mut(&cid).unwrap();
+                    city.production += produced;
+                    let repaired = (city.production.floor() as i32).min(max - city.wall_hp);
+                    city.wall_hp += repaired;
+                    city.production -= repaired as f64;
+                    if city.wall_hp == max {
+                        city.queue.remove(0);
+                    }
+                }
+            } else {
+                self.cities.get_mut(&cid).unwrap().production += produced;
+            }
         }
         let queue_head = self.cities[&cid].queue.first().cloned();
         if let Some(item) = queue_head {
+            if matches!(&item, Item::Project { project } if project == "repair_outer_defenses") {
+                // Repair applies Production directly to wall HP above.
+            } else {
             let cost = self.item_cost(&item);
             let stalled = matches!(&item, Item::Unit { unit } if unit == "settler")
                 && self.cities[&cid].pop < 2;
@@ -4938,6 +5019,7 @@ impl Game {
                     city.production -= cost;
                     city.queue.remove(0);
                 }
+            }
             }
         }
         {
@@ -4956,16 +5038,10 @@ impl Game {
                 self.expand_borders(cid);
             }
         }
-        let max_wall = self.city_max_wall_hp(&self.cities[&cid]);
         let besieged = self.city_under_siege(cid);
-        let turn = self.turn;
         let city = self.cities.get_mut(&cid).unwrap();
         if !besieged {
             city.hp = (city.hp + 20).min(200); // Civ 6 heal rate
-        }
-        if city.wall_hp < max_wall && turn.saturating_sub(city.last_attacked) >= 3 {
-            // stand-in for the Civ 6 "repair outer defenses" project
-            city.wall_hp = (city.wall_hp + 20).min(max_wall);
         }
         ys
     }
@@ -4992,7 +5068,7 @@ impl Game {
                 }
                 self.cities.get_mut(&cid).unwrap().buildings.push(building.clone());
                 if building == "walls" || building == "medieval_walls" {
-                    self.cities.get_mut(&cid).unwrap().wall_hp += 50;
+                    self.cities.get_mut(&cid).unwrap().wall_hp += 100;
                 }
                 if spec.wonder {
                     self.players[pid].era_score += 3;
@@ -5024,6 +5100,9 @@ impl Game {
                 true
             }
             Item::Project { project } => {
+                if project == "repair_outer_defenses" {
+                    return true;
+                }
                 let spec = self.rules.projects[project.as_str()].clone();
                 if !spec.repeatable && self.players[pid].science_projects.contains(project) {
                     // Another city won this internal project race.
@@ -5286,8 +5365,11 @@ mod combat_scenarios {
             .unwrap();
         assert_ne!(friendly, center);
         assert_eq!(g.city_at(friendly), None);
-        // A non-center district remains ordinary friendly territory.
+        // Any district receives the 20 HP district rate.
         g.map.tiles.get_mut(&friendly).unwrap().district = Some("campus".to_string());
+        let plain_friendly = ring.iter().copied()
+            .find(|pos| *pos != friendly && g.map.tiles[pos].owner_city == Some(home))
+            .unwrap();
 
         let neutral = g
             .wdisk(center, 2)
@@ -5307,12 +5389,17 @@ mod combat_scenarios {
             .into_iter()
             .find(|pos| g.map.tiles[pos].owner_city == Some(enemy_city))
             .unwrap();
-        assert_eq!(g.city_at(friendly), None, "cities={:?}", g.city_by_pos);
+        assert_eq!(g.city_at(friendly), None);
 
         let cases = [
-            (g.spawn_unit("warrior", 0, center), HealingLocation::City, 20),
+            (g.spawn_unit("warrior", 0, center), HealingLocation::District, 20),
             (
                 g.spawn_unit("warrior", 0, friendly),
+                HealingLocation::District,
+                20,
+            ),
+            (
+                g.spawn_unit("warrior", 0, plain_friendly),
                 HealingLocation::FriendlyTerritory,
                 15,
             ),
@@ -5334,29 +5421,24 @@ mod combat_scenarios {
                 unit.acted = false;
                 unit.pos
             };
-            let city_here = g.city_at(pos);
-            assert_eq!(
-                g.healing_location(0, pos),
-                location,
-                "uid={uid} pos={pos:?} city_here={city_here:?} cities={:?} center={center:?} friendly={friendly:?} neutral={neutral:?} enemy={enemy:?}",
-                g.city_by_pos
-            );
+            assert_eq!(g.healing_location(0, pos), location);
             assert_eq!(g.unit_heal_rate(uid), rate);
         }
 
         g.begin_turn(0);
         assert_eq!(g.units[&cases[0].0].hp, 70);
-        assert_eq!(g.units[&cases[1].0].hp, 65);
-        assert_eq!(g.units[&cases[2].0].hp, 60);
-        assert_eq!(g.units[&cases[3].0].hp, 55);
+        assert_eq!(g.units[&cases[1].0].hp, 70);
+        assert_eq!(g.units[&cases[2].0].hp, 65);
+        assert_eq!(g.units[&cases[3].0].hp, 60);
+        assert_eq!(g.units[&cases[4].0].hp, 55);
 
-        // Foreign territory is neutral rather than enemy when no war exists.
+        // Peace and Open Borders do not make another civilization friendly.
         g.at_war.remove(&pair(0, 1));
         assert_eq!(
             g.healing_location(0, enemy),
-            HealingLocation::NeutralTerritory
+            HealingLocation::EnemyTerritory
         );
-        assert_eq!(g.unit_heal_rate(cases[3].0), 10);
+        assert_eq!(g.unit_heal_rate(cases[4].0), 5);
     }
 
     #[test]

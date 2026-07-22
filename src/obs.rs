@@ -44,6 +44,7 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             "hills": t.hills, "resource": t.resource,
             "improvement": t.improvement, "district": t.district,
             "owner": owner, "river": t.river, "road": t.road,
+            "continent": t.continent,
         }))
     }).collect();
     let units: Vec<Value> = g.units.values()
@@ -111,7 +112,20 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
         "world_era": g.world_era,
         "player": pid,
         "current": g.current,
-        "map": {"width": g.map.width, "height": g.map.height, "tiles": tiles},
+        "map": {
+            "size": g.map_size().id,
+            "size_name": g.map_size().name,
+            "width": g.map.width,
+            "height": g.map.height,
+            "default_players": g.map_size().default_players,
+            "max_players": g.map_size().max_players,
+            "default_city_states": g.map_size().default_city_states,
+            "max_city_states": g.map_size().max_city_states,
+            "max_religions": g.max_religions(),
+            "natural_wonders": g.map_size().natural_wonders,
+            "continents": g.map_size().continents,
+            "tiles": tiles,
+        },
         "visible": vis.iter().filter(|v| g.map.tiles.contains_key(v))
             .map(|v| json!([v.0, v.1])).collect::<Vec<_>>(),
         "camps": g.barb_camps.keys().filter(|cp| explored.contains(cp))
@@ -168,16 +182,7 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             for cid in g.player_city_ids(o.id) {
                 output.add(g.city_yields(cid));
             }
-            let military = g.player_unit_ids(o.id).into_iter().map(|uid| {
-                let u = &g.units[&uid];
-                let spec = &g.rules.units[u.kind.as_str()];
-                if spec.class != "military" {
-                    return 0.0;
-                }
-                let strength = g.unit_strength(u, false)
-                    .max(g.unit_ranged_attack_strength(u));
-                strength * (u.hp.max(0) as f64 / 100.0)
-            }).sum::<f64>().round() as i64;
+            let military = g.military_power(o.id).round() as i64;
             json!({
                 "id": o.id, "civ": o.civ,
                 "leader": g.rules.civs.get(&o.civ).map(|c| c.leader.clone()),

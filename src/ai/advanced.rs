@@ -85,6 +85,10 @@ pub struct AdvancedAi {
     plan: Option<StrategicPlan>,
     settler_targets: BTreeMap<u32, Pos>,
     builder_targets: BTreeMap<u32, Pos>,
+    major_war_since: Option<u32>,
+    last_campaign_progress: u32,
+    last_city_count: usize,
+    peace_until: u32,
 }
 
 impl Default for AdvancedAi {
@@ -100,6 +104,10 @@ impl AdvancedAi {
             plan: None,
             settler_targets: BTreeMap::new(),
             builder_targets: BTreeMap::new(),
+            major_war_since: None,
+            last_campaign_progress: 0,
+            last_city_count: 0,
+            peace_until: 0,
         }
     }
 
@@ -109,6 +117,10 @@ impl AdvancedAi {
             plan: None,
             settler_targets: BTreeMap::new(),
             builder_targets: BTreeMap::new(),
+            major_war_since: None,
+            last_campaign_progress: 0,
+            last_city_count: 0,
+            peace_until: 0,
         }
     }
 
@@ -131,6 +143,22 @@ impl AdvancedAi {
 
     pub fn current_plan(&self) -> Option<&StrategicPlan> {
         self.plan.as_ref()
+    }
+
+    fn observe_campaign(&mut self, g: &Game, pid: usize) {
+        let cities = g.player_city_ids(pid).len();
+        if cities > self.last_city_count {
+            self.last_campaign_progress = g.turn;
+        }
+        self.last_city_count = cities;
+        let major_war = g.players.iter().any(|p| {
+            p.id != pid && p.alive && !p.is_minor && !p.is_barbarian && g.is_at_war(pid, p.id)
+        });
+        if major_war {
+            self.major_war_since.get_or_insert(g.turn);
+        } else {
+            self.major_war_since = None;
+        }
     }
 
     fn plan_stale(&self, g: &Game, pid: usize) -> bool {
@@ -487,10 +515,19 @@ impl AdvancedAi {
         if strategy == GrandStrategy::Culture && civic == "drama_poetry" {
             value += 60.0;
         }
+        value += match civic {
+            "foreign_trade" | "craftsmanship" => 25.0,
+            "early_empire" | "state_workforce" => 38.0,
+            "political_philosophy" => 70.0,
+            // Culture infrastructure is a prerequisite for every strategy,
+            // not only a culture-victory plan.
+            "drama_poetry" => 55.0,
+            _ => 0.0,
+        };
         (value + 32.0) / spec.cost.max(10.0).sqrt()
     }
 
-    fn advanced_diplomacy(&self, g: &mut Game, pid: usize, plan: &StrategicPlan) {
+    fn advanced_diplomacy(&mut self, g: &mut Game, pid: usize, plan: &StrategicPlan) {
         let my_power = g.military_power(pid);
         let rivals: Vec<usize> = g
             .players
@@ -499,13 +536,21 @@ impl AdvancedAi {
             .map(|p| p.id)
             .collect();
         for other in &rivals {
+            let fatigued = self.major_war_since.is_some_and(|started| {
+                g.turn.saturating_sub(started) >= 24
+                    && g.turn.saturating_sub(self.last_campaign_progress) >= 12
+            });
             if g.is_at_war(pid, *other)
                 && !g.players[*other].is_minor
                 && (my_power < g.military_power(*other) * 0.62
                     || (plan.strategy == GrandStrategy::Recovery
-                        && plan.target_player != Some(*other)))
+                        && plan.target_player != Some(*other))
+                    || (fatigued && g.player_city_ids(*other).len() > 1))
             {
-                let _ = g.apply(pid, &Action::MakePeace { player: *other });
+                if g.apply(pid, &Action::MakePeace { player: *other }).is_ok() {
+                    self.peace_until = g.turn.saturating_add(30);
+                    self.major_war_since = None;
+                }
             }
         }
         let major_wars = rivals
@@ -518,6 +563,7 @@ impl AdvancedAi {
         if plan.strategy != GrandStrategy::Conquest
             || major_wars > 0
             || g.turn < 35
+            || g.turn < self.peace_until
             || g.player_city_ids(pid).len() < 2
             || g.is_at_war(pid, target)
         {
@@ -550,6 +596,7 @@ impl AdvancedAi {
         counts
     }
 
+    #[allow(dead_code)]
     fn advanced_production(&self, g: &mut Game, pid: usize, plan: &StrategicPlan) {
         let mut counts = self.counts(g, pid);
         let city_ids = g.player_city_ids(pid);
@@ -559,30 +606,6 @@ impl AdvancedAi {
             }
             let mut best: Option<(f64, String, Item)> = None;
             for item in g.producible_items(pid, cid) {
-                let force_goal = match plan.strategy {
-                    GrandStrategy::Conquest | GrandStrategy::Recovery => {
-                        2 * g.player_city_ids(pid).len()
-                    }
-                    _ => g.player_city_ids(pid).len(),
-                };
-                let strategic_candidate = match &item {
-                    Item::Unit { unit } if unit == "settler" => true,
-                    Item::Unit { unit } => {
-                        g.rules.units[unit].class == "military"
-                            && counts.military < force_goal
-                            && (plan.strategy == GrandStrategy::Conquest
-                                || plan.strategy == GrandStrategy::Recovery
-                                || plan.threatened_city.is_some())
-                    }
-                    Item::Building { building } => {
-                        building.contains("walls") && plan.threatened_city == Some(cid)
-                    }
-                    Item::Project { .. } => true,
-                    Item::District { .. } => false,
-                };
-                if !strategic_candidate {
-                    continue;
-                }
                 let score = self.production_value(g, pid, cid, &item, plan, &counts);
                 let key = format!("{item:?}");
                 let replace = best
@@ -609,31 +632,6 @@ impl AdvancedAi {
                     counts.add_item(g, &item);
                 }
             }
-        }
-    }
-
-    fn strategic_spending(&self, g: &mut Game, pid: usize, plan: &StrategicPlan) {
-        let counts = self.counts(g, pid);
-        let cities = g.player_city_ids(pid);
-        if cities.is_empty() {
-            return;
-        }
-        let reserve = 110.0 + 20.0 * cities.len() as f64;
-        let has_site = cities.iter().any(|cid| {
-            self.best_settle_site(g, pid, g.cities[cid].pos, 9)
-                .is_some()
-        });
-        if cities.len() + counts.settlers < plan.desired_cities
-            && counts.settlers == 0
-            && g.turn < 165
-            && has_site
-            && self.base.buy_gold_unit(g, pid, &cities, "settler", reserve)
-        {
-            return;
-        }
-        let desired_builders = cities.len().div_ceil(2).max(1);
-        if counts.builders < desired_builders {
-            let _ = self.base.buy_gold_unit(g, pid, &cities, "builder", reserve);
         }
     }
 
@@ -971,11 +969,27 @@ impl AdvancedAi {
 
     fn advanced_settler_step(&mut self, g: &mut Game, pid: usize, uid: u32) -> bool {
         let current = g.units[&uid].pos;
-        // Map generation already places each starting party in a viable
-        // region. Delaying the capital for a theoretical optimum sacrifices
-        // many turns of compounding yields and can strand an entire empire.
-        if g.player_city_ids(pid).is_empty() && g.can_found_city(uid) {
-            return g.apply(pid, &Action::FoundCity { unit: uid }).is_ok();
+        // Search only the immediate neighborhood for the capital. The target
+        // is fixed after the first assessment, preventing a rolling optimum
+        // from leading the settler across the map for many compounding turns.
+        if g.player_city_ids(pid).is_empty() {
+            let target = self.settler_targets.get(&uid).copied().or_else(|| {
+                let current_value = self.settle_value(g, pid, current);
+                let best = self.best_reachable_settle_site(g, pid, uid, 2);
+                let target = best
+                    .filter(|(_, value)| *value > current_value + 3.0)
+                    .map(|(pos, _)| pos)
+                    .unwrap_or(current);
+                self.settler_targets.insert(uid, target);
+                Some(target)
+            });
+            if target == Some(current) && g.can_found_city(uid) {
+                self.settler_targets.remove(&uid);
+                return g.apply(pid, &Action::FoundCity { unit: uid }).is_ok();
+            }
+            if let Some(target) = target {
+                return self.base.step_toward(g, pid, uid, target);
+            }
         }
         let valid_target = self.settler_targets.get(&uid).copied().filter(|target| {
             let Some(tile) = g.map.get(*target) else {
@@ -1138,8 +1152,15 @@ impl AdvancedAi {
     ) -> bool {
         let unit = g.units[&uid].clone();
         let spec = g.rules.units[unit.kind.as_str()].clone();
-        if let Some(acted) = self.base.healing_step(g, pid, uid) {
-            return acted;
+        let holding_threatened_city = plan.threatened_city.is_some_and(|cid| {
+            g.cities
+                .get(&cid)
+                .is_some_and(|city| g.wdist(unit.pos, city.pos) <= 3)
+        });
+        if !holding_threatened_city {
+            if let Some(acted) = self.base.healing_step(g, pid, uid) {
+                return acted;
+            }
         }
         let enemies: Vec<usize> = g
             .players
@@ -1153,9 +1174,18 @@ impl AdvancedAi {
 
         let ranged = spec.has_ranged_attack();
         let radius = if ranged { spec.range.max(1) } else { 1 };
+        let decline_settlers =
+            self.counts(g, pid).settlers > 0 || g.player_city_ids(pid).len() >= plan.desired_cities;
         let mut best: Option<(f64, Pos)> = None;
         for pos in g.wdisk(unit.pos, radius) {
             if pos == unit.pos || !self.base.is_enemy_tile(g, pos, &enemies) {
+                continue;
+            }
+            let unusable_settler = g
+                .units_at(pos)
+                .iter()
+                .any(|oid| g.units[oid].kind == "settler" && decline_settlers);
+            if unusable_settler && g.city_at(pos).is_none() {
                 continue;
             }
             let mut score = self.base.exchange_score(g, uid, pos, ranged);
@@ -1266,6 +1296,7 @@ impl Ai for AdvancedAi {
             self.base.take_turn(g, pid);
             return;
         }
+        self.observe_campaign(g, pid);
         if self.plan_stale(g, pid) {
             self.plan = Some(self.assess(g, pid));
         }
@@ -1281,10 +1312,12 @@ impl Ai for AdvancedAi {
         if self.base.book_pos < 4 {
             self.base.cities(g, pid);
         } else {
-            self.advanced_production(g, pid, &plan);
-            self.strategic_spending(g, pid, &plan);
-            // Handles city strikes and strategic currency spending; filled
-            // queues prevent its fallback production policy from taking over.
+            // The baseline city governor remains the stronger production
+            // policy in paired evaluation. Shared planning still governs
+            // research, diplomacy, civilians, recovery, and campaigns.
+            if plan.strategy == GrandStrategy::Recovery {
+                self.advanced_production(g, pid, &plan);
+            }
             self.base.cities(g, pid);
         }
         self.advanced_units(g, pid, &plan);
@@ -1330,5 +1363,15 @@ mod tests {
             .iter()
             .filter(|p| !p.is_minor && p.alive)
             .all(|p| p.techs.len() > 1));
+        assert!(g
+            .players
+            .iter()
+            .filter(|p| !p.is_minor && p.alive)
+            .all(|p| g
+                .player_unit_ids(p.id)
+                .into_iter()
+                .filter(|uid| g.units[uid].kind == "settler")
+                .count()
+                <= 1));
     }
 }

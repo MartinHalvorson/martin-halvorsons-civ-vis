@@ -402,7 +402,11 @@
         <div class="utility-group">
           <h2>New simulation</h2>
           <div id="newgame-options">
-            <label class="small">Major civilizations<select id="np" style="margin-top:4px"><option>2</option><option selected>4</option><option>6</option></select></label>
+            <label class="small">World size<select id="np" style="margin-top:4px">
+              <option value="2">Duel · 2 civs · 44×26</option>
+              <option value="4" selected>Tiny · 4 civs · 60×38</option>
+              <option value="6">Small · 6 civs · 74×46</option>
+            </select></label>
             <button id="newgame">Create</button>
           </div>
           <label class="small" style="display:flex;gap:7px;align-items:center;margin-top:10px"><input type="checkbox" id="specchk"> AI-only observer game</label>
@@ -682,6 +686,12 @@ async function fetchJSON(url, opts) { return await (await fetch(url, opts)).json
 let firstLoad = true;
 async function boot() {
   RULES = await fetchJSON("/rules");
+  if (Array.isArray(RULES.map_sizes)) {
+    const supported = RULES.map_sizes.filter(size => [2, 4, 6].includes(size.default_players));
+    document.getElementById("np").innerHTML = supported.map(size =>
+      `<option value="${size.default_players}">${size.name} · ${size.default_players} civs · ${size.width}×${size.height}</option>`
+    ).join("");
+  }
   render(await fetchJSON("/state"));
   if (firstLoad) {
     firstLoad = false;
@@ -869,6 +879,12 @@ function render(st, recordChronicle = true) {
   document.getElementById("endturn").style.display = SPEC ? "none" : "block";
   document.getElementById("specbar").style.display = SPEC ? "block" : "none";
   if (newWorld && st.seed !== undefined) { lastSeed = st.seed; loadTacks(); }
+  if (newWorld) {
+    const majors = st.players.filter(p => !p.is_minor && !p.is_barbarian).length;
+    const playerSelect = document.getElementById("np");
+    if ([...playerSelect.options].some(o => +o.value === majors))
+      playerSelect.value = String(majors);
+  }
   if (SPEC) sel = null;
   if (sel) sel = st.units.find(u => u.id === sel.id && u.owner === 0) || null;
   TMAP = new Map(st.map.tiles.map(t => [key(t.pos), t]));
@@ -1837,9 +1853,10 @@ function drawTopbar() {
     `<div class="hud-stat">✦ <strong>${Math.round(me.faith)}</strong><i>+${y.faith}</i></div>`;
 
   const identity = SPEC ? actor : state.players[0];
+  const mapLabel = `${state.map.size_name || "Custom"} ${state.map.width}×${state.map.height}`;
   document.getElementById("gameidentity").innerHTML =
     `<div><div class="civ-name">${identity.civ}</div>` +
-    `<div class="small">${identity.leader || "Unknown leader"}${identity.government ? ` · ${identity.government.replaceAll("_", " ")}` : ""}</div></div>` +
+    `<div class="small">${identity.leader || "Unknown leader"}${identity.government ? ` · ${identity.government.replaceAll("_", " ")}` : ""} · ${mapLabel}</div></div>` +
     `<span class="live-badge">${SPEC ? "Observing" : "Your empire"}</span>`;
 }
 

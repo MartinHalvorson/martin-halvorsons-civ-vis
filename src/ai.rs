@@ -1295,14 +1295,9 @@ impl BasicAi {
         let friendly_tiles: HashSet<Pos> = g
             .map
             .tiles
-            .iter()
-            .filter_map(|(pos, tile)| {
-                tile
-                    .owner_city
-                    .and_then(|cid| g.cities.get(&cid))
-                    .is_some_and(|city| city.owner == pid)
-                    .then_some(*pos)
-            })
+            .keys()
+            .filter(|pos| g.healing_location(pid, **pos).rate() >= 15)
+            .copied()
             .collect();
         if let Some(next) = g
             .route_step_to_any(uid, &friendly_tiles)
