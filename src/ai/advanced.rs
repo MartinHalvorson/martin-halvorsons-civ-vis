@@ -89,6 +89,7 @@ pub struct AdvancedAi {
     last_campaign_progress: u32,
     last_city_count: usize,
     peace_until: u32,
+    culture_committed: bool,
 }
 
 impl Default for AdvancedAi {
@@ -108,6 +109,7 @@ impl AdvancedAi {
             last_campaign_progress: 0,
             last_city_count: 0,
             peace_until: 0,
+            culture_committed: false,
         }
     }
 
@@ -121,6 +123,7 @@ impl AdvancedAi {
             last_campaign_progress: 0,
             last_city_count: 0,
             peace_until: 0,
+            culture_committed: false,
         }
     }
 
@@ -257,7 +260,9 @@ impl AdvancedAi {
             GrandStrategy::Conquest
         } else if cities.len() < desired_cities && has_site && g.turn < 175 {
             GrandStrategy::Expansion
-        } else if g.players[pid].civ == "Greece" {
+        } else if self.culture_committed
+            || g.players[pid].civ == "Greece"
+        {
             GrandStrategy::Culture
         } else {
             GrandStrategy::Science
@@ -1300,6 +1305,9 @@ impl Ai for AdvancedAi {
             self.plan = Some(self.assess(g, pid));
         }
         let plan = self.plan.clone().unwrap();
+        if plan.strategy == GrandStrategy::Culture {
+            self.culture_committed = true;
+        }
         self.advanced_research(g, pid, &plan);
         // Keep the mature ancillary systems: governments, policies, beliefs,
         // governors, religions, and envoys. Research is already selected.
@@ -1308,6 +1316,9 @@ impl Ai for AdvancedAi {
 
         // Preserve the proven four-build opening before switching every city
         // to utility planning. This also keeps the frozen baseline comparable.
+        let culture_focus = self.base.culture_focus;
+        let culture_building = self.culture_committed && g.turn >= 70;
+        self.base.culture_focus = culture_building;
         if self.base.book_pos < 4 {
             self.base.cities(g, pid);
         } else {
@@ -1317,8 +1328,17 @@ impl Ai for AdvancedAi {
             if plan.strategy == GrandStrategy::Recovery {
                 self.advanced_production(g, pid, &plan);
             }
+            let theater_priority = self.base.w.d_theater;
+            if culture_building {
+                self.base.w.d_theater = self.base.w.d_campus
+                    .max(self.base.w.d_commercial)
+                    .max(self.base.w.d_holy)
+                    + 1.0;
+            }
             self.base.cities(g, pid);
+            self.base.w.d_theater = theater_priority;
         }
+        self.base.culture_focus = culture_focus;
         self.advanced_units(g, pid, &plan);
         if g.winner.is_none() && g.current == pid {
             let _ = g.apply(pid, &Action::EndTurn);
@@ -1349,6 +1369,32 @@ mod tests {
         let first = ai.current_plan().unwrap().clone();
         assert!(!ai.plan_stale(&g, 0));
         assert_eq!(ai.current_plan(), Some(&first));
+    }
+
+    #[test]
+    fn culture_strategy_remains_committed_after_the_initial_plan() {
+        let mut g = Game::new(2, 24, 16, 74, 300, 0);
+        let first = g.player_unit_ids(0).into_iter()
+            .find(|uid| g.units[uid].kind == "settler").unwrap();
+        g.apply(0, &Action::FoundCity { unit: first }).unwrap();
+        g.apply(0, &Action::EndTurn).unwrap();
+        let second = g.player_unit_ids(1).into_iter()
+            .find(|uid| g.units[uid].kind == "settler").unwrap();
+        g.apply(1, &Action::FoundCity { unit: second }).unwrap();
+        g.apply(1, &Action::EndTurn).unwrap();
+        g.turn = 180;
+        g.players[0].civ = "Greece".to_string();
+
+        let mut ai = AdvancedAi::new();
+        ai.take_turn(&mut g, 0);
+        assert!(ai.culture_committed);
+        assert_eq!(ai.current_plan().map(|plan| plan.strategy),
+                   Some(GrandStrategy::Culture));
+
+        g.players[0].civ = "Rome".to_string();
+        ai.plan = None;
+        assert_eq!(ai.assess(&g, 0).strategy, GrandStrategy::Culture,
+                   "temporary conflict plans must not erase the victory commitment");
     }
 
     #[test]

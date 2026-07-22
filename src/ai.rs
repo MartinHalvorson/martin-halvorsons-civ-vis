@@ -186,6 +186,7 @@ impl Weights {
 pub struct BasicAi {
     minor: bool,
     barb: bool,
+    culture_focus: bool,
     w: Weights,
     book_pos: usize, // opening-book progress (capital builds played so far)
     /// Units that have withdrawn from combat stay in recovery until they are
@@ -198,6 +199,7 @@ impl BasicAi {
         BasicAi {
             minor: false,
             barb: false,
+            culture_focus: false,
             w: Weights::default(),
             book_pos: 0,
             recovering_units: HashSet::new(),
@@ -208,6 +210,7 @@ impl BasicAi {
         BasicAi {
             minor: false,
             barb: false,
+            culture_focus: false,
             w,
             book_pos: 0,
             recovering_units: HashSet::new(),
@@ -769,7 +772,10 @@ impl BasicAi {
                 .map(|project| Item::Project {
                     project: project.clone(),
                 })
-                .filter(|item| g.can_produce(pid, cid, item))
+                .filter(|item| {
+                    let Item::Project { project } = item else { return false };
+                    self.project_matches_focus(g, project) && g.can_produce(pid, cid, item)
+                })
                 .collect();
             projects.sort_by(|a, b| {
                 g.item_cost(a)
@@ -828,6 +834,44 @@ impl BasicAi {
                 return Some(Item::District { district: dname.to_string(), pos: best });
             }
         }
+        if self.culture_focus
+            && !g.cities[&cid].buildings.iter().any(|b| b == "amphitheater")
+        {
+            let amphitheater = Item::Building { building: "amphitheater".to_string() };
+            if g.can_produce(pid, cid, &amphitheater) {
+                return Some(amphitheater);
+            }
+        }
+        if self.culture_focus {
+            let empire_wonders = g.cities.values()
+                .filter(|city| city.owner == pid)
+                .flat_map(|city| city.buildings.iter())
+                .filter(|building| g.rules.buildings[building.as_str()].wonder)
+                .count();
+            if empire_wonders < 3 {
+                let queued: HashSet<&str> = g.cities.values()
+                    .filter_map(|city| match city.queue.first() {
+                        Some(Item::Building { building })
+                            if g.rules.buildings[building.as_str()].wonder => {
+                                Some(building.as_str())
+                            }
+                        _ => None,
+                    })
+                    .collect();
+                let wonder = g.rules.buildings.iter()
+                    .filter(|(building, spec)| spec.wonder
+                        && !queued.contains(building.as_str())
+                        && g.can_produce(pid, cid, &Item::Building {
+                            building: (*building).clone(),
+                        }))
+                    .min_by(|(an, a), (bn, b)| a.cost.partial_cmp(&b.cost).unwrap()
+                        .then_with(|| an.cmp(bn)))
+                    .map(|(building, _)| Item::Building { building: building.clone() });
+                if wonder.is_some() {
+                    return wonder;
+                }
+            }
+        }
         let mut buildable: Vec<(i64, String)> = g
             .rules
             .buildings
@@ -856,6 +900,11 @@ impl BasicAi {
         }
         self.combined_arms_unit(g, pid, cid, melee, ranged)
             .map(|m| Item::Unit { unit: m })
+    }
+
+    fn project_matches_focus(&self, g: &Game, project: &str) -> bool {
+        !self.culture_focus
+            || g.rules.projects[project].district.as_deref() != Some("spaceport")
     }
 
     fn units(&mut self, g: &mut Game, pid: usize) {
@@ -1538,6 +1587,28 @@ mod tests {
         let next = ai.pick_item(&g, 0, home, 1, 0, 1, 0, 1, 2, 2, 0).unwrap();
         assert!(!matches!(next, Item::Unit { unit }
             if unit == "battering_ram" || unit == "siege_tower"));
+    }
+
+    #[test]
+    fn culture_focus_skips_space_projects_and_finishes_amphitheaters_first() {
+        let mut g = Game::new_full(1, 20, 14, 35, 300, 0, false);
+        let settler = g.player_unit_ids(0).into_iter()
+            .find(|id| g.units[id].kind == "settler").unwrap();
+        g.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let cid = g.player_city_ids(0)[0];
+        let theater = g.cities[&cid].owned_tiles[1];
+        g.players[0].civics.insert("drama_poetry".to_string());
+        g.cities.get_mut(&cid).unwrap().districts
+            .insert("theater_square".to_string(), theater);
+        g.cities.get_mut(&cid).unwrap().buildings.push("monument".to_string());
+
+        let mut ai = BasicAi::new();
+        ai.culture_focus = true;
+        assert!(!ai.project_matches_focus(&g, "launch_earth_satellite"));
+        assert!(ai.project_matches_focus(&g, "repair_outer_defenses"));
+
+        let item = ai.pick_item(&g, 0, cid, 1, 1, 1, 0, 0, 1, 1, 0).unwrap();
+        assert_eq!(item, Item::Building { building: "amphitheater".to_string() });
     }
 
     #[test]

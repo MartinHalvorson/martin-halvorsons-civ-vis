@@ -4797,7 +4797,7 @@ impl Game {
         let amphitheaters = cities.iter()
             .filter(|city| city.buildings.iter().any(|building| building == "amphitheater"))
             .count() as f64;
-        0.4 * culture + 4.0 * wonders + 3.0 * theaters + 4.0 * amphitheaters
+        0.4 * culture + 4.0 * wonders + 6.0 * theaters + 8.0 * amphitheaters
     }
 
     /// Culture victory: visiting tourists must exceed the largest rival
@@ -6237,7 +6237,7 @@ mod victory_conditions {
         city.buildings.push("amphitheater".to_string());
         city.buildings.push(wonder);
 
-        assert!((g.tourism_output(0, 10.0) - 15.0).abs() < 1e-9);
+        assert!((g.tourism_output(0, 10.0) - 22.0).abs() < 1e-9);
     }
 
     #[test]
