@@ -2153,6 +2153,88 @@ impl BasicAi {
             && self.buy_gold_military(g, pid, city_ids, reserve, want_ranged)
     }
 
+    fn economic_recovery_item(
+        &self,
+        g: &Game,
+        pid: usize,
+        cid: u32,
+        traders: usize,
+    ) -> Option<Item> {
+        if g.active_routes(pid) + (traders as i64) < g.trade_capacity(pid) {
+            let trader = Item::Unit {
+                unit: "trader".to_string(),
+            };
+            if g.can_produce(pid, cid, &trader) {
+                return Some(trader);
+            }
+        }
+
+        let profitable_building = g
+            .rules
+            .buildings
+            .iter()
+            .filter(|(_, spec)| !spec.wonder && spec.yields.gold > spec.maintenance)
+            .filter(|(building, _)| {
+                g.can_produce(
+                    pid,
+                    cid,
+                    &Item::Building {
+                        building: (*building).clone(),
+                    },
+                )
+            })
+            .map(|(building, spec)| {
+                let net_gold = spec.yields.gold - spec.maintenance;
+                (
+                    net_gold / spec.cost.max(1.0),
+                    net_gold,
+                    std::cmp::Reverse(spec.cost as i64),
+                    std::cmp::Reverse(building.clone()),
+                    building.clone(),
+                )
+            })
+            .max_by(|left, right| {
+                left.0
+                    .partial_cmp(&right.0)
+                    .unwrap()
+                    .then_with(|| left.1.partial_cmp(&right.1).unwrap())
+                    .then(left.2.cmp(&right.2))
+                    .then(left.3.cmp(&right.3))
+            })
+            .map(|(_, _, _, _, building)| Item::Building { building });
+        if profitable_building.is_some() {
+            return profitable_building;
+        }
+
+        ["commercial_hub", "harbor"]
+            .into_iter()
+            .flat_map(|district| {
+                g.district_sites(cid, district)
+                    .into_iter()
+                    .map(move |pos| (district, pos))
+            })
+            .filter_map(|(district, pos)| {
+                let item = Item::District {
+                    district: district.to_string(),
+                    pos,
+                };
+                g.can_produce(pid, cid, &item).then_some((
+                    g.district_yields(district, pos).gold,
+                    std::cmp::Reverse(district),
+                    std::cmp::Reverse(pos),
+                    item,
+                ))
+            })
+            .max_by(|left, right| {
+                left.0
+                    .partial_cmp(&right.0)
+                    .unwrap()
+                    .then(left.1.cmp(&right.1))
+                    .then(left.2.cmp(&right.2))
+            })
+            .map(|(_, _, _, item)| item)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn pick_item(
         &self,
@@ -2169,6 +2251,22 @@ impl BasicAi {
         ranged: usize,
     ) -> Option<Item> {
         let city_pop = g.cities[&cid].pop;
+        let at_major_war = g.players.iter().any(|player| {
+            player.id != pid
+                && player.alive
+                && !player.is_barbarian
+                && !player.is_minor
+                && g.is_at_war(pid, player.id)
+        });
+        let recovery_reserve = 100.0 + 25.0 * n_cities as f64;
+        let economic_recovery = !self.minor
+            && !self.barb
+            && g.players[pid].gold_per_turn < -0.5
+            && g.players[pid].gold < recovery_reserve;
+        let emergency_defense = at_major_war && military < n_cities.max(1);
+        if economic_recovery && !emergency_defense {
+            return self.economic_recovery_item(g, pid, cid, traders);
+        }
         let can_add_military = !self.minor || military < Self::minor_military_budget(g, pid);
         if can_add_military && (military as f64) < self.w.mil_per_city * n_cities as f64 {
             if let Some(m) = self.combined_arms_unit(g, pid, cid, melee, ranged) {
@@ -4603,6 +4701,78 @@ mod tests {
             Action::BuyBuilding { building, currency, .. }
                 if building == "monument" && currency == "gold"
         )));
+    }
+
+    #[test]
+    fn deficit_empire_builds_its_way_back_to_positive_gpt() {
+        let mut g = Game::new_full(1, 20, 14, 323, 60, 0, false);
+        let settler = g
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|id| g.units[id].kind == "settler")
+            .unwrap();
+        g.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        g.players[0].techs.insert("currency".to_string());
+        g.players[0].gold = 0.0;
+        g.players[0].gold_per_turn = -9.2;
+        let cid = g.player_city_ids(0)[0];
+        let ai = BasicAi::new();
+
+        let district = ai
+            .pick_item(&g, 0, cid, 1, 0, 0, 0, 0, 4, 2, 2)
+            .expect("a deficit city should establish gold infrastructure");
+        let Item::District {
+            district,
+            pos: commercial_hub,
+        } = district
+        else {
+            panic!("expected a Commercial Hub, got {district:?}");
+        };
+        assert_eq!(district, "commercial_hub");
+        g.map.tiles.get_mut(&commercial_hub).unwrap().district = Some(district.clone());
+        g.cities
+            .get_mut(&cid)
+            .unwrap()
+            .districts
+            .insert(district, commercial_hub);
+
+        assert_eq!(
+            ai.pick_item(&g, 0, cid, 1, 0, 0, 0, 0, 4, 2, 2),
+            Some(Item::Building {
+                building: "market".to_string()
+            })
+        );
+        g.cities
+            .get_mut(&cid)
+            .unwrap()
+            .buildings
+            .push("market".to_string());
+        g.players[0].civics.insert("foreign_trade".to_string());
+        assert_eq!(
+            ai.pick_item(&g, 0, cid, 1, 0, 0, 0, 0, 4, 2, 2),
+            Some(Item::Unit {
+                unit: "trader".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn deficit_empire_without_a_recovery_build_does_not_add_upkeep() {
+        let mut g = Game::new_full(1, 20, 14, 324, 60, 0, false);
+        let settler = g
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|id| g.units[id].kind == "settler")
+            .unwrap();
+        g.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        g.players[0].gold = 0.0;
+        g.players[0].gold_per_turn = -4.0;
+        let cid = g.player_city_ids(0)[0];
+
+        assert_eq!(
+            BasicAi::new().pick_item(&g, 0, cid, 1, 0, 0, 0, 0, 6, 3, 3),
+            None
+        );
     }
 
     #[test]
