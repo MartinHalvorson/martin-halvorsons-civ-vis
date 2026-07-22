@@ -1245,6 +1245,9 @@ impl AdvancedAi {
                 GrandStrategy::Culture => ["printing", "radio", "computers"]
                     .into_iter()
                     .find(|tech| !g.players[pid].techs.contains(*tech)),
+                GrandStrategy::Diplomacy if !g.players[pid].techs.contains("seasteads") => {
+                    Some("seasteads")
+                }
                 GrandStrategy::Religion if !g.players[pid].techs.contains("astrology") => {
                     Some("astrology")
                 }
@@ -1291,6 +1294,11 @@ impl AdvancedAi {
                 .find(|civic| !g.players[pid].civics.contains(*civic)),
                 GrandStrategy::Science if !g.players[pid].civics.contains("space_race") => {
                     Some("space_race")
+                }
+                GrandStrategy::Diplomacy
+                    if !g.players[pid].civics.contains("global_warming_mitigation") =>
+                {
+                    Some("global_warming_mitigation")
                 }
                 GrandStrategy::Religion if !g.players[pid].civics.contains("theology") => {
                     Some("theology")
@@ -8995,6 +9003,19 @@ mod tests {
             culture.players[0].research.as_deref(),
             Some("mining"),
             "the available prerequisite toward Printing wins"
+        );
+
+        let mut diplomacy = Game::new_full(1, 20, 14, 764, 300, 0, false);
+        ai.advanced_research(&mut diplomacy, 0, &plan(GrandStrategy::Diplomacy));
+        let tech = diplomacy.players[0].research.as_deref().unwrap();
+        assert!(
+            ai.tech_leads_to(&diplomacy, tech, "seasteads"),
+            "diplomatic research must advance toward Seasteads' victory point"
+        );
+        let civic = diplomacy.players[0].civic.as_deref().unwrap();
+        assert!(
+            ai.civic_leads_to(&diplomacy, civic, "global_warming_mitigation"),
+            "diplomatic culture must advance toward Global Warming Mitigation's victory point"
         );
     }
 
