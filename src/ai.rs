@@ -941,6 +941,9 @@ impl BasicAi {
                 .any(|action| matches!(action, Action::LiberateCity { city } if *city == cid));
             let diplomatic_liberation = can_liberate
                 && (prefer_diplomacy
+                    || g.active_emergencies.iter().any(|emergency| {
+                        emergency.city == cid && emergency.members.contains(&pid)
+                    })
                     || g.players[founder].is_minor
                     || !g.players[founder].alive
                     || g.are_friends(pid, founder)
@@ -1225,70 +1228,93 @@ impl BasicAi {
                     continue;
                 }
                 let own_a = format!("A:{pid}");
-                let choice = resolution
-                    .ballots
-                    .values()
-                    .max_by_key(|(choice, votes)| (*votes, std::cmp::Reverse(choice.clone())))
-                    .map(|(choice, _)| choice.clone())
+                let emergency_choice = g
+                    .emergency_proposal_for_resolution(&resolution.id)
+                    .and_then(|proposal| {
+                        if proposal.target == pid {
+                            Some("B:oppose".to_string())
+                        } else if proposal.eligible.contains(&pid) {
+                            Some("A:support".to_string())
+                        } else {
+                            None
+                        }
+                    });
+                if g.emergency_proposal_for_resolution(&resolution.id)
+                    .is_some()
+                    && emergency_choice.is_none()
+                {
+                    continue;
+                }
+                let choice = emergency_choice
                     .or_else(|| {
-                        (resolution.id == "world_leader"
-                            || resolution.id == "trade_policy"
-                            || resolution.id == "migration_treaty"
-                            || resolution.id == "border_control_treaty"
-                            || resolution.id == "public_relations")
-                            .then(|| {
-                                resolution
-                                    .choices
-                                    .iter()
-                                    .find(|choice| **choice == own_a)
-                                    .cloned()
-                            })
-                            .flatten()
-                    })
-                    .or_else(|| {
-                        (resolution.id == "world_ideology")
-                            .then(|| {
-                                let own_government = g.players[pid].government.as_deref()?;
-                                let wanted = format!("A:{own_government}");
-                                resolution
-                                    .choices
-                                    .iter()
-                                    .find(|choice| **choice == wanted)
-                                    .cloned()
-                            })
-                            .flatten()
-                    })
-                    .or_else(|| {
-                        (resolution.id == "mercenary_companies")
-                            .then(|| {
-                                resolution
-                                    .choices
-                                    .iter()
-                                    .find(|choice| choice.as_str() == "B:production")
-                                    .cloned()
-                            })
-                            .flatten()
-                    })
-                    .or_else(|| {
-                        let preferred = match resolution.id.as_str() {
-                            "global_energy_treaty" => Some("A:coal_power_plant"),
-                            "public_works_program" => resolution
-                                .choices
-                                .iter()
-                                .find(|choice| choice.starts_with("A:"))
-                                .map(String::as_str),
-                            "deforestation_treaty" => resolution
-                                .choices
-                                .iter()
-                                .find(|choice| choice.starts_with("A:"))
-                                .map(String::as_str),
-                            _ => None,
-                        }?;
                         resolution
-                            .choices
-                            .iter()
-                            .find(|choice| choice.as_str() == preferred)
-                            .cloned()
+                            .ballots
+                            .values()
+                            .max_by_key(|(choice, votes)| {
+                                (*votes, std::cmp::Reverse(choice.clone()))
+                            })
+                            .map(|(choice, _)| choice.clone())
+                            .or_else(|| {
+                                (resolution.id == "world_leader"
+                                    || resolution.id == "trade_policy"
+                                    || resolution.id == "migration_treaty"
+                                    || resolution.id == "border_control_treaty"
+                                    || resolution.id == "public_relations")
+                                    .then(|| {
+                                        resolution
+                                            .choices
+                                            .iter()
+                                            .find(|choice| **choice == own_a)
+                                            .cloned()
+                                    })
+                                    .flatten()
+                            })
+                            .or_else(|| {
+                                (resolution.id == "world_ideology")
+                                    .then(|| {
+                                        let own_government =
+                                            g.players[pid].government.as_deref()?;
+                                        let wanted = format!("A:{own_government}");
+                                        resolution
+                                            .choices
+                                            .iter()
+                                            .find(|choice| **choice == wanted)
+                                            .cloned()
+                                    })
+                                    .flatten()
+                            })
+                            .or_else(|| {
+                                (resolution.id == "mercenary_companies")
+                                    .then(|| {
+                                        resolution
+                                            .choices
+                                            .iter()
+                                            .find(|choice| choice.as_str() == "B:production")
+                                            .cloned()
+                                    })
+                                    .flatten()
+                            })
+                            .or_else(|| {
+                                let preferred = match resolution.id.as_str() {
+                                    "global_energy_treaty" => Some("A:coal_power_plant"),
+                                    "public_works_program" => resolution
+                                        .choices
+                                        .iter()
+                                        .find(|choice| choice.starts_with("A:"))
+                                        .map(String::as_str),
+                                    "deforestation_treaty" => resolution
+                                        .choices
+                                        .iter()
+                                        .find(|choice| choice.starts_with("A:"))
+                                        .map(String::as_str),
+                                    _ => None,
+                                }?;
+                                resolution
+                                    .choices
+                                    .iter()
+                                    .find(|choice| choice.as_str() == preferred)
+                                    .cloned()
+                            })
                     })
                     .unwrap_or_else(|| resolution.choices[pid % resolution.choices.len()].clone());
                 let votes = if g.players[pid].diplomatic_favor >= 30.0 {
@@ -1317,7 +1343,10 @@ impl BasicAi {
             .map(|o| o.id)
             .collect();
         for o in &others {
-            if g.is_at_war(pid, *o) && my_power < self.w.peace_ratio * g.military_power(*o) {
+            if g.is_at_war(pid, *o)
+                && !g.emergency_war_pair(pid, *o)
+                && my_power < self.w.peace_ratio * g.military_power(*o)
+            {
                 let _ = g.apply(pid, &Action::MakePeace { player: *o });
             }
         }
@@ -2020,8 +2049,15 @@ impl BasicAi {
             let mut projects: Vec<Item> = g
                 .rules
                 .projects
-                .keys()
-                .map(|project| Item::Project {
+                .iter()
+                .filter(|(project, spec)| {
+                    !spec.repeatable
+                        || matches!(
+                            project.as_str(),
+                            "lagrange_laser_station" | "terrestrial_laser_station"
+                        )
+                })
+                .map(|(project, _)| Item::Project {
                     project: project.clone(),
                 })
                 .filter(|item| g.can_produce(pid, cid, item))
@@ -2188,6 +2224,37 @@ impl BasicAi {
                 return Some(Item::Building {
                     building: wonders[0].1.clone(),
                 });
+            }
+        }
+        // Repeatable district projects are a developed-city fallback. If
+        // considered with mandatory projects above, their low early base cost
+        // makes a basic AI loop them forever before building Monuments,
+        // districts, or district buildings.
+        if !self.minor && !self.barb {
+            let mut projects: Vec<Item> = g
+                .rules
+                .projects
+                .iter()
+                .filter(|(project, spec)| {
+                    spec.repeatable
+                        && !matches!(
+                            project.as_str(),
+                            "lagrange_laser_station" | "terrestrial_laser_station"
+                        )
+                })
+                .map(|(project, _)| Item::Project {
+                    project: project.clone(),
+                })
+                .filter(|item| g.can_produce(pid, cid, item))
+                .collect();
+            projects.sort_by(|a, b| {
+                g.item_cost_for(pid, a)
+                    .partial_cmp(&g.item_cost_for(pid, b))
+                    .unwrap()
+                    .then_with(|| format!("{a:?}").cmp(&format!("{b:?}")))
+            });
+            if let Some(project) = projects.into_iter().next() {
+                return Some(project);
             }
         }
         self.combined_arms_unit(g, pid, cid, melee, ranged)
@@ -3508,6 +3575,50 @@ mod tests {
             .pick_item(&g, 0, cid, 1, 0, 2, 1, 5, 3, 2)
             .expect("coastal city has a production choice");
         assert!(matches!(item, Item::Unit { unit } if unit == "quadrireme"));
+    }
+
+    #[test]
+    fn repeatable_district_projects_do_not_preempt_basic_infrastructure() {
+        let mut g = Game::new_full(1, 24, 16, 91_771, 120, 0, false);
+        let settler = g
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| g.units[unit].kind == "settler")
+            .unwrap();
+        g.found_city_for(0, g.units[&settler].pos, None);
+        let city = g.player_city_ids(0)[0];
+        g.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .retain(|building| building != "monument");
+        for position in g.nbrs(g.cities[&city].pos) {
+            g.map.tiles.get_mut(&position).unwrap().terrain = "plains".to_string();
+        }
+        let campus = g.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != g.cities[&city].pos)
+            .unwrap();
+        g.map.tiles.get_mut(&campus).unwrap().district = Some("campus".to_string());
+        g.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert("campus".to_string(), campus);
+        let grants = Item::Project {
+            project: "campus_research_grants".to_string(),
+        };
+        assert!(g.can_produce(0, city, &grants));
+
+        let item = BasicAi::new()
+            .pick_item(&g, 0, city, 8, 2, 20, 10, 20, 10, 10)
+            .expect("developing city has a production choice");
+        assert!(
+            matches!(item, Item::Building { ref building } if building == "monument"),
+            "repeatable project displaced {item:?}"
+        );
     }
 
     #[test]

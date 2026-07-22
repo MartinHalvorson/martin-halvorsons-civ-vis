@@ -745,9 +745,12 @@ impl AdvancedAi {
         );
         let victory = self.victory_focus(g, pid);
         let denial = self.victory_denial(g, pid);
+        let emergency_objective = g.emergency_objective(pid).cloned();
         let strategy = if at_war && (threatened_city.is_some() || my_power * 1.25 < strongest_rival)
         {
             GrandStrategy::Recovery
+        } else if emergency_objective.is_some() {
+            GrandStrategy::Conquest
         } else if let Some(target) = self.victory_target {
             if target == VictoryTarget::Religion && g.players[pid].religion.is_none() {
                 GrandStrategy::Religion
@@ -777,7 +780,9 @@ impl AdvancedAi {
         // Finish wars already in progress before selecting the next major
         // rival. In particular, this gives hostile city-states an explicit
         // city objective that the force-group planner can actually consume.
-        let target_player = if wartime_rivals.is_empty() {
+        let target_player = if let Some(emergency) = &emergency_objective {
+            Some(emergency.target)
+        } else if wartime_rivals.is_empty() {
             denial.map(|(rival, _)| rival).or_else(|| {
                 let mut candidates = major_rivals.clone();
                 if strategy == GrandStrategy::Conquest {
@@ -808,24 +813,21 @@ impl AdvancedAi {
                     .then(a.cmp(b))
             })
         };
-        let target_city = target_player.and_then(|target| {
-            let from = cities
-                .iter()
-                .map(|cid| g.cities[cid].pos)
-                .collect::<Vec<_>>();
-            g.cities
-                .values()
-                .filter(|c| c.owner == target)
-                .min_by_key(|c| {
-                    let distance = from
-                        .iter()
-                        .map(|p| g.wdist(*p, c.pos))
-                        .min()
-                        .unwrap_or(i32::MAX);
-                    (distance, c.hp + c.wall_hp.max(0), c.id)
+        let target_city = emergency_objective
+            .map(|emergency| emergency.city)
+            .or_else(|| {
+                target_player.and_then(|target| {
+                    g.cities
+                        .values()
+                        .filter(|c| c.owner == target)
+                        .min_by(|left, right| {
+                            self.campaign_city_value(g, pid, left, strategy)
+                                .total_cmp(&self.campaign_city_value(g, pid, right, strategy))
+                                .then_with(|| left.id.cmp(&right.id))
+                        })
+                        .map(|c| c.id)
                 })
-                .map(|c| c.id)
-        });
+            });
 
         StrategicPlan {
             strategy,
@@ -1696,6 +1698,28 @@ impl AdvancedAi {
         resolution: &CongressResolution,
         strategy: GrandStrategy,
     ) -> Option<String> {
+        if let Some(proposal) = g.emergency_proposal_for_resolution(&resolution.id) {
+            if proposal.target == pid {
+                return Some("B:oppose".to_string());
+            }
+            if !proposal.eligible.contains(&pid) {
+                return None;
+            }
+            let grievance = g.players[pid]
+                .grievances
+                .get(&proposal.target)
+                .copied()
+                .unwrap_or(0.0);
+            let threat = self.rival_victory_pressure(g, proposal.target).progress;
+            let affordable_war =
+                g.military_power(pid) * 1.75 + 20.0 >= g.military_power(proposal.target);
+            let support = proposal.kind == "city_state"
+                || strategy == GrandStrategy::Diplomacy
+                || grievance >= 25.0
+                || threat >= 55
+                || affordable_war;
+            return Some(if support { "A:support" } else { "B:oppose" }.to_string());
+        }
         // Legacy saves encoded only a target. Preserve their old strategic
         // behavior while new sessions use explicit `A:target`/`B:target`
         // ballots.
@@ -2249,6 +2273,8 @@ impl AdvancedAi {
                 // targets abstain; adaptive agents still participate normally.
                 if self.victory_target.is_some()
                     && self.victory_target != Some(VictoryTarget::Diplomacy)
+                    && g.emergency_proposal_for_resolution(&resolution.id)
+                        .is_none()
                 {
                     continue;
                 }
@@ -2290,6 +2316,7 @@ impl AdvancedAi {
                     && g.turn.saturating_sub(self.last_campaign_progress) >= 12
             });
             if g.is_at_war(pid, *other)
+                && !g.emergency_war_pair(pid, *other)
                 && !g.players[*other].is_minor
                 && (my_power < g.military_power(*other) * 0.62
                     || (plan.strategy == GrandStrategy::Recovery
@@ -3594,6 +3621,165 @@ impl AdvancedAi {
             value -= (6 - enemy_distance) as f64 * 6.0;
         }
         value
+    }
+
+    /// Lower is a better operational objective. Unlike a nearest-city rule,
+    /// this combines approach geometry, live defenses, staged forces,
+    /// occupation pressure, development, and victory-denial value. It is the
+    /// campaign analogue of a chess engine's move ordering: forces search the
+    /// most forcing and profitable front first rather than the first legal one.
+    fn campaign_city_value(
+        &self,
+        g: &Game,
+        pid: usize,
+        city: &crate::game::City,
+        strategy: GrandStrategy,
+    ) -> f64 {
+        let core_distance = g
+            .player_city_ids(pid)
+            .into_iter()
+            .map(|mine| g.wdist(g.cities[&mine].pos, city.pos))
+            .min()
+            .unwrap_or(40);
+        let military_units = g
+            .player_unit_ids(pid)
+            .into_iter()
+            .filter(|unit| g.rules.units[g.units[unit].kind.as_str()].class == "military")
+            .collect::<Vec<_>>();
+        let city_is_coastal = g.nbrs(city.pos).into_iter().any(|position| {
+            g.map
+                .get(position)
+                .is_some_and(|tile| g.rules.is_water(tile))
+        });
+        let military_distance = military_units
+            .iter()
+            .filter(|unit| {
+                let domain = g.rules.units[g.units[unit].kind.as_str()].domain.as_deref();
+                domain != Some("sea") || city_is_coastal
+            })
+            .map(|unit| g.wdist(g.units[unit].pos, city.pos))
+            .min()
+            .unwrap_or(core_distance);
+        let has_land_force = military_units.iter().any(|unit| {
+            !matches!(
+                g.rules.units[g.units[unit].kind.as_str()].domain.as_deref(),
+                Some("sea" | "air")
+            )
+        });
+        let has_naval_force = military_units.iter().any(|unit| {
+            g.rules.units[g.units[unit].kind.as_str()].domain.as_deref() == Some("sea")
+        });
+        // With no army yet, value prospective land staging rather than
+        // declaring every objective sealed. Once forces exist, only count
+        // adjacent tiles that the relevant land or naval arm can exploit.
+        let plan_land_approach = has_land_force || !has_naval_force;
+        let approaches = g
+            .nbrs(city.pos)
+            .into_iter()
+            .filter(|position| {
+                g.map.get(*position).is_some_and(|tile| {
+                    g.rules.is_passable(tile)
+                        && if g.rules.is_water(tile) {
+                            has_naval_force
+                        } else {
+                            plan_land_approach
+                        }
+                })
+            })
+            .count();
+        let friendly_local: f64 = g
+            .units
+            .values()
+            .filter(|unit| unit.owner == pid && g.wdist(unit.pos, city.pos) <= 7)
+            .filter(|unit| g.rules.units[unit.kind.as_str()].class == "military")
+            .map(|unit| crate::game::effective_strength(g.unit_strength(unit, true), unit.hp))
+            .sum();
+        let hostile_local: f64 = g
+            .units
+            .values()
+            .filter(|unit| unit.owner == city.owner && g.wdist(unit.pos, city.pos) <= 7)
+            .filter(|unit| g.rules.units[unit.kind.as_str()].class == "military")
+            .map(|unit| crate::game::effective_strength(g.unit_strength(unit, true), unit.hp))
+            .sum();
+
+        let friendly_pressure: f64 = g
+            .cities
+            .values()
+            .filter(|source| source.owner == pid)
+            .filter_map(|source| {
+                let distance = g.wdist(source.pos, city.pos);
+                (distance <= 9).then_some(source.pop.max(1) as f64 * (10 - distance) as f64)
+            })
+            .sum();
+        let hostile_pressure: f64 = g
+            .cities
+            .values()
+            .filter(|source| source.owner == city.owner && source.id != city.id)
+            .filter_map(|source| {
+                let distance = g.wdist(source.pos, city.pos);
+                (distance <= 9).then_some(source.pop.max(1) as f64 * (10 - distance) as f64)
+            })
+            .sum();
+        let occupation_risk = (hostile_pressure - friendly_pressure).max(0.0)
+            * if strategy == GrandStrategy::Conquest {
+                0.7
+            } else {
+                1.2
+            };
+
+        let defenses = g.city_strength(city.id) * 1.8
+            + city.hp.max(0) as f64 * 0.12
+            + city.wall_hp.max(0) as f64 * 0.16;
+        let local_balance = (hostile_local - friendly_local).clamp(-250.0, 250.0) * 0.45;
+        let approach_cost = (6usize.saturating_sub(approaches)) as f64 * 11.0;
+        let development = city.pop.max(1) as f64 * 7.0
+            + city.buildings.len() as f64 * 5.0
+            + city.districts.len() as f64 * 10.0
+            + city.wonders.len() as f64 * 24.0;
+        let capital_value = if city.is_capital {
+            if strategy == GrandStrategy::Conquest {
+                180.0
+            } else {
+                75.0
+            }
+        } else {
+            0.0
+        };
+        let science_denial = if city.districts.contains_key("spaceport")
+            && self.rival_victory_pressure(g, city.owner).strategy == GrandStrategy::Science
+        {
+            110.0
+        } else {
+            0.0
+        };
+        let recapture_value = if city.original_owner == pid {
+            135.0
+        } else {
+            0.0
+        };
+        let liberation_value = if city.original_owner != city.owner
+            && city.original_owner != pid
+            && g.players
+                .get(city.original_owner)
+                .is_some_and(|founder| !founder.is_barbarian)
+            && strategy == GrandStrategy::Diplomacy
+        {
+            120.0
+        } else {
+            0.0
+        };
+
+        core_distance as f64 * 7.0
+            + military_distance as f64 * 5.0
+            + defenses
+            + local_balance
+            + approach_cost
+            + occupation_risk
+            - development
+            - capital_value
+            - science_denial
+            - recapture_value
+            - liberation_value
     }
 
     fn settle_sites(&self, g: &Game, pid: usize, from: Pos, radius: i32) -> Vec<(Pos, f64)> {
@@ -5447,6 +5633,17 @@ impl AdvancedAi {
             _ => return value,
         };
         if let Some(city) = before.cities.get(&city_id) {
+            let emergency_objective = before
+                .active_emergencies
+                .iter()
+                .any(|emergency| emergency.city == city_id && emergency.members.contains(&pid));
+            if emergency_objective {
+                value += if matches!(action, Action::LiberateCity { .. }) {
+                    100_000.0
+                } else {
+                    -100_000.0
+                };
+            }
             let nearest_core = before
                 .cities
                 .values()
@@ -6118,6 +6315,127 @@ mod tests {
         assert_eq!(game.suzerain_of(minor), Some(0));
         let allied = ai.assess(&game, 0);
         assert_eq!(allied.target_player, Some(1));
+    }
+
+    #[test]
+    fn campaign_city_ordering_prefers_a_breach_then_the_domination_capital() {
+        let mut game = Game::new_full(2, 30, 18, 7_111, 300, 0, false);
+        for pid in 0..2 {
+            game.current = pid;
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        let own_capital = game.player_city_ids(0)[0];
+        let enemy_capital = game.player_city_ids(1)[0];
+        let enemy_position = game.cities[&enemy_capital].pos;
+        let capital_distance = game.wdist(game.cities[&own_capital].pos, enemy_position);
+        let outpost_position = game
+            .map
+            .tiles
+            .iter()
+            .filter(|(position, tile)| {
+                game.rules.is_passable(tile)
+                    && !game.rules.is_water(tile)
+                    && tile.owner_city.is_none()
+                    && game.wdist(enemy_position, **position) >= 9
+                    && game
+                        .cities
+                        .values()
+                        .all(|city| game.wdist(city.pos, **position) >= 4)
+            })
+            .min_by_key(|(position, _)| {
+                (
+                    (game.wdist(game.cities[&own_capital].pos, **position) - capital_distance)
+                        .abs(),
+                    **position,
+                )
+            })
+            .map(|(position, _)| *position)
+            .expect("test map has a comparable second-city site");
+        game.current = 1;
+        let settler = game.spawn_test_unit("settler", 1, outpost_position);
+        game.apply(1, &Action::FoundCity { unit: settler }).unwrap();
+        let enemy_outpost = game
+            .player_city_ids(1)
+            .into_iter()
+            .find(|city| *city != enemy_capital)
+            .unwrap();
+        for unit in game.units.keys().copied().collect::<Vec<_>>() {
+            game.remove_unit(unit);
+        }
+
+        let fortify = |game: &mut Game, city: u32| {
+            let position = {
+                let target = game.cities.get_mut(&city).unwrap();
+                target.hp = 200;
+                target.wall_hp = 400;
+                target.buildings.extend([
+                    "walls".to_string(),
+                    "medieval_walls".to_string(),
+                    "renaissance_walls".to_string(),
+                ]);
+                target.pos
+            };
+            for _ in 0..3 {
+                game.spawn_test_unit("giant_death_robot", 1, position);
+            }
+        };
+        let breach = |game: &mut Game, city: u32| {
+            let target = game.cities.get_mut(&city).unwrap();
+            target.hp = 25;
+            target.wall_hp = 0;
+            target.buildings.retain(|building| {
+                !matches!(
+                    building.as_str(),
+                    "walls" | "medieval_walls" | "renaissance_walls"
+                )
+            });
+        };
+        let ai = AdvancedAi::targeting(VictoryTarget::Domination);
+
+        fortify(&mut game, enemy_capital);
+        breach(&mut game, enemy_outpost);
+        let exposed_outpost = ai.campaign_city_value(
+            &game,
+            0,
+            &game.cities[&enemy_outpost],
+            GrandStrategy::Conquest,
+        );
+        let fortified_capital = ai.campaign_city_value(
+            &game,
+            0,
+            &game.cities[&enemy_capital],
+            GrandStrategy::Conquest,
+        );
+        assert!(
+            exposed_outpost < fortified_capital,
+            "an exposed breach ({exposed_outpost}) should be searched before a fully defended capital ({fortified_capital})"
+        );
+
+        for unit in game.units.keys().copied().collect::<Vec<_>>() {
+            game.remove_unit(unit);
+        }
+        breach(&mut game, enemy_capital);
+        fortify(&mut game, enemy_outpost);
+        assert!(
+            ai.campaign_city_value(
+                &game,
+                0,
+                &game.cities[&enemy_capital],
+                GrandStrategy::Conquest,
+            ) < ai.campaign_city_value(
+                &game,
+                0,
+                &game.cities[&enemy_outpost],
+                GrandStrategy::Conquest,
+            ),
+            "once both geometry and defenses favor it, Domination must order the original capital first"
+        );
     }
 
     #[test]
@@ -7597,6 +7915,104 @@ mod tests {
             Some((0, Action::Attack { unit, target }))
                 if *unit == attackers[1] && *target == second_target
         ));
+    }
+
+    #[test]
+    fn advanced_ai_votes_in_special_sessions_and_liberates_emergency_objectives() {
+        let mut vote_game = Game::new_full(3, 26, 16, 73_001, 120, 0, false);
+        for player in 0..3 {
+            let settler = vote_game
+                .player_unit_ids(player)
+                .into_iter()
+                .find(|unit| vote_game.units[unit].kind == "settler")
+                .unwrap();
+            vote_game.found_city_for(player, vote_game.units[&settler].pos, None);
+        }
+        let objective = vote_game.player_city_ids(0)[0];
+        vote_game.pending_emergencies = vec![crate::game::EmergencyProposal {
+            id: 77,
+            kind: "city_state".to_string(),
+            target: 0,
+            city: objective,
+            original_owner: 1,
+            eligible: [2].into_iter().collect(),
+            requested: vote_game.turn,
+        }];
+        vote_game.congress = Some(crate::game::CongressSession {
+            convened: vote_game.turn,
+            closes: vote_game.turn + 5,
+            resolutions: vec![CongressResolution {
+                id: "emergency:77".to_string(),
+                title: "City-State Emergency".to_string(),
+                choices: vec!["A:support".to_string(), "B:oppose".to_string()],
+                ballots: BTreeMap::new(),
+            }],
+        });
+        vote_game.current = 2;
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Science,
+            target_player: None,
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: vote_game.turn,
+        };
+        let mut ai = AdvancedAi::targeting(VictoryTarget::Science);
+        ai.advanced_diplomacy(&mut vote_game, 2, &plan);
+        assert_eq!(
+            vote_game.congress.as_ref().unwrap().resolutions[0].ballots[&2].0,
+            "A:support"
+        );
+        assert_eq!(
+            ai.congress_choice(
+                &vote_game,
+                0,
+                &vote_game.congress.as_ref().unwrap().resolutions[0],
+                GrandStrategy::Conquest,
+            ),
+            Some("B:oppose".to_string())
+        );
+
+        let mut conquest = Game::new_full(3, 26, 16, 73_002, 120, 0, false);
+        for player in 0..3 {
+            let settler = conquest
+                .player_unit_ids(player)
+                .into_iter()
+                .find(|unit| conquest.units[unit].kind == "settler")
+                .unwrap();
+            conquest.found_city_for(player, conquest.units[&settler].pos, None);
+        }
+        let objective = conquest.player_city_ids(1)[0];
+        {
+            let city = conquest.cities.get_mut(&objective).unwrap();
+            city.owner = 0;
+            city.captured_from = None;
+            city.occupied_from = Some(1);
+        }
+        conquest.active_emergencies = vec![crate::game::Emergency {
+            id: 78,
+            kind: "military".to_string(),
+            target: 0,
+            city: objective,
+            original_owner: 1,
+            members: [2].into_iter().collect(),
+            contributions: BTreeMap::new(),
+            started: conquest.turn,
+            ends: conquest.turn + 30,
+        }];
+        conquest.current = 2;
+        let emergency_plan = ai.assess(&conquest, 2);
+        assert_eq!(emergency_plan.target_player, Some(0));
+        assert_eq!(emergency_plan.target_city, Some(objective));
+        {
+            let city = conquest.cities.get_mut(&objective).unwrap();
+            city.owner = 2;
+            city.captured_from = Some(0);
+            city.occupied_from = Some(0);
+        }
+        ai.resolve_city_dispositions(&mut conquest, 2, GrandStrategy::Science);
+        assert_eq!(conquest.cities[&objective].owner, 1);
+        assert!(conquest.active_emergencies.is_empty());
     }
 
     #[test]

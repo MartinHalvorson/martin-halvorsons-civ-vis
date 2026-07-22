@@ -451,6 +451,10 @@ pub struct GovernorSpec {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ProjectSpec {
     pub cost: f64,
+    /// COST_PROGRESSION_GAME_PROGRESS maximum cost as a percentage of the
+    /// base cost (1500 means the project grows linearly from 1x to 15x).
+    #[serde(default)]
+    pub cost_progression_max_pct: f64,
     #[serde(default)]
     pub tech: Option<String>,
     #[serde(default)]
@@ -463,6 +467,15 @@ pub struct ProjectSpec {
     pub requires_buildings: Vec<String>,
     #[serde(default)]
     pub repeatable: bool,
+    /// Per-turn yield conversion percentages while this project is active.
+    #[serde(default)]
+    pub ongoing_yields: BTreeMap<String, f64>,
+    /// Base completion points. Stock district projects scale these from 1x
+    /// to 8x with the same whole-percent game-progress model as their cost.
+    #[serde(default)]
+    pub completion_gpp: BTreeMap<String, f64>,
+    #[serde(default)]
+    pub full_power_while_active: bool,
     #[serde(default)]
     pub effects: BTreeMap<String, f64>,
 }
@@ -917,7 +930,7 @@ mod tests {
         assert_eq!(rules.wonders.len(), 53);
         assert_eq!(rules.improvements.len(), 35);
         assert_eq!(rules.resources.len(), 20);
-        assert_eq!(rules.projects.len(), 17);
+        assert_eq!(rules.projects.len(), 24);
         assert_eq!(rules.policies.len(), 118);
         assert_eq!(rules.governments.len(), 13);
 
