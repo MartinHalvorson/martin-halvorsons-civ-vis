@@ -31,7 +31,7 @@
   "leonardo_da_vinci": {"name":"Leonardo da Vinci","kind":"engineer","era":3,"cost":240,"effects":{"modern_tech_boosts":1,"workshops_culture":3}},
   "gustave_eiffel": {"name":"Gustave Eiffel","kind":"engineer","era":4,"cost":720,"charges":2,"effects":{"wonder_production":480}},
 
-  "marcus_licinius_crassus": {"name":"Marcus Licinius Crassus","kind":"merchant","era":1,"cost":60,"effects":{"gold":200,"envoys":1}},
-  "marco_polo": {"name":"Marco Polo","kind":"merchant","era":2,"cost":180,"effects":{"gold":200,"trade_capacity":1}},
-  "john_rockefeller": {"name":"John D. Rockefeller","kind":"merchant","era":5,"cost":720,"effects":{"gold":500,"trade_capacity":1}}
+  "marcus_licinius_crassus": {"name":"Marcus Licinius Crassus","kind":"merchant","era":1,"cost":60,"charges":3,"effects":{"gold":60,"annex_tile":1}},
+  "marco_polo": {"name":"Marco Polo","kind":"merchant","era":2,"cost":180,"effects":{"free_trader":1,"trade_capacity":1,"destination_foreign_trade_gold":2}},
+  "john_rockefeller": {"name":"John D. Rockefeller","kind":"merchant","era":5,"cost":720,"effects":{"oil_per_turn":3,"strategic_destination_trade_gold":2}}
 }
