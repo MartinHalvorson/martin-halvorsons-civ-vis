@@ -15,7 +15,7 @@
     "class": "espionage",
     "cost": 225,
     "maintenance": 4,
-    "moves": 0,
+    "moves": 1,
     "civic": "diplomatic_service",
     "promotion_class": "espionage"
   },
@@ -115,8 +115,8 @@
   },
   "pikeman": {
     "class": "military",
-    "cost": 180,
-    "maintenance": 2,
+    "cost": 200,
+    "maintenance": 3,
     "moves": 2,
     "strength": 45,
     "tech": "military_tactics",
@@ -125,8 +125,8 @@
   },
   "knight": {
     "class": "military",
-    "cost": 220,
-    "maintenance": 4,
+    "cost": 180,
+    "maintenance": 3,
     "moves": 4,
     "strength": 50,
     "tech": "stirrups",
@@ -389,7 +389,7 @@
     "strength": 40,
     "tech": "iron_working",
     "requires_resource": "iron",
-    "resource_cost": 20,
+    "resource_cost": 10,
     "unique_to": "Rome",
     "replaces": "swordsman",
     "promotion_class": "melee",
@@ -442,8 +442,8 @@
   },
   "maryannu_chariot_archer": {
     "class": "military",
-    "cost": 90,
-    "maintenance": 1,
+    "cost": 120,
+    "maintenance": 2,
     "moves": 2,
     "strength": 25,
     "ranged_strength": 35,
@@ -500,7 +500,7 @@
     "bombard_strength": 45, "range": 2, "tech": "military_engineering", "siege": true, "promotion_class": "siege"
   },
   "military_engineer": {
-    "class": "support", "cost": 170, "maintenance": 2, "moves": 2, "charges": 2,
+    "class": "support", "cost": 170, "maintenance": 4, "moves": 2, "charges": 2,
     "tech": "military_engineering", "requires_building": "armory",
     "builds": ["fort", "airstrip", "missile_silo", "mountain_tunnel"]
   },
@@ -576,17 +576,17 @@
     "ranged_strength": 85, "range": 2, "tech": "advanced_ballistics", "promotion_class": "ranged"
   },
   "at_crew": {
-    "class": "military", "cost": 400, "maintenance": 4, "moves": 2, "strength": 80,
+    "class": "military", "cost": 400, "maintenance": 4, "moves": 2, "strength": 75,
     "tech": "chemistry", "promotion_class": "anti_cavalry", "zone_of_control": true
   },
-  "drone": {"class": "support", "cost": 420, "maintenance": 3, "moves": 3, "tech": "computers", "sight": 4, "effects": {"adjacent_siege_range": 1, "adjacent_siege_bombard": 5}},
+  "drone": {"class": "support", "cost": 420, "maintenance": 3, "moves": 3, "tech": "computers", "sight": 5, "effects": {"adjacent_siege_range": 1, "adjacent_siege_bombard": 5}},
   "modern_armor": {
     "class": "military", "cost": 680, "maintenance": 8, "moves": 4, "strength": 95,
     "tech": "composites", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1, "cavalry": true,
     "promotion_class": "heavy_cavalry", "zone_of_control": true
   },
   "modern_at": {
-    "class": "military", "cost": 580, "maintenance": 8, "moves": 3, "strength": 90,
+    "class": "military", "cost": 580, "maintenance": 8, "moves": 3, "strength": 85,
     "tech": "composites", "promotion_class": "anti_cavalry", "zone_of_control": true
   },
   "mobile_sam": {
