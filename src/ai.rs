@@ -2815,13 +2815,7 @@ impl BasicAi {
             // best destination: most districts in range (domestic or foreign)
             let mut best: Option<(usize, usize, u32)> = None;
             for (cid, c) in &g.cities {
-                if *cid == origin
-                    || g.is_at_war(pid, c.owner)
-                    || g.wdist(g.cities[&origin].pos, c.pos) > 15
-                    || g.routes
-                        .iter()
-                        .any(|r| r.origin == origin && r.dest == *cid)
-                {
+                if !g.can_establish_trade_route(pid, origin, *cid) {
                     continue;
                 }
                 let alliance_connection = g.alliance_with(pid, c.owner).is_some_and(|_| {
@@ -2849,12 +2843,19 @@ impl BasicAi {
                     )
                     .is_ok();
             }
-            return false;
         }
+        // A Trader can be completed in a city whose nearby destinations are
+        // already reserved. Relocate it to the nearest origin with a legal
+        // route instead of retrying an invalid assignment every turn.
         let target = g
             .cities
             .values()
             .filter(|c| c.owner == pid)
+            .filter(|origin| {
+                g.cities
+                    .values()
+                    .any(|destination| g.can_establish_trade_route(pid, origin.id, destination.id))
+            })
             .min_by_key(|c| (g.wdist(upos, c.pos), c.id))
             .map(|c| c.pos);
         match target {
