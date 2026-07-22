@@ -76,12 +76,12 @@ fn main() {
 
             let actual = game.victory_type.as_deref().unwrap_or("none");
             let winner = game.winner.unwrap_or(usize::MAX);
-            let research_eras: Vec<usize> =
+            let major_progress: Vec<(usize, bool, usize, usize, usize)> =
                 game.players
                     .iter()
                     .filter(|player| !player.is_minor && !player.is_barbarian)
                     .map(|player| {
-                        player
+                        let era = player
                             .techs
                             .iter()
                             .filter_map(|node| game.rules.techs.get(node).map(|spec| spec.era))
@@ -89,7 +89,14 @@ fn main() {
                                 game.rules.civics.get(node).map(|spec| spec.era)
                             }))
                             .max()
-                            .unwrap_or(0)
+                            .unwrap_or(0);
+                        (
+                            player.id,
+                            player.alive,
+                            era,
+                            game.player_city_ids(player.id).len(),
+                            player.techs.len(),
+                        )
                     })
                     .collect();
             let passed = actual == target.as_str();
@@ -166,7 +173,7 @@ fn main() {
                 VictoryTarget::Score => format!("score={}", game.score(winner)),
             });
             println!(
-                "{:<11} seed={} target={:<10} actual={:<10} winner={} turn={} world_era={} research_eras={:?} {} [{:.2}s]",
+                "{:<11} seed={} target={:<10} actual={:<10} winner={} turn={} world_era={} majors=(id,alive,era,cities,techs){:?} {} [{:.2}s]",
                 if passed { "PASS" } else { "FAIL" },
                 seed,
                 target.as_str(),
@@ -178,7 +185,7 @@ fn main() {
                 },
                 game.turn,
                 game.world_era,
-                research_eras,
+                major_progress,
                 progress.unwrap_or_default(),
                 game_started.elapsed().as_secs_f64(),
             );
