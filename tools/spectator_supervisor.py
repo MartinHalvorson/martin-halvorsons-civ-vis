@@ -218,6 +218,11 @@ def progress_marker(state: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def should_nudge(state: dict[str, Any], stalled_for: float, timeout: float) -> bool:
+    """Distinguish a dead spectator loop from an intentional GUI pause."""
+    return not state.get("spectator_paused", False) and stalled_for >= max(0.1, timeout)
+
+
 def checkpoint_path(port: int) -> Path:
     return CHECKPOINT_DIR / f"spectator-{port}.json"
 
@@ -527,7 +532,11 @@ def main() -> int:
                 if marker != last_progress:
                     last_progress = marker
                     progress_at = now
-                elif now - progress_at >= max(0.1, args.stall_timeout):
+                elif state.get("spectator_paused", False):
+                    # A human pause is not a freeze. Keep its stall clock fresh
+                    # so unpausing does not immediately trigger a false nudge.
+                    progress_at = now
+                elif should_nudge(state, now - progress_at, args.stall_timeout):
                     log(
                         f"simulation stalled at turn {state.get('turn')} "
                         f"player {state.get('current')}; requesting a recovery step"

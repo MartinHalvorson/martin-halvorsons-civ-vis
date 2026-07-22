@@ -114,6 +114,14 @@ class RecoveryTests(unittest.TestCase):
             supervisor.progress_marker(first), supervisor.progress_marker(stepped)
         )
 
+    def test_stall_recovery_respects_an_intentional_browser_pause(self):
+        self.assertTrue(supervisor.should_nudge({}, stalled_for=31, timeout=30))
+        self.assertFalse(
+            supervisor.should_nudge(
+                {"spectator_paused": True}, stalled_for=300, timeout=30
+            )
+        )
+
     def test_server_command_can_resume_an_atomic_checkpoint(self):
         settings = {
             "players": 4,

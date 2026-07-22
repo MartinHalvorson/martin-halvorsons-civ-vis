@@ -480,7 +480,16 @@ impl AdvancedAi {
             .filter(|p| p.id != pid && p.alive && !p.is_minor && !p.is_barbarian)
             .map(|p| p.id)
             .collect();
-        let at_war = major_rivals.iter().any(|o| g.is_at_war(pid, *o));
+        // City-states follow their Suzerain into wars and can also be attacked
+        // directly. Once hostilities exist they are real campaign actors, not
+        // an uncoordinated side task for whichever unit happens to be nearby.
+        let wartime_rivals: Vec<usize> = g
+            .players
+            .iter()
+            .filter(|p| p.id != pid && p.alive && !p.is_barbarian && g.is_at_war(pid, p.id))
+            .map(|p| p.id)
+            .collect();
+        let at_war = !wartime_rivals.is_empty();
         let strongest_rival = major_rivals
             .iter()
             .map(|o| g.military_power(*o))
@@ -568,7 +577,15 @@ impl AdvancedAi {
             victory.strategy
         };
 
-        let target_player = major_rivals
+        // Finish wars already in progress before selecting the next major
+        // rival. In particular, this gives hostile city-states an explicit
+        // city objective that the force-group planner can actually consume.
+        let target_pool = if wartime_rivals.is_empty() {
+            &major_rivals
+        } else {
+            &wartime_rivals
+        };
+        let target_player = target_pool
             .iter()
             .min_by(|a, b| {
                 self.rival_value(g, pid, **a)
@@ -2498,7 +2515,6 @@ impl AdvancedAi {
             .filter(|player| {
                 player.id != pid
                     && player.alive
-                    && !player.is_minor
                     && !player.is_barbarian
                     && g.is_at_war(pid, player.id)
             })
@@ -2794,9 +2810,7 @@ impl AdvancedAi {
         let enemies: Vec<usize> = g
             .players
             .iter()
-            .filter(|p| {
-                p.id != pid && p.alive && !p.is_minor && !p.is_barbarian && g.is_at_war(pid, p.id)
-            })
+            .filter(|p| p.id != pid && p.alive && !p.is_barbarian && g.is_at_war(pid, p.id))
             .map(|p| p.id)
             .collect();
         if enemies.is_empty() {
@@ -3752,6 +3766,53 @@ mod tests {
             Some((0, Action::Attack { unit, target }))
                 if *unit == army[0] && *target == land_target.0
         ));
+    }
+
+    #[test]
+    fn city_state_wars_receive_a_campaign_target_and_combined_arms_orders() {
+        let mut g = Game::new_full(2, 24, 16, 96, 80, 1, false);
+        let minor = g
+            .players
+            .iter()
+            .find(|player| player.is_minor && !player.is_barbarian)
+            .map(|player| player.id)
+            .expect("test map has a city-state");
+        let target_city = g.player_city_ids(minor)[0];
+        let target = g.cities[&target_city].pos;
+        let staging: Vec<Pos> = g
+            .nbrs(target)
+            .into_iter()
+            .filter(|position| {
+                g.map.get(*position).is_some_and(|tile| {
+                    g.rules.is_passable(tile)
+                        && !g.rules.is_water(tile)
+                        && g.units_at(*position).is_empty()
+                })
+            })
+            .take(2)
+            .collect();
+        assert_eq!(staging.len(), 2, "city-state needs an open attack front");
+        let attackers = [
+            g.spawn_test_unit("warrior", 0, staging[0]),
+            g.spawn_test_unit("archer", 0, staging[1]),
+        ];
+        g.at_war.insert((0, minor));
+
+        let mut ai = AdvancedAi::new();
+        let plan = ai.assess(&g, 0);
+        assert_eq!(plan.target_player, Some(minor));
+        assert_eq!(plan.target_city, Some(target_city));
+
+        ai.rebuild_force_groups(&g, 0, &plan);
+        let orders = ai
+            .force_groups()
+            .iter()
+            .find(|group| attackers.iter().all(|unit| group.units.contains(unit)))
+            .expect("the city-state front should form a shared army order");
+        assert_eq!(orders.domain, ForceDomain::Land);
+        assert_eq!(orders.objective, target);
+        assert_eq!(orders.focus_target, Some(target));
+        assert_eq!(orders.posture, ForcePosture::Engage);
     }
 
     #[test]

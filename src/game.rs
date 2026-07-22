@@ -5546,6 +5546,20 @@ impl Game {
                     _ => {}
                 }
             }
+            if owner.is_some_and(|pid| {
+                self.empire_wonder_effect(
+                    pid,
+                    "mountain_commercial_industrial_theater_adjacency",
+                ) > 0.0
+            }) {
+                let mountains = count("mountain") as f64;
+                match self.district_family(dname) {
+                    "commercial_hub" => adj.gold += mountains,
+                    "industrial_zone" => adj.production += mountains,
+                    "theater_square" => adj.culture += mountains,
+                    _ => {}
+                }
+            }
             // The six adjacency-card families include unique replacements.
             if let Some(pid) = owner {
                 let percent = if self.district_is_family(dname, "campus") {
@@ -6367,7 +6381,8 @@ impl Game {
         }
         for r in self.routes.iter().filter(|r| r.origin == cid) {
             if let Some(dc) = self.cities.get(&r.dest) {
-                let mut rys = self.route_yields(r.dest, dc.owner == city.owner);
+                let domestic = dc.owner == city.owner;
+                let mut rys = self.route_yields(r.dest, domestic);
                 rys.gold += self.policy_effect(city.owner, "trade_gold");
                 rys.food += self.policy_effect(city.owner, "trade_food");
                 rys.production += self.policy_effect(city.owner, "trade_production");
@@ -6377,11 +6392,86 @@ impl Game {
                 if self.players[dc.owner].is_minor {
                     rys.gold += self.policy_effect(city.owner, "city_state_route_gold");
                 }
+                if domestic {
+                    rys.production += self.city_building_effect(city, "domestic_route_production");
+                } else {
+                    rys.gold += self.city_building_effect(city, "international_route_gold");
+                }
+                if dc.wonders.contains_key("university_of_sankore") {
+                    if domestic {
+                        rys.faith += self.rules.wonders["university_of_sankore"]
+                            .effects
+                            .get("domestic_route_city_faith")
+                            .copied()
+                            .unwrap_or(0.0);
+                    } else {
+                        rys.science += self.rules.wonders["university_of_sankore"]
+                            .effects
+                            .get("incoming_foreign_route_science")
+                            .copied()
+                            .unwrap_or(0.0);
+                        rys.gold += self.rules.wonders["university_of_sankore"]
+                            .effects
+                            .get("incoming_foreign_route_gold")
+                            .copied()
+                            .unwrap_or(0.0);
+                    }
+                }
+                if city.wonders.contains_key("great_zimbabwe") {
+                    let spec = &self.rules.wonders["great_zimbabwe"];
+                    let range = spec
+                        .effects
+                        .get("origin_route_bonus_resource_range")
+                        .copied()
+                        .unwrap_or(0.0) as i32;
+                    let per_resource = spec
+                        .effects
+                        .get("origin_route_bonus_resource_gold")
+                        .copied()
+                        .unwrap_or(0.0);
+                    rys.gold += per_resource
+                        * city
+                            .owned_tiles
+                            .iter()
+                            .filter(|position| self.wdist(city.pos, **position) <= range)
+                            .filter(|position| {
+                                self.map.tiles[position].resource.as_ref().is_some_and(|resource| {
+                                    self.rules.resources[resource.as_str()].class == "bonus"
+                                })
+                            })
+                            .count() as f64;
+                }
+                if !domestic && city.wonders.contains_key("torre_de_belem") {
+                    let per_resource = self.rules.wonders["torre_de_belem"]
+                        .effects
+                        .get("origin_international_luxury_gold")
+                        .copied()
+                        .unwrap_or(0.0);
+                    rys.gold += per_resource
+                        * dc
+                            .owned_tiles
+                            .iter()
+                            .filter(|position| {
+                                self.map.tiles[position].resource.as_ref().is_some_and(|resource| {
+                                    self.rules.resources[resource.as_str()].class == "luxury"
+                                })
+                            })
+                            .count() as f64;
+                }
                 let government = self.gov_effects(city.owner);
                 rys.food += government.trade_food;
                 rys.production += government.trade_production;
                 ys.add(rys);
             }
+        }
+        let incoming_routes = self.routes.iter().filter(|route| route.dest == cid).count() as f64;
+        if incoming_routes > 0.0 && city.wonders.contains_key("university_of_sankore") {
+            ys.science += incoming_routes
+                * self.rules.wonders["university_of_sankore"]
+                    .effects
+                    .get("incoming_route_city_science")
+                    .copied()
+                    .unwrap_or(0.0);
         }
         if !self.players[city.owner].is_minor {
             ys.add(self.envoy_yields(city.owner, city));
@@ -9084,7 +9174,17 @@ impl Game {
         if !self.can_found_city(uid) {
             return Err("cannot found city here".into());
         }
-        self.found_city_for(pid, u.pos, None);
+        let cid = self.found_city_for(pid, u.pos, None);
+        if self.empire_building_sum(pid, |building| {
+            building
+                .effects
+                .get("free_builder_new_city")
+                .copied()
+                .unwrap_or(0.0)
+        }) > 0.0
+        {
+            self.place_new_unit("builder", pid, self.cities[&cid].pos);
+        }
         self.remove_unit(uid);
         Ok(())
     }
@@ -14940,6 +15040,45 @@ mod district_mechanics {
         let owned_before = game.cities[&city].owned_tiles.len();
         game.apply_great_person_district_effects(0);
         assert_eq!(game.cities[&city].owned_tiles.len(), owned_before + 1);
+    }
+
+    #[test]
+    fn unique_district_bonuses_are_data_driven_and_disable_when_pillaged() {
+        let (mut game, city, position, _) = controlled_game();
+        let effects = [
+            ("acropolis", "envoys", 1.0),
+            ("suguba", "gold_faith_purchase_discount_pct", 20.0),
+            ("cothon", "naval_settler_production_pct", 50.0),
+            ("cothon", "naval_heal_full", 1.0),
+            ("royal_navy_dockyard", "naval_movement", 1.0),
+            ("royal_navy_dockyard", "foreign_continent_gold", 2.0),
+            ("royal_navy_dockyard", "foreign_continent_loyalty", 4.0),
+            ("hippodrome", "free_heavy_cavalry", 1.0),
+            ("oppidum", "unlock_apprenticeship", 1.0),
+            ("thanh", "tourism_after_flight", 1.0),
+        ];
+        for (district, effect, expected) in effects {
+            assert_eq!(game.rules.districts[district].effects[effect], expected);
+        }
+
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert("cothon".to_string(), position);
+        assert_eq!(
+            game.city_district_effect(&game.cities[&city], "naval_settler_production_pct"),
+            50.0
+        );
+        let galley = game.spawn_unit("galley", 0, position);
+        assert_eq!(game.unit_heal_rate(galley), 100);
+
+        game.map.tiles.get_mut(&position).unwrap().pillaged = true;
+        assert_eq!(
+            game.city_district_effect(&game.cities[&city], "naval_settler_production_pct"),
+            0.0
+        );
+        assert_eq!(game.unit_heal_rate(galley), 20);
     }
 
     #[test]

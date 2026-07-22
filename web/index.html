@@ -745,6 +745,7 @@ async function boot() {
       document.getElementById("specchk").checked = SPEC;
       if (SPEC) document.getElementById("specspeed").value = "100";
       scheduleSpec(state);
+      reportSpecStatus();
     }
   } catch (e) {
     clearTimeout(bootTimer);
@@ -767,6 +768,13 @@ async function send(action) {
 // and a watchdog revives the loop if the timer chain ever dies.
 let specLast = Date.now();
 let specRenderMs = 0;
+function reportSpecStatus() {
+  if (!SPEC) return;
+  fetchJSON("/spectator-status", {method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({paused: specPaused})}, 3000).catch(() => {});
+}
+setInterval(reportSpecStatus, 4000);
 async function specStep(force) {
   if (!SPEC || (!force && specPaused) || specBusy) return;
   specBusy = true;
@@ -2609,11 +2617,13 @@ document.getElementById("specpause").onclick = () => {
   specPaused = !specPaused;
   document.getElementById("specpause").textContent =
     specPaused ? "▶ Resume" : "⏸ Pause";
+  reportSpecStatus();
   if (specPaused) clearTimeout(specTimer); else specStep();
 };
 document.getElementById("specstep").onclick = () => {
   if (!SPEC) return;
   specPaused = true;
+  reportSpecStatus();
   clearTimeout(specTimer);
   document.getElementById("specpause").textContent = "▶ Resume";
   specStep(true);
@@ -2630,6 +2640,7 @@ document.getElementById("newgame").onclick = async () => {
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({num_players: np, seed: Math.floor(Math.random() * 1e9),
                           spectate: document.getElementById("specchk").checked}) }));
+  reportSpecStatus();
   scheduleSpec(state);
 };
 {

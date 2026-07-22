@@ -58,7 +58,8 @@ five seconds. If the server crashes or stops responding, the supervisor resumes
 that checkpoint; if the same state repeatedly freezes, it quarantines the save
 and starts a fresh match instead of entering a restart loop. It also nudges a
 simulation that stops advancing, while browser requests use timeouts and retry
-after temporary server outages.
+after temporary server outages. The browser reports intentional pauses so the
+stall watchdog never mistakes the Pause button for a frozen simulation.
 
 The supervisor fingerprints all runtime inputs before and after compilation.
 If code changes during the build or the newest source does not compile, the
