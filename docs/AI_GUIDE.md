@@ -61,9 +61,12 @@ appeal bands for Neighborhoods and Preserves; non-specialty districts are not
 subject to an invented AI population cap. Search sees each district's
 progress-scaled, underbuilt-discounted cost; once a site is selected, that
 foundation is offered for resumption ahead of fresh sites and retains its
-locked cost through later research. When an Aqueduct, Dam, or Canal is under
-construction, a Military Engineer routes to its foundation and spends charges
-there instead of being absorbed into an army's support screen.
+locked cost through later research. Production search evaluates incremental
+remaining cost, so item-specific paused progress and usable overflow act like
+cached search work instead of being mistaken for a fresh build. When an
+Aqueduct, Dam, or Canal is under construction, a Military Engineer routes to
+its foundation and spends charges there instead of being absorbed into an
+army's support screen.
 
 ## Victory targeting and full-game validation
 
@@ -167,6 +170,11 @@ ranged units preserve firing depth; siege prioritizes cities and districts;
 support stays close to the line; fighters prefer interception patrols while
 bombers prefer strikes and useful rebasing. If no recon unit exists, one
 ordinary combat unit explores at peace instead of sending the whole army.
+Before committing an attack, a bounded quiescence search clones the resulting
+position, orders the opponent's forcing replies, and extends the four strongest
+branches through a second focus-fire action. This catches poisoned captures
+and coordinated ranged kills without expanding quiet movement into a full
+turn-tree search.
 
 ```rust
 for force in ai.force_groups() {

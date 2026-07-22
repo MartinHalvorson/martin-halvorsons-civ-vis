@@ -2875,7 +2875,7 @@ impl AdvancedAi {
         let city = &g.cities[&cid];
         let city_count = g.player_city_ids(pid).len();
         let production = g.city_yields(cid).production.max(1.0);
-        let turns = g.item_cost_for_city(pid, cid, item) / production;
+        let turns = g.item_remaining_cost_for_city(pid, cid, item) / production;
         let remaining_turns = g.max_turns.saturating_sub(g.turn).max(1) as f64;
         let threatened = plan.threatened_city == Some(cid)
             || (city.last_attacked > 0 && g.turn.saturating_sub(city.last_attacked) <= 4);
@@ -6512,6 +6512,64 @@ mod tests {
         assert!(
             crowded_value > roomy_value,
             "appeal housing must be worth more when growth is constrained"
+        );
+    }
+
+    #[test]
+    fn production_search_uses_incremental_remaining_cost_for_paused_builds() {
+        let mut game = Game::new_full(1, 20, 14, 71_002, 200, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.players[0].civ = "Egypt".to_string();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = game.player_city_ids(0)[0];
+        let monument = Item::Building {
+            building: "monument".to_string(),
+        };
+        let builder = Item::Unit {
+            unit: "builder".to_string(),
+        };
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Expansion,
+            target_player: None,
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+        let ai = AdvancedAi::new();
+        let counts = ai.counts(&game, 0);
+        let fresh = ai.production_value(&game, 0, city, &monument, &plan, &counts);
+
+        game.apply(
+            0,
+            &Action::Produce {
+                city,
+                item: monument.clone(),
+            },
+        )
+        .unwrap();
+        game.cities.get_mut(&city).unwrap().production = 20.0;
+        game.apply(
+            0,
+            &Action::Produce {
+                city,
+                item: builder,
+            },
+        )
+        .unwrap();
+        let resumed = ai.production_value(&game, 0, city, &monument, &plan, &counts);
+
+        assert_eq!(
+            game.item_remaining_cost_for_city(0, city, &monument),
+            game.item_cost_for_city(0, city, &monument) - 20.0
+        );
+        assert!(
+            resumed > fresh,
+            "incremental evaluation should prefer finishing invested infrastructure"
         );
     }
 
