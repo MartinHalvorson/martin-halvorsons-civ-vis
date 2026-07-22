@@ -6224,6 +6224,55 @@ impl AdvancedAi {
         }
     }
 
+    fn defensive_strike_value(&self, g: &Game, pid: usize, action: &Action) -> f64 {
+        let target = match action {
+            Action::CityStrike { target, .. } | Action::EncampmentStrike { target, .. } => *target,
+            _ => return f64::NEG_INFINITY,
+        };
+        let defenders: Vec<(u32, i32, f64, f64, bool, bool)> = g
+            .units_at(target)
+            .into_iter()
+            .filter_map(|unit| {
+                let defender = &g.units[&unit];
+                let spec = &g.rules.units[defender.kind.as_str()];
+                (defender.owner != pid
+                    && g.is_at_war(pid, defender.owner)
+                    && spec.class == "military")
+                    .then_some((
+                        unit,
+                        defender.hp,
+                        g.unit_strength(defender, true),
+                        spec.cost,
+                        spec.siege,
+                        !spec.has_ranged_attack(),
+                    ))
+            })
+            .collect();
+        let mut after = g.clone();
+        if after.apply(pid, action).is_err() {
+            return f64::NEG_INFINITY;
+        }
+        defenders
+            .into_iter()
+            .map(
+                |(unit, hp, strength, cost, siege, captures)| match after.units.get(&unit) {
+                    None => {
+                        180.0
+                            + cost * 0.45
+                            + strength * 2.0
+                            + if siege { 70.0 } else { 0.0 }
+                            + if captures { 30.0 } else { 0.0 }
+                    }
+                    Some(defender) => {
+                        (hp - defender.hp).max(0) as f64 * (1.0 + strength / 100.0)
+                            + if siege { 25.0 } else { 0.0 }
+                            + if captures { 8.0 } else { 0.0 }
+                    }
+                },
+            )
+            .sum()
+    }
+
     fn advanced_encampment_strikes(&self, g: &mut Game, pid: usize) {
         let has_ready_encampment = g.player_city_ids(pid).into_iter().any(|cid| {
             let city = &g.cities[&cid];
@@ -6235,25 +6284,18 @@ impl AdvancedAi {
         if !has_ready_encampment {
             return;
         }
-        let mut best: BTreeMap<u32, (i64, Pos)> = BTreeMap::new();
+        let mut best: BTreeMap<u32, (f64, Pos)> = BTreeMap::new();
         for action in g.legal_actions(pid) {
             let Action::EncampmentStrike { city, target } = action else {
                 continue;
             };
-            let target_value = g
-                .units_at(target)
-                .into_iter()
-                .filter(|uid| {
-                    let unit = &g.units[uid];
-                    unit.owner != pid && g.rules.units[unit.kind.as_str()].class == "military"
-                })
-                .map(|uid| {
-                    let unit = &g.units[&uid];
-                    g.unit_strength(unit, true) + (100 - unit.hp) as f64 * 0.6
-                })
-                .fold(0.0_f64, f64::max) as i64;
+            let strike = Action::EncampmentStrike { city, target };
+            let target_value = self.defensive_strike_value(g, pid, &strike);
             let candidate = (target_value, target);
-            if best.get(&city).is_none_or(|old| candidate > *old) {
+            if best.get(&city).is_none_or(|old| {
+                target_value.total_cmp(&old.0).is_gt()
+                    || (target_value.total_cmp(&old.0).is_eq() && target < old.1)
+            }) {
                 best.insert(city, candidate);
             }
         }
@@ -6274,52 +6316,8 @@ impl AdvancedAi {
                 .filter(|action| matches!(action, Action::CityStrike { .. }))
                 .collect();
             let best = candidates.into_iter().max_by(|left, right| {
-                let score = |action: &Action| -> f64 {
-                    let Action::CityStrike { target, .. } = action else {
-                        return f64::NEG_INFINITY;
-                    };
-                    let defenders: Vec<(u32, i32, f64, f64, bool)> = g
-                        .units_at(*target)
-                        .into_iter()
-                        .filter_map(|unit| {
-                            let defender = &g.units[&unit];
-                            let spec = &g.rules.units[defender.kind.as_str()];
-                            (defender.owner != pid
-                                && g.is_at_war(pid, defender.owner)
-                                && spec.class == "military")
-                                .then_some((
-                                    unit,
-                                    defender.hp,
-                                    g.unit_strength(defender, true),
-                                    spec.cost,
-                                    spec.siege,
-                                ))
-                        })
-                        .collect();
-                    let mut after = g.clone();
-                    if after.apply(pid, action).is_err() {
-                        return f64::NEG_INFINITY;
-                    }
-                    defenders
-                        .into_iter()
-                        .map(
-                            |(unit, hp, strength, cost, siege)| match after.units.get(&unit) {
-                                None => {
-                                    180.0
-                                        + cost * 0.45
-                                        + strength * 2.0
-                                        + if siege { 70.0 } else { 0.0 }
-                                }
-                                Some(defender) => {
-                                    (hp - defender.hp).max(0) as f64 * (1.0 + strength / 100.0)
-                                        + if siege { 25.0 } else { 0.0 }
-                                }
-                            },
-                        )
-                        .sum()
-                };
-                score(left)
-                    .total_cmp(&score(right))
+                self.defensive_strike_value(g, pid, left)
+                    .total_cmp(&self.defensive_strike_value(g, pid, right))
                     .then_with(|| format!("{right:?}").cmp(&format!("{left:?}")))
             });
             let Some(action) = best else { break };
@@ -9442,6 +9440,70 @@ mod tests {
                 .is_none_or(|defender| defender.hp < before),
             "the explicit victory command phase must spend an available wall strike"
         );
+    }
+
+    #[test]
+    fn encampment_strikes_choose_the_exact_kill_over_static_unit_strength() {
+        let mut game = Game::new_full(2, 20, 14, 8_120, 80, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = game.player_city_ids(0)[0];
+        let center = game.cities[&city].pos;
+        let encampment = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != center)
+            .unwrap();
+        for position in game.wdisk(encampment, 2) {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.hills = false;
+        }
+        game.map.tiles.get_mut(&encampment).unwrap().district = Some("encampment".to_string());
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert("encampment".to_string(), encampment);
+        {
+            let city = game.cities.get_mut(&city).unwrap();
+            city.encampment_hp = 100;
+            city.encampment_wall_hp = 100;
+        }
+        game.at_war.insert((0, 1));
+        let targets: Vec<Pos> = game
+            .nbrs(encampment)
+            .into_iter()
+            .filter(|position| {
+                *position != encampment
+                    && game.city_at(*position).is_none()
+                    && game.encampment_at(*position).is_none()
+                    && game.units_at(*position).is_empty()
+            })
+            .take(2)
+            .collect();
+        assert_eq!(targets.len(), 2);
+        let armor = game.spawn_test_unit("modern_armor", 1, targets[0]);
+        let weak = game.spawn_test_unit("warrior", 1, targets[1]);
+        game.units.get_mut(&weak).unwrap().hp = 1;
+        let armor_static = game.unit_strength(&game.units[&armor], true);
+        let weak_static = game.unit_strength(&game.units[&weak], true) + 99.0 * 0.6;
+        assert!(
+            armor_static > weak_static,
+            "the legacy heuristic chose the armor"
+        );
+
+        AdvancedAi::targeting(VictoryTarget::Domination).advanced_encampment_strikes(&mut game, 0);
+
+        assert!(game.cities[&city].encampment_struck);
+        assert!(game.units.contains_key(&armor));
+        assert!(!game.units.contains_key(&weak));
     }
 
     #[test]
