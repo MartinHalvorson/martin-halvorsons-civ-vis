@@ -53,17 +53,17 @@
   },
   "corporate_libertarianism": {
     "civic": "corporate_libertarianism",
-    "effects": {"production_pct": 10},
+    "effects": {"commercial_encampment_production_pct": 10, "improved_strategic_resource_rate": 1, "science_pct": -10},
     "slots": {"military": 3, "economic": 1, "diplomatic": 1, "wildcard": 5}
   },
   "digital_democracy": {
     "civic": "digital_democracy",
-    "effects": {"amenity": 2, "culture_per_district": 2},
+    "effects": {"amenity": 2, "culture_per_district": 2, "combat_strength": -3},
     "slots": {"military": 1, "economic": 1, "diplomatic": 3, "wildcard": 5}
   },
   "synthetic_technocracy": {
     "civic": "synthetic_technocracy",
-    "effects": {"project_production_pct": 30},
+    "effects": {"power_per_city": 3, "project_production_pct": 30, "tourism_pct": -10},
     "slots": {"military": 1, "economic": 3, "diplomatic": 1, "wildcard": 5}
   }
 }
