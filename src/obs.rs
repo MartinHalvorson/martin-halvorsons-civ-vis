@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeSet;
 
 use crate::game::{growth_threshold, Game};
-use crate::{hex, Pos};
+use crate::Pos;
 
 pub fn observation(g: &Game, pid: usize) -> Value {
     obs_impl(g, pid, false)
@@ -43,7 +43,7 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             "pos": [pos.0, pos.1], "terrain": t.terrain, "feature": t.feature,
             "hills": t.hills, "resource": t.resource,
             "improvement": t.improvement, "district": t.district,
-            "owner": owner, "river": t.river,
+            "owner": owner, "river": t.river, "road": t.road,
         }))
     }).collect();
     let units: Vec<Value> = g.units.values()
@@ -113,6 +113,13 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             "civics": p.civics, "civic": p.civic,
             "civic_progress": round1(p.civic_progress),
             "government": p.government,
+            "influence": round1(p.influence),
+            "envoys_free": p.envoys_free,
+            "envoys": p.envoys,
+            "trade_capacity": g.trade_capacity(pid),
+            "routes": g.routes.iter().filter(|r| r.owner == pid)
+                .map(|r| json!({"origin": r.origin, "dest": r.dest, "ends": r.ends}))
+                .collect::<Vec<_>>(),
             "policies": p.policies,
             "policy_slots": g.gov_slots(pid),
             "available_policies": g.available_policies(pid),
@@ -127,6 +134,17 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
         "players": g.players.iter().map(|o| json!({
             "id": o.id, "civ": o.civ, "alive": o.alive,
             "is_minor": o.is_minor, "is_barbarian": o.is_barbarian,
+            "cs_type": if o.is_minor && !o.is_barbarian {
+                Some(Game::cs_type(&o.civ))
+            } else {
+                None
+            },
+            "suzerain": if o.is_minor && !o.is_barbarian {
+                g.suzerain_of(o.id)
+            } else {
+                None
+            },
+            "my_envoys": g.envoys_at(pid, o.id),
             "government": o.government,
             "score": g.score(o.id),
             "cities": g.player_city_ids(o.id).len(),

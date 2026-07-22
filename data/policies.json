@@ -1,42 +1,108 @@
 {
-  "discipline": {"slot": "military", "civic": "code_of_laws",
-    "note": "+5 combat strength fighting barbarians"},
-  "survey": {"slot": "military", "civic": "code_of_laws",
-    "note": "double XP for recon units"},
-  "god_king": {"slot": "economic", "civic": "code_of_laws",
-    "note": "+1 gold and +1 faith in the capital"},
-  "urban_planning": {"slot": "economic", "civic": "code_of_laws",
-    "note": "+1 production in all cities"},
-  "agoge": {"slot": "military", "civic": "craftsmanship",
-    "note": "+50% production toward melee, anti-cavalry and ranged units"},
-  "ilkum": {"slot": "economic", "civic": "craftsmanship",
-    "note": "+30% production toward builders"},
-  "maritime_industries": {"slot": "military", "civic": "foreign_trade",
-    "note": "+100% production toward naval units"},
-  "maneuver": {"slot": "military", "civic": "military_tradition",
-    "note": "+50% production toward cavalry units"},
-  "strategos": {"slot": "wildcard", "civic": "military_tradition",
-    "note": "+2 great general points per turn (reserved: great people pending)"},
-  "colonization": {"slot": "economic", "civic": "early_empire",
-    "note": "+50% production toward settlers"},
-  "conscription": {"slot": "military", "civic": "state_workforce",
-    "note": "unit maintenance reduced by 1 gold per unit"},
-  "insulae": {"slot": "economic", "civic": "games_recreation",
-    "note": "+1 housing in cities with 2+ districts"},
-  "bastions": {"slot": "military", "civic": "defensive_tactics",
-    "note": "+6 city defense strength, +5 city ranged strength"},
-  "limes": {"slot": "military", "civic": "defensive_tactics",
-    "note": "+100% production toward defensive buildings"},
-  "serfdom": {"slot": "economic", "civic": "feudalism",
-    "note": "newly trained builders gain 2 extra build charges"},
-  "feudal_contract": {"slot": "military", "civic": "feudalism", "replaces": "agoge",
-    "note": "+50% production toward melee, anti-cavalry and ranged units"},
-  "meritocracy": {"slot": "economic", "civic": "civil_service",
-    "note": "+1 culture per specialty district in each city"},
-  "retainers": {"slot": "military", "civic": "civil_service",
-    "note": "+1 amenity in cities with a garrisoned unit"},
-  "town_charters": {"slot": "economic", "civic": "guilds",
-    "note": "+100% commercial hub adjacency bonuses"},
-  "craftsmen": {"slot": "economic", "civic": "guilds",
-    "note": "+100% industrial zone adjacency bonuses"}
+  "discipline": {
+    "slot": "military",
+    "civic": "code_of_laws",
+    "note": "+5 combat strength fighting barbarians"
+  },
+  "survey": {
+    "slot": "military",
+    "civic": "code_of_laws",
+    "note": "double XP for recon units"
+  },
+  "god_king": {
+    "slot": "economic",
+    "civic": "code_of_laws",
+    "note": "+1 gold and +1 faith in the capital"
+  },
+  "urban_planning": {
+    "slot": "economic",
+    "civic": "code_of_laws",
+    "note": "+1 production in all cities"
+  },
+  "agoge": {
+    "slot": "military",
+    "civic": "craftsmanship",
+    "note": "+50% production toward melee, anti-cavalry and ranged units"
+  },
+  "ilkum": {
+    "slot": "economic",
+    "civic": "craftsmanship",
+    "note": "+30% production toward builders"
+  },
+  "maritime_industries": {
+    "slot": "military",
+    "civic": "foreign_trade",
+    "note": "+100% production toward naval units"
+  },
+  "maneuver": {
+    "slot": "military",
+    "civic": "military_tradition",
+    "note": "+50% production toward cavalry units"
+  },
+  "strategos": {
+    "slot": "wildcard",
+    "civic": "military_tradition",
+    "note": "+2 great general points per turn (reserved: great people pending)"
+  },
+  "colonization": {
+    "slot": "economic",
+    "civic": "early_empire",
+    "note": "+50% production toward settlers"
+  },
+  "conscription": {
+    "slot": "military",
+    "civic": "state_workforce",
+    "note": "unit maintenance reduced by 1 gold per unit"
+  },
+  "insulae": {
+    "slot": "economic",
+    "civic": "games_recreation",
+    "note": "+1 housing in cities with 2+ districts"
+  },
+  "bastions": {
+    "slot": "military",
+    "civic": "defensive_tactics",
+    "note": "+6 city defense strength, +5 city ranged strength"
+  },
+  "limes": {
+    "slot": "military",
+    "civic": "defensive_tactics",
+    "note": "+100% production toward defensive buildings"
+  },
+  "serfdom": {
+    "slot": "economic",
+    "civic": "feudalism",
+    "note": "newly trained builders gain 2 extra build charges"
+  },
+  "feudal_contract": {
+    "slot": "military",
+    "civic": "feudalism",
+    "replaces": "agoge",
+    "note": "+50% production toward melee, anti-cavalry and ranged units"
+  },
+  "meritocracy": {
+    "slot": "economic",
+    "civic": "civil_service",
+    "note": "+1 culture per specialty district in each city"
+  },
+  "retainers": {
+    "slot": "military",
+    "civic": "civil_service",
+    "note": "+1 amenity in cities with a garrisoned unit"
+  },
+  "town_charters": {
+    "slot": "economic",
+    "civic": "guilds",
+    "note": "+100% commercial hub adjacency bonuses"
+  },
+  "craftsmen": {
+    "slot": "economic",
+    "civic": "guilds",
+    "note": "+100% industrial zone adjacency bonuses"
+  },
+  "caravansaries": {
+    "slot": "economic",
+    "civic": "foreign_trade",
+    "note": "+2 gold from all trade routes"
+  }
 }

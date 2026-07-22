@@ -112,6 +112,8 @@ pub struct UnitSpec {
     #[serde(default)]
     pub domain: Option<String>,
     #[serde(default)]
+    pub civic: Option<String>,
+    #[serde(default)]
     pub cavalry: bool, // ignores zone of control
     #[serde(default)]
     pub siege: bool, // full damage vs city walls
@@ -283,6 +285,9 @@ impl Rules {
         }
         if t.hills {
             c = c.max(2.0);
+        }
+        if t.road && !self.terrains[t.terrain.as_str()].water {
+            c = 1.0; // roads flatten terrain (Civ 6 ancient roads)
         }
         c
     }

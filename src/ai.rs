@@ -2,7 +2,7 @@
 //! sparring partner, not a fair-play agent.
 use crate::game::{effective_strength, Action, Game, Item};
 use crate::rng::Rng;
-use crate::{hex, Pos};
+use crate::Pos;
 
 const TECH_PRIORITY: [&str; 15] = ["pottery", "animal_husbandry", "mining", "writing",
     "archery", "bronze_working", "currency", "masonry", "irrigation", "iron_working",
@@ -153,6 +153,22 @@ impl BasicAi {
                 let _ = g.apply(pid, &Action::SlotPolicy { policy: card.to_string() });
             }
         }
+        while g.players[pid].envoys_free > 0 {
+            // consolidate on the city-state we already lead in (suzerain push)
+            let target = g.players.iter()
+                .filter(|m| m.is_minor && !m.is_barbarian && m.alive
+                    && !g.is_at_war(pid, m.id))
+                .max_by_key(|m| (g.envoys_at(pid, m.id), std::cmp::Reverse(m.id)))
+                .map(|m| m.id);
+            match target {
+                Some(t) => {
+                    if g.apply(pid, &Action::SendEnvoy { player: t }).is_err() {
+                        break;
+                    }
+                }
+                None => break,
+            }
+        }
     }
 
     fn diplomacy(&self, g: &mut Game, pid: usize) {
@@ -280,6 +296,15 @@ impl BasicAi {
         if builders < (n_cities + 1) / 2 {
             return Some(Item::Unit { unit: "builder".to_string() });
         }
+        if !self.minor {
+            let traders = g.units.values()
+                .filter(|u| u.owner == pid && u.kind == "trader").count() as i64;
+            if g.active_routes(pid) + traders < g.trade_capacity(pid)
+                && g.can_produce(pid, cid, &Item::Unit { unit: "trader".to_string() })
+            {
+                return Some(Item::Unit { unit: "trader".to_string() });
+            }
+        }
         if !g.cities[&cid].buildings.iter().any(|b| b == "monument") {
             return Some(Item::Building { building: "monument".to_string() });
         }
@@ -348,6 +373,7 @@ impl BasicAi {
                 let acted = match kind.as_str() {
                     "settler" => self.settler_step(g, pid, uid),
                     "builder" => self.builder_step(g, pid, uid),
+                    "trader" => self.trader_step(g, pid, uid),
                     _ => self.military_step(g, pid, uid),
                 };
                 if !acted {
@@ -427,6 +453,37 @@ impl BasicAi {
             return g.apply(pid, &Action::FoundCity { unit: uid }).is_ok();
         }
         self.step_toward(g, pid, uid, target)
+    }
+
+    fn trader_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
+        let upos = g.units[&uid].pos;
+        if let Some(origin) = g.city_at(upos).filter(|c| g.cities[c].owner == pid) {
+            // best destination: most districts in range (domestic or foreign)
+            let mut best: Option<(usize, u32)> = None;
+            for (cid, c) in &g.cities {
+                if *cid == origin || g.is_at_war(pid, c.owner)
+                    || g.wdist(g.cities[&origin].pos, c.pos) > 15
+                    || g.routes.iter().any(|r| r.origin == origin && r.dest == *cid) {
+                    continue;
+                }
+                let key = (c.districts.len() + 1, *cid);
+                if best.map(|b| (key.0, key.1) > b).unwrap_or(true) {
+                    best = Some(key);
+                }
+            }
+            if let Some((_, dest)) = best {
+                return g.apply(pid, &Action::TradeRoute { unit: uid, city: dest }).is_ok();
+            }
+            return false;
+        }
+        let target = g.cities.values()
+            .filter(|c| c.owner == pid)
+            .min_by_key(|c| (g.wdist(upos, c.pos), c.id))
+            .map(|c| c.pos);
+        match target {
+            Some(t) => self.step_toward(g, pid, uid, t),
+            None => false,
+        }
     }
 
     fn builder_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {

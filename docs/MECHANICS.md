@@ -4,7 +4,7 @@ Tracked against the [Civilization Wiki](https://civilization.fandom.com/wiki/Civ
 Status: ✅ implemented · 🟡 simplified · ❌ not yet.
 
 > **In progress** (claimed by parallel sessions — check before starting a batch):
-> - Session B: trade routes + roads + city-state envoys/suzerain (engine + data; NOT touching web/index.html).
+> - (none currently claimed by session B; GUI wiring for routes/roads/envoys is open for the GUI session)
 
 | System | Status | Notes |
 |---|---|---|
@@ -20,10 +20,10 @@ Status: ✅ implemented · 🟡 simplified · ❌ not yet.
 | Fortify, city ranged strikes, walls | ✅ | wall HP pool (50/level), melee 15% / ranged 50% / siege 100% vs walls, strike = best ranged unit, walls razed on capture |
 | Embarkation (Shipbuilding) | ✅ | embarked strength 10, cannot attack |
 | Barbarians (camps, raiders, rewards) | ✅ | no scout-alert mechanic |
-| City-states | 🟡 | defensive minors; envoys/suzerain ❌ |
+| City-states + envoys | ✅ | influence by gov tier (100 pts = envoy); type bonuses at 1/3/6 (capital +2, +2 per matching district); suzerain = 6+ & strict lead; war clears envoys |
 | Great People | ❌ | |
 | Religion (pantheons, beliefs, units) | ❌ | faith yield + faith purchases only |
-| Trade routes & roads | ❌ | |
+| Trade routes & roads | ✅ | wiki capacity (Foreign Trade +1/hub-or-harbor city, +2 merchant republic); vanilla per-district yield table; traders lay roads (cost 1, bridge rivers 🟡); 30-turn duration; war/capture cancels |
 | Diplomacy (deals, alliances, grievances) | 🟡 | war/peace only |
 | Loyalty, governors (R&F/GS) | ❌ | |
 | Natural wonders, goody huts | ❌ | |

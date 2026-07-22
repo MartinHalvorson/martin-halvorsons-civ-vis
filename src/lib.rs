@@ -289,6 +289,80 @@ mod tests {
         assert!(g.available_policies(0).iter().any(|c| c == "feudal_contract"));
     }
 
+    /// Add a fresh unit of `kind` at `pos` for player 0 via save-edit.
+    fn conjure(g: &Game, kind: &str, pos: crate::Pos) -> (Game, u32) {
+        let mut v = serde_json::to_value(g).unwrap();
+        let id = v["next_id"].as_u64().unwrap() as u32;
+        v["next_id"] = serde_json::json!(id + 1);
+        v["units"].as_array_mut().unwrap().push(serde_json::json!({
+            "id": id, "type": kind, "owner": 0, "pos": [pos.0, pos.1],
+            "hp": 100, "moves_left": 2.0, "charges": 0,
+        }));
+        (serde_json::from_value(v).unwrap(), id)
+    }
+
+    #[test]
+    fn trade_routes_and_envoys() {
+        let mut g = Game::new_full(2, 26, 16, 3, 200, 2, false);
+        let s = g.player_unit_ids(0).into_iter()
+            .find(|id| g.units[id].kind == "settler").unwrap();
+        g.apply(0, &Action::FoundCity { unit: s }).unwrap();
+        let cap = g.player_city_ids(0)[0];
+        let cpos = g.cities[&cap].pos;
+        // second own city 4+ tiles out for a domestic route
+        let spot = g.map.tiles.values()
+            .find(|t| {
+                let d = g.wdist(t.pos, cpos);
+                (4..=8).contains(&d) && !g.rules.is_water(t)
+                    && g.rules.is_passable(t) && g.units_at(t.pos).is_empty()
+                    && g.cities.values().all(|c| g.wdist(t.pos, c.pos) >= 4)
+            })
+            .map(|t| t.pos).expect("settle spot");
+        let (g2, s2) = conjure(&g, "settler", spot);
+        let mut g = g2;
+        g.apply(0, &Action::FoundCity { unit: s2 }).unwrap();
+        let second = *g.player_city_ids(0).iter().find(|c| **c != cap).unwrap();
+        // trader + foreign trade civic → capacity 1
+        g.players[0].civics.insert("foreign_trade".to_string());
+        assert_eq!(g.trade_capacity(0), 1);
+        let (mut g, trader) = conjure(&g, "trader", cpos);
+        let before = g.city_yields(cap);
+        g.apply(0, &Action::TradeRoute { unit: trader, city: second }).unwrap();
+        assert_eq!(g.active_routes(0), 1);
+        assert!(!g.units.contains_key(&trader)); // trader is on the road
+        let after = g.city_yields(cap);
+        // domestic city-center route: +1 food +1 production at the origin
+        assert!((after.food - before.food - 1.0).abs() < 1e-9);
+        assert!(after.production > before.production);
+        // capacity is enforced
+        let (mut g3, t2) = conjure(&g, "trader", cpos);
+        assert!(g3.apply(0, &Action::TradeRoute { unit: t2, city: second }).is_err());
+        // a road was laid toward the destination
+        assert!(g.map.tiles.values().any(|t| t.road));
+        // envoys: +2 of the type yield in the capital at 1 envoy
+        let minor = g.players.iter()
+            .find(|p| p.is_minor && !p.is_barbarian).expect("city-state").id;
+        g.players[0].envoys_free = 1;
+        let before = g.city_yields(cap);
+        g.apply(0, &Action::SendEnvoy { player: minor }).unwrap();
+        assert_eq!(g.envoys_at(0, minor), 1);
+        let after = g.city_yields(cap);
+        assert!((after.total() - before.total() - 2.0).abs() < 1e-6);
+        // suzerain needs 6+ envoys and a strict lead
+        assert_eq!(g.suzerain_of(minor), None);
+        g.players[0].envoys[0].1 = 6;
+        assert_eq!(g.suzerain_of(minor), Some(0));
+        // routes expire and hand the trader back
+        g.routes[0].ends = g.turn + 1;
+        g.apply(0, &Action::EndTurn).unwrap();
+        while g.current != 0 {
+            let cur = g.current;
+            g.apply(cur, &Action::EndTurn).unwrap();
+        }
+        assert_eq!(g.active_routes(0), 0);
+        assert!(g.units.values().any(|u| u.owner == 0 && u.kind == "trader"));
+    }
+
     #[test]
     fn serialization_roundtrip() {
         let mut g = Game::new(2, 18, 12, 4, 25, 1);

@@ -165,6 +165,12 @@ pub struct Player {
     #[serde(default)]
     pub policies: BTreeSet<String>,
     #[serde(default)]
+    pub influence: f64,
+    #[serde(default)]
+    pub envoys_free: i64,
+    #[serde(default)]
+    pub envoys: Vec<(usize, i64)>, // (city-state pid, envoys placed)
+    #[serde(default)]
     pub counters: BTreeMap<String, i64>,
     #[serde(default)]
     pub boosted_techs: BTreeSet<String>,
@@ -195,6 +201,9 @@ impl Player {
             is_barbarian: false,
             government: None,
             policies: BTreeSet::new(),
+            influence: 0.0,
+            envoys_free: 0,
+            envoys: Vec::new(),
             counters: BTreeMap::new(),
             boosted_techs: BTreeSet::new(),
             boosted_civics: BTreeSet::new(),
@@ -223,6 +232,8 @@ pub enum Action {
     Government { government: String },
     SlotPolicy { policy: String },
     UnslotPolicy { policy: String },
+    TradeRoute { unit: u32, city: u32 },
+    SendEnvoy { player: usize },
     CityStrike { city: u32, target: Pos },
     EndTurn,
 }
@@ -252,8 +263,17 @@ pub struct Game {
     pub at_war: BTreeSet<(usize, usize)>,
     pub barb_pid: Option<usize>,
     pub barb_camps: BTreeMap<Pos, u32>,
+    pub routes: Vec<TradeRoute>,
     occ: BTreeMap<Pos, Vec<u32>>,
     city_by_pos: BTreeMap<Pos, u32>,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
+pub struct TradeRoute {
+    pub origin: u32,
+    pub dest: u32,
+    pub owner: usize,
+    pub ends: u32,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -271,6 +291,8 @@ struct GameSer {
     barb_pid: Option<usize>,
     #[serde(default)]
     barb_camps: Vec<(Pos, u32)>,
+    #[serde(default)]
+    routes: Vec<TradeRoute>,
     map: WorldMap,
     players: Vec<Player>,
     units: Vec<Unit>,
@@ -296,6 +318,7 @@ impl From<GameSer> for Game {
             at_war: s.at_war.into_iter().collect(),
             barb_pid: s.barb_pid,
             barb_camps: s.barb_camps.into_iter().collect(),
+            routes: s.routes,
             occ: BTreeMap::new(),
             city_by_pos: BTreeMap::new(),
         };
@@ -329,6 +352,7 @@ impl From<Game> for GameSer {
             at_war: g.at_war.into_iter().collect(),
             barb_pid: g.barb_pid,
             barb_camps: g.barb_camps.into_iter().collect(),
+            routes: g.routes,
             map: g.map,
             players: g.players,
             units: g.units.into_values().collect(),
@@ -368,6 +392,7 @@ impl Game {
             at_war: BTreeSet::new(),
             barb_pid: None,
             barb_camps: BTreeMap::new(),
+            routes: Vec::new(),
             occ: BTreeMap::new(),
             city_by_pos: BTreeMap::new(),
         };
@@ -526,6 +551,252 @@ impl Game {
 
     pub fn has_policy(&self, pid: usize, name: &str) -> bool {
         self.players[pid].policies.contains(name)
+    }
+
+    // -------------------------------------------------- trade routes
+
+    /// Trading capacity: 1 with Foreign Trade, +1 per city with a Commercial
+    /// Hub or Harbor (not cumulative per city), +2 under Merchant Republic.
+    pub fn trade_capacity(&self, pid: usize) -> i64 {
+        let p = &self.players[pid];
+        if !p.civics.contains("foreign_trade") {
+            return 0;
+        }
+        let mut cap = 1;
+        for c in self.cities.values().filter(|c| c.owner == pid) {
+            if c.districts.contains_key("commercial_hub")
+                || c.districts.contains_key("harbor") {
+                cap += 1;
+            }
+        }
+        if p.government.as_deref() == Some("merchant_republic") {
+            cap += 2;
+        }
+        cap
+    }
+
+    pub fn active_routes(&self, pid: usize) -> i64 {
+        self.routes.iter().filter(|r| r.owner == pid).count() as i64
+    }
+
+    /// Origin-city yields of a route by destination districts (Civ 6 vanilla
+    /// table): domestic food/production, international gold/science/etc.
+    pub fn route_yields(&self, dest: u32, domestic: bool) -> Yields {
+        let city = &self.cities[&dest];
+        let mut ys = Yields::default();
+        if domestic {
+            ys.food += 1.0;
+            ys.production += 1.0; // city center
+        } else {
+            ys.gold += 3.0;
+        }
+        for d in city.districts.keys() {
+            match (d.as_str(), domestic) {
+                ("campus", true) | ("holy_site", true) | ("theater_square", true)
+                | ("entertainment_complex", true) => ys.food += 1.0,
+                ("encampment", _) | ("industrial_zone", _)
+                | ("commercial_hub", true) | ("harbor", true) => ys.production += 1.0,
+                ("commercial_hub", false) | ("harbor", false) => ys.gold += 3.0,
+                ("campus", false) => ys.science += 1.0,
+                ("holy_site", false) => ys.faith += 1.0,
+                ("theater_square", false) => ys.culture += 1.0,
+                ("entertainment_complex", false) => ys.food += 1.0,
+                _ => {}
+            }
+        }
+        ys
+    }
+
+    fn do_trade_route(&mut self, pid: usize, uid: u32, dest: u32) -> Result<(), String> {
+        let u = self.own_unit(pid, uid)?;
+        if u.kind != "trader" {
+            return Err("only traders run routes".into());
+        }
+        let origin = self.city_at(u.pos)
+            .filter(|cid| self.cities[cid].owner == pid)
+            .ok_or_else(|| "trader must be in one of your cities".to_string())?;
+        let dc = self.cities.get(&dest).ok_or_else(|| "no such city".to_string())?;
+        if dest == origin {
+            return Err("destination is the origin".into());
+        }
+        if self.is_at_war(pid, dc.owner) {
+            return Err("cannot trade with an enemy".into());
+        }
+        if self.wdist(self.cities[&origin].pos, dc.pos) > 15 {
+            return Err("destination out of range".into());
+        }
+        if self.routes.iter().any(|r| r.origin == origin && r.dest == dest) {
+            return Err("route already active".into());
+        }
+        if self.active_routes(pid) >= self.trade_capacity(pid) {
+            return Err("no trading capacity".into());
+        }
+        self.build_road(self.cities[&origin].pos, self.cities[&dest].pos);
+        let ends = self.turn + 30;
+        self.routes.push(TradeRoute { origin, dest, owner: pid, ends });
+        self.remove_unit(uid); // the trader services the route until it ends
+        Ok(())
+    }
+
+    /// Lay an ancient road along a greedy shortest walk between two cities
+    /// (traders build roads as they go in Civ 6).
+    fn build_road(&mut self, from: Pos, to: Pos) {
+        let mut cur = from;
+        for _ in 0..40 {
+            if let Some(t) = self.map.tiles.get_mut(&cur) {
+                if !self.rules.terrains[t.terrain.as_str()].water {
+                    t.road = true;
+                }
+            }
+            if cur == to {
+                break;
+            }
+            let next = self.nbrs(cur).into_iter()
+                .filter(|n| self.rules.is_passable(&self.map.tiles[n]))
+                .min_by_key(|n| (self.wdist(*n, to), *n));
+            match next {
+                Some(n) if self.wdist(n, to) < self.wdist(cur, to) => cur = n,
+                _ => break,
+            }
+        }
+    }
+
+    /// Route upkeep at the owner's turn start: expire finished routes and
+    /// hand the trader back to its origin city.
+    fn process_routes(&mut self, pid: usize) {
+        let turn = self.turn;
+        let expired: Vec<TradeRoute> = self.routes.iter()
+            .filter(|r| r.owner == pid && turn >= r.ends).cloned().collect();
+        self.routes.retain(|r| !(r.owner == pid && turn >= r.ends));
+        for r in expired {
+            if let Some(c) = self.cities.get(&r.origin) {
+                if c.owner == pid {
+                    let pos = c.pos;
+                    self.place_new_unit("trader", pid, pos);
+                }
+            }
+        }
+    }
+
+    fn cancel_routes_with(&mut self, a: usize, b: usize) {
+        self.routes.retain(|r| {
+            let downer = self.cities.get(&r.dest).map(|c| c.owner);
+            let oowner = self.cities.get(&r.origin).map(|c| c.owner);
+            !((r.owner == a && downer == Some(b))
+                || (r.owner == b && downer == Some(a))
+                || oowner.is_none() || downer.is_none())
+        });
+    }
+
+    // -------------------------------------------------- city-state envoys
+
+    pub fn cs_type(civ: &str) -> &'static str {
+        match civ {
+            "Geneva" | "Hattusa" | "Stockholm" => "scientific",
+            "Mohenjo-Daro" | "Vilnius" => "cultural",
+            "Yerevan" | "Kandy" => "religious",
+            "Kabul" | "Valletta" => "militaristic",
+            "Auckland" => "industrial",
+            _ => "trade", // Carthage, Zanzibar, ...
+        }
+    }
+
+    /// (yield kind, matching district) for a city-state type's envoy bonuses.
+    fn cs_bonus(kind: &str) -> (&'static str, &'static str) {
+        match kind {
+            "scientific" => ("science", "campus"),
+            "cultural" => ("culture", "theater_square"),
+            "religious" => ("faith", "holy_site"),
+            "militaristic" => ("production", "encampment"),
+            "industrial" => ("production", "industrial_zone"),
+            _ => ("gold", "commercial_hub"),
+        }
+    }
+
+    pub fn envoys_at(&self, pid: usize, minor: usize) -> i64 {
+        self.players[pid].envoys.iter()
+            .find(|(m, _)| *m == minor).map(|(_, n)| *n).unwrap_or(0)
+    }
+
+    /// Suzerain: at least 6 envoys and strictly more than every other major.
+    pub fn suzerain_of(&self, minor: usize) -> Option<usize> {
+        let mut best: Option<(i64, usize)> = None;
+        let mut tied = false;
+        for p in self.players.iter().filter(|p| !p.is_minor && p.alive) {
+            let n = self.envoys_at(p.id, minor);
+            match best {
+                Some((bn, _)) if n == bn => tied = true,
+                Some((bn, _)) if n > bn => {
+                    best = Some((n, p.id));
+                    tied = false;
+                }
+                None => {
+                    best = Some((n, p.id));
+                    tied = false;
+                }
+                _ => {}
+            }
+        }
+        match best {
+            Some((n, pid)) if n >= 6 && !tied => Some(pid),
+            _ => None,
+        }
+    }
+
+    fn do_send_envoy(&mut self, pid: usize, minor: usize) -> Result<(), String> {
+        if self.players[pid].envoys_free <= 0 {
+            return Err("no envoys to send".into());
+        }
+        let ok = self.players.get(minor)
+            .map(|m| m.is_minor && !m.is_barbarian && m.alive)
+            .unwrap_or(false);
+        if !ok || self.is_at_war(pid, minor) {
+            return Err("invalid city-state".into());
+        }
+        let p = &mut self.players[pid];
+        p.envoys_free -= 1;
+        match p.envoys.iter_mut().find(|(m, _)| *m == minor) {
+            Some(e) => e.1 += 1,
+            None => p.envoys.push((minor, 1)),
+        }
+        Ok(())
+    }
+
+    /// Envoy yield bonuses for one of `pid`'s cities (Civ 6 vanilla: +2 of
+    /// the type yield in the capital at 1 envoy, +2 in each matching district
+    /// at 3 and again at 6; suzerain repeats the district bonus).
+    fn envoy_yields(&self, pid: usize, city: &City) -> Yields {
+        let mut ys = Yields::default();
+        for m in self.players.iter().filter(|m| m.is_minor && !m.is_barbarian && m.alive) {
+            let n = self.envoys_at(pid, m.id);
+            if n == 0 {
+                continue;
+            }
+            let (kind, district) = Self::cs_bonus(Self::cs_type(&m.civ));
+            let mut amt = 0.0;
+            if n >= 1 && city.is_capital && city.owner == city.original_owner {
+                amt += 2.0;
+            }
+            if city.districts.contains_key(district) {
+                if n >= 3 {
+                    amt += 2.0;
+                }
+                if n >= 6 {
+                    amt += 2.0;
+                }
+                if self.suzerain_of(m.id) == Some(pid) {
+                    amt += 2.0;
+                }
+            }
+            match kind {
+                "science" => ys.science += amt,
+                "culture" => ys.culture += amt,
+                "faith" => ys.faith += amt,
+                "production" => ys.production += amt,
+                _ => ys.gold += amt,
+            }
+        }
+        ys
     }
 
     /// Survey doubles XP for recon units.
@@ -918,9 +1189,9 @@ impl Game {
     pub fn step_cost(&self, from: Pos, to: Pos) -> f64 {
         let t = &self.map.tiles[&to];
         let mut c = self.rules.move_cost(t);
-        if t.river && !self.rules.is_water(t)
+        if t.river && !t.road && !self.rules.is_water(t)
             && self.map.get(from).map(|f| !f.river).unwrap_or(true) {
-            c += 2.0;
+            c += 2.0; // roads bridge rivers (simplified: any road)
         }
         c
     }
@@ -1333,6 +1604,18 @@ impl Game {
         if self.has_policy(city.owner, "meritocracy") {
             ys.culture += city.districts.len() as f64;
         }
+        for r in self.routes.iter().filter(|r| r.origin == cid) {
+            if let Some(dc) = self.cities.get(&r.dest) {
+                let mut rys = self.route_yields(r.dest, dc.owner == city.owner);
+                if self.has_policy(city.owner, "caravansaries") {
+                    rys.gold += 2.0;
+                }
+                ys.add(rys);
+            }
+        }
+        if !self.players[city.owner].is_minor {
+            ys.add(self.envoy_yields(city.owner, city));
+        }
         let eff = self.gov_effects(city.owner);
         ys.production *= 1.0 + eff.production_pct / 100.0;
         ys.science *= 1.0 + eff.science_pct / 100.0;
@@ -1429,7 +1712,7 @@ impl Game {
                     Some(s) => s,
                     None => return false,
                 };
-                if !self.unlocked(pid, &spec.tech, &None) {
+                if !self.unlocked(pid, &spec.tech, &spec.civic) {
                     return false;
                 }
                 if let Some(res) = &spec.requires_resource {
@@ -1646,6 +1929,34 @@ impl Game {
             for card in &p.policies {
                 acts.push(Action::UnslotPolicy { policy: card.clone() });
             }
+            if self.active_routes(pid) < self.trade_capacity(pid) {
+                for uid in self.player_unit_ids(pid) {
+                    if self.units[&uid].kind != "trader" {
+                        continue;
+                    }
+                    let origin = match self.city_at(self.units[&uid].pos) {
+                        Some(cid) if self.cities[&cid].owner == pid => cid,
+                        _ => continue,
+                    };
+                    for (dest, dc) in &self.cities {
+                        if *dest == origin || self.is_at_war(pid, dc.owner)
+                            || self.wdist(self.cities[&origin].pos, dc.pos) > 15
+                            || self.routes.iter()
+                                .any(|r| r.origin == origin && r.dest == *dest) {
+                            continue;
+                        }
+                        acts.push(Action::TradeRoute { unit: uid, city: *dest });
+                    }
+                }
+            }
+            if p.envoys_free > 0 {
+                for m in &self.players {
+                    if m.is_minor && !m.is_barbarian && m.alive
+                        && !self.is_at_war(pid, m.id) {
+                        acts.push(Action::SendEnvoy { player: m.id });
+                    }
+                }
+            }
         }
         if !p.is_barbarian {
             for o in &self.players {
@@ -1698,6 +2009,8 @@ impl Game {
             Action::Government { government } => self.do_government(pid, government),
             Action::SlotPolicy { policy } => self.do_slot_policy(pid, policy),
             Action::UnslotPolicy { policy } => self.do_unslot_policy(pid, policy),
+            Action::TradeRoute { unit, city } => self.do_trade_route(pid, *unit, *city),
+            Action::SendEnvoy { player } => self.do_send_envoy(pid, *player),
             Action::CityStrike { city, target } => self.do_city_strike(pid, *city, *target),
             Action::EndTurn => {
                 self.do_end_turn();
@@ -2309,6 +2622,10 @@ impl Game {
             return Err("barbarians are always at war".into());
         }
         self.at_war.insert(pair(pid, other));
+        self.cancel_routes_with(pid, other);
+        if self.players[other].is_minor {
+            self.players[pid].envoys.retain(|(m, _)| *m != other);
+        }
         Ok(())
     }
 
@@ -2371,6 +2688,22 @@ impl Game {
 
     fn begin_turn(&mut self, pid: usize) {
         self.check_boosts(pid);
+        self.process_routes(pid);
+        if !self.players[pid].is_minor {
+            // influence points scale with government tier; 100 points = 1 envoy
+            let tier = match self.players[pid].government.as_deref() {
+                Some("monarchy") | Some("merchant_republic") => 2.0,
+                Some("autocracy") | Some("oligarchy")
+                | Some("classical_republic") => 1.0,
+                _ => 0.0,
+            };
+            let p = &mut self.players[pid];
+            p.influence += 1.0 + tier;
+            if p.influence >= 100.0 {
+                p.influence -= 100.0;
+                p.envoys_free += 1;
+            }
+        }
         for uid in self.player_unit_ids(pid) {
             let (kind, hp, pos) = {
                 let u = &self.units[&uid];
@@ -2745,6 +3078,7 @@ impl Game {
             }
         }
         bump(&mut self.players[new_owner], "captures");
+        self.routes.retain(|r| r.origin != cid && r.dest != cid);
         self.check_elimination(old);
         self.check_domination();
     }

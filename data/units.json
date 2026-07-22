@@ -113,5 +113,12 @@
     "strength": 30,
     "domain": "sea",
     "tech": "sailing"
+  },
+  "trader": {
+    "class": "civilian",
+    "cost": 40,
+    "moves": 2,
+    "civic": "foreign_trade",
+    "sight": 2
   }
 }
