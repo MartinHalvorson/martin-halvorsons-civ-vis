@@ -60,6 +60,8 @@ TABLE_KEYS = {
     "Districts": "DistrictType",
     "TechnologyPrereqs": ("Technology", "PrereqTech"),
     "CivicPrereqs": ("Civic", "PrereqCivic"),
+    "District_Adjacencies": ("DistrictType", "YieldChangeId"),
+    "Adjacency_YieldChanges": "ID",
     "Building_YieldChanges": ("BuildingType", "YieldType"),
     "Governments": "GovernmentType",
     "Government_SlotCounts": ("GovernmentType", "GovernmentSlotType"),
@@ -393,6 +395,75 @@ def project_improvements(database: Database) -> dict[str, dict]:
     )
 
 
+# CIVVIS names the adjacency source; the game names the column that matched.
+ADJACENCY_FEATURES = {
+    "jungle": "rainforest",
+    "barrier_reef": "great_barrier_reef",
+    "everest": "mount_everest",
+}
+ADJACENCY_DISTRICTS = {
+    "government": "government_plaza",
+    "theater": "theater_square",
+    "water_entertainment_complex": "water_park",
+    "water_street_carnival": "street_carnival",
+}
+
+
+def adjacency_source(rule: dict) -> str | None:
+    """The CIVVIS adjacency key a game adjacency rule corresponds to."""
+    if truthy(rule.get("Self")):
+        return "self"
+    if truthy(rule.get("OtherDistrictAdjacent")):
+        return "district"
+    if truthy(rule.get("AdjacentRiver")):
+        return "river"
+    if truthy(rule.get("AdjacentWonder")):
+        return "wonder"
+    if truthy(rule.get("AdjacentNaturalWonder")):
+        return "natural_wonder"
+    if truthy(rule.get("AdjacentSeaResource")):
+        return "coast_resource"
+    if truthy(rule.get("AdjacentResource")):
+        return "resource"
+    if terrain := rule.get("AdjacentTerrain"):
+        # The game spells one rule per terrain family; CIVVIS keys the family.
+        return "mountain" if terrain.endswith("_MOUNTAIN") else slug(terrain, "TERRAIN_")
+    if feature := rule.get("AdjacentFeature"):
+        name = slug(feature, "FEATURE_")
+        return ADJACENCY_FEATURES.get(name, name)
+    if district := rule.get("AdjacentDistrict"):
+        name = slug(district, "DISTRICT_")
+        return ADJACENCY_DISTRICTS.get(name, name)
+    if improvement := rule.get("AdjacentImprovement"):
+        return slug(improvement, "IMPROVEMENT_")
+    if klass := rule.get("AdjacentResourceClass"):
+        return f"{slug(klass, 'RESOURCECLASS_')}_resource"
+    return None
+
+
+def project_adjacency(database: Database) -> dict[str, dict]:
+    rules = {row["ID"]: row for row in database.rows("Adjacency_YieldChanges")}
+    projected: dict[str, dict] = {
+        slug(row["DistrictType"], "DISTRICT_"): {} for row in database.rows("Districts")
+    }
+    for row in database.rows("District_Adjacencies"):
+        rule = rules.get(row["YieldChangeId"])
+        if rule is None:
+            continue
+        source = adjacency_source(rule)
+        if source is None:
+            continue
+        district = slug(row["DistrictType"], "DISTRICT_")
+        amount = number(rule.get("YieldChange")) / max(number(rule.get("TilesRequired"), 1), 1)
+        field = f"{source}_{slug(rule['YieldType'], 'YIELD_')}"
+        entry = projected.setdefault(district, {})
+        # Several game rules can collapse onto one CIVVIS key (five mountain
+        # terrains, two Mine rules). Same-value rules are one rule restated per
+        # terrain; genuinely different values sum the way adjacency does.
+        entry[field] = amount if entry.get(field) in (None, amount) else entry[field] + amount
+    return projected
+
+
 def project_building_yields(database: Database) -> dict[str, dict]:
     return project_yields(
         database, "Building_YieldChanges", "BuildingType", "BUILDING_", "Buildings"
@@ -541,6 +612,17 @@ def ours_improvement_upgrades() -> dict[str, dict]:
         if kept:
             out[node] = kept
     return out
+
+
+def ours_adjacency() -> dict[str, dict]:
+    return {
+        name: {
+            f"{source}_{field}": amount
+            for source, yields in (entry.get("adjacency") or {}).items()
+            for field, amount in yields.items()
+        }
+        for name, entry in load_ours("districts").items()
+    }
 
 
 def ours_governments() -> dict[str, dict]:
@@ -707,6 +789,7 @@ def main() -> int:
         ("Improvements", ours_yields("improvements"), project_improvements(database)),
         ("BuildingYields", ours_yields("buildings"), project_building_yields(database)),
         ("Governments", ours_governments(), project_governments(database)),
+        ("DistrictAdjacency", ours_adjacency(), project_adjacency(database)),
         (
             "ImprovementUpgrades",
             ours_improvement_upgrades(),

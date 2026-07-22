@@ -35932,7 +35932,7 @@ mod district_mechanics {
             ("theater_square", "government_plaza", 1.0),
             ("industrial_zone", "quarry", 1.0),
             ("industrial_zone", "strategic_resource", 1.0),
-            ("industrial_zone", "mine", 0.5),
+            ("industrial_zone", "mine", 1.5),
             ("industrial_zone", "lumber_mill", 0.5),
             ("industrial_zone", "district", 0.5),
             ("industrial_zone", "aqueduct", 2.0),

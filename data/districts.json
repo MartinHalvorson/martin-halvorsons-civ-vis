@@ -107,7 +107,7 @@
     "adjacency": {
       "quarry": {"production": 1},
       "strategic_resource": {"production": 1},
-      "mine": {"production": 0.5},
+      "mine": {"production": 1.5},
       "lumber_mill": {"production": 0.5},
       "district": {"production": 0.5},
       "aqueduct": {"production": 2},
