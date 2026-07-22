@@ -4,7 +4,7 @@ Tracked against the [Civilization Wiki](https://civilization.fandom.com/wiki/Civ
 Status: ✅ implemented · 🟡 simplified · ❌ not yet.
 
 > **In progress** (claimed by parallel sessions — check before starting a batch):
-> - (none currently claimed by session B; GUI panels for religion/GP/trade/eras are open)
+> - Session B: natural wonders, support units (ram/tower), loyalty+governors, world congress diplomatic victory. NOT touching web/index.html.
 
 | System | Status | Notes |
 |---|---|---|
