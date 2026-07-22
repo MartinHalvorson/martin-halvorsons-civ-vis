@@ -104,7 +104,13 @@ impl Ai for RandomAi {
 
 // ------------------------------------------------------------------ BasicAi
 
-const GOV_PRIORITY: [&str; 6] = [
+const GOV_PRIORITY: [&str; 12] = [
+    "digital_democracy",
+    "synthetic_technocracy",
+    "corporate_libertarianism",
+    "democracy",
+    "communism",
+    "fascism",
     "merchant_republic",
     "monarchy",
     "classical_republic",
@@ -2603,6 +2609,7 @@ impl BasicAi {
                 let acted = match kind.as_str() {
                     "settler" => self.settler_step(g, pid, uid),
                     "builder" => self.builder_step(g, pid, uid),
+                    "military_engineer" => self.military_engineer_step(g, pid, uid),
                     "naturalist" => self.naturalist_step(g, pid, uid),
                     "archaeologist" => self.archaeologist_step(g, pid, uid),
                     "trader" => self.trader_step(g, pid, uid),
@@ -2681,8 +2688,12 @@ impl BasicAi {
                     }
                     let a_spec = &game.rules.units[a.kind.as_str()];
                     let b_spec = &game.rules.units[b.kind.as_str()];
-                    let support = (a_spec.class == "support" && b_spec.class == "military")
-                        || (b_spec.class == "support" && a_spec.class == "military");
+                    let support = (a_spec.class == "support"
+                        && a.kind != "military_engineer"
+                        && b_spec.class == "military")
+                        || (b_spec.class == "support"
+                            && b.kind != "military_engineer"
+                            && a_spec.class == "military");
                     let naval_settler = (a_spec.domain.as_deref() == Some("sea")
                         && b.kind == "settler")
                         || (b_spec.domain.as_deref() == Some("sea") && a.kind == "settler");
@@ -2698,7 +2709,9 @@ impl BasicAi {
                     Action::LinkUnits { unit, with } => {
                         let a = &g.rules.units[g.units[unit].kind.as_str()];
                         let b = &g.rules.units[g.units[with].kind.as_str()];
-                        let support = a.class == "support" || b.class == "support";
+                        let support = (a.class == "support"
+                            && g.units[unit].kind != "military_engineer")
+                            || (b.class == "support" && g.units[with].kind != "military_engineer");
                         let naval_settler = (a.domain.as_deref() == Some("sea")
                             && g.units[with].kind == "settler")
                             || (b.domain.as_deref() == Some("sea")
@@ -3191,6 +3204,30 @@ impl BasicAi {
             Some((_, pos)) => self.step_toward(g, pid, uid, pos),
             None => false,
         }
+    }
+
+    pub(crate) fn military_engineer_step(&mut self, g: &mut Game, pid: usize, uid: u32) -> bool {
+        let current = g.units[&uid].pos;
+        let target = g
+            .player_city_ids(pid)
+            .into_iter()
+            .filter_map(|city| {
+                let position = g.district_contribution_target(pid, city)?;
+                if position != current {
+                    g.route_step(uid, position, 0)?;
+                }
+                Some((g.wdist(current, position), position, city))
+            })
+            .min();
+        let Some((_, position, city)) = target else {
+            return self.military_step(g, pid, uid);
+        };
+        if current == position && g.can_contribute_district(pid, uid, city) {
+            return g
+                .apply(pid, &Action::ContributeDistrict { unit: uid, city })
+                .is_ok();
+        }
+        self.step_toward(g, pid, uid, position)
     }
 
     fn naturalist_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
@@ -5192,6 +5229,58 @@ mod tests {
         assert!(positions.iter().all(|position| {
             g.map.tiles[position].improvement.as_deref() == Some("national_park")
         }));
+    }
+
+    #[test]
+    fn headless_military_engineer_routes_to_and_accelerates_an_aqueduct() {
+        let mut game = Game::new_full(1, 20, 14, 36_001, 80, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = game.player_city_ids(0)[0];
+        let center = game.cities[&city].pos;
+        let site = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != center && game.units_at(*position).is_empty())
+            .unwrap();
+        let center_edge = game.map.direction_to(site, center).unwrap();
+        {
+            let tile = game.map.tiles.get_mut(&site).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.hills = false;
+            tile.feature = None;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.district = None;
+            tile.river_edges[(center_edge + 1) % 6] = true;
+        }
+        game.players[0].techs.insert("engineering".to_string());
+        game.cities.get_mut(&city).unwrap().queue = vec![Item::District {
+            district: "aqueduct".to_string(),
+            pos: site,
+        }];
+        let engineer = game.spawn_test_unit("military_engineer", 0, center);
+        let mut ai = BasicAi::new();
+
+        assert!(ai.military_engineer_step(&mut game, 0, engineer));
+        assert_eq!(game.units[&engineer].pos, site);
+        // The river-adjacent construction tile can consume the Engineer's
+        // full movement; the contribution is made after movement refreshes.
+        game.units.get_mut(&engineer).unwrap().moves_left = 2.0;
+        assert!(game.can_contribute_district(0, engineer, city));
+        assert!(ai.military_engineer_step(&mut game, 0, engineer));
+        assert!(
+            (game.cities[&city].production - 7.2).abs() < 1e-9,
+            "production was {}",
+            game.cities[&city].production
+        );
+        assert_eq!(game.units[&engineer].charges, 1);
+        assert_eq!(game.units[&engineer].moves_left, 0.0);
     }
 
     #[test]

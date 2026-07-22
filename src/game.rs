@@ -1301,6 +1301,493 @@ mod governor_runtime_tests {
         assert_eq!(game.players[0].faith, faith - cost);
         assert!(game.city_has_district_family(&game.cities[&city], "industrial_zone"));
     }
+
+    #[test]
+    fn pingala_executes_population_gpp_space_and_curator_effects() {
+        let mut game = Game::new_full(1, 24, 16, 91_784, 200, 0, false);
+        let city = found_capital(&mut game, 0);
+        appoint_established(
+            &mut game,
+            0,
+            "pingala",
+            city,
+            &[
+                "connoisseur",
+                "researcher",
+                "grants",
+                "space_initiative",
+                "curator",
+            ],
+        );
+        game.cities.get_mut(&city).unwrap().pop = 4;
+        let center = game.cities[&city].pos;
+        let sites: Vec<Pos> = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .filter(|position| *position != center)
+            .take(2)
+            .collect();
+        set_district(&mut game, city, sites[0], "campus");
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .extend(["library".to_string(), "amphitheater".to_string()]);
+
+        let mut without_population = game.clone();
+        for promotion in ["connoisseur", "researcher"] {
+            without_population.players[0]
+                .governor_roster
+                .get_mut("pingala")
+                .unwrap()
+                .promotions
+                .remove(promotion);
+        }
+        let with_yields = game.city_yields(city);
+        let without_yields = without_population.city_yields(city);
+        assert_eq!(game.governor_effect(0, city, "science_per_pop"), 1.0);
+        assert_eq!(game.governor_effect(0, city, "culture_per_pop"), 1.0);
+        assert!(with_yields.science > without_yields.science);
+        assert!(with_yields.culture > without_yields.culture);
+
+        let mut without_grants = game.clone();
+        without_grants.players[0]
+            .governor_roster
+            .get_mut("pingala")
+            .unwrap()
+            .promotions
+            .remove("grants");
+        game.process_great_people(0);
+        without_grants.process_great_people(0);
+        assert_eq!(
+            game.players[0].gpp["scientist"],
+            2.0 * without_grants.players[0].gpp["scientist"]
+        );
+
+        set_district(&mut game, city, sites[1], "spaceport");
+        let project = Item::Project {
+            project: "launch_earth_satellite".to_string(),
+        };
+        let mut without_space = game.clone();
+        without_space.players[0]
+            .governor_roster
+            .get_mut("pingala")
+            .unwrap()
+            .promotions
+            .remove("space_initiative");
+        assert!(
+            (game.item_prod_mult(0, city, Some(&project))
+                - without_space.item_prod_mult(0, city, Some(&project))
+                - 0.3)
+                .abs()
+                < 1e-9
+        );
+
+        game.players[0]
+            .counters
+            .insert("great_work:writing".to_string(), 1);
+        let mut without_curator = game.clone();
+        without_curator.players[0]
+            .governor_roster
+            .get_mut("pingala")
+            .unwrap()
+            .promotions
+            .remove("curator");
+        assert_eq!(
+            game.tourism_per_turn(0) - without_curator.tourism_per_turn(0),
+            2.0
+        );
+    }
+
+    #[test]
+    fn reyna_executes_routes_borders_adjacency_forestry_purchases_and_renewables() {
+        let mut game = Game::new_full(2, 26, 16, 91_785, 200, 0, false);
+        let city = found_capital(&mut game, 0);
+        let rival = found_capital(&mut game, 1);
+        appoint_established(
+            &mut game,
+            0,
+            "reyna",
+            city,
+            &[
+                "harbormaster",
+                "forestry_management",
+                "tax_collector",
+                "contractor",
+                "renewable_subsidizer",
+            ],
+        );
+        game.cities.get_mut(&city).unwrap().pop = 4;
+        game.routes.push(TradeRoute {
+            origin: rival,
+            dest: city,
+            owner: 1,
+            ends: game.turn + 30,
+        });
+
+        let mut base_reyna = game.clone();
+        base_reyna.players[0]
+            .governor_roster
+            .get_mut("reyna")
+            .unwrap()
+            .promotions
+            .remove("tax_collector");
+        let mut no_reyna = base_reyna.clone();
+        no_reyna.players[0].governor_roster.clear();
+        assert_eq!(
+            base_reyna.governor_effect(0, city, "incoming_foreign_trade_gold"),
+            3.0
+        );
+        assert!(base_reyna.city_yields(city).gold > no_reyna.city_yields(city).gold);
+        let base_border = 1.0 + no_reyna.city_yields(city).culture * 0.5;
+        base_reyna.process_city(0, city);
+        no_reyna.process_city(0, city);
+        assert_eq!(base_reyna.cities[&city].border_culture, base_border * 1.2);
+        assert_eq!(no_reyna.cities[&city].border_culture, base_border);
+
+        let mut without_tax = game.clone();
+        without_tax.players[0]
+            .governor_roster
+            .get_mut("reyna")
+            .unwrap()
+            .promotions
+            .remove("tax_collector");
+        assert_eq!(game.governor_effect(0, city, "gold_per_pop"), 2.0);
+        assert!(game.city_yields(city).gold > without_tax.city_yields(city).gold);
+
+        let center = game.cities[&city].pos;
+        let sites: Vec<Pos> = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .filter(|position| *position != center)
+            .take(4)
+            .collect();
+        set_district(&mut game, city, sites[0], "commercial_hub");
+        game.map.tiles.get_mut(&sites[0]).unwrap().river_edges[0] = true;
+        let mut without_harbormaster = game.clone();
+        without_harbormaster.players[0]
+            .governor_roster
+            .get_mut("reyna")
+            .unwrap()
+            .promotions
+            .remove("harbormaster");
+        assert_eq!(
+            game.district_yields("commercial_hub", sites[0]).gold
+                - without_harbormaster
+                    .district_yields("commercial_hub", sites[0])
+                    .gold,
+            2.0
+        );
+
+        {
+            let tile = game.map.tiles.get_mut(&sites[1]).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = Some("forest".to_string());
+            tile.improvement = None;
+            tile.pillaged = false;
+        }
+        let appeal_target = game
+            .nbrs(sites[1])
+            .into_iter()
+            .find(|position| game.map.tiles[position].owner_city == Some(city))
+            .unwrap();
+        let mut without_forestry = game.clone();
+        without_forestry.players[0]
+            .governor_roster
+            .get_mut("reyna")
+            .unwrap()
+            .promotions
+            .remove("forestry_management");
+        assert_eq!(
+            game.player_tile_yields(0, sites[1], &game.map.tiles[&sites[1]])
+                .gold
+                - without_forestry
+                    .player_tile_yields(0, sites[1], &without_forestry.map.tiles[&sites[1]],)
+                    .gold,
+            2.0
+        );
+        assert_eq!(
+            game.tile_appeal(appeal_target) - without_forestry.tile_appeal(appeal_target),
+            1
+        );
+
+        {
+            let tile = game.map.tiles.get_mut(&sites[2]).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.improvement = Some("solar_farm".to_string());
+            tile.pillaged = false;
+        }
+        let mut without_renewables = game.clone();
+        without_renewables.players[0]
+            .governor_roster
+            .get_mut("reyna")
+            .unwrap()
+            .promotions
+            .remove("renewable_subsidizer");
+        assert_eq!(
+            game.player_tile_yields(0, sites[2], &game.map.tiles[&sites[2]])
+                .gold
+                - without_renewables
+                    .player_tile_yields(0, sites[2], &without_renewables.map.tiles[&sites[2]],)
+                    .gold,
+            2.0
+        );
+        assert_eq!(
+            game.city_renewable_power(&game.cities[&city])
+                - without_renewables.city_renewable_power(&without_renewables.cities[&city]),
+            2.0
+        );
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("hydroelectric_dam".to_string());
+        without_renewables
+            .cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("hydroelectric_dam".to_string());
+        assert!(
+            game.city_yields(city).gold > without_renewables.city_yields(city).gold,
+            "the hydroelectric dam receives Reyna's renewable Gold"
+        );
+        assert_eq!(
+            game.city_renewable_power(&game.cities[&city])
+                - without_renewables.city_renewable_power(&without_renewables.cities[&city]),
+            4.0
+        );
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .wonders
+            .insert("biosphere".to_string(), center);
+        without_renewables
+            .cities
+            .get_mut(&city)
+            .unwrap()
+            .wonders
+            .insert("biosphere".to_string(), center);
+        assert_eq!(
+            game.tourism_per_turn(0) - without_renewables.tourism_per_turn(0),
+            12.0,
+            "the Biosphere triples Reyna's four bonus renewable Power into Tourism"
+        );
+
+        game.players[0].techs = game.rules.techs.keys().cloned().collect();
+        game.players[0].civics = game.rules.civics.keys().cloned().collect();
+        game.players[0].gold = 10_000.0;
+        let district_site = game
+            .district_sites(city, "government_plaza")
+            .into_iter()
+            .next()
+            .unwrap();
+        let district = Item::District {
+            district: "government_plaza".to_string(),
+            pos: district_site,
+        };
+        let cost = game.item_cost_for_city(0, city, &district) * 4.0;
+        let gold = game.players[0].gold;
+        game.do_buy_district(0, city, "government_plaza", district_site, "gold")
+            .unwrap();
+        assert_eq!(game.players[0].gold, gold - cost);
+        assert!(game.city_has_district_family(&game.cities[&city], "government_plaza"));
+    }
+
+    #[test]
+    fn victor_executes_defense_loyalty_resources_strikes_promotions_air_and_nukes() {
+        let mut game = Game::new_full(2, 28, 18, 91_786, 200, 0, false);
+        let city = found_capital(&mut game, 0);
+        let rival = found_capital(&mut game, 1);
+        appoint_established(
+            &mut game,
+            0,
+            "victor",
+            city,
+            &[
+                "garrison_commander",
+                "defense_logistics",
+                "embrasure",
+                "air_defense_initiative",
+                "arms_race_proponent",
+            ],
+        );
+        game.at_war.insert(pair(0, 1));
+
+        let victor = &game.rules.governors["victor"];
+        assert_eq!(
+            victor.promotions["embrasure"].requires,
+            vec!["garrison_commander", "defense_logistics"]
+        );
+        assert_eq!(
+            victor.promotions["air_defense_initiative"].requires,
+            vec!["embrasure"]
+        );
+        assert_eq!(
+            victor.promotions["arms_race_proponent"].requires,
+            vec!["embrasure"]
+        );
+
+        let mut without_victor = game.clone();
+        without_victor.players[0].governor_roster.clear();
+        without_victor.sync_governor_cities(0);
+        assert_eq!(
+            game.city_strength(city) - without_victor.city_strength(city),
+            5.0
+        );
+
+        let center = game.cities[&city].pos;
+        let mut owned: Vec<Pos> = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .filter(|position| *position != center)
+            .collect();
+        owned.sort();
+        assert!(owned.len() >= 4);
+        for position in &owned {
+            let tile = game.map.tiles.get_mut(position).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.hills = false;
+        }
+
+        let defender = game.spawn_test_unit("warrior", 0, owned[0]);
+        let mut without_commander = game.clone();
+        without_commander.players[0]
+            .governor_roster
+            .get_mut("victor")
+            .unwrap()
+            .promotions
+            .remove("garrison_commander");
+        assert_eq!(
+            game.unit_strength(&game.units[&defender], true)
+                - without_commander.unit_strength(&without_commander.units[&defender], true),
+            5.0
+        );
+        assert_eq!(
+            game.unit_strength(&game.units[&defender], false),
+            without_commander.unit_strength(&without_commander.units[&defender], false)
+        );
+
+        game.players[0].techs.insert("bronze_working".to_string());
+        {
+            let tile = game.map.tiles.get_mut(&owned[1]).unwrap();
+            tile.resource = Some("iron".to_string());
+            tile.improvement = Some("mine".to_string());
+            tile.pillaged = false;
+        }
+        let mut without_logistics = game.clone();
+        without_logistics.players[0]
+            .governor_roster
+            .get_mut("victor")
+            .unwrap()
+            .promotions
+            .remove("defense_logistics");
+        assert_eq!(
+            game.strategic_resource_rate(0, "iron")
+                - without_logistics.strategic_resource_rate(0, "iron"),
+            1.0
+        );
+
+        let mut with_loyalty = game.clone();
+        let mut without_loyalty = without_commander.clone();
+        with_loyalty.cities.get_mut(&city).unwrap().loyalty = 50.0;
+        without_loyalty.cities.get_mut(&city).unwrap().loyalty = 50.0;
+        with_loyalty.process_loyalty(0);
+        without_loyalty.process_loyalty(0);
+        assert_eq!(
+            with_loyalty.cities[&city].loyalty - without_loyalty.cities[&city].loyalty,
+            4.0
+        );
+
+        set_district(&mut game, city, owned[2], "encampment");
+        {
+            let defended_city = game.cities.get_mut(&city).unwrap();
+            defended_city.wall_hp = 100;
+            defended_city.encampment_hp = 100;
+            defended_city.encampment_wall_hp = 100;
+        }
+        let strike_target = game.spawn_test_unit("modern_armor", 1, owned[3]);
+        game.do_city_strike(0, city, owned[3]).unwrap();
+        game.do_city_strike(0, city, owned[3]).unwrap();
+        assert!(game.do_city_strike(0, city, owned[3]).is_err());
+        assert_eq!(game.cities[&city].extra_strikes_used, 1);
+        assert!(game.units.contains_key(&strike_target));
+        game.do_encampment_strike(0, city, owned[3]).unwrap();
+        game.do_encampment_strike(0, city, owned[3]).unwrap();
+        assert!(game.do_encampment_strike(0, city, owned[3]).is_err());
+        assert_eq!(game.cities[&city].encampment_extra_strikes_used, 1);
+
+        for position in game.nbrs(center) {
+            if game
+                .map
+                .get(position)
+                .is_some_and(|tile| game.rules.is_passable(tile))
+                && !game.units_at(position).iter().any(|unit| {
+                    game.units[unit].owner == 1
+                        && game.rules.units[game.units[unit].kind.as_str()].class == "military"
+                })
+            {
+                game.spawn_test_unit("warrior", 1, position);
+            }
+        }
+        assert!(!game.city_under_siege(city));
+        let mut siegeable = game.clone();
+        siegeable.players[0]
+            .governor_roster
+            .get_mut("victor")
+            .unwrap()
+            .promotions
+            .remove("defense_logistics");
+        assert!(siegeable.city_under_siege(city));
+
+        let trainee = game.spawn_test_unit("warrior", 0, center);
+        game.apply_training_district_effects(city, trainee);
+        assert!(game.promotion_pending(trainee));
+        assert_eq!(game.units[&trainee].xp, Game::promotion_threshold(1));
+
+        let anti_air = game.spawn_test_unit("anti_air_gun", 0, owned[0]);
+        let bomber = game.spawn_test_unit("bomber", 1, game.cities[&rival].pos);
+        let mut without_air_defense = game.clone();
+        without_air_defense.players[0]
+            .governor_roster
+            .get_mut("victor")
+            .unwrap()
+            .promotions
+            .remove("air_defense_initiative");
+        let bomber_state = game.units[&bomber].clone();
+        let without_bomber_state = without_air_defense.units[&bomber].clone();
+        assert_eq!(
+            game.air_interception_strength(&bomber_state, game.units[&anti_air].pos)
+                - without_air_defense.air_interception_strength(
+                    &without_bomber_state,
+                    without_air_defense.units[&anti_air].pos,
+                ),
+            25.0
+        );
+
+        let nuclear = Item::Project {
+            project: "build_nuclear_device".to_string(),
+        };
+        let mut without_arms_race = game.clone();
+        without_arms_race.players[0]
+            .governor_roster
+            .get_mut("victor")
+            .unwrap()
+            .promotions
+            .remove("arms_race_proponent");
+        assert!(
+            (game.item_prod_mult(0, city, Some(&nuclear))
+                - without_arms_race.item_prod_mult(0, city, Some(&nuclear))
+                - 0.3)
+                .abs()
+                < 1e-9
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1935,6 +2422,49 @@ mod specialist_tests {
         assert!(game.players[0]
             .science_projects
             .contains("launch_earth_satellite"));
+    }
+
+    #[test]
+    fn military_engineers_accelerate_engineering_districts_and_can_finish_them() {
+        let (mut game, city, position) = specialist_game();
+        game.players[0].techs.insert("engineering".to_string());
+        let center = game.cities[&city].pos;
+        let center_edge = game.map.direction_to(position, center).unwrap();
+        let river_edge = (0..6).find(|edge| *edge != center_edge).unwrap();
+        game.map.tiles.get_mut(&position).unwrap().river_edges[river_edge] = true;
+        let aqueduct = Item::District {
+            district: "aqueduct".to_string(),
+            pos: position,
+        };
+        assert!(game.district_sites(city, "aqueduct").contains(&position));
+        game.cities.get_mut(&city).unwrap().queue = vec![aqueduct.clone()];
+
+        let mut england = game.clone();
+        england.players[0].civ = "England".to_string();
+        let engineer = game.spawn_unit("military_engineer", 0, position);
+        let english_engineer = england.spawn_unit("military_engineer", 0, position);
+        assert!(game.legal_actions(0).contains(&Action::ContributeDistrict {
+            unit: engineer,
+            city,
+        }));
+
+        game.do_contribute_district(0, engineer, city).unwrap();
+        england
+            .do_contribute_district(0, english_engineer, city)
+            .unwrap();
+        assert!((game.cities[&city].production - 7.2).abs() < 1e-9);
+        assert!((england.cities[&city].production - 14.4).abs() < 1e-9);
+        assert_eq!(game.units[&engineer].charges, 1);
+        assert_eq!(game.units[&engineer].moves_left, 0.0);
+
+        game.cities.get_mut(&city).unwrap().production = 35.0;
+        let finisher = game.spawn_unit("military_engineer", 0, position);
+        game.units.get_mut(&finisher).unwrap().charges = 1;
+        game.do_contribute_district(0, finisher, city).unwrap();
+        assert!(!game.units.contains_key(&finisher));
+        assert!(game.cities[&city].queue.is_empty());
+        assert!(game.cities[&city].districts.contains_key("aqueduct"));
+        assert!((game.cities[&city].production - 6.2).abs() < 1e-9);
     }
 }
 
@@ -3274,11 +3804,11 @@ mod district_building_wonder_runtime_tests {
         let mut game = Game::new_full(3, 24, 16, 774_4062, 120, 0, false);
         game.players[0].tourism_lifetime = 2_000.0;
         game.players[0].targeted_tourism.insert(1, 1_000.0);
-        assert_eq!(game.foreign_tourists(0), 5);
+        assert_eq!(game.foreign_tourists(0), 4);
 
         let restored: Game = serde_json::from_str(&serde_json::to_string(&game).unwrap()).unwrap();
         assert_eq!(restored.players[0].targeted_tourism[&1], 1_000.0);
-        assert_eq!(restored.foreign_tourists(0), 5);
+        assert_eq!(restored.foreign_tourists(0), 4);
     }
 
     #[test]
@@ -4205,6 +4735,9 @@ pub struct City {
     pub is_capital: bool,
     #[serde(default)]
     pub struck: bool,
+    /// Additional city-center strikes consumed after the normal strike.
+    #[serde(default)]
+    pub extra_strikes_used: i32,
     /// Outer-defense pool from walls (Civ 6); -1 in old saves = derive on load.
     #[serde(default = "wall_unset")]
     pub wall_hp: i32,
@@ -4216,6 +4749,9 @@ pub struct City {
     pub encampment_wall_hp: i32,
     #[serde(default)]
     pub encampment_struck: bool,
+    /// Additional Encampment strikes consumed after the normal strike.
+    #[serde(default)]
+    pub encampment_extra_strikes_used: i32,
     #[serde(default)]
     pub encampment_last_attacked: u32,
     #[serde(default)]
@@ -4507,6 +5043,12 @@ pub struct Player {
     /// this ledger prevents directed bursts from affecting every rival.
     #[serde(default)]
     pub targeted_tourism: BTreeMap<usize, f64>,
+    /// Lifetime Tourism pressure after per-civilization international
+    /// modifiers. Entries are accumulated when Tourism is generated, so a
+    /// later border, route, religion, or government change is not retroactive.
+    /// Missing entries use the legacy lifetime totals for save compatibility.
+    #[serde(default)]
+    pub tourism_pressure: BTreeMap<usize, f64>,
     /// Portion of lifetime Tourism produced by Relics and controlled Holy
     /// Cities. Enlightenment and Cristo Redentor apply only to this portion.
     #[serde(default)]
@@ -4587,6 +5129,7 @@ impl Player {
             culture_lifetime: 0.0,
             tourism_lifetime: 0.0,
             targeted_tourism: BTreeMap::new(),
+            tourism_pressure: BTreeMap::new(),
             religious_tourism_lifetime: 0.0,
             science_projects: BTreeSet::new(),
             exoplanet_distance: 0.0,
@@ -4638,6 +5181,12 @@ pub enum Action {
         product: String,
     },
     ContributeProject {
+        unit: u32,
+        city: u32,
+    },
+    /// Spend one Military Engineer charge for 20% of the current Aqueduct,
+    /// Dam, or Canal cost (40% for England's Workshop of the World).
+    ContributeDistrict {
         unit: u32,
         city: u32,
     },
@@ -6974,15 +7523,16 @@ impl Game {
         }
         let mut earn: BTreeMap<String, f64> = BTreeMap::new();
         for c in self.cities.values().filter(|c| c.owner == pid) {
+            let mut city_earn: BTreeMap<String, f64> = BTreeMap::new();
             for position in &c.owned_tiles {
                 let tile = &self.map.tiles[position];
                 if !tile.pillaged && tile.improvement.as_deref() == Some("industry") {
-                    *earn.entry("merchant".to_string()).or_insert(0.0) += self.rules.improvements
-                        ["industry"]
-                        .effects
-                        .get("great_merchant_points")
-                        .copied()
-                        .unwrap_or(0.0);
+                    *city_earn.entry("merchant".to_string()).or_insert(0.0) +=
+                        self.rules.improvements["industry"]
+                            .effects
+                            .get("great_merchant_points")
+                            .copied()
+                            .unwrap_or(0.0);
                 }
             }
             for (d, position) in &c.districts {
@@ -6990,9 +7540,10 @@ impl Game {
                     continue;
                 }
                 for (kind, points) in &self.rules.districts[d.as_str()].great_person_points {
-                    *earn.entry(kind.clone()).or_insert(0.0) += *points;
+                    *city_earn.entry(kind.clone()).or_insert(0.0) += *points;
                     if c.wonders.contains_key("oracle") {
-                        *earn.entry(kind.clone()).or_insert(0.0) += self.rules.wonders["oracle"]
+                        *city_earn.entry(kind.clone()).or_insert(0.0) += self.rules.wonders
+                            ["oracle"]
                             .effects
                             .get("city_district_gpp")
                             .copied()
@@ -7001,10 +7552,10 @@ impl Game {
                 }
                 if d == "lavra" {
                     if self.city_has_building_family(c, "shrine") {
-                        *earn.entry("writer".to_string()).or_insert(0.0) += 1.0;
+                        *city_earn.entry("writer".to_string()).or_insert(0.0) += 1.0;
                     }
                     if self.city_has_building_family(c, "temple") {
-                        *earn.entry("artist".to_string()).or_insert(0.0) += 1.0;
+                        *city_earn.entry("artist".to_string()).or_insert(0.0) += 1.0;
                     }
                     let has_worship_building = c.buildings.iter().any(|building| {
                         self.rules.buildings.get(building).is_some_and(|building| {
@@ -7016,7 +7567,7 @@ impl Game {
                         })
                     });
                     if has_worship_building {
-                        *earn.entry("musician".to_string()).or_insert(0.0) += 1.0;
+                        *city_earn.entry("musician".to_string()).or_insert(0.0) += 1.0;
                     }
                 }
             }
@@ -7025,7 +7576,7 @@ impl Game {
                     continue;
                 }
                 for (kind, points) in &self.rules.buildings[b.as_str()].great_person_points {
-                    *earn.entry(kind.clone()).or_insert(0.0) += *points;
+                    *city_earn.entry(kind.clone()).or_insert(0.0) += *points;
                 }
                 let add = |earn: &mut BTreeMap<String, f64>, kind: &str, amount: f64| {
                     if amount != 0.0 {
@@ -7034,27 +7585,27 @@ impl Game {
                 };
                 match b.as_str() {
                     "art_museum" => add(
-                        &mut earn,
+                        &mut city_earn,
                         "artist",
                         self.policy_effect(pid, "gpp_artist_per_art_museum"),
                     ),
                     "workshop" => add(
-                        &mut earn,
+                        &mut city_earn,
                         "engineer",
                         self.policy_effect(pid, "gpp_engineer_per_workshop"),
                     ),
                     "broadcast_center" => add(
-                        &mut earn,
+                        &mut city_earn,
                         "musician",
                         self.policy_effect(pid, "gpp_musician_per_broadcast_center"),
                     ),
                     "armory" => add(
-                        &mut earn,
+                        &mut city_earn,
                         "general",
                         self.policy_effect(pid, "gpp_general_per_armory"),
                     ),
                     "military_academy" => add(
-                        &mut earn,
+                        &mut city_earn,
                         "general",
                         self.policy_effect(pid, "gpp_general_per_military_academy"),
                     ),
@@ -7062,21 +7613,21 @@ impl Game {
                 }
                 if matches!(b.as_str(), "bank" | "stock_exchange") {
                     add(
-                        &mut earn,
+                        &mut city_earn,
                         "merchant",
                         self.policy_effect(pid, "late_economic_gpp"),
                     );
                 }
                 if matches!(b.as_str(), "shipyard" | "seaport") {
                     add(
-                        &mut earn,
+                        &mut city_earn,
                         "admiral",
                         self.policy_effect(pid, "late_economic_gpp"),
                     );
                 }
                 if matches!(b.as_str(), "university" | "research_lab") {
                     add(
-                        &mut earn,
+                        &mut city_earn,
                         "scientist",
                         self.policy_effect(pid, "late_science_industry_gpp"),
                     );
@@ -7086,7 +7637,7 @@ impl Game {
                     "factory" | "coal_power_plant" | "oil_power_plant" | "nuclear_power_plant"
                 ) {
                     add(
-                        &mut earn,
+                        &mut city_earn,
                         "engineer",
                         self.policy_effect(pid, "late_science_industry_gpp"),
                     );
@@ -7094,8 +7645,12 @@ impl Game {
             }
             for wonder in c.wonders.keys() {
                 for (kind, points) in &self.rules.wonders[wonder.as_str()].great_person_points {
-                    *earn.entry(kind.clone()).or_insert(0.0) += *points;
+                    *city_earn.entry(kind.clone()).or_insert(0.0) += *points;
                 }
+            }
+            let city_multiplier = 1.0 + self.governor_effect(pid, c.id, "great_people_pct") / 100.0;
+            for (kind, amount) in city_earn {
+                *earn.entry(kind).or_insert(0.0) += amount * city_multiplier;
             }
         }
         for kind in [
@@ -7128,7 +7683,10 @@ impl Game {
                                 && !c.pillaged_buildings.contains(building)
                         })
                     {
-                        *earn.entry(kind.to_string()).or_insert(0.0) += divine_spark;
+                        let city_multiplier =
+                            1.0 + self.governor_effect(pid, c.id, "great_people_pct") / 100.0;
+                        *earn.entry(kind.to_string()).or_insert(0.0) +=
+                            divine_spark * city_multiplier;
                     }
                 }
             }
@@ -8084,10 +8642,20 @@ impl Game {
                     bonus += 1.0;
                 }
                 bonus += self.gov_effects(pid).project_production_pct / 100.0;
+                if matches!(
+                    project.as_str(),
+                    "build_nuclear_device" | "build_thermonuclear_device"
+                ) {
+                    bonus +=
+                        self.governor_effect(pid, cid, "nuclear_armament_production_pct") / 100.0;
+                }
                 if self.congress_effect_active("public_works_program", "A", project) {
                     bonus += 1.0;
                 } else if self.congress_effect_active("public_works_program", "B", project) {
                     bonus -= 0.5;
+                }
+                if self.rules.projects[project].district.as_deref() == Some("spaceport") {
+                    bonus += self.governor_effect(pid, cid, "space_project_production_pct") / 100.0;
                 }
                 if self.rules.projects[project].district.as_deref() == Some("spaceport")
                     && (self.city_has_building_family(&self.cities[&cid], "military_academy")
@@ -8420,12 +8988,30 @@ impl Game {
         s
     }
 
+    fn governor_unit_defense_bonus(&self, unit: &Unit) -> f64 {
+        self.map.tiles[&unit.pos]
+            .owner_city
+            .filter(|city_id| {
+                self.cities
+                    .get(city_id)
+                    .is_some_and(|city| city.owner == unit.owner)
+            })
+            .map(|city_id| self.governor_effect(unit.owner, city_id, "city_unit_defense"))
+            .unwrap_or(0.0)
+    }
+
     pub fn unit_strength(&self, u: &Unit, defending: bool) -> f64 {
         if self.is_embarked(u) {
-            return 10.0; // embarked units are nearly defenseless
+            return 10.0
+                + if defending {
+                    self.governor_unit_defense_bonus(u)
+                } else {
+                    0.0
+                }; // embarked units are nearly defenseless
         }
         let mut s = self.unit_unembarked_strength(u);
         if defending {
+            s += self.governor_unit_defense_bonus(u);
             s += 3.0 * u.fortify_turns.clamp(0, 2) as f64;
             s += self.promotion_effect(u, "defend_all");
             let tile = &self.map.tiles[&u.pos];
@@ -8714,10 +9300,19 @@ impl Game {
                     .get("power")
                     .copied()
                     .unwrap_or(0.0);
+                if matches!(
+                    improvement.as_str(),
+                    "wind_farm" | "solar_farm" | "offshore_wind_farm" | "geothermal_plant"
+                ) {
+                    renewable += self.governor_effect(city.owner, city.id, "renewable_power_bonus");
+                }
             }
         }
         if self.city_has_district_family(city, "spaceport") {
             renewable += self.policy_effect(city.owner, "spaceport_power");
+        }
+        if self.city_has_active_building_family(city, "hydroelectric_dam") {
+            renewable += self.governor_effect(city.owner, city.id, "renewable_power_bonus");
         }
         renewable *= 1.0 + self.empire_wonder_effect(city.owner, "renewable_power_pct") / 100.0;
         renewable
@@ -9726,7 +10321,20 @@ impl Game {
     }
 
     pub fn city_can_strike(&self, city: &City) -> bool {
-        !city.struck && city.wall_hp > 0 // ranged strike needs standing walls
+        city.wall_hp > 0
+            && (!city.struck
+                || city.extra_strikes_used
+                    < self.governor_effect(city.owner, city.id, "city_extra_strike") as i32)
+        // Ranged strikes require standing walls; Embrasure supplies one more.
+    }
+
+    fn encampment_can_strike(&self, city: &City) -> bool {
+        city.encampment_hp > 0
+            && city.encampment_wall_hp > 0
+            && !city.encampment_pillaged
+            && (!city.encampment_struck
+                || city.encampment_extra_strikes_used
+                    < self.governor_effect(city.owner, city.id, "city_extra_strike") as i32)
     }
 
     /// Route an attack roll into a walled city: walls absorb it (melee does
@@ -9833,6 +10441,7 @@ impl Game {
         }
         let expected_improvement = self.rules.resources[res].improvement.as_str();
         let mut improved = 0.0;
+        let mut governor_accumulation = 0.0;
         for c in self.cities.values().filter(|c| c.owner == pid) {
             for pos in &c.owned_tiles {
                 let tile = &self.map.tiles[pos];
@@ -9841,6 +10450,8 @@ impl Game {
                     && (*pos == c.pos || tile.improvement.as_deref() == Some(expected_improvement))
                 {
                     improved += 1.0;
+                    governor_accumulation +=
+                        self.governor_effect(pid, c.id, "strategic_resource_accumulation");
                 }
             }
         }
@@ -9918,7 +10529,7 @@ impl Game {
                 sources * base * suzerain_multiplier
             })
             .unwrap_or(0.0);
-        improved * (base + extra) + spaceport + wonder + building + amani
+        improved * (base + extra) + governor_accumulation + spaceport + wonder + building + amani
     }
 
     pub fn strategic_stockpile_capacity(&self, pid: usize) -> f64 {
@@ -11354,6 +11965,18 @@ impl Game {
         base + self.policy_effect(owner, "city_ranged")
     }
 
+    fn city_defense_district_count(&self, city: &City) -> usize {
+        city.districts
+            .iter()
+            .filter(|(district, _)| {
+                !matches!(
+                    self.district_family(district),
+                    "preserve" | "aqueduct" | "canal" | "dam"
+                )
+            })
+            .count()
+    }
+
     pub fn city_strength(&self, cid: u32) -> f64 {
         let city = &self.cities[&cid];
         let current_best = self
@@ -11386,12 +12009,13 @@ impl Game {
                     .filter(|building| self.rules.buildings[building.as_str()].outer_defense > 0)
                     .count() as f64;
         }
-        s += 2.0 * city.districts.len() as f64;
+        s += 2.0 * self.city_defense_district_count(city) as f64;
         s += self.tile_defense_bonus(city.pos);
         if self.city_has_palace(city) {
             s += 3.0;
         }
         s += self.policy_effect(city.owner, "city_defense");
+        s += self.governor_effect(city.owner, city.id, "garrison_strength");
         if self.players[city.owner].is_minor {
             if let Some(suzerain) = self.suzerain_of(city.owner) {
                 s += self.envoys_at(suzerain, city.owner) as f64;
@@ -11423,7 +12047,7 @@ impl Game {
                     .filter(|building| self.rules.buildings[building.as_str()].outer_defense > 0)
                     .count() as f64;
         }
-        strength += 2.0 * city.districts.len() as f64;
+        strength += 2.0 * self.city_defense_district_count(city) as f64;
         if let Some(position) = self.city_district_family_position(city, "encampment") {
             strength += self.tile_defense_bonus(position);
         }
@@ -11492,10 +12116,11 @@ impl Game {
     /// neighbors count as sealed sides of the siege ring.
     fn city_under_siege(&self, cid: u32) -> bool {
         let city = &self.cities[&cid];
-        self.district_under_siege(city.owner, city.pos)
+        self.governor_effect(city.owner, cid, "city_siege_immunity") <= 0.0
+            && self.district_under_siege(city.owner, city.pos)
     }
 
-    fn district_family<'a>(&'a self, district: &'a str) -> &'a str {
+    pub(crate) fn district_family<'a>(&'a self, district: &'a str) -> &'a str {
         let mut current = district;
         // Stock replacements are one level deep. Following the full chain
         // makes modded replacements compose without scattered name lists.
@@ -11633,8 +12258,8 @@ impl Game {
         let Some(tile) = self.map.get(position) else {
             return 0;
         };
-        let owner = tile
-            .owner_city
+        let owner_city_id = tile.owner_city;
+        let owner = owner_city_id
             .and_then(|city_id| self.cities.get(&city_id))
             .map(|city| city.owner);
         let biosphere = owner
@@ -11658,6 +12283,16 @@ impl Game {
                     | "plains_floodplains",
                 ) => appeal -= 1,
                 _ => {}
+            }
+            if adjacent.owner_city == owner_city_id
+                && adjacent.improvement.is_none()
+                && adjacent.feature.is_some()
+            {
+                if let Some(city_id) = owner_city_id {
+                    if let Some(city) = self.cities.get(&city_id) {
+                        appeal += self.governor_effect(city.owner, city.id, "appeal") as i32;
+                    }
+                }
             }
             if biosphere != 0 && matches!(adjacent.feature.as_deref(), Some("jungle" | "marsh")) {
                 appeal += biosphere;
@@ -11851,7 +12486,7 @@ impl Game {
         parks
     }
 
-    fn district_housing(&self, district: &str, position: Pos) -> f64 {
+    pub(crate) fn district_housing(&self, district: &str, position: Pos) -> f64 {
         let spec = &self.rules.districts[district];
         let Some(maximum) = spec.effects.get("appeal_housing_max").copied() else {
             return spec.housing;
@@ -11876,7 +12511,7 @@ impl Game {
         spec.housing + dynamic.min(maximum)
     }
 
-    fn district_amenity(&self, district: &str, position: Pos) -> f64 {
+    pub(crate) fn district_amenity(&self, district: &str, position: Pos) -> f64 {
         let spec = &self.rules.districts[district];
         let geothermal = spec
             .effects
@@ -11907,12 +12542,12 @@ impl Game {
                 .into_iter()
                 .filter_map(|pos| self.map.get(pos))
                 .collect();
-            let owner = self
+            let owner_city = self
                 .map
                 .get(dpos)
                 .and_then(|tile| tile.owner_city)
-                .and_then(|city_id| self.cities.get(&city_id))
-                .map(|city| city.owner);
+                .and_then(|city_id| self.cities.get(&city_id));
+            let owner = owner_city.map(|city| city.owner);
             let gaul = owner.is_some_and(|pid| self.players[pid].civ == "Gaul");
             let count = |key: &str| -> usize {
                 match key {
@@ -12066,7 +12701,7 @@ impl Game {
             }
             // The six adjacency-card families include unique replacements.
             if let Some(pid) = owner {
-                let percent = if self.district_is_family(dname, "campus") {
+                let mut percent = if self.district_is_family(dname, "campus") {
                     self.policy_effect(pid, "campus_adjacency_pct")
                 } else if self.district_is_family(dname, "holy_site") {
                     self.policy_effect(pid, "holy_site_adjacency_pct")
@@ -12081,6 +12716,12 @@ impl Game {
                 } else {
                     0.0
                 };
+                if matches!(self.district_family(dname), "commercial_hub" | "harbor") {
+                    if let Some(city) = owner_city {
+                        percent +=
+                            self.governor_effect(pid, city.id, "commercial_harbor_adjacency_pct");
+                    }
+                }
                 let scale = percent / 100.0;
                 adj.add(Yields {
                     food: adj.food * scale,
@@ -12695,6 +13336,18 @@ impl Game {
                 })
             });
 
+        if !tile.pillaged && tile.improvement.is_none() && tile.feature.is_some() {
+            yields.gold += self.governor_effect(pid, city.id, "unimproved_feature_gold");
+        }
+        if !tile.pillaged
+            && matches!(
+                tile.improvement.as_deref(),
+                Some("wind_farm" | "solar_farm" | "offshore_wind_farm" | "geothermal_plant")
+            )
+        {
+            yields.gold += self.governor_effect(pid, city.id, "renewable_gold");
+        }
+
         if !tile.pillaged {
             match tile.improvement.as_deref() {
                 Some("fishery") => {
@@ -13278,6 +13931,13 @@ impl Game {
             }
         }
         let incoming_routes = self.routes.iter().filter(|route| route.dest == cid).count() as f64;
+        let incoming_foreign_routes = self
+            .routes
+            .iter()
+            .filter(|route| route.dest == cid && route.owner != city.owner)
+            .count() as f64;
+        ys.gold += incoming_foreign_routes
+            * self.governor_effect(city.owner, city.id, "incoming_foreign_trade_gold");
         if incoming_routes > 0.0 && city.wonders.contains_key("university_of_sankore") {
             ys.science += incoming_routes
                 * self.rules.wonders["university_of_sankore"]
@@ -13402,6 +14062,9 @@ impl Game {
             ) && !city.pillaged_buildings.contains(building)
         }) {
             ys.production += self.governor_effect(city.owner, city.id, "power_plant_production");
+        }
+        if self.city_has_active_building_family(city, "hydroelectric_dam") {
+            ys.gold += self.governor_effect(city.owner, city.id, "renewable_gold");
         }
         if self.city_has_palace(city) {
             ys.add(eff.capital_yields);
@@ -14861,7 +15524,7 @@ impl Game {
             .filter(|city| city.owner == pid && city.captured_from.is_some())
         {
             actions.push(Action::KeepCity { city: city.id });
-            if !city.is_capital {
+            if !city.is_capital && !self.players[city.original_owner].is_minor {
                 actions.push(Action::RazeCity { city: city.id });
             }
             if city.original_owner != pid
@@ -15071,6 +15734,13 @@ impl Game {
                 for city in self.player_city_ids(pid) {
                     if self.can_contribute_project(pid, uid, city) {
                         acts.push(Action::ContributeProject { unit: uid, city });
+                    }
+                }
+            }
+            if u.kind == "military_engineer" && u.charges > 0 && u.moves_left > 0.0 {
+                for city in self.player_city_ids(pid) {
+                    if self.can_contribute_district(pid, uid, city) {
+                        acts.push(Action::ContributeDistrict { unit: uid, city });
                     }
                 }
             }
@@ -15293,16 +15963,26 @@ impl Game {
                     item: item.clone(),
                 });
             }
-            if self.governor_effect(pid, cid, "faith_purchase_districts") > 0.0 {
+            let faith_districts = self.governor_effect(pid, cid, "faith_purchase_districts") > 0.0;
+            let gold_districts = self.governor_effect(pid, cid, "gold_purchase_districts") > 0.0;
+            if faith_districts || gold_districts {
                 for item in &producible {
                     if let Item::District { district, pos } = item {
                         let cost = self.item_cost_for_city(pid, cid, item) * 4.0;
-                        if p.faith + f64::EPSILON >= cost {
+                        if faith_districts && p.faith + f64::EPSILON >= cost {
                             acts.push(Action::BuyDistrict {
                                 city: cid,
                                 district: district.clone(),
                                 pos: *pos,
                                 currency: "faith".to_string(),
+                            });
+                        }
+                        if gold_districts && p.gold + f64::EPSILON >= cost {
+                            acts.push(Action::BuyDistrict {
+                                city: cid,
+                                district: district.clone(),
+                                pos: *pos,
+                                currency: "gold".to_string(),
                             });
                         }
                     }
@@ -15439,11 +16119,7 @@ impl Game {
                 }
             }
             let city = &self.cities[&cid];
-            if city.encampment_hp > 0
-                && city.encampment_wall_hp > 0
-                && !city.encampment_pillaged
-                && !city.encampment_struck
-            {
+            if self.encampment_can_strike(city) {
                 let Some(source) = self.city_district_family_position(city, "encampment") else {
                     continue;
                 };
@@ -15884,6 +16560,7 @@ impl Game {
             | Action::FoundCity { unit }
             | Action::Improve { unit, .. }
             | Action::ContributeProject { unit, .. }
+            | Action::ContributeDistrict { unit, .. }
             | Action::PerformConcert { unit }
             | Action::Pillage { unit }
             | Action::RepairImprovement { unit }
@@ -15925,6 +16602,9 @@ impl Game {
             }
             Action::ContributeProject { unit, city } => {
                 self.do_contribute_project(pid, *unit, *city)
+            }
+            Action::ContributeDistrict { unit, city } => {
+                self.do_contribute_district(pid, *unit, *city)
             }
             Action::PerformConcert { unit } => self.do_perform_concert(pid, *unit),
             Action::Pillage { unit } => self.do_pillage(pid, *unit),
@@ -17132,10 +17812,12 @@ impl Game {
             original_owner: pid,
             is_capital,
             struck: false,
+            extra_strikes_used: 0,
             wall_hp: 0,
             encampment_hp: 0,
             encampment_wall_hp: 0,
             encampment_struck: false,
+            encampment_extra_strikes_used: 0,
             encampment_last_attacked: 0,
             encampment_pillaged: false,
             last_attacked: 0,
@@ -17462,6 +18144,71 @@ impl Game {
         Ok(())
     }
 
+    /// Tile on which a Military Engineer may accelerate the city's current
+    /// engineering district. District foundations are represented by the
+    /// queued item until completion, so the position comes from that item.
+    pub(crate) fn district_contribution_target(&self, pid: usize, cid: u32) -> Option<Pos> {
+        let city = self.cities.get(&cid)?;
+        if city.owner != pid {
+            return None;
+        }
+        let Some(Item::District { district, pos }) = city.queue.first() else {
+            return None;
+        };
+        matches!(self.district_family(district), "aqueduct" | "canal" | "dam").then_some(*pos)
+    }
+
+    pub(crate) fn can_contribute_district(&self, pid: usize, uid: u32, cid: u32) -> bool {
+        let Some(unit) = self.units.get(&uid) else {
+            return false;
+        };
+        unit.owner == pid
+            && unit.kind == "military_engineer"
+            && unit.charges > 0
+            && unit.moves_left > 0.0
+            && unit.linked_to.is_none()
+            && self.district_contribution_target(pid, cid) == Some(unit.pos)
+    }
+
+    /// Gathering Storm Military Engineers spend one charge to add 20% of an
+    /// Aqueduct, Dam, or Canal's cost. Workshop of the World doubles this to
+    /// 40% for England. Contributions may finish the district immediately and
+    /// preserve ordinary base-production overflow.
+    fn do_contribute_district(&mut self, pid: usize, uid: u32, cid: u32) -> Result<(), String> {
+        if !self.can_contribute_district(pid, uid, cid) {
+            return Err("military engineer cannot contribute to that district".into());
+        }
+        let item = self.cities[&cid].queue[0].clone();
+        let cost = self.item_cost_for_city(pid, cid, &item);
+        let percent = if self.players[pid].civ == "England" {
+            40.0
+        } else {
+            20.0
+        };
+        self.cities.get_mut(&cid).unwrap().production += cost * percent / 100.0;
+        {
+            let engineer = self.units.get_mut(&uid).unwrap();
+            engineer.charges -= 1;
+            engineer.moves_left = 0.0;
+            engineer.acted = true;
+            engineer.moved = true;
+        }
+
+        if self.cities[&cid].production + f64::EPSILON >= cost
+            && self.complete_item(pid, cid, &item)
+        {
+            let city = self.cities.get_mut(&cid).unwrap();
+            city.production = (city.production - cost).max(0.0);
+            if city.queue.first() == Some(&item) {
+                city.queue.remove(0);
+            }
+        }
+        if self.units.get(&uid).is_some_and(|unit| unit.charges <= 0) {
+            self.remove_unit(uid);
+        }
+        Ok(())
+    }
+
     fn rock_concert_venue_details(
         &self,
         pid: usize,
@@ -17618,11 +18365,14 @@ impl Game {
         if tourism <= 0.0 || pid == target {
             return;
         }
+        let pressure = self.tourism_pressure_against(pid, target)
+            + tourism * self.international_tourism_multiplier(pid, target, false);
         self.players[pid].tourism_lifetime += tourism;
         *self.players[pid]
             .targeted_tourism
             .entry(target)
             .or_insert(0.0) += tourism;
+        self.players[pid].tourism_pressure.insert(target, pressure);
     }
 
     fn do_perform_concert(&mut self, pid: usize, uid: u32) -> Result<(), String> {
@@ -18070,13 +18820,27 @@ impl Game {
                     && self.tree_effect(unit.owner, "gdr_air_defense") > 0.0
                     && self.wdist(unit.pos, target)
                         <= self.tree_effect(unit.owner, "gdr_anti_air_range").max(1.0) as i32;
+                let governor_air_defense = if ground || gdr {
+                    self.map.tiles[&unit.pos]
+                        .owner_city
+                        .filter(|city_id| {
+                            self.cities
+                                .get(city_id)
+                                .is_some_and(|city| city.owner == unit.owner)
+                        })
+                        .map(|city_id| self.governor_effect(unit.owner, city_id, "air_defense"))
+                        .unwrap_or(0.0)
+                } else {
+                    0.0
+                };
                 (fighter || ground || gdr).then_some((
                     spec.ranged_attack_strength()
                         + if gdr {
                             self.tree_effect(unit.owner, "gdr_anti_air_strength")
                         } else {
                             0.0
-                        },
+                        }
+                        + governor_air_defense,
                     unit.id,
                 ))
             })
@@ -18524,8 +19288,12 @@ impl Game {
         if self.cities.get(&cid).is_none_or(|city| city.owner != pid) {
             return Err("not your city".into());
         }
-        if currency != "faith" || self.governor_effect(pid, cid, "faith_purchase_districts") <= 0.0
-        {
+        let allowed = match currency {
+            "faith" => self.governor_effect(pid, cid, "faith_purchase_districts") > 0.0,
+            "gold" => self.governor_effect(pid, cid, "gold_purchase_districts") > 0.0,
+            _ => false,
+        };
+        if !allowed {
             return Err("district cannot be purchased that way".into());
         }
         let item = Item::District {
@@ -18536,13 +19304,22 @@ impl Game {
             return Err("cannot purchase that district".into());
         }
         let cost = self.item_cost_for_city(pid, cid, &item) * 4.0;
-        if self.players[pid].faith + f64::EPSILON < cost {
+        let bank = if currency == "faith" {
+            self.players[pid].faith
+        } else {
+            self.players[pid].gold
+        };
+        if bank + f64::EPSILON < cost {
             return Err("cannot afford".into());
         }
         if !self.complete_item(pid, cid, &item) {
             return Err("district placement failed".into());
         }
-        self.players[pid].faith -= cost;
+        if currency == "faith" {
+            self.players[pid].faith -= cost;
+        } else {
+            self.players[pid].gold -= cost;
+        }
         Ok(())
     }
 
@@ -18870,7 +19647,11 @@ impl Game {
             self.remove_unit(did);
             self.on_unit_lost(downer);
         }
-        self.cities.get_mut(&cid).unwrap().struck = true;
+        let city = self.cities.get_mut(&cid).unwrap();
+        if city.struck {
+            city.extra_strikes_used += 1;
+        }
+        city.struck = true;
         Ok(())
     }
 
@@ -18888,11 +19669,7 @@ impl Game {
                     .then_some(*position)
             })
             .ok_or_else(|| "city has no Encampment".to_string())?;
-        if city.encampment_pillaged
-            || city.encampment_hp <= 0
-            || city.encampment_wall_hp <= 0
-            || city.encampment_struck
-        {
+        if !self.encampment_can_strike(city) {
             return Err("Encampment cannot strike".into());
         }
         if self.wdist(position, target) > 2 || !self.has_line_of_sight(position, target, true) {
@@ -18935,7 +19712,11 @@ impl Game {
             self.remove_unit(defender_id);
             self.on_unit_lost(owner);
         }
-        self.cities.get_mut(&cid).unwrap().encampment_struck = true;
+        let city = self.cities.get_mut(&cid).unwrap();
+        if city.encampment_struck {
+            city.encampment_extra_strikes_used += 1;
+        }
+        city.encampment_struck = true;
         Ok(())
     }
 
@@ -19942,9 +20723,34 @@ impl Game {
         self.players[pid]
             .alliances
             .retain(|_, alliance| alliance.ends > turn);
-        let grievance_decay = if self.world_era <= 1 { 2.0 } else { 1.0 };
-        for amount in self.players[pid].grievances.values_mut() {
-            *amount = (*amount - grievance_decay).max(0.0);
+        let offenders: Vec<usize> = self.players[pid].grievances.keys().copied().collect();
+        for offender in offenders {
+            if self.is_at_war(pid, offender) {
+                continue;
+            }
+            let occupation_modifier = |founder: usize, occupier: usize| {
+                let occupied = self
+                    .cities
+                    .values()
+                    .filter(|city| city.original_owner == founder && city.owner == occupier)
+                    .collect::<Vec<_>>();
+                if occupied.iter().any(|city| city.is_capital) {
+                    3.0
+                } else if occupied.is_empty() {
+                    0.0
+                } else {
+                    1.0
+                }
+            };
+            // Base decay runs from 10 in Ancient to 2 in Future. Holding the
+            // victim's city slows decay; the victim holding the offender's
+            // city accelerates it, with original Capitals using +/-3.
+            let decay = (10.0 - self.world_era.min(8) as f64 - occupation_modifier(pid, offender)
+                + occupation_modifier(offender, pid))
+            .max(0.0);
+            if let Some(amount) = self.players[pid].grievances.get_mut(&offender) {
+                *amount = (*amount - decay).max(0.0);
+            }
         }
         self.players[pid]
             .grievances
@@ -19953,19 +20759,27 @@ impl Game {
         // Retaining a city founded by another civilization continues to
         // create Grievances every turn; it is not only a one-off capture
         // penalty. A city returned to its founder stops this immediately.
-        let occupied_founders: Vec<usize> = self
+        let mut occupied_founders: BTreeMap<usize, f64> = BTreeMap::new();
+        for city in self
             .cities
             .values()
             .filter(|city| city.owner == pid && city.original_owner != pid)
-            .map(|city| city.original_owner)
-            .filter(|founder| {
+            .filter(|city| {
                 self.players
-                    .get(*founder)
-                    .is_some_and(|player| !player.is_barbarian)
+                    .get(city.original_owner)
+                    .is_some_and(|player| player.alive && !player.is_barbarian)
             })
-            .collect();
-        for founder in occupied_founders {
-            self.add_grievances(founder, pid, 1.0);
+            .filter(|city| !self.is_at_war(pid, city.original_owner))
+        {
+            occupied_founders
+                .entry(city.original_owner)
+                .and_modify(|amount| {
+                    *amount = (*amount).max(if city.is_capital { 3.0 } else { 1.0 })
+                })
+                .or_insert(if city.is_capital { 3.0 } else { 1.0 });
+        }
+        for (founder, amount) in occupied_founders {
+            self.add_grievances(founder, pid, amount);
         }
 
         let partners: Vec<usize> = self.players[pid]
@@ -20406,6 +21220,13 @@ impl Game {
                     .filter(|source| source.owner == pid)
                     .map(|source| self.city_building_effect(source, "no_governor_loyalty"))
                     .sum::<f64>();
+            }
+            if let Some(victor_city) = self.established_governor_city(pid, "victor") {
+                if self.wdist(self.cities[&victor_city].pos, cpos) <= 9 {
+                    // Gathering Storm applies the aura to Victor's own city
+                    // too, despite the Civilopedia saying "other cities."
+                    delta += self.governor_effect(pid, victor_city, "nearby_city_loyalty");
+                }
             }
             let garrisoned = self.units_at(cpos).into_iter().any(|uid| {
                 self.units[&uid].owner == pid
@@ -21141,68 +21962,203 @@ impl Game {
         }
     }
 
+    fn starting_major_count(&self) -> usize {
+        self.players
+            .iter()
+            .filter(|player| !player.is_minor && !player.is_barbarian)
+            .count()
+    }
+
+    fn visiting_tourists_from(&self, source: usize, target: usize) -> i64 {
+        if source == target
+            || !self.players[source].alive
+            || !self.players[target].alive
+            || self.players[source].is_minor
+            || self.players[source].is_barbarian
+            || self.players[target].is_minor
+            || self.players[target].is_barbarian
+        {
+            return 0;
+        }
+        let divisor = self.starting_major_count() as f64 * TOURISM_PER_VISITOR;
+        if divisor <= 0.0 {
+            return 0;
+        }
+        (self.tourism_pressure_against(source, target) / divisor).floor() as i64
+    }
+
     pub fn domestic_tourists(&self, pid: usize) -> i64 {
-        (self.players[pid].culture_lifetime / 100.0).floor() as i64
+        let generated = (self.players[pid].culture_lifetime / 100.0).floor() as i64;
+        let visiting_elsewhere = self
+            .players
+            .iter()
+            .filter(|source| source.id != pid)
+            .map(|source| self.visiting_tourists_from(source.id, pid))
+            .sum::<i64>();
+        generated.saturating_sub(visiting_elsewhere)
+    }
+
+    fn government_tourism_intolerance(&self, pid: usize) -> f64 {
+        match self.players[pid].government.as_deref() {
+            Some(
+                "communism"
+                | "democracy"
+                | "fascism"
+                | "corporate_libertarianism"
+                | "digital_democracy"
+                | "synthetic_technocracy",
+            ) => 20.0,
+            _ => 0.0,
+        }
+    }
+
+    fn tourism_open_borders(&self, source: usize, target: usize) -> bool {
+        self.alliance_with(source, target).is_some()
+            || self.players[target]
+                .open_borders_until
+                .get(&source)
+                .is_some_and(|until| *until > self.turn)
+            || self
+                .active_trade_deals
+                .iter()
+                .filter(|deal| deal.ends > self.turn)
+                .any(|deal| {
+                    (deal.from == target && deal.to == source && deal.offer.open_borders)
+                        || (deal.to == target && deal.from == source && deal.request.open_borders)
+                })
+    }
+
+    pub(crate) fn has_tourism_trade_route(&self, source: usize, target: usize) -> bool {
+        self.routes.iter().any(|route| {
+            route.owner == source
+                && route.ends > self.turn
+                && self
+                    .cities
+                    .get(&route.dest)
+                    .is_some_and(|city| city.owner == target)
+        })
+    }
+
+    /// Gathering Storm's international modifiers are summed and then applied
+    /// independently to each civilization. Religious penalties affect only
+    /// Holy City and Relic Tourism; Cristo cancels Enlightenment, not the
+    /// separate different-religion penalty.
+    pub(crate) fn international_tourism_multiplier(
+        &self,
+        source: usize,
+        target: usize,
+        religious: bool,
+    ) -> f64 {
+        let mut percent = self.policy_effect(target, "incoming_tourism_pct");
+        if self.tourism_open_borders(source, target) {
+            percent += 25.0;
+        }
+        if self.has_tourism_trade_route(source, target) {
+            percent += 25.0 + self.policy_effect(source, "trade_partner_tourism_pct");
+        }
+        if self.players[source].government != self.players[target].government {
+            percent -= self.government_tourism_intolerance(source)
+                + self.government_tourism_intolerance(target);
+        }
+        if religious {
+            if self.players[source].religion.is_some()
+                && self.players[target].religion.is_some()
+                && self.players[source].religion != self.players[target].religion
+            {
+                percent -= 50.0;
+            }
+            let cristo = self.empire_wonder_effect(source, "religious_tourism_unreduced") > 0.0;
+            if !cristo {
+                percent += self.tree_effect(target, "incoming_religious_tourism_pct");
+            }
+        }
+        (1.0 + percent / 100.0).max(0.0)
+    }
+
+    /// Reconstruct pressure for an older save that predates the per-rival
+    /// ledger. The value is frozen into `tourism_pressure` the next time this
+    /// source generates Tourism against the target.
+    fn legacy_tourism_pressure(&self, source: usize, target: usize) -> f64 {
+        let player = &self.players[source];
+        let religious = player
+            .religious_tourism_lifetime
+            .clamp(0.0, player.tourism_lifetime);
+        let targeted_total = player.targeted_tourism.values().copied().sum::<f64>();
+        let secular = (player.tourism_lifetime - religious - targeted_total).max(0.0);
+        let targeted = player.targeted_tourism.get(&target).copied().unwrap_or(0.0);
+        (secular + targeted) * self.international_tourism_multiplier(source, target, false)
+            + religious * self.international_tourism_multiplier(source, target, true)
+    }
+
+    pub fn tourism_pressure_against(&self, source: usize, target: usize) -> f64 {
+        self.players[source]
+            .tourism_pressure
+            .get(&target)
+            .copied()
+            .unwrap_or_else(|| self.legacy_tourism_pressure(source, target))
+    }
+
+    fn add_passive_tourism(
+        &mut self,
+        pid: usize,
+        tourism: f64,
+        religious: f64,
+        film_studio_tourism: f64,
+        film_studio_religious: f64,
+    ) {
+        let religious = religious.clamp(0.0, tourism);
+        let pressure: Vec<(usize, f64)> = self
+            .players
+            .iter()
+            .filter(|target| {
+                target.id != pid && target.alive && !target.is_minor && !target.is_barbarian
+            })
+            .map(|target| {
+                let modern_target = self.player_era(target.id) >= 5;
+                let target_tourism = tourism
+                    + if modern_target {
+                        film_studio_tourism
+                    } else {
+                        0.0
+                    };
+                let target_religious = (religious
+                    + if modern_target {
+                        film_studio_religious
+                    } else {
+                        0.0
+                    })
+                .clamp(0.0, target_tourism);
+                let target_secular = (target_tourism - target_religious).max(0.0);
+                let added = target_secular
+                    * self.international_tourism_multiplier(pid, target.id, false)
+                    + target_religious
+                        * self.international_tourism_multiplier(pid, target.id, true);
+                (
+                    target.id,
+                    self.tourism_pressure_against(pid, target.id) + added,
+                )
+            })
+            .collect();
+        let player = &mut self.players[pid];
+        player.tourism_lifetime += tourism;
+        player.religious_tourism_lifetime += religious;
+        for (target, total) in pressure {
+            player.tourism_pressure.insert(target, total);
+        }
     }
 
     pub fn foreign_tourists(&self, pid: usize) -> i64 {
-        let starting_majors = self
-            .players
-            .iter()
-            .filter(|p| !p.is_minor && !p.is_barbarian)
-            .count();
-        if starting_majors == 0 {
+        if self.starting_major_count() == 0 || !self.players[pid].alive {
             return 0;
         }
-        // Tourism output is applied to each rival. Civ VI converts total
-        // lifetime tourism into visitors using the starting player count;
-        // using that fixed count also keeps visitors from disappearing when
-        // a civilization is eliminated.
-        let religious = self.players[pid]
-            .religious_tourism_lifetime
-            .clamp(0.0, self.players[pid].tourism_lifetime);
-        let targeted_total = self.players[pid]
-            .targeted_tourism
-            .values()
-            .copied()
-            .sum::<f64>();
-        let secular = (self.players[pid].tourism_lifetime - religious - targeted_total).max(0.0);
-        let cristo = self.empire_wonder_effect(pid, "religious_tourism_unreduced") > 0.0;
-        let exposure = self
-            .players
+        // Each rival owns a separate integer tourist pool. Fractions do not
+        // combine across civilizations, and eliminating a civilization
+        // removes both its contributed visitors and future Tourism market.
+        self.players
             .iter()
-            .filter(|rival| !rival.is_minor && !rival.is_barbarian && rival.id != pid)
-            .map(|rival| {
-                let general = self.policy_effect(rival.id, "incoming_tourism_pct");
-                let mut religious_only =
-                    self.tree_effect(rival.id, "incoming_religious_tourism_pct");
-                if cristo && religious_only < 0.0 {
-                    religious_only = 0.0;
-                }
-                let has_route = self.routes.iter().any(|route| {
-                    route.owner == pid
-                        && self
-                            .cities
-                            .get(&route.dest)
-                            .is_some_and(|city| city.owner == rival.id)
-                });
-                let trade = if has_route {
-                    self.policy_effect(pid, "trade_partner_tourism_pct")
-                } else {
-                    0.0
-                };
-                let secular_modifier = (1.0 + (general + trade) / 100.0).max(0.0);
-                let religious_modifier =
-                    (1.0 + (general + trade + religious_only) / 100.0).max(0.0);
-                let targeted = self.players[pid]
-                    .targeted_tourism
-                    .get(&rival.id)
-                    .copied()
-                    .unwrap_or(0.0);
-                (secular + targeted) * secular_modifier + religious * religious_modifier
-            })
-            .sum::<f64>();
-        (exposure / (starting_majors as f64 * TOURISM_PER_VISITOR)).floor() as i64
+            .filter(|rival| rival.id != pid)
+            .map(|rival| self.visiting_tourists_from(pid, rival.id))
+            .sum()
     }
 
     fn great_work_local_multiplier(&self, city: &City, kind: &str) -> f64 {
@@ -21447,47 +22403,72 @@ impl Game {
     /// Tourism generated specifically by Relics and Holy Cities. Keeping this
     /// source separate is necessary because Enlightenment reduces only these
     /// sources and Cristo Redentor cancels exactly that reduction.
-    pub fn religious_tourism_per_turn(&self, pid: usize) -> f64 {
+    fn religious_tourism_components_per_turn(&self, pid: usize) -> (f64, f64) {
         let global_multiplier =
             1.0 + (self.tree_effect(pid, "tourism_pct") + self.monopoly_bonuses(pid).1) / 100.0;
-        let holy_city_tourism = self
+        let mut holy_city_tourism = 0.0;
+        let mut film_studio_bonus = 0.0;
+        for city_id in self
             .players
             .iter()
             .filter_map(|founder| founder.holy_city)
             .filter(|city| self.cities.get(city).is_some_and(|city| city.owner == pid))
-            .count() as f64
-            * 8.0;
+        {
+            holy_city_tourism += 8.0;
+            film_studio_bonus += 8.0
+                * self.city_building_effect(&self.cities[&city_id], "modern_civ_tourism_pct")
+                / 100.0;
+        }
 
-        let relic_tourism = self
-            .housed_great_works(pid)
-            .into_iter()
-            .map(|(city_id, works)| {
-                works.get("relic").copied().unwrap_or(0) as f64
-                    * self.great_work_tourism(pid, "relic")
-                    * self.great_work_local_multiplier(&self.cities[&city_id], "relic")
-            })
-            .sum::<f64>();
-        (holy_city_tourism + relic_tourism) * global_multiplier
+        let mut relic_tourism = 0.0;
+        for (city_id, works) in self.housed_great_works(pid) {
+            let city = &self.cities[&city_id];
+            let mut value = works.get("relic").copied().unwrap_or(0) as f64
+                * self.great_work_tourism(pid, "relic");
+            if city.wonders.contains_key("st_basils_cathedral") {
+                value *= 1.0
+                    + self.rules.wonders["st_basils_cathedral"]
+                        .effects
+                        .get("city_religious_tourism_pct")
+                        .copied()
+                        .unwrap_or(0.0)
+                        / 100.0;
+            }
+            relic_tourism += value;
+            film_studio_bonus +=
+                value * self.city_building_effect(city, "modern_civ_tourism_pct") / 100.0;
+        }
+        (
+            (holy_city_tourism + relic_tourism) * global_multiplier,
+            film_studio_bonus * global_multiplier,
+        )
+    }
+
+    pub fn religious_tourism_per_turn(&self, pid: usize) -> f64 {
+        self.religious_tourism_components_per_turn(pid).0
     }
 
     /// Current tourism generated by this civilization each turn.
     ///
     /// Named Great Works occupy compatible active building/wonder slots;
     /// legacy generic-Artist saves retain their former three-work fallback.
-    pub fn tourism_per_turn(&self, pid: usize) -> f64 {
+    fn tourism_components_per_turn(&self, pid: usize) -> (f64, f64) {
         let mut tourism = 0.0;
+        let mut film_studio_bonus = 0.0;
         let housed_works = self.housed_great_works(pid);
         for city in self.cities.values().filter(|city| city.owner == pid) {
             let city_tourism_start = tourism;
-            let modern_tourism_multiplier = if self.world_era >= 5 {
-                1.0 + self.city_building_effect(city, "modern_civ_tourism_pct") / 100.0
-            } else {
-                1.0
-            };
             tourism += 2.0 * city.wonders.len() as f64;
             tourism += city.products.len().min(self.product_capacity(city)) as f64;
             for (kind, count) in housed_works.get(&city.id).into_iter().flatten() {
                 let mut value = self.great_work_tourism(pid, kind) * *count as f64;
+                if matches!(
+                    kind.as_str(),
+                    "writing" | "art" | "religious_art" | "music" | "any"
+                ) {
+                    value *=
+                        1.0 + self.governor_effect(pid, city.id, "great_work_tourism_pct") / 100.0;
+                }
                 if kind == "relic" && city.wonders.contains_key("st_basils_cathedral") {
                     value *= 1.0
                         + self.rules.wonders["st_basils_cathedral"]
@@ -21667,11 +22648,18 @@ impl Game {
                             / 100.0;
                 }
                 tourism += improvement_tourism;
-                tourism += self.rules.improvements[improvement]
+                let mut renewable_power = self.rules.improvements[improvement]
                     .effects
                     .get("power")
                     .copied()
-                    .unwrap_or(0.0)
+                    .unwrap_or(0.0);
+                if matches!(
+                    improvement,
+                    "wind_farm" | "solar_farm" | "offshore_wind_farm" | "geothermal_plant"
+                ) {
+                    renewable_power += self.governor_effect(pid, city.id, "renewable_power_bonus");
+                }
+                tourism += renewable_power
                     * (1.0 + self.empire_wonder_effect(pid, "renewable_power_pct") / 100.0)
                     * self.empire_wonder_effect(pid, "renewable_power_tourism");
                 if self.tree_effect(pid, "improvement_culture_tourism") > 0.0 {
@@ -21682,7 +22670,7 @@ impl Game {
                     tourism += (improved.culture - unimproved.culture).max(0.0);
                 }
             }
-            tourism += city
+            let mut building_renewable_power = city
                 .buildings
                 .iter()
                 .filter(|building| !city.pillaged_buildings.contains(*building))
@@ -21693,10 +22681,17 @@ impl Game {
                         .copied()
                         .unwrap_or(0.0)
                 })
-                .sum::<f64>()
+                .sum::<f64>();
+            if self.city_has_active_building_family(city, "hydroelectric_dam") {
+                building_renewable_power +=
+                    self.governor_effect(pid, city.id, "renewable_power_bonus");
+            }
+            tourism += building_renewable_power
                 * (1.0 + self.empire_wonder_effect(pid, "renewable_power_pct") / 100.0)
                 * self.empire_wonder_effect(pid, "renewable_power_tourism");
-            tourism += (tourism - city_tourism_start) * (modern_tourism_multiplier - 1.0);
+            film_studio_bonus += (tourism - city_tourism_start)
+                * self.city_building_effect(city, "modern_civ_tourism_pct")
+                / 100.0;
         }
 
         let culture = self
@@ -21704,15 +22699,28 @@ impl Game {
             .into_iter()
             .map(|cid| self.city_yields(cid).culture)
             .sum::<f64>();
-        let holy_city_tourism = self
+        let mut holy_city_tourism = 0.0;
+        for city_id in self
             .players
             .iter()
             .filter_map(|founder| founder.holy_city)
             .filter(|city| self.cities.get(city).is_some_and(|city| city.owner == pid))
-            .count() as f64
-            * 8.0;
-        let base = tourism + holy_city_tourism + 0.15 * culture;
-        base * (1.0 + (self.tree_effect(pid, "tourism_pct") + self.monopoly_bonuses(pid).1) / 100.0)
+        {
+            holy_city_tourism += 8.0;
+            film_studio_bonus += 8.0
+                * self.city_building_effect(&self.cities[&city_id], "modern_civ_tourism_pct")
+                / 100.0;
+        }
+        let global_multiplier =
+            1.0 + (self.tree_effect(pid, "tourism_pct") + self.monopoly_bonuses(pid).1) / 100.0;
+        (
+            (tourism + holy_city_tourism + 0.15 * culture) * global_multiplier,
+            film_studio_bonus * global_multiplier,
+        )
+    }
+
+    pub fn tourism_per_turn(&self, pid: usize) -> f64 {
+        self.tourism_components_per_turn(pid).0
     }
 
     fn great_work_tourism(&self, pid: usize, kind: &str) -> f64 {
@@ -21953,12 +22961,17 @@ impl Game {
         gold += founder_yields.gold;
         faith += founder_yields.faith;
         if !self.players[pid].is_minor {
-            let tourism = self.tourism_per_turn(pid);
-            let religious_tourism = self.religious_tourism_per_turn(pid);
-            let p = &mut self.players[pid];
-            p.culture_lifetime += cul;
-            p.tourism_lifetime += tourism;
-            p.religious_tourism_lifetime += religious_tourism;
+            let (tourism, film_studio_tourism) = self.tourism_components_per_turn(pid);
+            let (religious_tourism, film_studio_religious) =
+                self.religious_tourism_components_per_turn(pid);
+            self.players[pid].culture_lifetime += cul;
+            self.add_passive_tourism(
+                pid,
+                tourism,
+                religious_tourism,
+                film_studio_tourism,
+                film_studio_religious,
+            );
         }
         gold += self.monopoly_bonuses(pid).0;
         gold -= self.unit_gold_maintenance(pid);
@@ -22161,8 +23174,11 @@ impl Game {
     }
 
     fn process_city(&mut self, pid: usize, cid: u32) -> Yields {
-        self.cities.get_mut(&cid).unwrap().struck = false;
-        self.cities.get_mut(&cid).unwrap().encampment_struck = false;
+        let city = self.cities.get_mut(&cid).unwrap();
+        city.struck = false;
+        city.extra_strikes_used = 0;
+        city.encampment_struck = false;
+        city.encampment_extra_strikes_used = 0;
         let ys = self.city_yields(cid);
         let housing = self.city_housing(&self.cities[&cid]);
         let am = self.city_amenity_surplus(&self.cities[&cid]);
@@ -22282,7 +23298,10 @@ impl Game {
         }
         if !self.congress_effect_active("border_control_treaty", "B", &pid.to_string()) {
             let owned = self.cities[&cid].owned_tiles.len() as i32;
-            let border_mult = 1.0 + self.pantheon_effect(pid, "border_growth_pct") / 100.0;
+            let border_mult = 1.0
+                + (self.pantheon_effect(pid, "border_growth_pct")
+                    + self.governor_effect(pid, cid, "border_growth_pct"))
+                    / 100.0;
             let city = self.cities.get_mut(&cid).unwrap();
             city.border_culture += (1.0 + ys.culture * 0.5) * border_mult;
             let need_b = (15 + 8 * (owned - 7).max(0)) as f64;
@@ -22783,7 +23802,9 @@ impl Game {
                         player.research_progress = 0.0;
                     }
                 }
-                if spec.effects.get("culture_bomb").copied().unwrap_or(0.0) > 0.0 {
+                if spec.effects.get("culture_bomb").copied().unwrap_or(0.0) > 0.0
+                    || (self.players[pid].civ == "Gaul" && spec.specialty)
+                {
                     self.culture_bomb(cid, *pos);
                 }
                 if self.congress_effect_active("border_control_treaty", "A", &pid.to_string()) {
@@ -22987,9 +24008,18 @@ impl Game {
         };
         let patron_saint = matches!(self.units[&uid].kind.as_str(), "apostle" | "warrior_monk")
             && self.governor_effect(city.owner, cid, "apostle_extra_promotion") > 0.0;
+        let embrasure_promotion = spec.class == "military"
+            && !spec.promotion_class.is_empty()
+            && self.governor_effect(city.owner, cid, "military_free_promotion") > 0.0;
         let unit = self.units.get_mut(&uid).unwrap();
         unit.xp_bonus_pct += xp_pct;
         unit.xp += starting_xp;
+        if embrasure_promotion {
+            // A free promotion is represented by exactly enough XP to expose
+            // the first promotion choice. max() prevents free-promotion
+            // effects from stacking with one another.
+            unit.xp = unit.xp.max(Self::promotion_threshold(unit.level));
+        }
         unit.bonus_moves += cavalry_movement;
         unit.extra_first_promotion |= patron_saint;
     }
@@ -23130,6 +24160,21 @@ impl Game {
 
     fn transfer_city(&mut self, cid: u32, new_owner: usize, conquest: bool) {
         let old = self.cities[&cid].owner;
+        let captured_works = self
+            .housed_great_works(old)
+            .remove(&cid)
+            .unwrap_or_default();
+        let evacuation_positions: BTreeSet<Pos> = std::iter::once(self.cities[&cid].pos)
+            .chain(
+                self.cities[&cid]
+                    .districts
+                    .iter()
+                    .filter(|(district, _)| {
+                        matches!(self.district_family(district), "encampment" | "aerodrome")
+                    })
+                    .map(|(_, position)| *position),
+            )
+            .collect();
         let defensive_buildings: BTreeSet<String> = self
             .rules
             .buildings
@@ -23137,21 +24182,149 @@ impl Game {
             .filter(|(_, spec)| spec.outer_defense > 0)
             .map(|(name, _)| name.clone())
             .collect();
+        let captor_civ = self.players[new_owner].civ.clone();
+        let converted_districts: Vec<(String, Pos, bool)> = self.cities[&cid]
+            .districts
+            .iter()
+            .map(|(district, position)| {
+                let family = self.district_family(district).to_string();
+                let replacement = self
+                    .rules
+                    .districts
+                    .iter()
+                    .find(|(_, spec)| {
+                        spec.unique_to.as_deref() == Some(captor_civ.as_str())
+                            && spec.replaces.as_deref() == Some(family.as_str())
+                    })
+                    .map(|(name, _)| name.clone())
+                    .unwrap_or_else(|| family.clone());
+                let retained = self
+                    .rules
+                    .districts
+                    .get(&replacement)
+                    .is_some_and(|spec| self.unlocked(new_owner, &spec.tech, &spec.civic));
+                (replacement, *position, retained)
+            })
+            .collect();
+        let retained_families: BTreeSet<String> = converted_districts
+            .iter()
+            .filter(|(_, _, retained)| *retained)
+            .map(|(district, _, _)| self.district_family(district).to_string())
+            .collect();
+        let convert_building = |building: &str| {
+            let family = self.rules.buildings[building]
+                .replaces
+                .as_deref()
+                .unwrap_or(building);
+            self.rules
+                .buildings
+                .iter()
+                .find(|(_, spec)| {
+                    spec.unique_to.as_deref() == Some(captor_civ.as_str())
+                        && spec.replaces.as_deref() == Some(family)
+                })
+                .map(|(name, _)| name.clone())
+                .unwrap_or_else(|| family.to_string())
+        };
+        let converted_buildings: BTreeMap<String, (usize, bool, bool)> = self.cities[&cid]
+            .buildings
+            .iter()
+            .filter(|building| !defensive_buildings.contains(*building))
+            .filter_map(|building| {
+                let converted = convert_building(building);
+                let district = self.rules.buildings[&converted]
+                    .district
+                    .as_deref()
+                    .unwrap_or("city_center");
+                (district == "city_center" || retained_families.contains(district)).then(|| {
+                    let era = self.cities[&cid]
+                        .building_eras
+                        .get(building)
+                        .copied()
+                        .unwrap_or(self.world_era);
+                    let pillaged = self.cities[&cid].pillaged_buildings.contains(building);
+                    (converted, (era, pillaged, district == "city_center"))
+                })
+            })
+            .collect();
+        let steel_retains_defenses = conquest
+            && self.players[new_owner].techs.contains("steel")
+            && !self.players[old].techs.contains("steel");
         {
             let city = self.cities.get_mut(&cid).unwrap();
             city.owner = new_owner;
             city.queue.clear();
             city.captured_from = conquest.then_some(old);
+            city.occupied_from = conquest.then_some(old);
             if conquest {
-                city.pop = (city.pop - 1).max(1);
+                // Gathering Storm removes approximately one quarter of the
+                // population, retaining the ceiling of 75%.
+                city.pop = ((city.pop * 3 + 3) / 4).max(1);
                 city.hp = 100;
                 city.loyalty = city.loyalty.min(50.0);
-                // Civ 6: walls are destroyed outright when a city falls.
-                city.buildings
-                    .retain(|building| !defensive_buildings.contains(building));
-                city.wall_hp = 0;
-                city.encampment_wall_hp = 0;
+                city.wall_hp = if steel_retains_defenses { 100 } else { 0 };
+                city.encampment_wall_hp = if steel_retains_defenses { 100 } else { 0 };
             }
+
+            city.buildings = converted_buildings.keys().cloned().collect();
+            city.building_eras = converted_buildings
+                .iter()
+                .map(|(building, (era, _, _))| (building.clone(), *era))
+                .collect();
+            city.pillaged_buildings = city
+                .buildings
+                .iter()
+                .filter(|building| {
+                    let (_, was_pillaged, city_center) = converted_buildings[building.as_str()];
+                    was_pillaged || (conquest && city_center)
+                })
+                .cloned()
+                .collect();
+
+            city.districts.clear();
+            for (district, position, retained) in &converted_districts {
+                if *retained {
+                    city.districts.insert(district.clone(), *position);
+                }
+            }
+        }
+        for (district, position, retained) in &converted_districts {
+            let tile = self.map.tiles.get_mut(position).unwrap();
+            tile.district = retained.then(|| district.clone());
+            if !retained {
+                tile.pillaged = false;
+            }
+        }
+        if !retained_families.contains("encampment") {
+            let city = self.cities.get_mut(&cid).unwrap();
+            city.encampment_hp = 0;
+            city.encampment_wall_hp = 0;
+            city.encampment_pillaged = false;
+        }
+        for position in self.cities[&cid].owned_tiles.clone() {
+            let Some(improvement) = self.map.tiles[&position].improvement.clone() else {
+                continue;
+            };
+            let retained = self
+                .rules
+                .improvements
+                .get(&improvement)
+                .is_some_and(|spec| {
+                    spec.unique_to
+                        .as_deref()
+                        .is_none_or(|civilization| civilization == captor_civ)
+                        && self.unlocked(new_owner, &spec.tech, &spec.civic)
+                });
+            if !retained {
+                let tile = self.map.tiles.get_mut(&position).unwrap();
+                tile.improvement = None;
+                tile.pillaged = false;
+            }
+        }
+        for (kind, count) in captured_works {
+            let key = format!("great_work:{kind}");
+            *self.players[old].counters.entry(key.clone()).or_insert(0) -= count as i64;
+            *self.players[new_owner].counters.entry(key).or_insert(0) += count as i64;
         }
         // An empire may have only one Industry for a given luxury. If a
         // captured city would duplicate one already controlled by its new
@@ -23180,13 +24353,14 @@ impl Game {
             tile.improvement = None;
             tile.pillaged = false;
         }
-        let pos = self.cities[&cid].pos;
-        for oid in self.units_at(pos) {
-            if self.units[&oid].owner == old {
-                if matches!(self.units[&oid].kind.as_str(), "builder" | "settler") {
-                    self.units.get_mut(&oid).unwrap().owner = new_owner;
-                } else {
-                    self.remove_unit(oid);
+        for position in evacuation_positions {
+            for oid in self.units_at(position) {
+                if self.units[&oid].owner == old {
+                    if matches!(self.units[&oid].kind.as_str(), "builder" | "settler") {
+                        self.units.get_mut(&oid).unwrap().owner = new_owner;
+                    } else {
+                        self.remove_unit(oid);
+                    }
                 }
             }
         }
@@ -23233,7 +24407,12 @@ impl Game {
         }
     }
 
-    fn city_state_elimination_grievances(&mut self, defeated: usize, conqueror: usize) {
+    fn city_state_elimination_grievances(
+        &mut self,
+        defeated: usize,
+        conqueror: usize,
+        razed: bool,
+    ) {
         if !self.players[defeated].is_minor
             || self.players[defeated].is_barbarian
             || self.players[defeated].alive
@@ -23248,7 +24427,27 @@ impl Game {
             {
                 continue;
             }
-            self.add_grievances(observer, conqueror, 100.0);
+            self.add_grievances(observer, conqueror, if razed { 100.0 } else { 50.0 });
+        }
+    }
+
+    fn civilization_elimination_grievances(&mut self, defeated: usize, conqueror: usize) {
+        if self.players[defeated].is_minor
+            || self.players[defeated].is_barbarian
+            || self.players[defeated].alive
+        {
+            return;
+        }
+        for observer in 0..self.players.len() {
+            if observer == conqueror
+                || observer == defeated
+                || self.players[observer].is_minor
+                || self.players[observer].is_barbarian
+                || !self.players[observer].alive
+            {
+                continue;
+            }
+            self.add_grievances(observer, conqueror, 150.0);
         }
     }
 
@@ -23257,7 +24456,8 @@ impl Game {
         self.cities.get_mut(&cid).unwrap().captured_from = None;
         self.capture_rewards(pid, defeated, 50.0);
         self.check_elimination(defeated);
-        self.city_state_elimination_grievances(defeated, pid);
+        self.city_state_elimination_grievances(defeated, pid, false);
+        self.civilization_elimination_grievances(defeated, pid);
         self.check_domination();
         Ok(())
     }
@@ -23265,8 +24465,8 @@ impl Game {
     fn do_raze_city(&mut self, pid: usize, cid: u32) -> Result<(), String> {
         let defeated = self.pending_city_capture(pid, cid)?;
         let city = self.cities[&cid].clone();
-        if city.is_capital {
-            return Err("capitals cannot be razed".into());
+        if city.is_capital || self.players[city.original_owner].is_minor {
+            return Err("original capitals and former city-states cannot be razed".into());
         }
         self.capture_rewards(pid, defeated, 150.0);
 
@@ -23288,7 +24488,8 @@ impl Game {
         self.city_by_pos.remove(&city.pos);
         self.cities.remove(&cid);
         self.check_elimination(defeated);
-        self.city_state_elimination_grievances(defeated, pid);
+        self.city_state_elimination_grievances(defeated, pid, true);
+        self.civilization_elimination_grievances(defeated, pid);
         self.check_domination();
         Ok(())
     }
@@ -23304,6 +24505,7 @@ impl Game {
             let city = self.cities.get_mut(&cid).unwrap();
             city.owner = original_owner;
             city.captured_from = None;
+            city.occupied_from = None;
             city.loyalty = 100.0;
         }
         self.players[original_owner].alive = true;
@@ -23320,6 +24522,12 @@ impl Game {
             .and_modify(|count| *count += 1)
             .or_insert(1);
         self.add_era_score(pid, if restored_to_game { 4 } else { 2 });
+        if self.players[original_owner].is_minor {
+            for player in &mut self.players {
+                player.envoys.retain(|(minor, _)| *minor != original_owner);
+            }
+            self.players[pid].envoys.push((original_owner, 3));
+        }
         self.check_elimination(defeated);
         self.check_domination();
         Ok(())
@@ -23345,6 +24553,16 @@ impl Game {
             return;
         }
         self.players[pid].alive = false;
+        for city in self.cities.values_mut() {
+            if city.occupied_from == Some(pid) {
+                city.occupied_from = None;
+            }
+        }
+        if self.players[pid].is_minor {
+            for player in &mut self.players {
+                player.envoys.retain(|(minor, _)| *minor != pid);
+            }
+        }
         for uid in self.player_unit_ids(pid) {
             self.remove_unit(uid);
         }
@@ -24449,6 +25667,41 @@ mod combat_scenarios {
         let galley = g.spawn_unit("galley", 0, city_pos);
         assert!(!g.unit_can_fortify(&g.units[&galley]));
         assert!(g.apply(0, &Action::Fortify { unit: galley }).is_err());
+    }
+
+    #[test]
+    fn only_stock_eligible_districts_add_city_combat_strength() {
+        let (mut g, city_pos, _) = controlled_game(31_432);
+        let city = g.found_city_for(0, city_pos, None);
+        let positions: Vec<Pos> = g
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .filter(|position| *position != city_pos)
+            .take(7)
+            .collect();
+        let base = g.city_strength(city);
+        for (index, district) in [
+            "preserve",
+            "aqueduct",
+            "bath",
+            "canal",
+            "dam",
+            "campus",
+            "encampment",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            g.cities
+                .get_mut(&city)
+                .unwrap()
+                .districts
+                .insert(district.to_string(), positions[index]);
+        }
+        assert_eq!(g.city_defense_district_count(&g.cities[&city]), 2);
+        assert_eq!(g.city_strength(city), base + 4.0);
     }
 
     #[test]
@@ -25575,9 +26828,11 @@ mod victory_conditions {
         assert!(restored
             .legal_actions(0)
             .contains(&Action::KeepCity { city: noncapital }));
+        assert_eq!(restored.cities[&noncapital].occupied_from, Some(1));
         assert!(g.apply(0, &Action::EndTurn).is_err());
         g.apply(0, &Action::KeepCity { city: noncapital }).unwrap();
         assert_eq!(g.cities[&noncapital].captured_from, None);
+        assert_eq!(g.cities[&noncapital].occupied_from, Some(1));
         assert_eq!(g.players[1].grievances.get(&0), Some(&50.0));
 
         let capital = g
@@ -25591,6 +26846,132 @@ mod victory_conditions {
             .legal_actions(0)
             .contains(&Action::RazeCity { city: capital }));
         assert!(g.do_raze_city(0, capital).is_err());
+    }
+
+    #[test]
+    fn conquest_applies_population_damage_repairs_conversion_and_occupation() {
+        let mut g = game_with_capitals(2, 4_216, 300);
+        g.players[0].civ = "Korea".to_string();
+        g.players[1].civ = "Greece".to_string();
+        g.players[0]
+            .techs
+            .extend(["writing".to_string(), "bronze_working".to_string()]);
+        g.players[0].civics.insert("drama_poetry".to_string());
+        let position = g
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|pos| g.city_at(*pos).is_none())
+            .unwrap();
+        let city = g.found_city_for(1, position, Some("Converted Prize".to_string()));
+        let sites: Vec<Pos> = g.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .filter(|site| *site != position)
+            .take(4)
+            .collect();
+        assert_eq!(sites.len(), 4);
+        for (district, site) in [
+            ("acropolis", sites[0]),
+            ("campus", sites[1]),
+            ("harbor", sites[2]),
+            ("encampment", sites[3]),
+        ] {
+            g.cities
+                .get_mut(&city)
+                .unwrap()
+                .districts
+                .insert(district.to_string(), site);
+            g.map.tiles.get_mut(&site).unwrap().district = Some(district.to_string());
+        }
+        {
+            let captured = g.cities.get_mut(&city).unwrap();
+            captured.pop = 9;
+            captured.wall_hp = 100;
+            captured.encampment_hp = 100;
+            captured.buildings = [
+                "monument",
+                "granary",
+                "walls",
+                "amphitheater",
+                "library",
+                "lighthouse",
+            ]
+            .map(str::to_string)
+            .to_vec();
+        }
+        g.players[1]
+            .counters
+            .insert("great_work:writing".to_string(), 1);
+        g.map.tiles.get_mut(&sites[0]).unwrap().improvement = Some("sphinx".to_string());
+        g.map.tiles.get_mut(&sites[1]).unwrap().improvement = Some("farm".to_string());
+        let defender = g.spawn_test_unit("warrior", 1, sites[3]);
+        let builder = g.spawn_test_unit("builder", 1, sites[3]);
+
+        g.capture_city(city, 0);
+
+        let captured = &g.cities[&city];
+        assert_eq!(
+            captured.pop, 7,
+            "capture retains the ceiling of 75% Population"
+        );
+        assert_eq!(captured.occupied_from, Some(1));
+        assert_eq!(captured.loyalty, 50.0);
+        assert_eq!(captured.wall_hp, 0);
+        assert!(!captured.buildings.contains(&"walls".to_string()));
+        assert!(captured.pillaged_buildings.contains("monument"));
+        assert!(captured.pillaged_buildings.contains("granary"));
+        assert!(!captured.pillaged_buildings.contains("library"));
+        assert!(captured.districts.contains_key("theater_square"));
+        assert!(captured.districts.contains_key("seowon"));
+        assert!(captured.districts.contains_key("encampment"));
+        assert!(!captured.districts.contains_key("acropolis"));
+        assert!(!captured.districts.contains_key("campus"));
+        assert!(!captured.districts.contains_key("harbor"));
+        assert!(!captured.buildings.contains(&"lighthouse".to_string()));
+        assert_eq!(g.map.tiles[&sites[0]].improvement, None);
+        assert_eq!(g.map.tiles[&sites[1]].improvement.as_deref(), Some("farm"));
+        assert!(!g.units.contains_key(&defender));
+        assert_eq!(g.units[&builder].owner, 0);
+        assert_eq!(g.players[1].counters["great_work:writing"], 0);
+        assert_eq!(g.players[0].counters["great_work:writing"], 1);
+
+        g.do_keep_city(0, city).unwrap();
+        assert_eq!(g.cities[&city].captured_from, None);
+        assert_eq!(g.cities[&city].occupied_from, Some(1));
+
+        let mut without_garrison = g.clone();
+        let before = without_garrison.cities[&city].loyalty;
+        without_garrison.process_loyalty(0);
+        let ungarrisoned_gain = without_garrison.cities[&city].loyalty - before;
+        g.spawn_test_unit("warrior", 0, position);
+        let before = g.cities[&city].loyalty;
+        g.process_loyalty(0);
+        assert_eq!(g.cities[&city].loyalty - before, ungarrisoned_gain + 5.0);
+    }
+
+    #[test]
+    fn steel_captor_retains_one_quarter_urban_defenses() {
+        let mut g = game_with_capitals(2, 4_217, 300);
+        g.players[0].techs.insert("steel".to_string());
+        let city = g.player_city_ids(1)[0];
+        g.capture_city(city, 0);
+        assert_eq!(g.cities[&city].wall_hp, 100);
+    }
+
+    #[test]
+    fn loyalty_states_apply_stock_yield_and_growth_bands() {
+        for (loyalty, yields, growth) in [
+            (100.0, 1.0, 1.0),
+            (75.0, 0.75, 0.75),
+            (50.0, 0.50, 0.25),
+            (25.0, 0.0, 0.0),
+        ] {
+            assert_eq!(Game::loyalty_yield_mult(loyalty), yields);
+            assert_eq!(Game::loyalty_growth_mult(loyalty), growth);
+        }
     }
 
     #[test]
@@ -25645,6 +27026,14 @@ mod victory_conditions {
     #[test]
     fn occupied_cities_create_recurring_grievances_and_capitals_drain_favor() {
         let mut g = game_with_capitals(2, 424, 300);
+        let refuge = g
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|position| g.city_at(*position).is_none())
+            .unwrap();
+        g.found_city_for(1, refuge, Some("Refuge".to_string()));
         let capital = g
             .cities
             .values()
@@ -25657,8 +27046,55 @@ mod victory_conditions {
 
         g.process_diplomacy(0);
 
-        assert_eq!(g.players[1].grievances.get(&0), Some(&51.0));
-        assert!((g.players[0].diplomatic_favor - 5.49).abs() < 1e-9);
+        assert_eq!(g.players[1].grievances.get(&0), Some(&53.0));
+        assert!((g.players[0].diplomatic_favor - 5.47).abs() < 1e-9);
+    }
+
+    #[test]
+    fn grievance_decay_pauses_at_war_and_uses_capital_occupation_modifier() {
+        let mut g = game_with_capitals(2, 4_241, 300);
+        let capital = g
+            .cities
+            .values()
+            .find(|city| city.original_owner == 0 && city.is_capital)
+            .unwrap()
+            .id;
+        g.cities.get_mut(&capital).unwrap().owner = 1;
+        g.players[0].grievances.insert(1, 100.0);
+        g.world_era = 0;
+        g.process_diplomacy(0);
+        assert_eq!(g.players[0].grievances.get(&1), Some(&93.0));
+
+        g.players[0].grievances.insert(1, 100.0);
+        g.at_war.insert(pair(0, 1));
+        g.process_diplomacy(0);
+        assert_eq!(g.players[0].grievances.get(&1), Some(&100.0));
+    }
+
+    #[test]
+    fn final_civilization_capture_creates_world_grievances() {
+        let mut g = game_with_capitals(3, 4_242, 300);
+        let city = g.player_city_ids(1)[0];
+        g.capture_city(city, 0);
+        g.do_keep_city(0, city).unwrap();
+        assert!(!g.players[1].alive);
+        assert_eq!(g.players[2].grievances.get(&0), Some(&150.0));
+    }
+
+    #[test]
+    fn original_capitals_can_flip_from_loyalty_pressure() {
+        let mut g = game_with_capitals(2, 4_243, 300);
+        let capital = g.player_city_ids(0)[0];
+        let foreign = g.player_city_ids(1)[0];
+        let neighbor = g.nbrs(g.cities[&capital].pos)[0];
+        g.cities.get_mut(&foreign).unwrap().pos = neighbor;
+        g.cities.get_mut(&foreign).unwrap().pop = 20;
+        g.cities.get_mut(&capital).unwrap().loyalty = 1.0;
+
+        g.process_loyalty(0);
+
+        assert_eq!(g.cities[&capital].owner, 1);
+        assert_eq!(g.cities[&capital].occupied_from, None);
     }
 
     #[test]
@@ -25672,9 +27108,12 @@ mod victory_conditions {
             .id;
         let city = g.player_city_ids(minor)[0];
         g.capture_city(city, 0);
+        assert!(!g
+            .pending_city_capture_actions(0)
+            .contains(&Action::RazeCity { city }));
         g.do_keep_city(0, city).unwrap();
         assert!(!g.players[minor].alive);
-        assert_eq!(g.players[1].grievances.get(&0), Some(&100.0));
+        assert_eq!(g.players[1].grievances.get(&0), Some(&50.0));
 
         g.capture_city(city, 1);
         assert!(g
@@ -25684,6 +27123,8 @@ mod victory_conditions {
         assert!(g.players[minor].alive);
         assert_eq!(g.cities[&city].owner, minor);
         assert_eq!(g.players[1].diplomatic_favor, 100.0);
+        assert_eq!(g.envoys_at(1, minor), 3);
+        assert_eq!(g.suzerain_of(minor), Some(1));
     }
 
     #[test]
@@ -25727,16 +27168,37 @@ mod victory_conditions {
     fn culture_requires_more_visiting_tourists_than_the_best_rival_domestic_total() {
         let mut g = game_with_capitals(2, 404, 300);
         g.players[1].culture_lifetime = 1_000.0;
-        g.players[0].tourism_lifetime = 4_000.0;
-        assert_eq!(g.domestic_tourists(1), 10);
-        assert_eq!(g.foreign_tourists(0), 10);
+        g.players[0].tourism_lifetime = 2_000.0;
+        assert_eq!(g.domestic_tourists(1), 5);
+        assert_eq!(g.foreign_tourists(0), 5);
         g.check_culture_victory();
         assert_eq!(g.winner, None, "a tie in tourist counts is not a victory");
-        g.players[0].tourism_lifetime = 4_400.0;
-        assert_eq!(g.foreign_tourists(0), 11);
+        g.players[0].tourism_lifetime = 2_400.0;
+        assert_eq!(g.domestic_tourists(1), 4);
+        assert_eq!(g.foreign_tourists(0), 6);
         g.check_culture_victory();
         assert_eq!(g.winner, Some(0));
         assert_eq!(g.victory_type.as_deref(), Some("culture"));
+    }
+
+    #[test]
+    fn tourists_are_discrete_per_rival_and_vanish_with_an_eliminated_source() {
+        let mut g = game_with_capitals(3, 4_040, 300);
+        g.players[0].tourism_pressure.insert(1, 599.0);
+        g.players[0].tourism_pressure.insert(2, 599.0);
+        assert_eq!(
+            g.foreign_tourists(0),
+            0,
+            "fractional tourists from separate civilizations cannot combine"
+        );
+
+        g.players[0].tourism_pressure.insert(1, 600.0);
+        g.players[1].culture_lifetime = 500.0;
+        assert_eq!(g.foreign_tourists(0), 1);
+        assert_eq!(g.domestic_tourists(1), 4);
+
+        g.players[1].alive = false;
+        assert_eq!(g.foreign_tourists(0), 0);
     }
 
     #[test]
@@ -25778,6 +27240,92 @@ mod victory_conditions {
             7,
             "Cristo must not increase the secular half of lifetime Tourism"
         );
+    }
+
+    #[test]
+    fn international_tourism_modifiers_accumulate_per_rival_without_retroactivity() {
+        let mut g = game_with_capitals(3, 4_042, 300);
+        g.turn = 10;
+        g.players[0].government = Some("democracy".to_string());
+        g.players[1].government = Some("communism".to_string());
+        g.players[2].government = Some("merchant_republic".to_string());
+        g.players[0].religion = Some("source_faith".to_string());
+        g.players[1].religion = Some("rival_faith".to_string());
+        g.players[2].religion = Some("source_faith".to_string());
+        g.players[1].civics.insert("the_enlightenment".to_string());
+
+        // Granting our borders to them is deliberately the wrong direction
+        // and does not improve our Tourism pressure against them.
+        g.players[0].open_borders_until.insert(1, 40);
+        assert_eq!(g.international_tourism_multiplier(0, 1, false), 0.6);
+        g.players[1].open_borders_until.insert(0, 40);
+        assert_eq!(g.international_tourism_multiplier(0, 1, false), 0.85);
+
+        let origin = g.player_city_ids(0)[0];
+        let destination = g.player_city_ids(1)[0];
+        g.routes.push(TradeRoute {
+            origin,
+            dest: destination,
+            owner: 0,
+            ends: 40,
+        });
+        assert_eq!(g.international_tourism_multiplier(0, 1, false), 1.1);
+        g.players[0]
+            .policies
+            .insert("online_communities".to_string());
+        assert_eq!(g.international_tourism_multiplier(0, 1, false), 1.6);
+        assert!((g.international_tourism_multiplier(0, 1, true) - 0.6).abs() < 1e-9);
+
+        g.add_passive_tourism(0, 100.0, 40.0, 0.0, 0.0);
+        assert!((g.players[0].tourism_pressure[&1] - 120.0).abs() < 1e-9);
+        assert!((g.players[0].tourism_pressure[&2] - 80.0).abs() < 1e-9);
+
+        // Expiring favorable modifiers affects only new pressure. It cannot
+        // rewrite the 120 points already accumulated against player 1.
+        g.players[0].policies.remove("online_communities");
+        g.players[1].open_borders_until.clear();
+        g.routes.clear();
+        g.players[1].government = Some("democracy".to_string());
+        g.add_passive_tourism(0, 100.0, 40.0, 0.0, 0.0);
+        assert!((g.players[0].tourism_pressure[&1] - 180.0).abs() < 1e-9);
+
+        let restored: Game = serde_json::from_str(&serde_json::to_string(&g).unwrap()).unwrap();
+        assert_eq!(
+            restored.players[0].tourism_pressure,
+            g.players[0].tourism_pressure
+        );
+    }
+
+    #[test]
+    fn film_studio_bonus_applies_only_against_each_modern_era_rival() {
+        let mut g = game_with_capitals(3, 4_043, 300);
+        let city = g.player_city_ids(0)[0];
+        g.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .extend(["amphitheater".to_string(), "film_studio".to_string()]);
+        g.players[0]
+            .counters
+            .insert("great_work:writing".to_string(), 1);
+        g.players[0].holy_city = Some(city);
+        g.players[1].techs.insert("radio".to_string());
+
+        let (tourism, film_studio_tourism) = g.tourism_components_per_turn(0);
+        let (religious, film_studio_religious) = g.religious_tourism_components_per_turn(0);
+        assert!(film_studio_tourism > 0.0);
+        assert!(film_studio_religious > 0.0);
+        g.add_passive_tourism(
+            0,
+            tourism,
+            religious,
+            film_studio_tourism,
+            film_studio_religious,
+        );
+
+        assert!((g.players[0].tourism_pressure[&1] - tourism - film_studio_tourism).abs() < 1e-9);
+        assert!((g.players[0].tourism_pressure[&2] - tourism).abs() < 1e-9);
+        assert_eq!(g.players[0].tourism_lifetime, tourism);
     }
 
     #[test]
@@ -27518,6 +29066,56 @@ mod district_mechanics {
             &Item::District {
                 district: "preserve".to_string(),
                 pos: preserve,
+            },
+        ));
+        assert_eq!(game.map.tiles[&claim].owner_city, Some(city));
+        assert!(game.cities[&city].owned_tiles.contains(&claim));
+    }
+
+    #[test]
+    fn gaul_specialty_districts_culture_bomb_from_nonadjacent_sites() {
+        let mut game = Game::new_full(1, 20, 14, 5154, 100, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        let city = game.found_city_for(0, game.units[&settler].pos, None);
+        game.players[0].civ = "Gaul".to_string();
+        game.players[0].techs.insert("writing".to_string());
+        let center = game.cities[&city].pos;
+        let site = game
+            .wdisk(center, 2)
+            .into_iter()
+            .find(|position| game.wdist(*position, center) == 2)
+            .unwrap();
+        {
+            let tile = game.map.tiles.get_mut(&site).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.district = None;
+            tile.wonder = None;
+            tile.hills = false;
+            tile.owner_city = Some(city);
+        }
+        if !game.cities[&city].owned_tiles.contains(&site) {
+            game.cities.get_mut(&city).unwrap().owned_tiles.push(site);
+        }
+        let claim = game
+            .nbrs(site)
+            .into_iter()
+            .find(|position| game.map.tiles[position].owner_city.is_none())
+            .unwrap();
+        assert!(game.district_sites(city, "campus").contains(&site));
+
+        assert!(game.complete_item(
+            0,
+            city,
+            &Item::District {
+                district: "campus".to_string(),
+                pos: site,
             },
         ));
         assert_eq!(game.map.tiles[&claim].owner_city, Some(city));

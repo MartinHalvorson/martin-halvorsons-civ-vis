@@ -50,19 +50,19 @@
       "connoisseur":{"tier":1,"effects":{"culture_per_pop":1}},
       "researcher":{"tier":1,"effects":{"science_per_pop":1}},
       "grants":{"tier":2,"requires":["connoisseur","researcher"],"effects":{"great_people_pct":100}},
-      "space_initiative":{"tier":2,"requires":["researcher"],"effects":{"space_project_production_pct":30}},
-      "curator":{"tier":3,"requires":["connoisseur","grants"],"effects":{"great_work_tourism_pct":100}}
+      "space_initiative":{"tier":3,"requires":["grants"],"effects":{"space_project_production_pct":30}},
+      "curator":{"tier":3,"requires":["grants"],"effects":{"great_work_tourism_pct":100}}
     }
   },
   "reyna": {
     "name":"Reyna", "title":"The Financier", "establish_turns":5,
-    "effects":{"loyalty":8,"gold_per_citizen":2},
+    "effects":{"loyalty":8,"border_growth_pct":20,"incoming_foreign_trade_gold":3},
     "promotions":{
       "harbormaster":{"tier":1,"effects":{"commercial_harbor_adjacency_pct":100}},
       "forestry_management":{"tier":1,"effects":{"unimproved_feature_gold":2,"appeal":1}},
       "tax_collector":{"tier":2,"requires":["harbormaster","forestry_management"],"effects":{"gold_per_pop":2}},
-      "contractor":{"tier":2,"requires":["tax_collector"],"effects":{"gold_purchase_districts":1}},
-      "renewable_subsidizer":{"tier":3,"requires":["contractor"],"effects":{"renewable_power":1}}
+      "contractor":{"tier":3,"requires":["tax_collector"],"effects":{"gold_purchase_districts":1}},
+      "renewable_subsidizer":{"tier":3,"requires":["tax_collector"],"effects":{"renewable_power_bonus":2,"renewable_gold":2}}
     }
   },
   "victor": {
@@ -70,10 +70,10 @@
     "effects":{"loyalty":8,"garrison_strength":5},
     "promotions":{
       "garrison_commander":{"tier":1,"effects":{"nearby_city_loyalty":4,"city_unit_defense":5}},
-      "defense_logistics":{"tier":1,"effects":{"city_siege_immunity":1,"strategic_stockpile":1}},
-      "embrasure":{"tier":2,"requires":["garrison_commander"],"effects":{"city_extra_strike":1,"military_free_promotion":1}},
-      "air_defense_initiative":{"tier":2,"requires":["defense_logistics"],"effects":{"air_defense":25}},
-      "arms_race_proponent":{"tier":3,"requires":["embrasure","air_defense_initiative"],"effects":{"military_production_pct":30}}
+      "defense_logistics":{"tier":1,"effects":{"city_siege_immunity":1,"strategic_resource_accumulation":1}},
+      "embrasure":{"tier":2,"requires":["garrison_commander","defense_logistics"],"effects":{"city_extra_strike":1,"military_free_promotion":1}},
+      "air_defense_initiative":{"tier":3,"requires":["embrasure"],"effects":{"air_defense":25}},
+      "arms_race_proponent":{"tier":3,"requires":["embrasure"],"effects":{"nuclear_armament_production_pct":30}}
     }
   }
 }

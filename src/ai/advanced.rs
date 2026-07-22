@@ -154,6 +154,7 @@ struct EmpireCounts {
     aircraft: usize,
     siege: usize,
     support: usize,
+    military_engineers: usize,
     missionaries: usize,
 }
 
@@ -170,6 +171,10 @@ impl EmpireCounts {
             "builder" => self.builders += 1,
             "trader" => self.traders += 1,
             "missionary" => self.missionaries += 1,
+            "military_engineer" => {
+                self.support += 1;
+                self.military_engineers += 1;
+            }
             "scout" => {
                 self.scouts += 1;
                 self.military += 1;
@@ -1127,6 +1132,99 @@ impl AdvancedAi {
         );
     }
 
+    fn strategic_government(&self, g: &mut Game, pid: usize, strategy: GrandStrategy) {
+        let objective = self
+            .victory_target
+            .map(VictoryTarget::strategy)
+            .unwrap_or(strategy);
+        let unlocked = |government: &str| {
+            g.rules.governments.get(government).is_some_and(|spec| {
+                spec.civic
+                    .as_ref()
+                    .is_none_or(|civic| g.players[pid].civics.contains(civic))
+            })
+        };
+
+        // Matching the leading Culture defender removes the full -40%
+        // Gathering Storm penalty between distinct Tier 3/4 governments.
+        // Lower-tier governments have zero intolerance and do not justify
+        // giving up the stronger late-game government effects.
+        let culture_match = (objective == GrandStrategy::Culture)
+            .then(|| {
+                g.players
+                    .iter()
+                    .filter(|rival| {
+                        rival.id != pid && rival.alive && !rival.is_minor && !rival.is_barbarian
+                    })
+                    .max_by_key(|rival| (g.domestic_tourists(rival.id), rival.id))
+                    .and_then(|rival| rival.government.clone())
+            })
+            .flatten()
+            .filter(|government| {
+                matches!(
+                    government.as_str(),
+                    "communism"
+                        | "democracy"
+                        | "fascism"
+                        | "corporate_libertarianism"
+                        | "digital_democracy"
+                        | "synthetic_technocracy"
+                ) && unlocked(government)
+            });
+
+        let priorities: &[&str] = match objective {
+            GrandStrategy::Culture | GrandStrategy::Diplomacy => &[
+                "digital_democracy",
+                "democracy",
+                "merchant_republic",
+                "classical_republic",
+                "chiefdom",
+            ],
+            GrandStrategy::Science => &[
+                "synthetic_technocracy",
+                "communism",
+                "democracy",
+                "merchant_republic",
+                "classical_republic",
+                "chiefdom",
+            ],
+            GrandStrategy::Conquest => &[
+                "corporate_libertarianism",
+                "fascism",
+                "communism",
+                "oligarchy",
+                "chiefdom",
+            ],
+            GrandStrategy::Religion => &["theocracy", "classical_republic", "chiefdom"],
+            GrandStrategy::Expansion => &[
+                "corporate_libertarianism",
+                "communism",
+                "merchant_republic",
+                "classical_republic",
+                "chiefdom",
+            ],
+            GrandStrategy::Recovery => &[
+                "digital_democracy",
+                "democracy",
+                "communism",
+                "classical_republic",
+                "chiefdom",
+            ],
+        };
+        let choice = culture_match.or_else(|| {
+            priorities
+                .iter()
+                .copied()
+                .find(|government| unlocked(government))
+                .map(str::to_string)
+        });
+        if let Some(government) = choice
+            .filter(|government| g.players[pid].government.as_deref() != Some(government.as_str()))
+        {
+            let _ = g.apply(pid, &Action::Government { government });
+        }
+    }
+
     /// Replace generic early cards with the late-game cards that directly
     /// advance an explicitly selected victory. Typed cards preferentially
     /// replace cards of their own type so wildcard capacity remains useful.
@@ -1485,6 +1583,58 @@ impl AdvancedAi {
             };
         }
         value - grievance * 0.8
+    }
+
+    fn strategic_bilateral_trade(
+        &self,
+        g: &mut Game,
+        pid: usize,
+        excluded_partner: Option<usize>,
+        strategy: GrandStrategy,
+    ) {
+        let objective = self
+            .victory_target
+            .map(VictoryTarget::strategy)
+            .unwrap_or(strategy);
+        if objective == GrandStrategy::Culture && g.turn % 6 == pid as u32 % 6 {
+            let best = g
+                .quick_deals(pid)
+                .into_iter()
+                .filter(|deal| Some(deal.partner) != excluded_partner)
+                .filter(|deal| {
+                    deal.item == "open_borders"
+                        && deal.direction == "buy"
+                        && deal.my_value >= 2.0
+                        && deal.partner_value >= 2.0
+                })
+                .max_by(|left, right| {
+                    g.domestic_tourists(left.partner)
+                        .cmp(&g.domestic_tourists(right.partner))
+                        .then_with(|| {
+                            left.my_value
+                                .min(left.partner_value)
+                                .partial_cmp(&right.my_value.min(right.partner_value))
+                                .unwrap()
+                        })
+                        .then_with(|| right.partner.cmp(&left.partner))
+                });
+            if let Some(deal) = best {
+                if g.apply(
+                    pid,
+                    &Action::Trade {
+                        player: deal.partner,
+                        offer: deal.offer,
+                        request: deal.request,
+                    },
+                )
+                .is_ok()
+                {
+                    return;
+                }
+            }
+        }
+        self.base
+            .bilateral_trade_excluding(g, pid, excluded_partner);
     }
 
     fn congress_choice(
@@ -2074,7 +2224,7 @@ impl AdvancedAi {
                 || g.is_at_war(pid, *target)
                 || self.rival_victory_pressure(g, *target).progress >= 78
         });
-        self.base.bilateral_trade_excluding(g, pid, denied_partner);
+        self.strategic_bilateral_trade(g, pid, denied_partner, plan.strategy);
         let my_power = g.military_power(pid);
         let rivals: Vec<usize> = g
             .players
@@ -2769,6 +2919,28 @@ impl AdvancedAi {
                     -10_000.0
                 }
             }
+            Item::Unit { unit } if unit == "military_engineer" => {
+                let engineering_districts = g
+                    .cities
+                    .values()
+                    .filter(|candidate| candidate.owner == pid)
+                    .filter(|candidate| {
+                        matches!(
+                            candidate.queue.first(),
+                            Some(Item::District { district, .. })
+                                if matches!(
+                                    g.district_family(district),
+                                    "aqueduct" | "canal" | "dam"
+                                )
+                        )
+                    })
+                    .count();
+                if engineering_districts > counts.military_engineers {
+                    390.0 + engineering_districts as f64 * 70.0
+                } else {
+                    -10_000.0
+                }
+            }
             Item::Formation { unit, formation } => {
                 let spec = &g.rules.units[unit];
                 let naval = spec.domain.as_deref() == Some("sea");
@@ -2979,53 +3151,211 @@ impl AdvancedAi {
             }
             Item::District { district, pos } => {
                 let spec = &g.rules.districts[district];
-                let developed_capacity = ((city.pop + 1) / 2).max(2) as usize;
-                if city.districts.len() >= developed_capacity
-                    && city.buildings.len() <= city.districts.len()
-                {
-                    return -1_200.0;
-                }
+                let family = g.district_family(district);
                 let district_count = g
                     .cities
                     .values()
-                    .filter(|c| c.owner == pid && c.districts.contains_key(district))
+                    .filter(|candidate| {
+                        candidate.owner == pid
+                            && candidate
+                                .districts
+                                .keys()
+                                .any(|built| g.district_family(built) == family)
+                    })
                     .count();
                 let balanced_core = if district_count * 2 < city_count {
-                    match district.as_str() {
+                    match family {
                         "campus" | "theater_square" | "commercial_hub" => 130.0,
+                        "harbor" | "industrial_zone" => 90.0,
                         _ => 0.0,
                     }
                 } else {
                     0.0
                 };
-                let culture_district = district == "theater_square"
-                    || spec.replaces.as_deref() == Some("theater_square");
+
+                // Evaluate the rules engine's actual post-construction
+                // housing rather than duplicating Aqueduct water rules or
+                // the appeal bands used by Neighborhoods and Preserves.
+                let mut developed = city.clone();
+                developed.districts.insert(district.clone(), *pos);
+                let housing_gain = (g.city_housing(&developed) - g.city_housing(city)).max(0.0);
+                let housing_need = (city.pop as f64 + 2.0 - g.city_housing(city)).max(0.0);
+                let amenity_gain = g.district_amenity(district, *pos);
+                let amenity_need = (-g.city_amenity_surplus(city)).max(0) as f64;
+                let great_people = spec.great_person_points.values().sum::<f64>();
+                let relevant_great_people = match plan.strategy {
+                    GrandStrategy::Science => spec
+                        .great_person_points
+                        .get("scientist")
+                        .copied()
+                        .unwrap_or(0.0),
+                    GrandStrategy::Culture => ["writer", "artist", "musician"]
+                        .into_iter()
+                        .map(|kind| spec.great_person_points.get(kind).copied().unwrap_or(0.0))
+                        .sum(),
+                    GrandStrategy::Religion => spec
+                        .great_person_points
+                        .get("prophet")
+                        .copied()
+                        .unwrap_or(0.0),
+                    GrandStrategy::Diplomacy => spec
+                        .great_person_points
+                        .get("merchant")
+                        .copied()
+                        .unwrap_or(0.0),
+                    GrandStrategy::Conquest => ["general", "admiral"]
+                        .into_iter()
+                        .map(|kind| spec.great_person_points.get(kind).copied().unwrap_or(0.0))
+                        .sum(),
+                    GrandStrategy::Expansion | GrandStrategy::Recovery => spec
+                        .great_person_points
+                        .get("engineer")
+                        .copied()
+                        .unwrap_or(0.0),
+                };
+                let effects = &spec.effects;
+                let effect_value = effects.get("governor_titles").copied().unwrap_or(0.0) * 520.0
+                    + effects.get("envoys").copied().unwrap_or(0.0)
+                        * if plan.strategy == GrandStrategy::Diplomacy {
+                            300.0
+                        } else {
+                            170.0
+                        }
+                    + effects
+                        .get("envoy_if_adjacent_city_center")
+                        .copied()
+                        .unwrap_or(0.0)
+                        * if g.wdist(city.pos, *pos) == 1 {
+                            if plan.strategy == GrandStrategy::Diplomacy {
+                                300.0
+                            } else {
+                                170.0
+                            }
+                        } else {
+                            0.0
+                        }
+                    + effects.get("spy_defense_levels").copied().unwrap_or(0.0) * 75.0
+                    + effects.get("flood_protection").copied().unwrap_or(0.0) * 160.0
+                    + effects.get("drought_protection").copied().unwrap_or(0.0) * 55.0
+                    + effects.get("culture_bomb").copied().unwrap_or(0.0) * 85.0
+                    + effects.get("naval_passage").copied().unwrap_or(0.0)
+                        * if plan.strategy == GrandStrategy::Conquest {
+                            150.0
+                        } else {
+                            75.0
+                        }
+                    + effects
+                        .get("gold_faith_purchase_discount_pct")
+                        .copied()
+                        .unwrap_or(0.0)
+                        * 8.0
+                    + effects
+                        .get("corps_army_discount_pct")
+                        .copied()
+                        .unwrap_or(0.0)
+                        * if plan.strategy == GrandStrategy::Conquest {
+                            8.0
+                        } else {
+                            2.0
+                        }
+                    + effects.get("free_heavy_cavalry").copied().unwrap_or(0.0)
+                        * if plan.strategy == GrandStrategy::Conquest {
+                            380.0
+                        } else {
+                            180.0
+                        }
+                    + effects
+                        .get("naval_settler_production_pct")
+                        .copied()
+                        .unwrap_or(0.0)
+                        * if plan.strategy == GrandStrategy::Expansion {
+                            4.0
+                        } else {
+                            1.5
+                        }
+                    + effects.get("naval_heal_full").copied().unwrap_or(0.0) * 90.0
+                    + effects.get("naval_movement").copied().unwrap_or(0.0) * 130.0
+                    + effects
+                        .get("foreign_continent_loyalty")
+                        .copied()
+                        .unwrap_or(0.0)
+                        * 22.0
+                    + effects.get("tourism_after_flight").copied().unwrap_or(0.0)
+                        * if plan.strategy == GrandStrategy::Culture {
+                            180.0
+                        } else {
+                            35.0
+                        }
+                    + effects
+                        .get("border_growth_on_great_person")
+                        .copied()
+                        .unwrap_or(0.0)
+                        * 90.0
+                    + effects.get("unlock_apprenticeship").copied().unwrap_or(0.0) * 120.0;
+
+                let strategic_family = match (plan.strategy, family) {
+                    (GrandStrategy::Science, "spaceport") if district_count == 0 => 3_000.0,
+                    (GrandStrategy::Science, "spaceport") => 250.0,
+                    (GrandStrategy::Science, "campus") => 170.0,
+                    (GrandStrategy::Science, "industrial_zone") => 150.0,
+                    (GrandStrategy::Religion, "holy_site") => 210.0,
+                    (GrandStrategy::Culture, "theater_square") => 850.0,
+                    (GrandStrategy::Culture, "preserve") => 210.0,
+                    (GrandStrategy::Diplomacy, "diplomatic_quarter") => 360.0,
+                    (GrandStrategy::Diplomacy, "commercial_hub") => 150.0,
+                    (GrandStrategy::Diplomacy, "harbor") => 130.0,
+                    (GrandStrategy::Diplomacy, "theater_square") => 100.0,
+                    (GrandStrategy::Conquest, "encampment") => 170.0,
+                    (GrandStrategy::Conquest, "aerodrome") => 280.0,
+                    (GrandStrategy::Conquest, "harbor") => 150.0,
+                    (GrandStrategy::Conquest, "industrial_zone") => 160.0,
+                    (GrandStrategy::Conquest, "canal") => 120.0,
+                    (GrandStrategy::Recovery, "industrial_zone") => 190.0,
+                    (GrandStrategy::Recovery, "dam") => 180.0,
+                    (GrandStrategy::Recovery, "aqueduct") => 120.0,
+                    (GrandStrategy::Expansion, "commercial_hub" | "harbor") => 90.0,
+                    (GrandStrategy::Expansion, "aqueduct" | "neighborhood") => 110.0,
+                    _ => 0.0,
+                };
+                let first_copy = match family {
+                    "government_plaza" if district_count == 0 => 420.0,
+                    "diplomatic_quarter" if district_count == 0 => 180.0,
+                    "aerodrome" if district_count == 0 && counts.aircraft > 0 => 260.0,
+                    _ => 0.0,
+                };
+                let development_penalty = if spec.specialty
+                    && !city.districts.is_empty()
+                    && city.buildings.len() <= city.districts.len()
+                {
+                    -120.0
+                } else {
+                    0.0
+                };
                 self.yield_value(g.district_yields(district, *pos), plan.strategy) * 60.0
+                    + self.yield_value(spec.citizen_yields, plan.strategy) * 24.0
                     + spec.defense * if threatened { 5.0 } else { 1.5 }
-                    + spec.amenity * 50.0
+                    + housing_gain * (32.0 + housing_need * 18.0)
+                    + amenity_gain * (55.0 + amenity_need * 35.0)
+                    + spec.loyalty * if city.loyalty < 76.0 { 22.0 } else { 7.0 }
+                    + spec.air_slots.max(0) as f64
+                        * if plan.strategy == GrandStrategy::Conquest || counts.aircraft > 0 {
+                            95.0
+                        } else {
+                            25.0
+                        }
+                    + spec.appeal
+                        * if plan.strategy == GrandStrategy::Culture {
+                            35.0
+                        } else {
+                            8.0
+                        }
+                    + great_people * 30.0
+                    + relevant_great_people * 85.0
                     + balanced_core
-                    + if plan.strategy == GrandStrategy::Culture && culture_district {
-                        // A Theater Square starts earning Great People long
-                        // before its building chain is complete, and every
-                        // city supplies another set of work slots. Establish
-                        // the network early instead of stopping at a merely
-                        // balanced half-empire coverage.
-                        850.0
-                    } else {
-                        0.0
-                    }
-                    + match (plan.strategy, district.as_str()) {
-                        (GrandStrategy::Science, "spaceport") if district_count == 0 => 3_000.0,
-                        (GrandStrategy::Science, "spaceport") => 250.0,
-                        (GrandStrategy::Science, "campus") => 170.0,
-                        (GrandStrategy::Religion, "holy_site") => 210.0,
-                        (GrandStrategy::Diplomacy, "commercial_hub") => 150.0,
-                        (GrandStrategy::Diplomacy, "theater_square") => 100.0,
-                        (GrandStrategy::Conquest, "encampment") => 130.0,
-                        (GrandStrategy::Recovery, "industrial_zone") => 130.0,
-                        (GrandStrategy::Expansion, "commercial_hub") => 90.0,
-                        _ => 0.0,
-                    }
+                    + strategic_family
+                    + first_copy
+                    + effect_value
+                    + development_penalty
             }
             Item::Repair { repair, .. } => {
                 if repair == "district" {
@@ -3540,8 +3870,8 @@ impl AdvancedAi {
                             .any(|r| r.origin == origin && r.dest == c.id)
                 })
                 .max_by(|a, b| {
-                    let av = self.yield_value(g.route_yields(a.id, a.owner == pid), strategy);
-                    let bv = self.yield_value(g.route_yields(b.id, b.owner == pid), strategy);
+                    let av = self.trade_route_destination_value(g, pid, a, strategy);
+                    let bv = self.trade_route_destination_value(g, pid, b, strategy);
                     av.partial_cmp(&bv).unwrap().then_with(|| b.id.cmp(&a.id))
                 })
                 .map(|c| c.id);
@@ -3552,6 +3882,32 @@ impl AdvancedAi {
             }
         }
         self.base.trader_step(g, pid, uid)
+    }
+
+    fn trade_route_destination_value(
+        &self,
+        g: &Game,
+        pid: usize,
+        city: &crate::game::City,
+        strategy: GrandStrategy,
+    ) -> f64 {
+        let mut value = self.yield_value(g.route_yields(city.id, city.owner == pid), strategy);
+        let objective = self
+            .victory_target
+            .map(VictoryTarget::strategy)
+            .unwrap_or(strategy);
+        // One route unlocks the entire empire's +25% Tourism pressure against
+        // that civilization (+75% with Online Communities). Duplicate routes
+        // do not stack, so Culture agents connect every rival before
+        // optimizing the route's ordinary yields.
+        if objective == GrandStrategy::Culture
+            && city.owner != pid
+            && !g.has_tourism_trade_route(pid, city.owner)
+        {
+            let modifier = 25.0 + g.policy_effect(pid, "trade_partner_tourism_pct");
+            value += 12.0 + g.tourism_per_turn(pid).min(400.0) * modifier / 100.0;
+        }
+        value
     }
 
     fn advanced_missionary_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
@@ -3749,6 +4105,70 @@ impl AdvancedAi {
             UnitDoctrine::Support | UnitDoctrine::Carrier => ForceRole::Support,
             UnitDoctrine::AirDefense | UnitDoctrine::AirStrike => ForceRole::AirStrike,
         }
+    }
+
+    /// Reserve one reachable land combat unit for each ungarrisoned occupied
+    /// city, weakest-loyalty first. The assignment is recomputed from the
+    /// current position before every unit acts, so a completed garrison is
+    /// immediately removed from the demand set and cannot attract a second
+    /// unit. This is the strategic counterpart to Gathering Storm's -5
+    /// occupation Loyalty penalty.
+    fn occupation_garrison_target(&self, g: &Game, pid: usize, uid: u32) -> Option<Pos> {
+        let mut cities: Vec<_> = g
+            .cities
+            .values()
+            .filter(|city| city.owner == pid)
+            .filter(|city| {
+                city.occupied_from
+                    .is_some_and(|former| g.players.get(former).is_some_and(|p| p.alive))
+            })
+            .filter(|city| {
+                !g.units_at(city.pos).into_iter().any(|unit| {
+                    g.units[&unit].owner == pid
+                        && g.rules.units[g.units[&unit].kind.as_str()].class == "military"
+                })
+            })
+            .collect();
+        cities.sort_by(|left, right| {
+            left.loyalty
+                .total_cmp(&right.loyalty)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        let mut available: BTreeSet<u32> = g
+            .player_unit_ids(pid)
+            .into_iter()
+            .filter(|unit| {
+                let spec = &g.rules.units[g.units[unit].kind.as_str()];
+                spec.class == "military"
+                    && !matches!(spec.domain.as_deref(), Some("sea" | "air"))
+                    && g.units[unit].linked_to.is_none()
+            })
+            .collect();
+        for city in cities {
+            let selected = available
+                .iter()
+                .filter(|unit| {
+                    g.units[unit].pos == city.pos || g.route_step(**unit, city.pos, 0).is_some()
+                })
+                .min_by(|left, right| {
+                    let rank = |unit: u32| {
+                        (
+                            g.wdist(g.units[&unit].pos, city.pos),
+                            g.unit_strength(&g.units[&unit], true) as i32,
+                            unit,
+                        )
+                    };
+                    rank(**left).cmp(&rank(**right))
+                })
+                .copied();
+            if let Some(selected) = selected {
+                available.remove(&selected);
+                if selected == uid {
+                    return Some(city.pos);
+                }
+            }
+        }
+        None
     }
 
     fn force_anchor(g: &Game, units: &[u32]) -> Pos {
@@ -4365,6 +4785,12 @@ impl AdvancedAi {
         if matches!(doctrine, UnitDoctrine::AirDefense | UnitDoctrine::AirStrike) {
             return false;
         }
+        if let Some(city) = self.occupation_garrison_target(g, pid, uid) {
+            if unit.pos != city {
+                return self.base.step_toward(g, pid, uid, city);
+            }
+            return self.base.fortify_or_stop(g, pid, uid);
+        }
         let enemies: Vec<usize> = g
             .players
             .iter()
@@ -4666,6 +5092,7 @@ impl AdvancedAi {
             .into_iter()
             .filter(|uid| {
                 g.rules.units[g.units[uid].kind.as_str()].class == "support"
+                    && g.units[uid].kind != "military_engineer"
                     && g.units[uid].linked_to.is_none()
             })
             .collect();
@@ -4797,6 +5224,7 @@ impl AdvancedAi {
                 let acted = match kind.as_str() {
                     "settler" => self.advanced_settler_step(g, pid, uid),
                     "builder" => self.advanced_builder_step(g, pid, uid, plan.strategy),
+                    "military_engineer" => self.base.military_engineer_step(g, pid, uid),
                     "naturalist" => self.base.naturalist_step(g, pid, uid),
                     "archaeologist" => self.base.archaeologist_step(g, pid, uid),
                     "trader" => self.advanced_trader_step(g, pid, uid, plan.strategy),
@@ -5085,6 +5513,7 @@ impl Ai for AdvancedAi {
         // Keep the mature ancillary systems: governments, policies, beliefs,
         // governors, religions, and envoys. Research is already selected.
         self.base.research(g, pid);
+        self.strategic_government(g, pid, plan.strategy);
         self.base.corporations(g, pid);
         self.advanced_products(g, pid, plan.strategy);
         self.advanced_great_people(g, pid, plan.strategy);
@@ -6216,6 +6645,88 @@ mod tests {
     }
 
     #[test]
+    fn district_search_values_unique_families_and_real_housing_need() {
+        let mut game = Game::new_full(1, 20, 14, 71_001, 200, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = game.player_city_ids(0)[0];
+        let site = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != game.cities[&city].pos)
+            .unwrap();
+        {
+            let tile = game.map.tiles.get_mut(&site).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.resource = None;
+            tile.hills = true;
+        }
+
+        for (unique, family) in [
+            ("seowon", "campus"),
+            ("lavra", "holy_site"),
+            ("hansa", "industrial_zone"),
+            ("bath", "aqueduct"),
+            ("mbanza", "neighborhood"),
+        ] {
+            assert_eq!(game.district_family(unique), family);
+        }
+
+        let ai = AdvancedAi::targeting(VictoryTarget::Science);
+        let counts = ai.counts(&game, 0);
+        let mut plan = StrategicPlan {
+            strategy: GrandStrategy::Science,
+            target_player: None,
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+        let seowon = Item::District {
+            district: "seowon".to_string(),
+            pos: site,
+        };
+        let science_value = ai.production_value(&game, 0, city, &seowon, &plan, &counts);
+        plan.strategy = GrandStrategy::Expansion;
+        let expansion_value = ai.production_value(&game, 0, city, &seowon, &plan, &counts);
+        assert!(
+            science_value > expansion_value,
+            "a Seowon must inherit the Campus science strategy bonus"
+        );
+
+        // The rules engine, not a second AI-only district cap, decides
+        // eligibility. A high-population city with an undeveloped specialty
+        // core should still recognize the urgent housing value of a
+        // Neighborhood.
+        for district in ["campus", "holy_site", "commercial_hub"] {
+            game.cities
+                .get_mut(&city)
+                .unwrap()
+                .districts
+                .insert(district.to_string(), site);
+        }
+        game.cities.get_mut(&city).unwrap().pop = 12;
+        let crowded = Item::District {
+            district: "neighborhood".to_string(),
+            pos: site,
+        };
+        let crowded_value = ai.production_value(&game, 0, city, &crowded, &plan, &counts);
+        game.cities.get_mut(&city).unwrap().pop = 2;
+        let roomy_value = ai.production_value(&game, 0, city, &crowded, &plan, &counts);
+        assert!(crowded_value > -1_000.0);
+        assert!(
+            crowded_value > roomy_value,
+            "appeal housing must be worth more when growth is constrained"
+        );
+    }
+
+    #[test]
     fn culture_production_trains_one_archaeologist_for_available_artifact_slots() {
         let mut game = Game::new(2, 24, 16, 7_100, 1_500, 0);
         let settler = game
@@ -6487,6 +6998,117 @@ mod tests {
             .extend(["discipline".to_string(), "urban_planning".to_string()]);
         AdvancedAi::new().strategic_policies(&mut reactive, 0, GrandStrategy::Culture);
         assert!(reactive.players[0].policies.contains("heritage_tourism"));
+    }
+
+    #[test]
+    fn culture_trade_routes_connect_unpressured_rivals_before_duplicating_links() {
+        let mut game = Game::new_full(3, 18, 10, 79_001, 200, 0, false);
+        for pid in 0..3 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.current = pid;
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        game.current = 0;
+        let origin = game.player_city_ids(0)[0];
+        let connected = game.player_city_ids(1)[0];
+        let unconnected = game.player_city_ids(2)[0];
+        game.routes.push(crate::game::TradeRoute {
+            origin,
+            dest: connected,
+            owner: 0,
+            ends: 30,
+        });
+
+        let ai = AdvancedAi::targeting(VictoryTarget::Culture);
+        let connected_value = ai.trade_route_destination_value(
+            &game,
+            0,
+            &game.cities[&connected],
+            GrandStrategy::Expansion,
+        );
+        let unconnected_value = ai.trade_route_destination_value(
+            &game,
+            0,
+            &game.cities[&unconnected],
+            GrandStrategy::Expansion,
+        );
+        assert!(unconnected_value > connected_value);
+
+        let science_ai = AdvancedAi::targeting(VictoryTarget::Science);
+        let science_connected = science_ai.trade_route_destination_value(
+            &game,
+            0,
+            &game.cities[&connected],
+            GrandStrategy::Expansion,
+        );
+        let science_unconnected = science_ai.trade_route_destination_value(
+            &game,
+            0,
+            &game.cities[&unconnected],
+            GrandStrategy::Expansion,
+        );
+        assert!(
+            unconnected_value - science_unconnected > connected_value - science_connected,
+            "only the Culture objective should add the missing-rival pressure bonus"
+        );
+    }
+
+    #[test]
+    fn strategic_governments_use_late_tiers_and_match_the_culture_holdout() {
+        let mut culture = Game::new_full(3, 18, 10, 79_002, 200, 0, false);
+        culture.players[0]
+            .civics
+            .extend(["class_struggle".to_string(), "suffrage".to_string()]);
+        culture.players[1].government = Some("communism".to_string());
+        culture.players[1].culture_lifetime = 20_000.0;
+        culture.players[2].government = Some("democracy".to_string());
+        culture.players[2].culture_lifetime = 10_000.0;
+        AdvancedAi::targeting(VictoryTarget::Culture).strategic_government(
+            &mut culture,
+            0,
+            GrandStrategy::Culture,
+        );
+        assert_eq!(culture.players[0].government.as_deref(), Some("communism"));
+
+        let mut science = Game::new_full(2, 18, 10, 79_003, 200, 0, false);
+        science.players[0]
+            .civics
+            .insert("synthetic_technocracy".to_string());
+        AdvancedAi::targeting(VictoryTarget::Science).strategic_government(
+            &mut science,
+            0,
+            GrandStrategy::Science,
+        );
+        assert_eq!(
+            science.players[0].government.as_deref(),
+            Some("synthetic_technocracy")
+        );
+    }
+
+    #[test]
+    fn culture_quick_deals_buy_the_direction_that_increases_our_tourism() {
+        let mut game = Game::new_full(2, 18, 10, 79_004, 200, 0, false);
+        game.turn = 6;
+        game.players[0].gold = 1_000.0;
+        game.players[1].gold = 1_000.0;
+        game.players[0].civics.insert("early_empire".to_string());
+        game.players[1].civics.insert("early_empire".to_string());
+
+        AdvancedAi::targeting(VictoryTarget::Culture).strategic_bilateral_trade(
+            &mut game,
+            0,
+            None,
+            GrandStrategy::Expansion,
+        );
+
+        assert!(game.has_open_borders(0, 1));
+        assert!(!game.has_open_borders(1, 0));
+        assert_eq!(game.international_tourism_multiplier(0, 1, false), 1.25);
     }
 
     #[test]
@@ -7161,5 +7783,57 @@ mod tests {
         ai.resolve_city_dispositions(&mut conquest, 0, GrandStrategy::Conquest);
         assert_eq!(conquest.cities[&city].owner, 0);
         assert_eq!(conquest.cities[&city].captured_from, None);
+    }
+
+    #[test]
+    fn occupation_reserves_a_reachable_garrison_during_war() {
+        let mut game = Game::new_full(3, 26, 16, 108, 80, 1, false);
+        let city = game
+            .players
+            .iter()
+            .find(|player| player.is_minor && !player.is_barbarian)
+            .and_then(|minor| game.player_city_ids(minor.id).first().copied())
+            .unwrap();
+        {
+            let occupied = game.cities.get_mut(&city).unwrap();
+            occupied.owner = 0;
+            occupied.captured_from = None;
+            occupied.occupied_from = Some(1);
+            occupied.loyalty = 35.0;
+        }
+        for unit in game.player_unit_ids(0) {
+            game.remove_unit(unit);
+        }
+        let city_pos = game.cities[&city].pos;
+        for unit in game.units_at(city_pos) {
+            game.remove_unit(unit);
+        }
+        let start =
+            game.nbrs(city_pos)
+                .into_iter()
+                .find(|position| {
+                    game.map.get(*position).is_some_and(|tile| {
+                        game.rules.is_passable(tile) && !game.rules.is_water(tile)
+                    }) && game.units_at(*position).is_empty()
+                })
+                .unwrap();
+        let warrior = game.spawn_test_unit("warrior", 0, start);
+        game.at_war.insert((0, 1));
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Conquest,
+            target_player: Some(1),
+            target_city: game.player_city_ids(1).first().copied(),
+            threatened_city: None,
+            desired_cities: 4,
+            assessed_turn: game.turn,
+        };
+        let mut ai = AdvancedAi::new();
+
+        assert_eq!(
+            ai.occupation_garrison_target(&game, 0, warrior),
+            Some(city_pos)
+        );
+        assert!(ai.advanced_military_step(&mut game, 0, warrior, &plan));
+        assert_eq!(game.units[&warrior].pos, city_pos);
     }
 }
