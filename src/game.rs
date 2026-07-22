@@ -18626,41 +18626,16 @@ impl Game {
                         });
                     }
                 }
-                let city = &self.cities[&cid];
-                if let Some(religion) = self.city_religion(city) {
-                    for (building, spec) in &self.rules.buildings {
-                        if city.buildings.contains(building) || p.faith < spec.cost * 2.0 {
-                            continue;
-                        }
-                        let worship = spec.worship_belief.as_ref().is_some_and(|belief| {
-                            self.religion_founder(religion).is_some_and(|founder| {
-                                self.players[founder]
-                                    .religion_beliefs
-                                    .iter()
-                                    .any(|chosen| chosen == belief)
-                            })
+                for building in self.rules.buildings.keys() {
+                    if self
+                        .building_faith_purchase_cost(pid, cid, building)
+                        .is_some_and(|cost| p.faith + f64::EPSILON >= cost)
+                    {
+                        acts.push(Action::BuyBuilding {
+                            city: cid,
+                            building: building.clone(),
+                            currency: "faith".to_string(),
                         });
-                        let jesuit = self.religion_belief_effect(
-                            religion,
-                            "faith_purchase_science_culture_buildings",
-                        ) > 0.0
-                            && spec.district.as_deref().is_some_and(|district| {
-                                matches!(district, "campus" | "theater_square")
-                            });
-                        let requirements =
-                            spec.district.as_ref().is_none_or(|district| {
-                                self.city_has_district_family(city, district)
-                            }) && spec
-                                .requires
-                                .iter()
-                                .all(|required| self.city_has_building_family(city, required));
-                        if (worship || jesuit) && requirements {
-                            acts.push(Action::BuyBuilding {
-                                city: cid,
-                                building: building.clone(),
-                                currency: "faith".to_string(),
-                            });
-                        }
                     }
                 }
             }
@@ -21591,38 +21566,9 @@ impl Game {
         if currency != "faith" {
             return Err("building cannot be purchased that way".into());
         }
-        let city = &self.cities[&cid];
-        let religion = self
-            .city_religion(city)
-            .ok_or_else(|| "city has no majority religion".to_string())?;
-        let worship = spec.worship_belief.as_ref().is_some_and(|belief| {
-            self.religion_founder(religion).is_some_and(|founder| {
-                self.players[founder]
-                    .religion_beliefs
-                    .iter()
-                    .any(|chosen| chosen == belief)
-            })
-        });
-        let jesuit =
-            self.religion_belief_effect(religion, "faith_purchase_science_culture_buildings") > 0.0
-                && spec
-                    .district
-                    .as_deref()
-                    .is_some_and(|district| matches!(district, "campus" | "theater_square"));
-        if (!worship && !jesuit)
-            || spec
-                .district
-                .as_ref()
-                .is_some_and(|district| !self.city_has_district_family(city, district))
-            || !spec
-                .requires
-                .iter()
-                .all(|required| self.city_has_building_family(city, required))
-        {
-            return Err("religion does not unlock this building purchase".into());
-        }
-        let purchase_discount = self.city_district_effect(city, "gold_faith_purchase_discount_pct");
-        let cost = spec.cost * 2.0 * (1.0 - purchase_discount / 100.0).max(0.0);
+        let cost = self
+            .building_faith_purchase_cost(pid, cid, building)
+            .ok_or_else(|| "building cannot be purchased with Faith".to_string())?;
         if self.players[pid].faith < cost {
             return Err("cannot afford".into());
         }
@@ -21632,6 +21578,69 @@ impl Game {
         self.players[pid].faith -= cost;
         self.finish_purchased_building(cid, &item);
         Ok(())
+    }
+
+    /// Faith price for a building unlocked by a Worship belief, Jesuit
+    /// Education, or Valletta. Valletta uses the normal 2:1 Faith conversion
+    /// for City Center and Encampment buildings, while the three wall tiers
+    /// (including unique replacements) receive its 50% discount.
+    pub(crate) fn building_faith_purchase_cost(
+        &self,
+        pid: usize,
+        cid: u32,
+        building: &str,
+    ) -> Option<f64> {
+        let city = self.cities.get(&cid).filter(|city| city.owner == pid)?;
+        let spec = self.rules.buildings.get(building)?;
+        if city.buildings.iter().any(|owned| owned == building) {
+            return None;
+        }
+        let item = Item::Building {
+            building: building.to_string(),
+        };
+        let district = spec
+            .district
+            .as_deref()
+            .map(|district| self.district_family(district))
+            .unwrap_or("city_center");
+        let valletta = self.grants_city_state_unique_bonus(pid, "Valletta")
+            && matches!(district, "city_center" | "encampment")
+            && self.can_produce(pid, cid, &item);
+        let religion = self.city_religion(city);
+        let worship = religion.is_some_and(|religion| {
+            spec.worship_belief.as_ref().is_some_and(|belief| {
+                self.religion_founder(religion).is_some_and(|founder| {
+                    self.players[founder]
+                        .religion_beliefs
+                        .iter()
+                        .any(|chosen| chosen == belief)
+                })
+            })
+        });
+        let jesuit = religion.is_some_and(|religion| {
+            self.religion_belief_effect(religion, "faith_purchase_science_culture_buildings") > 0.0
+                && matches!(district, "campus" | "theater_square")
+        });
+        let religious_requirements = spec
+            .district
+            .as_ref()
+            .is_none_or(|required| self.city_has_district_family(city, required))
+            && spec
+                .requires
+                .iter()
+                .all(|required| self.city_has_building_family(city, required));
+        if !valletta && (!(worship || jesuit) || !religious_requirements) {
+            return None;
+        }
+        let discounted_walls = valletta
+            && ["walls", "medieval_walls", "renaissance_walls"]
+                .into_iter()
+                .any(|family| self.building_is_family(building, family));
+        let conversion = if discounted_walls { 1.0 } else { 2.0 };
+        let discount = self
+            .city_district_effect(city, "gold_faith_purchase_discount_pct")
+            .clamp(0.0, 100.0);
+        Some(self.item_cost_for_city(pid, cid, &item) * conversion * (1.0 - discount / 100.0))
     }
 
     /// Stock Gold purchase price for an ordinary building. City defenses,

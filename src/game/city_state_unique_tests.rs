@@ -298,3 +298,47 @@ fn zanzibar_and_kandy_supply_luxuries_relics_and_relic_faith() {
         relics_before + 1
     );
 }
+
+#[test]
+fn valletta_purchases_city_center_and_encampment_buildings_with_discounted_walls() {
+    let (mut game, cities) = game_with_capitals(2, 89_006);
+    let city = cities[0];
+    let valletta = add_city_state(&mut game, "Valletta");
+    make_suzerain(&mut game, 1, valletta);
+    install_alliance(&mut game, 0, 1, "economic", 3);
+    game.players[0].techs.extend(
+        ["pottery", "masonry", "bronze_working"]
+            .into_iter()
+            .map(str::to_string),
+    );
+    game.players[0].faith = 1_000.0;
+
+    assert_eq!(
+        game.building_faith_purchase_cost(0, city, "granary"),
+        Some(130.0)
+    );
+    assert_eq!(
+        game.building_faith_purchase_cost(0, city, "walls"),
+        Some(80.0)
+    );
+    assert_eq!(game.building_faith_purchase_cost(0, city, "library"), None);
+    let purchase = Action::BuyBuilding {
+        city,
+        building: "walls".to_string(),
+        currency: "faith".to_string(),
+    };
+    assert!(game.legal_actions(0).contains(&purchase));
+    game.apply(0, &purchase).unwrap();
+    assert_close(game.players[0].faith, 920.0);
+    assert!(game.cities[&city].buildings.contains(&"walls".to_string()));
+    assert_eq!(game.cities[&city].wall_hp, 100);
+
+    install_district(&mut game, city, "encampment");
+    assert_eq!(
+        game.building_faith_purchase_cost(0, city, "barracks"),
+        Some(180.0)
+    );
+    game.players[0].alliances.clear();
+    game.players[1].alliances.clear();
+    assert_eq!(game.building_faith_purchase_cost(0, city, "granary"), None);
+}
