@@ -299,6 +299,8 @@
   .metric span { color: var(--faint); font-size: 7px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
   .event-list { height: 168px; display: flex; flex-direction: column; gap: 7px; overflow-y: auto; overflow-anchor: none; scrollbar-gutter: stable; }
   .event-item { min-height: 42px; display: grid; grid-template-columns: 25px 1fr; gap: 8px; padding: 8px; border-left: 2px solid #49645a; background: #0b1613; border-radius: 4px 9px 9px 4px; }
+  .event-item.important { border-left-color: var(--gold); background: linear-gradient(90deg, #302713, #0b1613 72%); box-shadow: inset 0 0 0 1px #d7b66a18; }
+  .event-item.important .event-icon { color: var(--gold-bright); background: #d7b66a14; }
   .event-icon { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 7px; background: #ffffff08; }
   .event-text { color: #cad5cf; font-size: 10px; }
   .event-turn { color: var(--faint); font-size: 8px; letter-spacing: .1em; text-transform: uppercase; }
@@ -961,8 +963,8 @@ async function specStep() {
 function scheduleSpec(_st) {} // server-driven; kept for legacy call sites
 function legalFor(type) { return state.legal_actions.filter(a => a.type === type); }
 
-function addEvent(icon, text, turn) {
-  worldEvents.unshift({ icon, text, turn });
+function addEvent(icon, text, turn, important = false) {
+  worldEvents.unshift({ icon, text, turn, important, at: performance.now() });
   worldEvents = worldEvents.slice(0, 12);
 }
 function chronicleActions(next) {
@@ -1036,7 +1038,7 @@ function chronicle(prev, next) {
                     diplomacy:"⚜", conquest:"⚔", recovery:"♜"}[p.ai_strategy] || "◇";
       addEvent(icon,
         `${p.civ} changed its grand strategy from ${titleCase(old.ai_strategy)} to ${titleCase(p.ai_strategy)}.`,
-        next.turn);
+        next.turn, true);
     }
   }
   const majors = next.players.filter(p => !p.is_minor && !p.is_barbarian && p.alive)
@@ -2473,15 +2475,18 @@ function drawResearchSlot(el, kind, name, progress, total, perTurn, boosted) {
 }
 function drawEvents() {
   const el = document.getElementById("events");
-  const signature = worldEvents.map(e => `${e.turn}:${e.icon}:${e.text}`).join("|");
+  const now = performance.now();
+  const pinned = worldEvents.filter(e => e.important && now - e.at < 6000);
+  const ordered = [...pinned, ...worldEvents.filter(e => !pinned.includes(e))];
+  const signature = ordered.map(e => `${e.turn}:${e.icon}:${e.text}:${pinned.includes(e)}`).join("|");
   if (el.dataset.signature === signature) return;
   el.dataset.signature = signature;
   if (!worldEvents.length) {
     el.innerHTML = `<div class="empty-state">The world is quiet—for now.</div>`;
     return;
   }
-  el.innerHTML = worldEvents.map(e =>
-    `<div class="event-item"><div class="event-icon">${e.icon}</div>` +
+  el.innerHTML = ordered.map(e =>
+    `<div class="event-item${e.important ? " important" : ""}"><div class="event-icon">${e.icon}</div>` +
     `<div><div class="event-text">${e.text}</div><div class="event-turn">Turn ${e.turn}</div></div></div>`
   ).join("");
 }
