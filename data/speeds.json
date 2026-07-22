@@ -1,0 +1,7 @@
+{
+  "online": {"name": "Online", "order": 0, "cost_pct": 50, "turns": 250},
+  "quick": {"name": "Quick", "order": 1, "cost_pct": 67, "turns": 330},
+  "standard": {"name": "Standard", "order": 2, "cost_pct": 100, "turns": 500},
+  "epic": {"name": "Epic", "order": 3, "cost_pct": 150, "turns": 750},
+  "marathon": {"name": "Marathon", "order": 4, "cost_pct": 300, "turns": 1500}
+}

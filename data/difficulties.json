@@ -1,0 +1,71 @@
+{
+  "settler": {
+    "name": "Settler",
+    "order": 0,
+    "human_combat_strength": 3,
+    "human_xp_pct": 45,
+    "human_camp_gold": 15,
+    "barb_force_scale": 0.5
+  },
+  "chieftain": {
+    "name": "Chieftain",
+    "order": 1,
+    "human_combat_strength": 2,
+    "human_xp_pct": 30,
+    "human_camp_gold": 10,
+    "barb_force_scale": 0.5
+  },
+  "warlord": {
+    "name": "Warlord",
+    "order": 2,
+    "human_combat_strength": 1,
+    "human_xp_pct": 15,
+    "human_camp_gold": 5,
+    "barb_force_scale": 1.0
+  },
+  "prince": {
+    "name": "Prince",
+    "order": 3,
+    "barb_force_scale": 1.0
+  },
+  "king": {
+    "name": "King",
+    "order": 4,
+    "ai_yield_pct": {"science": 8, "culture": 8, "production": 20, "gold": 20, "faith": 8},
+    "ai_combat_strength": 0,
+    "ai_xp_pct": 10,
+    "ai_era_boosts": 1,
+    "ai_bonus_units": {"warrior": 1},
+    "barb_force_scale": 1.0
+  },
+  "emperor": {
+    "name": "Emperor",
+    "order": 5,
+    "ai_yield_pct": {"science": 16, "culture": 16, "production": 40, "gold": 40, "faith": 16},
+    "ai_combat_strength": 1,
+    "ai_xp_pct": 20,
+    "ai_era_boosts": 2,
+    "ai_bonus_units": {"warrior": 2, "builder": 1},
+    "barb_force_scale": 1.0
+  },
+  "immortal": {
+    "name": "Immortal",
+    "order": 6,
+    "ai_yield_pct": {"science": 24, "culture": 24, "production": 60, "gold": 60, "faith": 24},
+    "ai_combat_strength": 2,
+    "ai_xp_pct": 30,
+    "ai_era_boosts": 3,
+    "ai_bonus_units": {"warrior": 3, "builder": 1, "settler": 1},
+    "barb_force_scale": 1.5
+  },
+  "deity": {
+    "name": "Deity",
+    "order": 7,
+    "ai_yield_pct": {"science": 32, "culture": 32, "production": 80, "gold": 80, "faith": 32},
+    "ai_combat_strength": 3,
+    "ai_xp_pct": 40,
+    "ai_era_boosts": 4,
+    "ai_bonus_units": {"warrior": 4, "builder": 2, "settler": 1},
+    "barb_force_scale": 1.5
+  }
+}

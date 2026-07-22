@@ -1,6 +1,7 @@
 //! Zero-dependency local HTTP server for the human-vs-AI browser GUI.
 //! Endpoints: GET / (page), GET /state, GET /save, GET /rules,
 //! POST /action, POST /step, POST /spectator-status, POST /new.
+use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -10,7 +11,8 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use crate::ai::{AdvancedAi, Ai, BasicAi};
-use crate::game::{Action, Game};
+use crate::game::{Action, Game, GameOptions};
+use crate::rules::Rules;
 use crate::obs::{observation, observation_spectator};
 use crate::setup::{MapSize, CIV6_MAP_SIZES};
 
@@ -29,6 +31,8 @@ pub struct Params {
     pub num_city_states: usize,
     /// All players AI-driven; the GUI just watches (auto-steps via /step).
     pub spectate: bool,
+    pub difficulty: String,
+    pub speed: String,
 }
 
 pub struct Session {
@@ -64,15 +68,26 @@ impl Session {
     }
 
     pub fn new(params: Params) -> Session {
-        let game = Game::new_full(
-            params.num_players,
-            params.width,
-            params.height,
-            params.seed,
-            params.max_turns,
-            params.num_city_states,
-            true,
-        );
+        // Seat 0 is the person at the keyboard, which is what decides who the
+        // difficulty hands its bonuses to. A spectated game has nobody there.
+        let human_seats = if params.spectate {
+            BTreeSet::new()
+        } else {
+            BTreeSet::from([0usize])
+        };
+        let game = Game::new_with(GameOptions {
+            difficulty: params.difficulty.clone(),
+            speed: params.speed.clone(),
+            human_seats,
+            ..GameOptions::new(
+                params.num_players,
+                params.width,
+                params.height,
+                params.seed,
+                params.max_turns,
+                params.num_city_states,
+            )
+        });
         // Paired and multiplayer evaluation make the hierarchical agent the
         // strongest built-in default. Minors/barbarians retain the cheaper
         // baseline because they do not need empire-level planning.
@@ -102,6 +117,8 @@ impl Session {
         params.height = game.map.height;
         params.seed = game.seed;
         params.max_turns = game.max_turns;
+        params.difficulty = game.difficulty.clone();
+        params.speed = game.speed.clone();
         let ais = Self::ai_fleet(&game);
         Session {
             params,
@@ -268,6 +285,20 @@ fn new_game_params(current: &Params, request: &Value) -> Params {
     if let Some(v) = request["spectate"].as_bool() {
         p.spectate = v;
     }
+    let rules = Rules::embedded();
+    if let Some(v) = request["difficulty"].as_str() {
+        if rules.difficulties.contains_key(v) {
+            p.difficulty = v.to_string();
+        }
+    }
+    if let Some(v) = request["speed"].as_str() {
+        if let Some(spec) = rules.speeds.get(v) {
+            p.speed = v.to_string();
+            // A speed carries its own turn budget; adopt it unless the client
+            // asked for a specific one in the same request.
+            p.max_turns = request["max_turns"].as_u64().unwrap_or(spec.turns as u64) as u32;
+        }
+    }
     p
 }
 
@@ -416,6 +447,7 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
                     "policies": r.policies, "beliefs": r.beliefs, "civs": r.civs,
                     "great_people": r.great_people, "governors": r.governors,
                     "map_sizes": CIV6_MAP_SIZES,
+                    "difficulties": r.difficulties, "speeds": r.speeds,
                 }),
             );
         }
@@ -489,6 +521,8 @@ mod tests {
             max_turns: 500,
             num_city_states: 1,
             spectate: false,
+            difficulty: crate::game::default_difficulty(),
+            speed: crate::game::default_speed(),
         }
     }
 

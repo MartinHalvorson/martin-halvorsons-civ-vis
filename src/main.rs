@@ -2,7 +2,8 @@
 use std::time::Instant;
 
 use civvis::ai::{run_game, AdvancedAi};
-use civvis::game::Game;
+use civvis::game::{default_difficulty, default_speed, Game, GameOptions};
+use civvis::rules::Rules;
 use civvis::setup::MapSize;
 
 fn arg(args: &[String], key: &str, default: i64) -> i64 {
@@ -37,6 +38,64 @@ fn auto_dimension(args: &[String], key: &str, players: i64, width: bool) -> i32 
         key,
         if width { size.width } else { size.height } as i64,
     ) as i32
+}
+
+/// Difficulty and speed are chosen the same way everywhere: by name, against
+/// the shipped ruleset, with the stock levels as defaults.
+fn game_options(args: &[String], players: i64, seed: u64, turns_default: i64) -> GameOptions {
+    let rules = Rules::embedded();
+    let difficulty = arg_text(args, "--difficulty", &default_difficulty());
+    if !rules.difficulties.contains_key(&difficulty) {
+        eprintln!(
+            "unknown difficulty {difficulty:?}; choose one of {:?}",
+            ladder(&rules)
+        );
+        std::process::exit(2);
+    }
+    let speed = arg_text(args, "--speed", &default_speed());
+    let Some(speed_spec) = rules.speeds.get(&speed) else {
+        eprintln!("unknown game speed {speed:?}; choose one of {:?}", speeds(&rules));
+        std::process::exit(2);
+    };
+    // An explicit --turns wins; otherwise the speed brings its own budget,
+    // and the stock speed keeps each command's historical default.
+    let turns = if args.iter().any(|a| a == "--turns") {
+        arg(args, "--turns", turns_default)
+    } else if speed == default_speed() {
+        turns_default
+    } else {
+        speed_spec.turns as i64
+    };
+    GameOptions {
+        difficulty,
+        speed,
+        // A headless game has nobody at the keyboard, so the difficulty only
+        // reaches the AI side of the ladder unless a seat is named human.
+        human_seats: arg_text(args, "--human-seats", "")
+            .split(',')
+            .filter_map(|seat| seat.trim().parse().ok())
+            .collect(),
+        ..GameOptions::new(
+            players.max(1) as usize,
+            auto_dimension(args, "--width", players, true),
+            auto_dimension(args, "--height", players, false),
+            seed,
+            turns as u32,
+            auto_cs(args, players),
+        )
+    }
+}
+
+fn ladder(rules: &Rules) -> Vec<&str> {
+    let mut names: Vec<&str> = rules.difficulties.keys().map(|k| k.as_str()).collect();
+    names.sort_by_key(|name| rules.difficulties[*name].order);
+    names
+}
+
+fn speeds(rules: &Rules) -> Vec<&str> {
+    let mut names: Vec<&str> = rules.speeds.keys().map(|k| k.as_str()).collect();
+    names.sort_by_key(|name| rules.speeds[*name].order);
+    names
 }
 
 fn standings(g: &Game) {
@@ -87,14 +146,12 @@ fn main() {
         "simulate" => {
             let players = arg(&args, "--players", 4);
             let g0 = Instant::now();
-            let mut g = Game::new(
-                players as usize,
-                auto_dimension(&args, "--width", players, true),
-                auto_dimension(&args, "--height", players, false),
+            let mut g = Game::new_with(game_options(
+                &args,
+                players,
                 arg(&args, "--seed", 0) as u64,
-                arg(&args, "--turns", 250) as u32,
-                auto_cs(&args, players),
-            );
+                250,
+            ));
             let mut ais = AdvancedAi::fleet(&g);
             run_game(&mut g, &mut ais);
             println!("[{:.3}s]", g0.elapsed().as_secs_f64());
@@ -108,14 +165,7 @@ fn main() {
             for seed in start..start + games {
                 let t0 = Instant::now();
                 let result = std::panic::catch_unwind(|| {
-                    let mut g = Game::new(
-                        players as usize,
-                        auto_dimension(&args, "--width", players, true),
-                        auto_dimension(&args, "--height", players, false),
-                        seed as u64,
-                        arg(&args, "--turns", 120) as u32,
-                        auto_cs(&args, players),
-                    );
+                    let mut g = Game::new_with(game_options(&args, players, seed as u64, 120));
                     let mut ais = AdvancedAi::fleet(&g);
                     run_game(&mut g, &mut ais);
                     g
@@ -256,6 +306,7 @@ fn main() {
                         .subsec_nanos() as u64
                 }
             };
+            let play_options = game_options(&args, players, seed, 500);
             civvis::server::serve_with_game(
                 arg(&args, "--port", 8765) as u16,
                 !args.iter().any(|a| a == "--no-open"),
@@ -264,9 +315,11 @@ fn main() {
                     width: auto_dimension(&args, "--width", players, true),
                     height: auto_dimension(&args, "--height", players, false),
                     seed,
-                    max_turns: arg(&args, "--turns", 500) as u32,
+                    max_turns: play_options.max_turns,
                     num_city_states: auto_cs(&args, players),
                     spectate: args.iter().any(|a| a == "--spectate" || a == "--watch"),
+                    difficulty: play_options.difficulty,
+                    speed: play_options.speed,
                 },
                 resumed,
             );

@@ -25,8 +25,161 @@ pub type Pos = (i32, i32);
 #[cfg(test)]
 mod tests {
     use crate::ai::{run_game, Ai, BasicAi};
-    use crate::game::{Action, Game};
+    use crate::game::{Action, Game, GameOptions};
     use crate::hex;
+    use crate::rules::Rules;
+    use std::collections::BTreeSet;
+
+    fn options(difficulty: &str, speed: &str, human_seats: &[usize]) -> GameOptions {
+        GameOptions {
+            difficulty: difficulty.to_string(),
+            speed: speed.to_string(),
+            human_seats: human_seats.iter().copied().collect::<BTreeSet<_>>(),
+            barbarians: false,
+            ..GameOptions::new(2, 20, 14, 7, 40, 0)
+        }
+    }
+
+    /// The ladder is a contiguous run from Settler to Deity, Prince is the
+    /// level that hands out nothing, and the handicaps only ever grow.
+    #[test]
+    fn the_difficulty_ladder_is_ordered_and_neutral_at_prince() {
+        let rules = Rules::embedded();
+        let mut levels: Vec<_> = rules.difficulties.values().collect();
+        levels.sort_by_key(|spec| spec.order);
+        assert_eq!(levels.len(), 8);
+        assert!(levels.iter().enumerate().all(|(i, spec)| spec.order == i));
+        let prince = &rules.difficulties["prince"];
+        assert_eq!(prince.order, 3);
+        assert_eq!(prince.ai_combat_strength, 0.0);
+        assert_eq!(prince.human_combat_strength, 0.0);
+        assert_eq!(prince.ai_yield_pct.science, 0.0);
+        assert!(prince.ai_bonus_units.is_empty());
+        for pair in levels.windows(2) {
+            let (lower, higher) = (pair[0], pair[1]);
+            assert!(higher.ai_yield_pct.science >= lower.ai_yield_pct.science);
+            assert!(higher.ai_xp_pct >= lower.ai_xp_pct);
+            assert!(higher.human_combat_strength <= lower.human_combat_strength);
+        }
+    }
+
+    /// Above Prince the handicaps land on the AI seats: better yields, a
+    /// stronger army, and extra units already on the map at turn one.
+    #[test]
+    fn deity_hands_its_bonuses_to_the_ai_seats() {
+        let deity = Game::new_with(options("deity", "standard", &[0]));
+        let prince = Game::new_with(options("prince", "standard", &[0]));
+        // Seat 0 is the human and is untouched; seat 1 is an AI major.
+        assert_eq!(deity.handicap_combat_strength(0), 0.0);
+        assert_eq!(deity.handicap_combat_strength(1), 3.0);
+        assert_eq!(deity.handicap_yield_pct(0).science, 0.0);
+        assert_eq!(deity.handicap_yield_pct(1).production, 80.0);
+        assert_eq!(deity.handicap_xp_pct(1), 40.0);
+        let extra_units = |g: &Game, pid: usize| g.player_unit_ids(pid).len();
+        assert_eq!(extra_units(&prince, 1), extra_units(&prince, 0));
+        assert_eq!(
+            extra_units(&deity, 1),
+            extra_units(&deity, 0) + 7, // 4 warriors, 2 builders, a settler
+        );
+    }
+
+    /// Below Prince the same machinery runs the other way, and the bonuses
+    /// reach the person at the keyboard instead.
+    #[test]
+    fn settler_hands_its_bonuses_to_the_human_seat() {
+        let g = Game::new_with(options("settler", "standard", &[0]));
+        assert_eq!(g.handicap_combat_strength(0), 3.0);
+        assert_eq!(g.handicap_xp_pct(0), 45.0);
+        assert_eq!(g.handicap_combat_strength(1), 0.0);
+        assert_eq!(g.handicap_yield_pct(1), Default::default());
+        // With no seat declared human, a headless game stays neutral.
+        let headless = Game::new_with(options("settler", "standard", &[]));
+        assert_eq!(headless.handicap_combat_strength(0), 0.0);
+    }
+
+    /// A difficulty bonus reaches the yields a city actually reports, and the
+    /// strength an opponent actually has to fight through.
+    #[test]
+    fn handicaps_reach_city_yields_and_unit_strength() {
+        let mut deity = Game::new_with(options("deity", "standard", &[0]));
+        let mut prince = Game::new_with(options("prince", "standard", &[0]));
+        for game in [&mut deity, &mut prince] {
+            for pid in 0..2 {
+                let settler = game
+                    .player_unit_ids(pid)
+                    .into_iter()
+                    .find(|uid| game.units[uid].kind == "settler")
+                    .unwrap();
+                let pos = game.units[&settler].pos;
+                game.found_city_for(pid, pos, None);
+            }
+        }
+        let ai_city = |g: &Game| {
+            let cid = g.player_city_ids(1)[0];
+            g.city_yields(cid)
+        };
+        let (boosted, stock) = (ai_city(&deity), ai_city(&prince));
+        assert!((boosted.production - stock.production * 1.8).abs() < 1e-6);
+        assert!((boosted.science - stock.science * 1.32).abs() < 1e-6);
+        assert_eq!(boosted.food, stock.food, "growth stays honest");
+        let warrior = |g: &Game, pid: usize| {
+            let uid = g
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|uid| g.units[uid].kind == "warrior")
+                .unwrap();
+            g.unit_strength(&g.units[&uid], false)
+        };
+        assert_eq!(warrior(&deity, 1) - warrior(&prince, 1), 3.0);
+        assert_eq!(warrior(&deity, 0), warrior(&prince, 0));
+    }
+
+    /// Speed scales everything bought with a stockpiled yield, and brings its
+    /// own turn budget from the shipped turn-length tables.
+    #[test]
+    fn game_speed_scales_every_cost() {
+        let marathon = Game::new_with(options("prince", "marathon", &[]));
+        let standard = Game::new_with(options("prince", "standard", &[]));
+        let online = Game::new_with(options("prince", "online", &[]));
+        assert_eq!(marathon.speed_cost_mult(), 3.0);
+        assert_eq!(online.speed_cost_mult(), 0.5);
+        let item = crate::game::Item::Unit {
+            unit: "warrior".to_string(),
+        };
+        assert_eq!(
+            marathon.item_cost(&item),
+            standard.item_cost(&item) * 3.0
+        );
+        assert_eq!(marathon.tech_cost("mining"), standard.tech_cost("mining") * 3.0);
+        assert_eq!(
+            marathon.civic_cost("code_of_laws"),
+            standard.civic_cost("code_of_laws") * 3.0
+        );
+        let rules = Rules::embedded();
+        assert_eq!(rules.speeds["marathon"].turns, 1500);
+        assert_eq!(rules.speeds["standard"].turns, 500);
+    }
+
+    /// The setup choices are part of the game, so they survive a save.
+    #[test]
+    fn difficulty_and_speed_survive_a_save_round_trip() {
+        let g = Game::new_with(options("immortal", "epic", &[0]));
+        let restored: Game = serde_json::from_str(&serde_json::to_string(&g).unwrap()).unwrap();
+        assert_eq!(restored.difficulty, "immortal");
+        assert_eq!(restored.speed, "epic");
+        assert_eq!(restored.human_seats, BTreeSet::from([0]));
+        assert_eq!(restored.handicap_combat_strength(1), 2.0);
+        // Saves written before difficulty existed still load, at the stock level.
+        let mut raw: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&g).unwrap()).unwrap();
+        for key in ["difficulty", "speed", "human_seats"] {
+            raw.as_object_mut().unwrap().remove(key);
+        }
+        let legacy: Game = serde_json::from_value(raw).unwrap();
+        assert_eq!(legacy.difficulty, "prince");
+        assert_eq!(legacy.speed, "standard");
+        assert!(legacy.human_seats.is_empty());
+    }
 
     #[test]
     fn hex_math() {

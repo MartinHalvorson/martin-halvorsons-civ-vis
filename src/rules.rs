@@ -682,6 +682,64 @@ pub struct PromotionSpec {
     pub note: String,
 }
 
+/// A difficulty level, in the Civ VI sense: a bag of handicaps applied to the
+/// AI seats above Prince and to the human seats below it. Prince is the
+/// reference level and carries no modifiers at all.
+///
+/// The numbers come from the scaling modifiers the game itself ships in
+/// `Leaders.xml` (`HIGH_DIFFICULTY_SCIENCE_SCALING` and its siblings, each
+/// declared `LinearScaleFromDefaultHandicap` off Prince), so a level here is
+/// the shipped per-step delta multiplied by that level's distance from Prince.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct DifficultySpec {
+    pub name: String,
+    /// Position on the ladder, Settler 0 through Deity 7. Also the sort order.
+    pub order: usize,
+    /// Percentage added to each AI city yield of the named kind.
+    pub ai_yield_pct: Yields,
+    /// Flat Combat Strength added to every AI unit.
+    pub ai_combat_strength: f64,
+    /// Percentage added to AI experience awards.
+    pub ai_xp_pct: f64,
+    /// Random Eurekas and Inspirations granted to each AI on a new world era.
+    pub ai_era_boosts: usize,
+    /// Extra units each AI receives on its start tile.
+    pub ai_bonus_units: BTreeMap<String, usize>,
+    /// Flat Combat Strength added to every human unit.
+    pub human_combat_strength: f64,
+    /// Percentage added to human experience awards.
+    pub human_xp_pct: f64,
+    /// Extra Gold a human receives for clearing a Barbarian camp.
+    pub human_camp_gold: f64,
+    /// Scales the size of barbarian raiding parties.
+    #[serde(default = "done")]
+    pub barb_force_scale: f64,
+}
+
+/// A game speed: everything a civilization buys with a stockpiled yield scales
+/// by `cost_pct`, and the game runs for `turns` turns. Both are the values the
+/// shipped `GameSpeeds.xml` uses (`CostMultiplier`, and the sum of that speed's
+/// turn-length table).
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SpeedSpec {
+    pub name: String,
+    pub order: usize,
+    #[serde(default = "dhundred")]
+    pub cost_pct: f64,
+    #[serde(default = "dstandard_turns")]
+    pub turns: u32,
+}
+
+fn dhundred() -> f64 {
+    100.0
+}
+
+fn dstandard_turns() -> u32 {
+    500
+}
+
 #[derive(Clone)]
 pub struct Rules {
     pub terrains: BTreeMap<String, TerrainSpec>,
@@ -702,6 +760,8 @@ pub struct Rules {
     pub promotions: BTreeMap<String, PromotionSpec>,
     pub beliefs: BeliefsData,
     pub civs: BTreeMap<String, CivSpec>,
+    pub difficulties: BTreeMap<String, DifficultySpec>,
+    pub speeds: BTreeMap<String, SpeedSpec>,
 }
 
 impl Rules {
@@ -725,6 +785,8 @@ impl Rules {
             promotions: serde_json::from_str(include_str!("../data/promotions.json")).unwrap(),
             beliefs: serde_json::from_str(include_str!("../data/beliefs.json")).unwrap(),
             civs: serde_json::from_str(include_str!("../data/civs.json")).unwrap(),
+            difficulties: serde_json::from_str(include_str!("../data/difficulties.json")).unwrap(),
+            speeds: serde_json::from_str(include_str!("../data/speeds.json")).unwrap(),
         };
         let effects: TreeEffectsData =
             serde_json::from_str(include_str!("../data/tree_effects.json")).unwrap();

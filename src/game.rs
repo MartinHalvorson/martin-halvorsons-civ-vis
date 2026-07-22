@@ -5,7 +5,7 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 
 use crate::rng::Rng;
-use crate::rules::{Rules, Yields};
+use crate::rules::{DifficultySpec, Rules, SpeedSpec, Yields};
 use crate::setup::MapSize;
 use crate::world::{DistrictFoundation, WorldMap};
 use crate::{hex, mapgen, Pos};
@@ -7374,12 +7374,68 @@ fn gold_s() -> String {
 
 // --------------------------------------------------------------------- game
 
+pub fn default_difficulty() -> String {
+    "prince".to_string()
+}
+
+pub fn default_speed() -> String {
+    "standard".to_string()
+}
+
+/// Everything a setup screen gets to choose about a game.
+#[derive(Clone, Debug)]
+pub struct GameOptions {
+    pub players: usize,
+    pub width: i32,
+    pub height: i32,
+    pub seed: u64,
+    pub max_turns: u32,
+    pub city_states: usize,
+    pub barbarians: bool,
+    pub difficulty: String,
+    pub speed: String,
+    pub human_seats: BTreeSet<usize>,
+}
+
+impl GameOptions {
+    pub fn new(
+        players: usize,
+        width: i32,
+        height: i32,
+        seed: u64,
+        max_turns: u32,
+        city_states: usize,
+    ) -> GameOptions {
+        GameOptions {
+            players,
+            width,
+            height,
+            seed,
+            max_turns,
+            city_states,
+            barbarians: true,
+            difficulty: default_difficulty(),
+            speed: default_speed(),
+            human_seats: BTreeSet::new(),
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(from = "GameSer", into = "GameSer")]
 pub struct Game {
     pub rules: Rules,
     pub rng: Rng,
     pub seed: u64,
+    /// Key into `rules.difficulties`. Prince is the unhandicapped reference.
+    pub difficulty: String,
+    /// Key into `rules.speeds`. Scales everything bought with a yield.
+    pub speed: String,
+    /// Seats played by a person rather than by an agent. Difficulty hands its
+    /// bonuses to the AI seats above Prince and to these seats below it; an
+    /// all-agent game leaves this empty, which is why headless simulation is
+    /// unaffected by the setting unless a seat is declared human.
+    pub human_seats: BTreeSet<usize>,
     pub max_turns: u32,
     pub turn: u32,
     pub current: usize,
@@ -7434,6 +7490,12 @@ pub struct TradeRoute {
 #[derive(Clone, Serialize, Deserialize)]
 struct GameSer {
     seed: u64,
+    #[serde(default = "default_difficulty")]
+    difficulty: String,
+    #[serde(default = "default_speed")]
+    speed: String,
+    #[serde(default)]
+    human_seats: BTreeSet<usize>,
     max_turns: u32,
     turn: u32,
     current: usize,
@@ -7492,6 +7554,9 @@ impl From<GameSer> for Game {
             rules: Rules::embedded(),
             rng: s.rng,
             seed: s.seed,
+            difficulty: s.difficulty,
+            speed: s.speed,
+            human_seats: s.human_seats,
             max_turns: s.max_turns,
             turn: s.turn,
             current: s.current,
@@ -7607,6 +7672,9 @@ impl From<Game> for GameSer {
     fn from(g: Game) -> GameSer {
         GameSer {
             seed: g.seed,
+            difficulty: g.difficulty,
+            speed: g.speed,
+            human_seats: g.human_seats,
             max_turns: g.max_turns,
             turn: g.turn,
             current: g.current,
@@ -7671,7 +7739,33 @@ impl Game {
         num_city_states: usize,
         barbarians: bool,
     ) -> Game {
+        Game::new_with(GameOptions {
+            barbarians,
+            ..GameOptions::new(num_players, width, height, seed, max_turns, num_city_states)
+        })
+    }
+
+    /// The one real constructor. Everything the setup screen can choose lives
+    /// in [`GameOptions`]; the older positional constructors delegate here.
+    pub fn new_with(options: GameOptions) -> Game {
+        let GameOptions {
+            players: num_players,
+            width,
+            height,
+            seed,
+            max_turns,
+            city_states: num_city_states,
+            barbarians,
+            difficulty,
+            speed,
+            human_seats,
+        } = options;
         let rules = Rules::embedded();
+        assert!(
+            rules.difficulties.contains_key(&difficulty),
+            "unknown difficulty {difficulty}"
+        );
+        assert!(rules.speeds.contains_key(&speed), "unknown game speed {speed}");
         let mut rng = Rng::new(seed);
         let map_size = MapSize::from_dimensions(width, height)
             .unwrap_or_else(|| MapSize::for_players(num_players));
@@ -7689,6 +7783,9 @@ impl Game {
             rules,
             rng,
             seed,
+            difficulty,
+            speed,
+            human_seats,
             max_turns,
             turn: 1,
             current: 0,
@@ -7730,6 +7827,16 @@ impl Game {
         for (i, pos) in spawns.iter().take(num_players).enumerate() {
             g.spawn_unit("settler", i, *pos);
             g.spawn_unit("warrior", i, *pos);
+            // Above Prince the AI seats open with extra units, exactly as the
+            // shipped `Eras.xml` bonus start table describes.
+            if !g.is_human_seat(i) {
+                let bonus = g.difficulty_spec().ai_bonus_units.clone();
+                for (kind, count) in bonus {
+                    for _ in 0..count {
+                        g.spawn_unit(&kind, i, *pos);
+                    }
+                }
+            }
             g.reveal(i, *pos, 3);
         }
         let major_spawns: Vec<Pos> = spawns.iter().take(num_players).cloned().collect();
@@ -7800,6 +7907,89 @@ impl Game {
                 (room, tile.pos)
             })
             .map(|tile| tile.pos)
+    }
+
+    // -------------------------------------------------- difficulty and speed
+
+    pub fn difficulty_spec(&self) -> &DifficultySpec {
+        &self.rules.difficulties[self.difficulty.as_str()]
+    }
+
+    pub fn speed_spec(&self) -> &SpeedSpec {
+        &self.rules.speeds[self.speed.as_str()]
+    }
+
+    pub fn is_human_seat(&self, pid: usize) -> bool {
+        self.human_seats.contains(&pid)
+    }
+
+    /// Handicaps reach the major civilizations only: city-states and
+    /// barbarians are not on either side of the difficulty bargain.
+    fn takes_handicap(&self, pid: usize) -> bool {
+        self.players
+            .get(pid)
+            .is_some_and(|player| !player.is_minor && !player.is_barbarian)
+    }
+
+    /// Flat Combat Strength this seat receives from the difficulty setting.
+    pub fn handicap_combat_strength(&self, pid: usize) -> f64 {
+        if !self.takes_handicap(pid) {
+            return 0.0;
+        }
+        let spec = self.difficulty_spec();
+        if self.is_human_seat(pid) {
+            spec.human_combat_strength
+        } else {
+            spec.ai_combat_strength
+        }
+    }
+
+    /// Percentage added to this seat's experience awards.
+    pub fn handicap_xp_pct(&self, pid: usize) -> f64 {
+        if !self.takes_handicap(pid) {
+            return 0.0;
+        }
+        let spec = self.difficulty_spec();
+        if self.is_human_seat(pid) {
+            spec.human_xp_pct
+        } else {
+            spec.ai_xp_pct
+        }
+    }
+
+    /// Percentage added to each of this seat's city yields. Food is never
+    /// handicapped — the shipped scaling covers the four spendable yields and
+    /// Faith, and growth stays on the honest curve.
+    pub fn handicap_yield_pct(&self, pid: usize) -> Yields {
+        if !self.takes_handicap(pid) || self.is_human_seat(pid) {
+            return Yields::default();
+        }
+        self.difficulty_spec().ai_yield_pct
+    }
+
+    /// Everything bought with a stockpiled yield scales by the game speed:
+    /// production, research, and civic costs alike.
+    pub fn speed_cost_mult(&self) -> f64 {
+        self.speed_spec().cost_pct / 100.0
+    }
+
+    /// Research cost of a technology at this game speed.
+    pub fn tech_cost(&self, tech: &str) -> f64 {
+        self.rules.techs[tech].cost * self.speed_cost_mult()
+    }
+
+    /// Culture cost of a civic at this game speed.
+    pub fn civic_cost(&self, civic: &str) -> f64 {
+        self.rules.civics[civic].cost * self.speed_cost_mult()
+    }
+
+    /// Below Prince a human is paid more for clearing a Barbarian camp.
+    fn human_camp_gold(&self, pid: usize) -> f64 {
+        if self.is_human_seat(pid) && self.takes_handicap(pid) {
+            self.difficulty_spec().human_camp_gold
+        } else {
+            0.0
+        }
     }
 
     fn spawn_camp(&mut self) {
@@ -8005,7 +8195,7 @@ impl Game {
             if t.improvement.as_deref() == Some("barbarian_camp") {
                 t.improvement = None;
             }
-            self.players[owner].gold += 50.0;
+            self.players[owner].gold += 50.0 + self.human_camp_gold(owner);
             self.add_era_score(owner, 1);
             if self.has_ability(owner, "epic_quest") {
                 match self.rng.below(4) {
@@ -8847,7 +9037,7 @@ impl Game {
             .cloned()
             .collect();
         for tech in candidates {
-            let cost = self.rules.techs[tech.as_str()].cost;
+            let cost = self.tech_cost(tech.as_str());
             let fraction = self.boost_frac(attacker);
             let player = &mut self.players[attacker];
             player.boosted_techs.insert(tech.clone());
@@ -11899,7 +12089,7 @@ impl Game {
             None => return 0,
         };
         let spec = &self.rules.units[kind.as_str()];
-        let mut multiplier = 1.0;
+        let mut multiplier = 1.0 + self.handicap_xp_pct(owner) / 100.0;
         if self.players[owner].government.as_deref() == Some("oligarchy") {
             multiplier += 0.2;
         }
@@ -12564,7 +12754,8 @@ impl Game {
             + self.unit_formation_bonus(u)
             + self.promotion_effect(u, "combat_all")
             + self.congress_military_strength_bonus(u)
-            + self.religious_combat_belief_bonus(u.owner, u.pos);
+            + self.religious_combat_belief_bonus(u.owner, u.pos)
+            + self.handicap_combat_strength(u.owner);
         if u.kind == "giant_death_robot" {
             s += self.tree_effect(u.owner, "gdr_armor");
         }
@@ -18231,6 +18422,14 @@ impl Game {
         ys.culture *= 1.0 + self.kilwa_type_bonus_pct(city.owner, city, "cultural") / 100.0;
         ys.gold *= 1.0 + self.kilwa_type_bonus_pct(city.owner, city, "trade") / 100.0;
         ys.faith *= 1.0 + self.kilwa_type_bonus_pct(city.owner, city, "religious") / 100.0;
+        // The difficulty handicap lands last, on top of everything the
+        // civilization actually earned.
+        let handicap = self.handicap_yield_pct(city.owner);
+        ys.production *= 1.0 + handicap.production / 100.0;
+        ys.gold *= 1.0 + handicap.gold / 100.0;
+        ys.science *= 1.0 + handicap.science / 100.0;
+        ys.culture *= 1.0 + handicap.culture / 100.0;
+        ys.faith *= 1.0 + handicap.faith / 100.0;
         ys
     }
 
@@ -18957,6 +19156,10 @@ impl Game {
     }
 
     pub fn item_cost(&self, item: &Item) -> f64 {
+        self.base_item_cost(item) * self.speed_cost_mult()
+    }
+
+    fn base_item_cost(&self, item: &Item) -> f64 {
         match item {
             Item::Formation { unit, formation } => {
                 self.rules.units[unit.as_str()].cost * if *formation >= 2 { 2.25 } else { 1.5 }
@@ -24247,7 +24450,7 @@ impl Game {
         if !self.available_techs(pid).iter().any(|t| t == tech) {
             return Err("tech unavailable".into());
         }
-        let cost = self.rules.techs[tech].cost;
+        let cost = self.tech_cost(tech);
         let p = &mut self.players[pid];
         p.research = Some(tech.to_string());
         p.research_progress = p.research_overflow;
@@ -24266,7 +24469,7 @@ impl Game {
         if !self.available_civics(pid).iter().any(|c| c == civic) {
             return Err("civic unavailable".into());
         }
-        let cost = self.rules.civics[civic].cost;
+        let cost = self.civic_cost(civic);
         let p = &mut self.players[pid];
         p.civic = Some(civic.to_string());
         p.civic_progress = p.civic_overflow;
@@ -27961,6 +28164,18 @@ impl Game {
             .filter(|player| !player.is_minor && !player.is_barbarian)
             .map(|player| player.id)
             .collect();
+        // Above Prince every AI civilization enters the new era holding a
+        // handful of free Eurekas and Inspirations.
+        let era_boosts = self.difficulty_spec().ai_era_boosts;
+        if era_boosts > 0 {
+            for pid in majors.clone() {
+                if self.is_human_seat(pid) {
+                    continue;
+                }
+                self.grant_random_boosts(pid, era_boosts, true);
+                self.grant_random_boosts(pid, era_boosts, false);
+            }
+        }
         for pid in majors {
             let cities = self.player_city_ids(pid).len().max(1) as i64;
             let player = &mut self.players[pid];
@@ -29036,7 +29251,7 @@ impl Game {
         let research = self.players[pid].research.clone();
         let mut completed_tech = None;
         if let Some(tech) = research {
-            let cost = self.rules.techs[tech.as_str()].cost;
+            let cost = self.tech_cost(tech.as_str());
             let p = &mut self.players[pid];
             p.research_progress += sci;
             if p.research_progress >= cost {
@@ -29055,7 +29270,7 @@ impl Game {
         let civic = self.players[pid].civic.clone();
         let mut completed_civic = None;
         if let Some(cv) = civic {
-            let cost = self.rules.civics[cv.as_str()].cost;
+            let cost = self.civic_cost(cv.as_str());
             let p = &mut self.players[pid];
             p.civic_progress += cul;
             if p.civic_progress >= cost {
