@@ -103,3 +103,51 @@ genuinely hard to defend without your own religion.
 score, with markedly stronger empires (score 230 vs advanced's usual ~195,
 military 257 vs ~103, tech 18.8 vs 15.3). Small sample — treat as "at
 least parity"; a 25-pair run should decide promotion to exhibition seats.
+
+## 2026-07-22 — score formula + game length (session F, after 0bd6734)
+
+Two rules fixes, both verified against the Civilopedia:
+
+1. **Score formula was not Civ 6's.** The engine scored 10/city, 3/Citizen,
+   3/district, 2/civic and **1 point per unit**. Gathering Storm scores
+   3/civic, 5/city, 2/district (4 unique), 1/building, 1/Citizen, 5/Great
+   Person, 10 for founding a religion + 2 per foreign follower city,
+   2/technology, 15/wonder, plus Era Score — and nothing for units. Ties now
+   resolve through the shipped tiebreaker chain. This is not cosmetic: score
+   decides every capped game and feeds `evolve` fitness, Elo placement, and
+   `StrategicAi::position_value`, so the AI was being paid to hoard units
+   and population rather than build wonders and Great People.
+2. **Standard speed is 500 turns**, and the engine already models
+   Standard-speed costs everywhere — but the default-speed CLI path kept
+   each command's historical budget (simulate 250, soak 120), so a
+   "Standard" game played half a game and ended on an arbitrary cutoff.
+
+**Soak, same seeds 100-111, now at the stock 500 turns:**
+
+| Outcome | 350t, old score | 500t, GS score |
+|---|---|---|
+| religious | 3 | 8 |
+| score (turn cap) | 9 | **1** |
+| diplomatic | 0 | 2 |
+| culture | 0 | 1 |
+
+Games are now decided by real victories instead of an arbitrary cutoff —
+only one of twelve reaches the turn limit, and four different victory
+types appear. 436/436 tests.
+
+**Top open balance lead: religion still wins 8/12 at full length.** The
+60%-pressure home defense fixed the *early* runaway (it was 11/12 before),
+but over a full 500 turns religion still converts the world more often
+than any other lane completes. Next probe: whether Missionary/Apostle
+spread pressure and the passive ±9-tile pressure match the stock numbers,
+and whether two defensive Missionaries is simply too small a budget.
+
+**ai_eval advanced vs basic under the corrected score** (25 pairs, seed
+4000): advanced 33/50 (66%), down from 78% under the old formula — the
+old scoring was inflating advanced's edge by paying for its larger unit
+count and population. 66% is the honest number.
+
+**StrategicAi promotion gate** (25 pairs, seed 6000): strategic 27/50
+(54%) over advanced. Above parity but inside the noise band at n=50, and
+each decision costs six full rollouts. Verdict: keep as the builtin
+`strategic` for further work; **not** promoted to the exhibition default.

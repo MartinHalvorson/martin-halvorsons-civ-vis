@@ -318,11 +318,18 @@ tens-of-thousands figures describe a much smaller historical rules workload.
   a named global scalar vector (own empire exact, per-rival public facts).
   Same visibility contract as the JSON protocol (`obs::visibility`), so a
   net trained on it never sees hidden state.
+- `civvis selfplay --games 200 --out <dir>` plays full games and exports
+  those tensors plus outcome labels (`planes.f32`, `globals.f32`,
+  `labels.f32`, `meta.json`); `python tools/train_spatial.py <dir>` trains a
+  wrap-aware residual CNN value net on them (CUDA when available).
 - `civvis evolve` appends value-net training rows to `evolved/dataset.csv`
   during SPRT confirmation games; `python tools/train_valuenet.py` trains
   the 25→64→32→1 net (CUDA via torch when present, NumPy fallback) and
   writes `evolved/valuenet.json` for `NeuralAi` plus the Rust parity
   fixture.
+- `civvis::strategic::StrategicAi` (builtin `strategic`) picks its victory
+  lane by rolling each lane forward and judging the resulting position —
+  the first macro-search rung above the scripted agents.
 - Ranked AI-strength roadmap and current status: `docs/AI_GAPS.md`.
   Recorded eval baselines and the regression battery: `docs/EVAL.md`.
 
