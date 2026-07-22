@@ -105,6 +105,15 @@ class SourceSnapshotTests(unittest.TestCase):
         command.assert_not_called()
         promote.assert_not_called()
 
+    def test_single_update_attempt_returns_control_after_a_failed_build(self):
+        with (
+            patch.object(supervisor, "sync_current_branch") as sync,
+            patch.object(supervisor, "build_latest", return_value=False) as build,
+        ):
+            self.assertFalse(supervisor.prepare_latest_once())
+        sync.assert_called_once_with()
+        build.assert_called_once_with()
+
 
 class RecoveryTests(unittest.TestCase):
     def test_progress_marker_tracks_player_steps_within_a_turn(self):

@@ -175,11 +175,16 @@ def build_latest(max_attempts: int = 3) -> bool:
     return False
 
 
+def prepare_latest_once() -> bool:
+    """Try one stable-source build without abandoning live monitoring forever."""
+    sync_current_branch()
+    return build_latest()
+
+
 def prepare_latest(retry_seconds: float) -> None:
-    """Block until the newest local/upstream source has a verified build."""
+    """Block until a verified build exists when no runtime can serve instead."""
     while True:
-        sync_current_branch()
-        if build_latest():
+        if prepare_latest_once():
             return
         log(f"retrying the latest build in {retry_seconds:g}s")
         time.sleep(retry_seconds)
@@ -447,6 +452,9 @@ def main() -> int:
     checkpoint_at = 0.0
     checkpointed_progress: tuple[Any, ...] | None = None
     resume_attempts: dict[tuple[Any, ...], int] = {}
+    finished_key: tuple[Any, ...] | None = None
+    finished_seen_at = 0.0
+    update_retry_at = 0.0
 
     def launch_recovery(open_browser: bool = False) -> dict[str, Any]:
         nonlocal process, adopted_pid
@@ -526,6 +534,7 @@ def main() -> int:
             unavailable_since = None
             settings = session_settings(state, settings)
             if state.get("winner") is None:
+                finished_key = None
                 now = time.monotonic()
                 marker = progress_marker(state)
                 if marker != last_progress:
@@ -561,16 +570,30 @@ def main() -> int:
                 time.sleep(args.poll)
                 continue
 
-            finished_at = time.monotonic()
             finished_instance = state.get("server_instance")
             finished_seed = state.get("seed")
-            log(
-                f"game finished on turn {state.get('turn')} "
-                f"({state.get('victory_type') or 'unknown'} victory); checking for updates"
-            )
+            current_finished_key = (finished_instance, finished_seed)
+            now = time.monotonic()
+            if current_finished_key != finished_key:
+                finished_key = current_finished_key
+                finished_seen_at = now
+                update_retry_at = 0.0
+                log(
+                    f"game finished on turn {state.get('turn')} "
+                    f"({state.get('victory_type') or 'unknown'} victory); checking for updates"
+                )
+
+            if now < update_retry_at:
+                time.sleep(min(args.poll, update_retry_at - now))
+                continue
+
             # Keep the completed game's result server available while builds
-            # retry, and only create a brief handoff gap once fresh code is ready.
-            prepare_latest(args.build_retry)
+            # retry. A broken worktree gets one attempt per retry interval so
+            # this loop can still checkpoint/recover a browser-started game.
+            if not prepare_latest_once():
+                update_retry_at = time.monotonic() + args.build_retry
+                time.sleep(args.poll)
+                continue
 
             # The page also has a result countdown. If it already created a
             # successor while compilation ran, never interrupt that live game.
@@ -584,9 +607,10 @@ def main() -> int:
                 state = latest_state
                 last_progress = progress_marker(state)
                 progress_at = time.monotonic()
+                finished_key = None
                 continue
 
-            remaining = args.cooldown - (time.monotonic() - finished_at)
+            remaining = args.cooldown - (time.monotonic() - finished_seen_at)
             if remaining > 0:
                 time.sleep(remaining)
             stop_server(process, adopted_pid)
