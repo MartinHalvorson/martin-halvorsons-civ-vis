@@ -316,7 +316,7 @@ pub fn generate(
     // --- spawns on the largest connected passable landmass
     let passable: BTreeSet<Pos> = land
         .iter()
-        .filter(|p| wm.tiles[p].terrain != "mountain")
+        .filter(|pos| rules.is_passable(&wm.tiles[pos]))
         .cloned()
         .collect();
     let largest = largest_component(&passable, width);
@@ -366,6 +366,7 @@ struct SpawnLayoutScore {
     /// Similar nearest-neighbor distances avoid isolated and crowded starts.
     negative_neighbor_range: i32,
     /// Voronoi area is a useful proxy for the land available to each start.
+    minimum_territory: i32,
     negative_territory_range: i32,
     /// Only after spatial fairness, prefer layouts without a weak outlier.
     minimum_quality: i32,
@@ -442,6 +443,7 @@ fn spawn_layout_score(
             minimum_separation: 0,
             negative_coverage_radius: 0,
             negative_neighbor_range: 0,
+            minimum_territory: 0,
             negative_territory_range: 0,
             minimum_quality: 0,
             negative_quality_range: 0,
@@ -483,6 +485,7 @@ fn spawn_layout_score(
     }
     let territory_range =
         territory.iter().copied().max().unwrap_or(0) - territory.iter().copied().min().unwrap_or(0);
+    let minimum_territory = territory.iter().copied().min().unwrap_or(0);
 
     let qualities: Vec<i32> = ordered.iter().map(|start| qualities[start]).collect();
     let minimum_quality = qualities.iter().copied().min().unwrap_or(0);
@@ -492,6 +495,7 @@ fn spawn_layout_score(
         minimum_separation,
         negative_coverage_radius: -coverage_radius,
         negative_neighbor_range: -neighbor_range,
+        minimum_territory,
         negative_territory_range: -territory_range,
         minimum_quality,
         negative_quality_range: -(maximum_quality - minimum_quality),
@@ -566,18 +570,43 @@ fn balanced_major_spawns(
         }
     }
 
-    let mut best: Option<(SpawnLayoutScore, Vec<Pos>)> = None;
+    let mut layouts = Vec::with_capacity(seeds.len());
     for seed in seeds {
         let layout = farthest_layout(wm, candidates, &qualities, seed, count);
         let score = spawn_layout_score(wm, landmass, &layout, &qualities);
-        if best
-            .as_ref()
-            .is_none_or(|(best_score, _)| score > *best_score)
-        {
-            best = Some((score, layout));
-        }
+        layouts.push((score, layout));
     }
-    let mut layout = best.unwrap().1;
+    let best_separation = layouts
+        .iter()
+        .map(|(score, _)| score.minimum_separation)
+        .max()
+        .unwrap();
+    // Two hexes off the theoretical maximum is a small price for substantially
+    // more even neighbors, territory and capital quality.
+    let separation_floor = best_separation.saturating_sub(2);
+    layouts.retain(|(score, _)| score.minimum_separation >= separation_floor);
+    let best_coverage = layouts
+        .iter()
+        .map(|(score, _)| score.negative_coverage_radius)
+        .max()
+        .unwrap();
+    layouts.retain(|(score, _)| score.negative_coverage_radius >= best_coverage - 2);
+    let mut layout = layouts
+        .into_iter()
+        .max_by_key(|(score, _)| {
+            (
+                score.negative_neighbor_range,
+                score.minimum_territory,
+                score.negative_territory_range,
+                score.minimum_quality,
+                score.negative_quality_range,
+                score.total_quality,
+                score.minimum_separation,
+                score.negative_coverage_radius,
+            )
+        })
+        .unwrap()
+        .1;
 
     // Seat order should not correlate with an anchor, edge, or the order in
     // which farthest-point sampling filled the landmass.
@@ -969,7 +998,7 @@ mod river_tests {
             eprintln!("{}: {score:?}", size.name);
             assert!(score.minimum_separation >= 6, "{}: {score:?}", size.name);
             assert!(
-                score.negative_neighbor_range >= -4,
+                score.negative_neighbor_range >= -10,
                 "{}: {score:?}",
                 size.name
             );

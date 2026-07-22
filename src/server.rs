@@ -34,6 +34,18 @@ pub struct Session {
 }
 
 impl Session {
+    fn ai_fleet(game: &Game) -> Vec<Box<dyn Ai>> {
+        game.players
+            .iter()
+            .map(|p| -> Box<dyn Ai> {
+                if p.is_minor || p.is_barbarian {
+                    return Box::new(BasicAi::new());
+                }
+                Box::new(AdvancedAi::new())
+            })
+            .collect()
+    }
+
     pub fn new(params: Params) -> Session {
         let game = Game::new_full(
             params.num_players,
@@ -47,16 +59,28 @@ impl Session {
         // Paired and multiplayer evaluation make the hierarchical agent the
         // strongest built-in default. Minors/barbarians retain the cheaper
         // baseline because they do not need empire-level planning.
-        let ais: Vec<Box<dyn Ai>> = game
+        let ais = Self::ai_fleet(&game);
+        Session { params, game, ais }
+    }
+
+    /// Restore an interrupted match and rebuild only the AIs' transient plans.
+    /// The serialized game retains the authoritative RNG and world state.
+    pub fn from_game(mut params: Params, game: Game) -> Session {
+        params.num_players = game
             .players
             .iter()
-            .map(|p| -> Box<dyn Ai> {
-                if p.is_minor || p.is_barbarian {
-                    return Box::new(BasicAi::new());
-                }
-                Box::new(AdvancedAi::new())
-            })
-            .collect();
+            .filter(|player| !player.is_minor && !player.is_barbarian)
+            .count();
+        params.num_city_states = game
+            .players
+            .iter()
+            .filter(|player| player.is_minor && !player.is_barbarian)
+            .count();
+        params.width = game.map.width;
+        params.height = game.map.height;
+        params.seed = game.seed;
+        params.max_turns = game.max_turns;
+        let ais = Self::ai_fleet(&game);
         Session { params, game, ais }
     }
 
@@ -248,6 +272,10 @@ fn handle(stream: &mut TcpStream, session: &mut Session) {
             respond(stream, "200 OK", "image/png", &mountain_atlas());
         }
         ("GET", "/state") => respond_json(stream, &session.state()),
+        ("GET", "/save") => {
+            let save = serde_json::to_value(&session.game).unwrap();
+            respond_json(stream, &save);
+        }
         ("GET", "/rules") => {
             let r = &session.game.rules;
             respond_json(
@@ -382,9 +410,27 @@ mod tests {
             Some(std::process::id() as u64)
         );
     }
+
+    #[test]
+    fn restored_session_preserves_progress_and_derives_its_world_settings() {
+        let mut game = Session::new(current()).game;
+        game.turn = 37;
+        game.current = 1;
+        let mut wrong = current();
+        wrong.num_players = 12;
+        wrong.width = 106;
+        wrong.height = 66;
+        wrong.num_city_states = 18;
+
+        let restored = Session::from_game(wrong, game);
+        assert_eq!((restored.game.turn, restored.game.current), (37, 1));
+        assert_eq!(restored.params.num_players, 2);
+        assert_eq!((restored.params.width, restored.params.height), (20, 14));
+        assert_eq!(restored.params.num_city_states, 1);
+    }
 }
 
-pub fn serve(port: u16, open_browser: bool, params: Params) {
+pub fn serve_with_game(port: u16, open_browser: bool, params: Params, game: Option<Game>) {
     let listener = TcpListener::bind(("127.0.0.1", port))
         .unwrap_or_else(|e| panic!("cannot bind port {port}: {e}"));
     let actual = listener.local_addr().unwrap().port();
@@ -398,7 +444,10 @@ pub fn serve(port: u16, open_browser: bool, params: Params) {
     } else {
         println!("You are player 0. Ctrl+C to quit.");
     }
-    let mut session = Session::new(params);
+    let mut session = match game {
+        Some(game) => Session::from_game(params, game),
+        None => Session::new(params),
+    };
     if open_browser {
         open_url(&url);
     }
@@ -407,6 +456,10 @@ pub fn serve(port: u16, open_browser: bool, params: Params) {
             handle(&mut s, &mut session);
         }
     }
+}
+
+pub fn serve(port: u16, open_browser: bool, params: Params) {
+    serve_with_game(port, open_browser, params, None);
 }
 
 fn open_url(url: &str) {

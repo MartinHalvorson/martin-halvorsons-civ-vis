@@ -32,6 +32,37 @@ remains the frozen deterministic control and the lightweight agent for
 city-states/barbarians. Both read full state (cheat on fog); fair-play agents
 should restrict themselves to `civvis::obs::observation(&game, pid)`.
 
+## Victory targeting and full-game validation
+
+Every major can be assigned an explicit victory objective. Targeted agents
+coordinate research, civics, policy cards, production, diplomacy, spending,
+and unit orders around that objective; city-states and barbarians continue to
+use the lightweight agent.
+
+```rust
+use civvis::ai::{run_game, AdvancedAi, VictoryTarget};
+use civvis::game::Game;
+
+let mut game = Game::new(4, 28, 18, 7, 1_200, 0);
+let mut ais = AdvancedAi::fleet_targeting(&game, VictoryTarget::Science);
+run_game(&mut game, &mut ais);
+assert_eq!(game.victory_type.as_deref(), Some("science"));
+```
+
+`victory_eval` runs the real game loop without injecting progress or invoking
+victory checks directly. It exits nonzero if the resulting victory type does
+not exactly match the requested target:
+
+```bash
+cargo run --release --bin victory_eval -- --target all --games 3 \
+  --start-seed 9000 --players 2
+```
+
+`--target` accepts `science`, `culture`, `religion`, `diplomacy`,
+`domination`, `score`, a comma-separated subset, or `all`. Per-condition turn
+limits reflect the length of each race; `--turns` overrides them for bounded
+diagnostics. Map dimensions can be overridden with `--width` and `--height`.
+
 ## Coordinated forces
 
 During a war, `AdvancedAi` partitions military and support units by movement

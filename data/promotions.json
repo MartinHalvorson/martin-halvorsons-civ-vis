@@ -85,5 +85,15 @@
   "advanced_engines": {"class":"naval_carrier","tier":2,"requires":["scout_planes","hangar_deck"],"effects":{"movement":1},"note":"+1 Movement."},
   "folding_wings": {"class":"naval_carrier","tier":3,"requires":["hangar_deck","deck_crews"],"effects":{"aircraft_slots":1},"note":"+1 aircraft slot."},
   "deck_crews": {"class":"naval_carrier","tier":3,"requires":["advanced_engines","folding_wings"],"effects":{"heal_after_attack":1},"note":"May heal after attacking."},
-  "supercarrier": {"class":"naval_carrier","tier":4,"requires":["folding_wings","deck_crews"],"effects":{"heal_anywhere":1},"note":"May heal outside friendly territory."}
+  "supercarrier": {"class":"naval_carrier","tier":4,"requires":["folding_wings","deck_crews"],"effects":{"heal_anywhere":1},"note":"May heal outside friendly territory."},
+
+  "debater": {"class":"religious_apostle","tier":1,"effects":{"religious_strength":20},"note":"+20 Religious Strength in theological combat."},
+  "orator": {"class":"religious_apostle","tier":1,"effects":{"religious_charges":2},"note":"May spread Religion 2 extra times."},
+  "translator": {"class":"religious_apostle","tier":1,"effects":{"foreign_spread_pct":200},"note":"Triple strength when spreading to cities of other civilizations."},
+  "proselytizer": {"class":"religious_apostle","tier":1,"effects":{"rival_pressure_removed_pct":75},"note":"Eliminates 75% of other religions' pressure when spreading."},
+  "pilgrim": {"class":"religious_apostle","tier":1,"effects":{"natural_wonder_charges":3},"note":"Gains 3 spreads after moving adjacent to a natural wonder."},
+  "indulgence_vendor": {"class":"religious_apostle","tier":1,"effects":{"gold_per_conversion":100},"note":"Gain Gold when this unit first converts a city."},
+  "martyr": {"class":"religious_apostle","tier":1,"effects":{"relic_on_death":1},"note":"Creates a Relic if defeated in theological combat."},
+  "chaplain": {"class":"religious_apostle","tier":1,"effects":{"adjacent_heal":20},"note":"Adjacent friendly units heal faster."},
+  "heathen_conversion": {"class":"religious_apostle","tier":1,"effects":{"convert_barbarians":1},"note":"Convert adjacent Barbarian units."}
 }

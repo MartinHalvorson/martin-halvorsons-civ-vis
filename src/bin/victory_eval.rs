@@ -94,12 +94,27 @@ fn main() {
                         .map(|city| game.city_yields(city).science)
                         .sum::<f64>()
                 ),
-                VictoryTarget::Culture => format!(
-                    "visiting={} domestic={} tourism={:.1}/turn",
-                    game.foreign_tourists(winner),
-                    game.domestic_tourists(winner),
-                    game.tourism_per_turn(winner)
-                ),
+                VictoryTarget::Culture => {
+                    let target = game
+                        .players
+                        .iter()
+                        .filter(|rival| {
+                            rival.id != winner
+                                && rival.alive
+                                && !rival.is_minor
+                                && !rival.is_barbarian
+                        })
+                        .map(|rival| game.domestic_tourists(rival.id))
+                        .max()
+                        .unwrap_or(0);
+                    format!(
+                        "visiting={} target={} domestic={} tourism={:.1}/turn",
+                        game.foreign_tourists(winner),
+                        target,
+                        game.domestic_tourists(winner),
+                        game.tourism_per_turn(winner)
+                    )
+                }
                 VictoryTarget::Religion => {
                     format!("religion={}", player.religion.as_deref().unwrap_or("none"))
                 }

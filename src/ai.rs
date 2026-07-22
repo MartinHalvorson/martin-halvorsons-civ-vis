@@ -500,7 +500,7 @@ impl BasicAi {
         None
     }
 
-    fn waterborne(g: &Game, uid: u32) -> bool {
+    pub(crate) fn waterborne(g: &Game, uid: u32) -> bool {
         let unit = &g.units[&uid];
         g.rules.units[unit.kind.as_str()].domain.as_deref() == Some("sea")
             || g.map
@@ -1851,8 +1851,19 @@ impl BasicAi {
         let upos = g.units[&uid].pos;
         let u = &g.units[&uid];
         let my_def = effective_strength(g.unit_strength(u, true), u.hp);
+        let doctrine = Self::unit_doctrine(g, uid);
+        let (preferred_range, progress, threat_caution) = match doctrine {
+            UnitDoctrine::Recon => (2, 0.60, 1.35),
+            UnitDoctrine::Assault => (1, 1.15, 1.00),
+            UnitDoctrine::Mobile => (1, 1.40, 0.80),
+            UnitDoctrine::Ranged => (attack_range.max(1), 0.90, 1.15),
+            UnitDoctrine::Siege => (attack_range.max(1), 0.80, 1.25),
+            UnitDoctrine::Support | UnitDoctrine::Carrier => (2, 0.65, 1.40),
+            UnitDoctrine::AirDefense | UnitDoctrine::AirStrike => (attack_range.max(1), 1.0, 1.0),
+        };
         let score = |g: &Game, tile: Pos| -> f64 {
-            let mut s = -2.0 * g.wdist(tile, target) as f64;
+            let depth_error = (g.wdist(tile, target) - preferred_range).abs();
+            let mut s = -3.0 * progress * depth_error as f64;
             let mut adjacent_support = 0;
             for n in g.nbrs(tile) {
                 for oid in g.units_at(n) {
@@ -1864,7 +1875,10 @@ impl BasicAi {
                         adjacent_support += 1;
                     } else if enemy_ids.contains(&o.owner) {
                         let att = effective_strength(g.unit_strength(o, false), o.hp);
-                        s -= self.w.mv_threat * 30.0 * ((att - my_def) / 25.0).exp();
+                        s -= self.w.mv_threat
+                            * threat_caution
+                            * 30.0
+                            * ((att - my_def) / 25.0).exp();
                     }
                 }
             }
@@ -1876,6 +1890,7 @@ impl BasicAi {
             s
         };
         let stay = score(g, upos);
+        let holding_role_position = g.wdist(upos, target) == preferred_range;
         let mut best: Option<(f64, Pos)> = None;
         for n in g.nbrs(upos) {
             if !g.can_move(uid, n) {
@@ -1887,14 +1902,20 @@ impl BasicAi {
             }
         }
         match best {
-            Some((sc, n)) if self.move_beats_holding(g, uid, sc, stay) => {
+            Some((sc, n))
+                if if holding_role_position {
+                    sc > stay + 1e-9
+                } else {
+                    self.move_beats_holding(g, uid, sc, stay)
+                } =>
+            {
                 g.apply(pid, &Action::Move { unit: uid, to: n }).is_ok()
             }
             _ => {
                 // Long-range search is the fallback, not the hot path: most
                 // turns keep the original cheap local tactic, while a unit at
                 // a genuine obstacle can take the first safe detour step.
-                let n = match g.route_step(uid, target, attack_range) {
+                let n = match g.route_step(uid, target, preferred_range) {
                     Some(n) if g.can_move(uid, n) => n,
                     _ => return false,
                 };
@@ -1995,7 +2016,7 @@ impl BasicAi {
         pid: usize,
         uid: u32,
         radius: i32,
-    ) -> Option<Pos> {
+    ) -> Option<(Pos, f64)> {
         let from = g.units[&uid].pos;
         let mut candidates: Vec<(f64, Pos)> = g
             .wdisk(from, radius)
@@ -2012,7 +2033,7 @@ impl BasicAi {
             .into_iter()
             .take(40)
             .find(|(_, pos)| *pos == from || g.route_step(uid, *pos, 0).is_some())
-            .map(|(_, pos)| pos)
+            .map(|(score, pos)| (pos, score))
     }
 
     fn settler_step(&mut self, g: &mut Game, pid: usize, uid: u32) -> bool {
@@ -2025,19 +2046,26 @@ impl BasicAi {
                 && (*target == upos || g.route_step(uid, *target, 0).is_some())
         });
         let target = current_target.or_else(|| {
-            let local_radius = if g.player_city_ids(pid).is_empty() { 2 } else { 6 };
-            self.best_reachable_settle_site(g, pid, uid, local_radius)
-                .or_else(|| {
-                    g.players[pid]
-                        .techs
-                        .contains("shipbuilding")
-                        .then(|| g.map.width + g.map.height)
-                        .and_then(|radius| self.best_reachable_settle_site(g, pid, uid, radius))
-                })
-                .map(|target| {
-                    self.settler_targets.insert(uid, target);
-                    target
-                })
+            let local_radius = if g.player_city_ids(pid).is_empty() {
+                2
+            } else {
+                6
+            };
+            let local = self.best_reachable_settle_site(g, pid, uid, local_radius);
+            let global = g.players[pid]
+                .techs
+                .contains("shipbuilding")
+                .then(|| g.map.width + g.map.height)
+                .and_then(|radius| self.best_reachable_settle_site(g, pid, uid, radius));
+            match (local, global) {
+                (Some(local), Some(global)) if global.1 > local.1 + 4.0 => Some(global),
+                (Some(local), _) => Some(local),
+                (None, global) => global,
+            }
+            .map(|(target, _)| {
+                self.settler_targets.insert(uid, target);
+                target
+            })
         });
         let Some(target) = target else {
             self.settler_targets.remove(&uid);
@@ -2268,6 +2296,70 @@ impl BasicAi {
             }
         }
         best.map(|(_, p)| p)
+    }
+
+    /// Naval forces should not select an attractive but unreachable inland
+    /// target. Waterborne enemies (including embarked land units) come first,
+    /// followed by coastal cities that melee ships can actually capture.
+    pub(crate) fn nearest_enemy_for_unit(
+        &self,
+        g: &Game,
+        pid: usize,
+        uid: u32,
+        enemy_ids: &[usize],
+    ) -> Option<Pos> {
+        let unit = &g.units[&uid];
+        if g.rules.units[unit.kind.as_str()].domain.as_deref() != Some("sea") {
+            return self.nearest_enemy(g, pid, unit.pos, enemy_ids);
+        }
+        g.units
+            .values()
+            .filter(|enemy| enemy_ids.contains(&enemy.owner) && Self::waterborne(g, enemy.id))
+            .map(|enemy| (g.wdist(unit.pos, enemy.pos), 0, enemy.pos))
+            .chain(
+                g.cities
+                    .values()
+                    .filter(|city| {
+                        enemy_ids.contains(&city.owner) && Self::city_is_coastal(g, city.id)
+                    })
+                    .map(|city| (g.wdist(unit.pos, city.pos), 1, city.pos)),
+            )
+            .min()
+            .map(|(_, _, pos)| pos)
+    }
+
+    /// Objective for a ship assigned to colony protection. A linked ship
+    /// leads the formation toward the settler's persistent colony site; an
+    /// unlinked ship first closes on the embarked settler so they can link on
+    /// a later command phase.
+    fn naval_escort_objective(&self, g: &Game, pid: usize, uid: u32) -> Option<Pos> {
+        let unit = &g.units[&uid];
+        if g.rules.units[unit.kind.as_str()].domain.as_deref() != Some("sea") {
+            return None;
+        }
+        if let Some(settler) = unit.linked_to.filter(|peer| {
+            g.units
+                .get(peer)
+                .is_some_and(|peer| peer.owner == pid && peer.kind == "settler")
+        }) {
+            return self
+                .settler_targets
+                .get(&settler)
+                .copied()
+                .or_else(|| Some(g.units[&settler].pos));
+        }
+        g.units
+            .values()
+            .filter(|settler| {
+                settler.owner == pid
+                    && settler.kind == "settler"
+                    && settler.linked_to.is_none()
+                    && g.map
+                        .get(settler.pos)
+                        .is_some_and(|tile| g.rules.is_water(tile))
+            })
+            .min_by_key(|settler| (g.wdist(unit.pos, settler.pos), settler.id))
+            .map(|settler| settler.pos)
     }
 
     fn explore_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
@@ -2523,13 +2615,31 @@ impl BasicAi {
                     }
                 }
             }
+            let hostile_water_unit = g
+                .units
+                .values()
+                .any(|enemy| enemy_ids.contains(&enemy.owner) && Self::waterborne(g, enemy.id));
+            if !hostile_water_unit {
+                if let Some(target) = self.naval_escort_objective(g, pid, uid) {
+                    if target != upos && self.step_toward(g, pid, uid, target) {
+                        return true;
+                    }
+                    if g.units[&uid].linked_to.is_some_and(|peer| {
+                        g.units
+                            .get(&peer)
+                            .is_some_and(|unit| unit.kind == "settler")
+                    }) {
+                        return self.fortify_or_stop(g, pid, uid);
+                    }
+                }
+            }
             if doctrine == UnitDoctrine::Recon
                 && self.should_explore(g, pid, uid, true)
                 && self.explore_step(g, pid, uid)
             {
                 return true;
             }
-            return match self.nearest_enemy(g, pid, upos, &enemy_ids) {
+            return match self.nearest_enemy_for_unit(g, pid, uid, &enemy_ids) {
                 Some(t) => self.tactical_step(g, pid, uid, t, &enemy_ids, radius),
                 None => self.fortify_or_stop(g, pid, uid),
             };
@@ -2545,6 +2655,18 @@ impl BasicAi {
                 return self.step_toward(g, pid, uid, cap);
             }
             return self.fortify_or_stop(g, pid, uid);
+        }
+        if let Some(target) = self.naval_escort_objective(g, pid, uid) {
+            if target != upos && self.step_toward(g, pid, uid, target) {
+                return true;
+            }
+            if g.units[&uid].linked_to.is_some_and(|peer| {
+                g.units
+                    .get(&peer)
+                    .is_some_and(|unit| unit.kind == "settler")
+            }) {
+                return self.fortify_or_stop(g, pid, uid);
+            }
         }
         if self.should_explore(g, pid, uid, false) && self.explore_step(g, pid, uid) {
             return true;
@@ -2901,6 +3023,47 @@ mod tests {
             Some(Action::AirStrike { unit, target })
                 if unit == bomber && target == air_target
         ));
+    }
+
+    #[test]
+    fn ranged_holds_firing_depth_while_mobile_unit_closes() {
+        let mut g = Game::new_full(1, 24, 16, 40, 30, 0, false);
+        let (target, ranged_pos, mobile_pos) = g
+            .map
+            .tiles
+            .iter()
+            .filter(|(pos, tile)| {
+                g.rules.is_passable(tile) && !g.rules.is_water(tile) && g.units_at(**pos).is_empty()
+            })
+            .find_map(|(target, _)| {
+                let ranged = g.wdisk(*target, 2).into_iter().find(|pos| {
+                    g.wdist(*target, *pos) == 2
+                        && g.map.get(*pos).is_some_and(|tile| {
+                            g.rules.is_passable(tile)
+                                && !g.rules.is_water(tile)
+                                && g.units_at(*pos).is_empty()
+                        })
+                })?;
+                let mobile = g.wdisk(*target, 4).into_iter().find(|pos| {
+                    g.wdist(*target, *pos) == 4
+                        && *pos != ranged
+                        && g.map.get(*pos).is_some_and(|tile| {
+                            g.rules.is_passable(tile)
+                                && !g.rules.is_water(tile)
+                                && g.units_at(*pos).is_empty()
+                        })
+                })?;
+                Some((*target, ranged, mobile))
+            })
+            .expect("test map needs open role-spacing positions");
+        let archer = g.spawn_test_unit("archer", 0, ranged_pos);
+        let ai = BasicAi::new();
+        ai.tactical_step(&mut g, 0, archer, target, &[], 2);
+        assert_eq!(g.wdist(g.units[&archer].pos, target), 2);
+
+        let horseman = g.spawn_test_unit("horseman", 0, mobile_pos);
+        assert!(ai.tactical_step(&mut g, 0, horseman, target, &[], 1));
+        assert!(g.wdist(g.units[&horseman].pos, target) < g.wdist(mobile_pos, target));
     }
 
     #[test]

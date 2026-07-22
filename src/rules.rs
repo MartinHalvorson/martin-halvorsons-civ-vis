@@ -511,6 +511,8 @@ pub struct CivSpec {
 pub struct BeliefSpec {
     #[serde(default)]
     pub note: String,
+    #[serde(default)]
+    pub effects: BTreeMap<String, f64>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -518,6 +520,10 @@ pub struct BeliefsData {
     pub pantheon: BTreeMap<String, BeliefSpec>,
     pub founder: BTreeMap<String, BeliefSpec>,
     pub follower: BTreeMap<String, BeliefSpec>,
+    #[serde(default)]
+    pub enhancer: BTreeMap<String, BeliefSpec>,
+    #[serde(default)]
+    pub worship: BTreeMap<String, BeliefSpec>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -850,6 +856,200 @@ mod tests {
         let rules = Rules::embedded();
         assert_complete_tree(&rules.techs, TECHS, [11, 8, 8, 9, 8, 8, 8, 9, 8]);
         assert_complete_tree(&rules.civics, CIVICS, [7, 7, 7, 6, 7, 9, 5, 7, 6]);
+    }
+
+    #[test]
+    fn every_tree_unlock_is_present_gated_and_runtime_indexed() {
+        let rules = Rules::embedded();
+        assert_eq!(rules.techs.len(), 77);
+        assert_eq!(rules.civics.len(), 61);
+        assert_eq!(rules.units.len(), 80);
+        assert_eq!(rules.buildings.len(), 85);
+        assert_eq!(rules.districts.len(), 35);
+        assert_eq!(rules.wonders.len(), 53);
+        assert_eq!(rules.improvements.len(), 31);
+        assert_eq!(rules.resources.len(), 19);
+        assert_eq!(rules.projects.len(), 17);
+        assert_eq!(rules.policies.len(), 118);
+        assert_eq!(rules.governments.len(), 13);
+
+        let check_gate = |kind: &str, id: &str, tech: &Option<String>, civic: &Option<String>| {
+            if let Some(node) = tech {
+                let spec = rules
+                    .techs
+                    .get(node)
+                    .unwrap_or_else(|| panic!("{kind} {id} references missing technology {node}"));
+                assert!(
+                    spec.unlocks
+                        .iter()
+                        .any(|unlock| unlock.kind == kind && unlock.id == id),
+                    "technology {node} does not index {kind} {id}"
+                );
+            }
+            if let Some(node) = civic {
+                let spec = rules
+                    .civics
+                    .get(node)
+                    .unwrap_or_else(|| panic!("{kind} {id} references missing civic {node}"));
+                assert!(
+                    spec.unlocks
+                        .iter()
+                        .any(|unlock| unlock.kind == kind && unlock.id == id),
+                    "civic {node} does not index {kind} {id}"
+                );
+            }
+        };
+
+        for (id, spec) in &rules.units {
+            check_gate("unit", id, &spec.tech, &spec.civic);
+            if let Some(resource) = &spec.requires_resource {
+                assert!(
+                    rules.resources.contains_key(resource),
+                    "{id} needs {resource}"
+                );
+            }
+            if let Some(building) = &spec.requires_building {
+                assert!(
+                    rules.buildings.contains_key(building),
+                    "{id} needs {building}"
+                );
+            }
+            if let Some(district) = &spec.requires_district {
+                assert!(
+                    rules.districts.contains_key(district),
+                    "{id} needs {district}"
+                );
+            }
+            for improvement in &spec.builds {
+                assert!(
+                    rules.improvements.contains_key(improvement),
+                    "{id} builds missing improvement {improvement}"
+                );
+            }
+        }
+        for (id, spec) in &rules.buildings {
+            check_gate("building", id, &spec.tech, &spec.civic);
+        }
+        for (id, spec) in &rules.districts {
+            check_gate("district", id, &spec.tech, &spec.civic);
+        }
+        for (id, spec) in &rules.wonders {
+            check_gate("wonder", id, &spec.tech, &spec.civic);
+        }
+        for (id, spec) in &rules.improvements {
+            check_gate("improvement", id, &spec.tech, &spec.civic);
+            for resource in &spec.resources {
+                assert!(
+                    rules.resources.contains_key(resource),
+                    "{id} references missing resource {resource}"
+                );
+            }
+        }
+        for (id, spec) in &rules.resources {
+            check_gate("resource", id, &spec.tech, &spec.civic);
+            if !spec.improvement.is_empty() {
+                assert!(
+                    rules.improvements.contains_key(&spec.improvement),
+                    "{id} references missing improvement {}",
+                    spec.improvement
+                );
+            }
+        }
+        for (id, spec) in &rules.projects {
+            check_gate("project", id, &spec.tech, &spec.civic);
+            if let Some(district) = &spec.district {
+                assert!(
+                    rules.districts.contains_key(district),
+                    "{id} needs {district}"
+                );
+            }
+            for prerequisite in &spec.requires {
+                assert!(
+                    rules.projects.contains_key(prerequisite),
+                    "{id} requires missing project {prerequisite}"
+                );
+            }
+            for building in &spec.requires_buildings {
+                assert!(
+                    rules.buildings.contains_key(building),
+                    "{id} requires missing building {building}"
+                );
+            }
+        }
+        for (id, spec) in &rules.policies {
+            check_gate("policy", id, &None, &spec.civic);
+            assert!(
+                matches!(
+                    spec.slot.as_str(),
+                    "military" | "economic" | "diplomatic" | "wildcard"
+                ),
+                "{id} has invalid slot {}",
+                spec.slot
+            );
+            assert!(
+                !spec.effects.is_empty(),
+                "policy {id} has no runtime effect"
+            );
+            if let Some(replaced) = &spec.replaces {
+                assert!(
+                    rules.policies.contains_key(replaced),
+                    "{id} replaces missing policy {replaced}"
+                );
+            }
+        }
+        for (id, spec) in &rules.governments {
+            check_gate("government", id, &None, &spec.civic);
+            let slots = spec.slots.military
+                + spec.slots.economic
+                + spec.slots.diplomatic
+                + spec.slots.wildcard;
+            assert!(slots > 0, "government {id} has no policy slots");
+        }
+
+        for (kind, tree) in [("technology", &rules.techs), ("civic", &rules.civics)] {
+            for (node, spec) in tree {
+                assert!(
+                    !spec.unlocks.is_empty() || !spec.effects.is_empty(),
+                    "{kind} {node} has neither a content unlock nor a runtime ability"
+                );
+                for unlock in &spec.unlocks {
+                    let gate = match unlock.kind.as_str() {
+                        "unit" => rules.units[&unlock.id]
+                            .tech
+                            .as_ref()
+                            .or(rules.units[&unlock.id].civic.as_ref()),
+                        "building" => rules.buildings[&unlock.id]
+                            .tech
+                            .as_ref()
+                            .or(rules.buildings[&unlock.id].civic.as_ref()),
+                        "district" => rules.districts[&unlock.id]
+                            .tech
+                            .as_ref()
+                            .or(rules.districts[&unlock.id].civic.as_ref()),
+                        "wonder" => rules.wonders[&unlock.id]
+                            .tech
+                            .as_ref()
+                            .or(rules.wonders[&unlock.id].civic.as_ref()),
+                        "improvement" => rules.improvements[&unlock.id]
+                            .tech
+                            .as_ref()
+                            .or(rules.improvements[&unlock.id].civic.as_ref()),
+                        "resource" => rules.resources[&unlock.id]
+                            .tech
+                            .as_ref()
+                            .or(rules.resources[&unlock.id].civic.as_ref()),
+                        "project" => rules.projects[&unlock.id]
+                            .tech
+                            .as_ref()
+                            .or(rules.projects[&unlock.id].civic.as_ref()),
+                        "policy" => rules.policies[&unlock.id].civic.as_ref(),
+                        "government" => rules.governments[&unlock.id].civic.as_ref(),
+                        other => panic!("{node} indexes unknown unlock kind {other}"),
+                    };
+                    assert_eq!(gate.map(String::as_str), Some(node.as_str()));
+                }
+            }
+        }
     }
 
     #[test]

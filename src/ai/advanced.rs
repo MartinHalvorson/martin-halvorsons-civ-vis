@@ -146,6 +146,12 @@ struct EmpireCounts {
     military: usize,
     melee: usize,
     ranged: usize,
+    naval: usize,
+    naval_melee: usize,
+    naval_ranged: usize,
+    naval_raider: usize,
+    carriers: usize,
+    aircraft: usize,
     siege: usize,
     support: usize,
     missionaries: usize,
@@ -173,6 +179,18 @@ impl EmpireCounts {
                 let spec = &g.rules.units[name];
                 if spec.class == "military" {
                     self.military += 1;
+                    if spec.domain.as_deref() == Some("sea") {
+                        self.naval += 1;
+                        match spec.promotion_class.as_str() {
+                            "naval_melee" => self.naval_melee += 1,
+                            "naval_ranged" => self.naval_ranged += 1,
+                            "naval_raider" => self.naval_raider += 1,
+                            "naval_carrier" => self.carriers += 1,
+                            _ => {}
+                        }
+                    } else if spec.domain.as_deref() == Some("air") {
+                        self.aircraft += 1;
+                    }
                     if spec.has_ranged_attack() {
                         self.ranged += 1;
                     } else {
@@ -510,9 +528,13 @@ impl AdvancedAi {
                     .map(|uid| g.units[&uid].pos),
             );
         }
-        let has_site = expansion_origins
-            .iter()
-            .any(|pos| self.best_settle_site(g, pid, *pos, 10).is_some());
+        let has_site = expansion_origins.iter().any(|pos| {
+            self.best_settle_site(g, pid, *pos, 10).is_some()
+                || (g.players[pid].techs.contains("shipbuilding")
+                    && self
+                        .best_settle_site(g, pid, *pos, g.map.width + g.map.height)
+                        .is_some())
+        });
 
         let military_civ = matches!(
             g.players[pid].civ.as_str(),
@@ -670,6 +692,8 @@ impl AdvancedAi {
             let forced_goal = match self.victory_target {
                 Some(VictoryTarget::Culture) => [
                     "humanism",
+                    "conservation",
+                    "professional_sports",
                     "cultural_heritage",
                     "space_race",
                     "environmentalism",
@@ -862,6 +886,21 @@ impl AdvancedAi {
         }
         if strategy == GrandStrategy::Religion && tech == "astrology" {
             value += 95.0;
+        }
+        if let Some(goal) = BasicAi::water_research_goal(g, pid) {
+            if self.tech_leads_to(g, tech, goal) {
+                // Embarkation and ocean access change which parts of the map
+                // are strategically reachable, so their prerequisites must
+                // compete with ordinary yield unlocks rather than wait for a
+                // naval unit to happen to win a generic score comparison.
+                value += match goal {
+                    "sailing" => 190.0,
+                    "shipbuilding" => 230.0,
+                    "celestial_navigation" => 150.0,
+                    "cartography" => 210.0,
+                    _ => 0.0,
+                };
+            }
         }
         if strategy == GrandStrategy::Science {
             let milestone = if !g.players[pid]
@@ -1417,7 +1456,15 @@ impl AdvancedAi {
         };
         let raw = match item {
             Item::Unit { unit } if unit == "settler" => {
-                let site = self.best_settle_site(g, pid, city.pos, 11);
+                let site = self.best_settle_site(g, pid, city.pos, 11).or_else(|| {
+                    g.players[pid]
+                        .techs
+                        .contains("shipbuilding")
+                        .then(|| {
+                            self.best_settle_site(g, pid, city.pos, g.map.width + g.map.height)
+                        })
+                        .flatten()
+                });
                 if city_count + counts.settlers < plan.desired_cities
                     && counts.settlers == 0
                     && city.pop >= 2
@@ -1458,9 +1505,15 @@ impl AdvancedAi {
             Item::Unit { unit } => {
                 let spec = &g.rules.units[unit];
                 if spec.class == "military" {
+                    let naval = spec.domain.as_deref() == Some("sea");
+                    let desired_naval = BasicAi::desired_navy(g, pid);
+                    if naval && !BasicAi::city_is_coastal(g, cid) {
+                        return -10_000.0;
+                    }
                     if self.victory_target.is_some()
                         && self.victory_target != Some(VictoryTarget::Domination)
                         && counts.military >= desired_military
+                        && (!naval || counts.naval >= desired_naval)
                         && !threatened
                     {
                         return -2_000.0;
@@ -1475,7 +1528,7 @@ impl AdvancedAi {
                         .iter()
                         .filter(|(name, candidate)| {
                             candidate.class == "military"
-                                && candidate.domain.as_deref() != Some("sea")
+                                && candidate.domain == spec.domain
                                 && candidate.has_ranged_attack() == spec.has_ranged_attack()
                                 && g.can_produce(
                                     pid,
@@ -1492,9 +1545,39 @@ impl AdvancedAi {
                     if unit != "scout" && power + 5.0 < best_role_power {
                         return -2_000.0;
                     }
-                    let force_gap = desired_military.saturating_sub(counts.military) as f64;
+                    let land_military = counts
+                        .military
+                        .saturating_sub(counts.naval + counts.aircraft);
+                    let force_gap = if naval {
+                        desired_naval.saturating_sub(counts.naval) as f64
+                    } else {
+                        desired_military.saturating_sub(land_military) as f64
+                    };
                     let role_gap = if force_gap <= 0.0 {
                         0.0
+                    } else if naval {
+                        match spec.promotion_class.as_str() {
+                            "naval_melee" => {
+                                (counts.naval_melee <= counts.naval_ranged + counts.naval_raider)
+                                    as i32 as f64
+                                    * 80.0
+                            }
+                            "naval_ranged" => {
+                                (counts.naval_ranged < counts.naval_melee.max(1)) as i32 as f64
+                                    * 65.0
+                            }
+                            "naval_raider" => {
+                                (counts.naval >= 2 && counts.naval_raider == 0) as i32 as f64 * 45.0
+                            }
+                            "naval_carrier" => {
+                                if counts.aircraft > 0 && counts.carriers == 0 {
+                                    55.0
+                                } else {
+                                    -180.0
+                                }
+                            }
+                            _ => 0.0,
+                        }
                     } else if spec.has_ranged_attack() {
                         (counts.melee > counts.ranged) as i32 as f64 * 55.0
                     } else {
@@ -1761,6 +1844,7 @@ impl AdvancedAi {
 
     fn settle_sites(&self, g: &Game, pid: usize, from: Pos, radius: i32) -> Vec<(Pos, f64)> {
         let mut sites = Vec::new();
+        let distance_penalty = if radius > 12 { 0.45 } else { 0.9 };
         for pos in g.wdisk(from, radius) {
             let Some(tile) = g.map.get(pos) else { continue };
             if g.rules.is_water(tile)
@@ -1772,7 +1856,8 @@ impl AdvancedAi {
             {
                 continue;
             }
-            let value = self.settle_value(g, pid, pos) - g.wdist(from, pos) as f64 * 0.9;
+            let value =
+                self.settle_value(g, pid, pos) - g.wdist(from, pos) as f64 * distance_penalty;
             if value >= 12.0 {
                 sites.push((pos, value));
             }
@@ -1795,7 +1880,7 @@ impl AdvancedAi {
         let from = g.units[&uid].pos;
         self.settle_sites(g, pid, from, radius)
             .into_iter()
-            .take(16)
+            .take(40)
             .find(|(pos, _)| *pos == from || g.route_step(uid, *pos, 0).is_some())
     }
 
@@ -1836,11 +1921,21 @@ impl AdvancedAi {
                 && (*target == current || g.route_step(uid, *target, 0).is_some())
         });
         let target = valid_target.or_else(|| {
-            self.best_reachable_settle_site(g, pid, uid, 8)
-                .map(|(pos, _)| {
-                    self.settler_targets.insert(uid, pos);
-                    pos
-                })
+            let local = self.best_reachable_settle_site(g, pid, uid, 8);
+            let global = g.players[pid]
+                .techs
+                .contains("shipbuilding")
+                .then(|| g.map.width + g.map.height)
+                .and_then(|radius| self.best_reachable_settle_site(g, pid, uid, radius));
+            match (local, global) {
+                (Some(local), Some(global)) if global.1 > local.1 + 5.0 => Some(global),
+                (Some(local), _) => Some(local),
+                (None, global) => global,
+            }
+            .map(|(pos, _)| {
+                self.settler_targets.insert(uid, pos);
+                pos
+            })
         });
         let Some(target) = target else {
             return self.base.settler_step(g, pid, uid);
@@ -1864,7 +1959,15 @@ impl AdvancedAi {
         strategy: GrandStrategy,
     ) -> f64 {
         let tile = &g.map.tiles[&pos];
-        let mut value = self.yield_value(g.rules.improvements[improvement].yields, strategy);
+        let spec = &g.rules.improvements[improvement];
+        let mut value = self.yield_value(spec.yields, strategy);
+        if strategy == GrandStrategy::Culture {
+            // Tourism is cumulative: delaying a resort or national park by
+            // dozens of turns loses visitors that cannot be recovered by an
+            // equivalent late-game yield. Treat it as a durable strategic
+            // yield so builders seek tourist sites as soon as they unlock.
+            value += spec.effects.get("tourism").copied().unwrap_or(0.0) * 35.0;
+        }
         if let Some(resource) = &tile.resource {
             value += match g.rules.resources[resource].class.as_str() {
                 "luxury" => 14.0,
@@ -2158,7 +2261,10 @@ impl AdvancedAi {
                 .values()
                 .filter(|unit| {
                     enemies.contains(&unit.owner)
-                        && Self::force_domain(g, unit.id) == domain
+                        && match domain {
+                            ForceDomain::Sea => BasicAi::waterborne(g, unit.id),
+                            ForceDomain::Land => !BasicAi::waterborne(g, unit.id),
+                        }
                         && g.wdist(city.pos, unit.pos) <= 8
                 })
                 .min_by_key(|unit| (g.wdist(anchor, unit.pos), unit.id))
@@ -2183,27 +2289,64 @@ impl AdvancedAi {
         if let Some(pos) = g
             .units
             .values()
+            .filter(|unit| enemies.contains(&unit.owner) && BasicAi::waterborne(g, unit.id))
+            .min_by_key(|unit| (g.wdist(anchor, unit.pos), unit.id))
+            .map(|unit| unit.pos)
+        {
+            return pos;
+        }
+        // During colonization, a fleet without an immediate contact screens
+        // the embarked settler. Once the civilian is linked, its naval leader
+        // will carry the pair all the way to the persistent colony objective.
+        if let Some(pos) = g
+            .units
+            .values()
             .filter(|unit| {
-                enemies.contains(&unit.owner) && Self::force_domain(g, unit.id) == ForceDomain::Sea
+                unit.owner == pid
+                    && unit.kind == "settler"
+                    && g.map
+                        .get(unit.pos)
+                        .is_some_and(|tile| g.rules.is_water(tile))
             })
             .min_by_key(|unit| (g.wdist(anchor, unit.pos), unit.id))
             .map(|unit| unit.pos)
         {
             return pos;
         }
-        planned
-            .and_then(|city_pos| {
-                g.wdisk(city_pos, 3)
-                    .into_iter()
-                    .filter(|pos| {
-                        g.map.get(*pos).is_some_and(|tile| {
-                            g.rules.is_water(tile)
-                                && g.rules.is_passable(tile)
-                                && (tile.terrain != "ocean"
-                                    || g.players[pid].techs.contains("cartography"))
-                        })
+
+        let coastal_campaign_city = planned
+            .filter(|pos| {
+                g.city_at(*pos)
+                    .is_some_and(|cid| BasicAi::city_is_coastal(g, cid))
+            })
+            .or_else(|| {
+                g.cities
+                    .values()
+                    .filter(|city| {
+                        enemies.contains(&city.owner) && BasicAi::city_is_coastal(g, city.id)
                     })
-                    .min_by_key(|pos| (g.wdist(anchor, *pos), *pos))
+                    .min_by_key(|city| (g.wdist(anchor, city.pos), city.id))
+                    .map(|city| city.pos)
+            });
+        coastal_campaign_city
+            .and_then(|city_pos| {
+                let approach = |radius| {
+                    g.wdisk(city_pos, radius)
+                        .into_iter()
+                        .filter(|pos| {
+                            g.map.get(*pos).is_some_and(|tile| {
+                                g.rules.is_water(tile)
+                                    && g.rules.is_passable(tile)
+                                    && (tile.terrain != "ocean"
+                                        || g.players[pid].techs.contains("cartography"))
+                            })
+                        })
+                        .min_by_key(|pos| (g.wdist(anchor, *pos), *pos))
+                };
+                // Adjacent water lets melee ships capture after ranged ships
+                // remove defenses. Radius three is only a fallback for cities
+                // behind a narrow land/coast configuration.
+                approach(1).or_else(|| approach(3))
             })
             .unwrap_or(anchor)
     }
@@ -2451,14 +2594,14 @@ impl AdvancedAi {
             .min();
         let score = |g: &Game, tile: Pos| -> f64 {
             let objective_distance = g.wdist(tile, target);
-            let (progress, cohesion, threat_caution) = match role {
-                ForceRole::Recon => (0.55, 0.40, 1.35),
-                ForceRole::Vanguard => (1.15, 1.00, 1.00),
-                ForceRole::Mobile => (1.40, 0.65, 0.80),
-                ForceRole::Ranged => (0.90, 1.10, 1.15),
-                ForceRole::Siege => (0.80, 1.30, 1.25),
-                ForceRole::Support => (0.65, 1.50, 1.40),
-                ForceRole::AirStrike => (1.20, 0.20, 0.75),
+            let (progress, cohesion, threat_caution, spacing) = match role {
+                ForceRole::Recon => (0.55, 0.40, 1.35, 1.25),
+                ForceRole::Vanguard => (1.15, 1.00, 1.00, 1.00),
+                ForceRole::Mobile => (1.40, 0.65, 0.80, 1.00),
+                ForceRole::Ranged => (0.90, 1.10, 1.15, 1.50),
+                ForceRole::Siege => (0.80, 1.30, 1.25, 1.70),
+                ForceRole::Support => (0.65, 1.50, 1.40, 1.20),
+                ForceRole::AirStrike => (1.20, 0.20, 0.75, 0.50),
             };
             let mut value = -self.base.w.objective_progress * progress * objective_distance as f64;
             let nearest_friend = group
@@ -2500,6 +2643,7 @@ impl AdvancedAi {
             }
             if g.wdist(tile, target) <= 5 {
                 value -= self.base.w.role_spacing
+                    * spacing
                     * (g.wdist(tile, target) - preferred_depth).abs() as f64;
                 if matches!(
                     role,
@@ -2521,6 +2665,7 @@ impl AdvancedAi {
         };
 
         let stay = score(g, upos);
+        let holding_role_position = g.wdist(upos, target) == preferred_depth;
         let mut best: Option<(f64, Pos)> = None;
         for pos in g.nbrs(upos).into_iter().filter(|pos| g.can_move(uid, *pos)) {
             let candidate = score(g, pos);
@@ -2532,7 +2677,12 @@ impl AdvancedAi {
             }
         }
         if let Some((candidate, pos)) = best {
-            if self.base.move_beats_holding(g, uid, candidate, stay) {
+            let should_move = if holding_role_position {
+                candidate > stay + 1e-9
+            } else {
+                self.base.move_beats_holding(g, uid, candidate, stay)
+            };
+            if should_move {
                 return g.apply(pid, &Action::Move { unit: uid, to: pos }).is_ok();
             }
         }
@@ -2611,6 +2761,19 @@ impl AdvancedAi {
             .map(|p| p.id)
             .collect();
         if enemies.is_empty() {
+            if spec.domain.as_deref() == Some("sea") {
+                if let Some(settler) = unit
+                    .linked_to
+                    .filter(|peer| g.units.get(peer).is_some_and(|peer| peer.kind == "settler"))
+                {
+                    if let Some(target) = self.settler_targets.get(&settler).copied() {
+                        if target != unit.pos && self.base.step_toward(g, pid, uid, target) {
+                            return true;
+                        }
+                    }
+                    return self.base.fortify_or_stop(g, pid, uid);
+                }
+            }
             return self.base.military_step(g, pid, uid);
         }
         // Combat can change occupancy, local power, line of sight, and the
@@ -2690,6 +2853,25 @@ impl AdvancedAi {
             }
         }
 
+        let linked_settler = (spec.domain.as_deref() == Some("sea"))
+            .then_some(unit.linked_to)
+            .flatten()
+            .filter(|peer| g.units.get(peer).is_some_and(|peer| peer.kind == "settler"));
+        let hostile_water_unit = g
+            .units
+            .values()
+            .any(|enemy| enemies.contains(&enemy.owner) && BasicAi::waterborne(g, enemy.id));
+        if !hostile_water_unit {
+            if let Some(settler) = linked_settler {
+                if let Some(target) = self.settler_targets.get(&settler).copied() {
+                    if target != unit.pos && self.base.step_toward(g, pid, uid, target) {
+                        return true;
+                    }
+                }
+                return self.base.fortify_or_stop(g, pid, uid);
+            }
+        }
+
         if doctrine == UnitDoctrine::Recon
             && self.base.should_explore(g, pid, uid, true)
             && self.base.explore_step(g, pid, uid)
@@ -2705,12 +2887,18 @@ impl AdvancedAi {
                 .min_by_key(|u| (g.wdist(unit.pos, u.pos), u.id))
                 .map(|u| u.pos)
         });
-        let campaign = defend_target
-            .or_else(|| {
-                plan.target_city
-                    .and_then(|cid| g.cities.get(&cid).map(|c| c.pos))
-            })
-            .or_else(|| self.base.nearest_enemy(g, pid, unit.pos, &enemies));
+        let campaign = if spec.domain.as_deref() == Some("sea") {
+            defend_target
+                .filter(|pos| g.map.get(*pos).is_some_and(|tile| g.rules.is_water(tile)))
+                .or_else(|| self.base.nearest_enemy_for_unit(g, pid, uid, &enemies))
+        } else {
+            defend_target
+                .or_else(|| {
+                    plan.target_city
+                        .and_then(|cid| g.cities.get(&cid).map(|c| c.pos))
+                })
+                .or_else(|| self.base.nearest_enemy(g, pid, unit.pos, &enemies))
+        };
         if let Some(orders) = &group {
             return self.coordinated_tactical_step(g, pid, uid, orders, &enemies);
         }
@@ -2866,6 +3054,30 @@ impl AdvancedAi {
                         std::cmp::Reverse(unit.id),
                     )
                 });
+            if let Some(unit) = escort {
+                let _ = g.apply(pid, &Action::LinkUnits { unit, with });
+            }
+        }
+
+        let embarked_settlers: Vec<u32> = g
+            .player_unit_ids(pid)
+            .into_iter()
+            .filter(|uid| {
+                let unit = &g.units[uid];
+                unit.kind == "settler"
+                    && unit.linked_to.is_none()
+                    && g.map
+                        .get(unit.pos)
+                        .is_some_and(|tile| g.rules.is_water(tile))
+            })
+            .collect();
+        for with in embarked_settlers {
+            let escort = g.units_at(g.units[&with].pos).into_iter().find(|uid| {
+                let unit = &g.units[uid];
+                unit.owner == pid
+                    && unit.linked_to.is_none()
+                    && g.rules.units[unit.kind.as_str()].domain.as_deref() == Some("sea")
+            });
             if let Some(unit) = escort {
                 let _ = g.apply(pid, &Action::LinkUnits { unit, with });
             }
@@ -3156,6 +3368,47 @@ mod tests {
             g.cities[&city].queue.first(),
             Some(Item::Project { project }) if project == "launch_earth_satellite"
         ));
+    }
+
+    #[test]
+    fn explicit_targets_replace_early_cards_with_victory_policies() {
+        let mut culture = Game::new(2, 24, 16, 78, 200, 0);
+        culture.players[0].government = Some("chiefdom".to_string());
+        culture.players[0]
+            .civics
+            .insert("cultural_heritage".to_string());
+        culture.players[0]
+            .policies
+            .extend(["discipline".to_string(), "urban_planning".to_string()]);
+        AdvancedAi::targeting(VictoryTarget::Culture).strategic_policies(&mut culture, 0);
+        assert!(culture.players[0].policies.contains("heritage_tourism"));
+        assert!(culture.players[0].policies.contains("discipline"));
+        assert!(!culture.players[0].policies.contains("urban_planning"));
+
+        let mut science = Game::new(2, 24, 16, 79, 200, 0);
+        science.players[0].government = Some("chiefdom".to_string());
+        science.players[0].civics.insert("space_race".to_string());
+        science.players[0]
+            .policies
+            .extend(["discipline".to_string(), "urban_planning".to_string()]);
+        AdvancedAi::targeting(VictoryTarget::Science).strategic_policies(&mut science, 0);
+        assert!(science.players[0]
+            .policies
+            .contains("integrated_space_cell"));
+        assert!(science.players[0].policies.contains("urban_planning"));
+        assert!(!science.players[0].policies.contains("discipline"));
+    }
+
+    #[test]
+    fn culture_strategy_treats_tourism_as_a_builder_yield() {
+        let g = Game::new(2, 24, 16, 73, 80, 0);
+        let pos = *g.map.tiles.keys().next().unwrap();
+        let ai = AdvancedAi::targeting(VictoryTarget::Culture);
+
+        let resort = ai.improvement_value(&g, pos, "seaside_resort", GrandStrategy::Culture);
+        let farm = ai.improvement_value(&g, pos, "farm", GrandStrategy::Culture);
+
+        assert!(resort > farm + 100.0, "resort={resort}, farm={farm}");
     }
 
     #[test]

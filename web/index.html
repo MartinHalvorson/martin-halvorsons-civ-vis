@@ -715,22 +715,42 @@ function pixelToHex(sx, sy) {
 }
 
 // ---------------------------------------------------------------- net
-async function fetchJSON(url, opts) { return await (await fetch(url, opts)).json(); }
+async function fetchJSON(url, opts = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {...opts, signal: controller.signal});
+    if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
 let firstLoad = true;
 let serverInstance = null;
+let bootBusy = false, bootTimer = null;
 async function boot() {
-  RULES = await fetchJSON("/rules");
-  if (Array.isArray(RULES.map_sizes)) {
-    document.getElementById("np").innerHTML = RULES.map_sizes.map(size =>
-      `<option value="${size.default_players}">${size.name} · ${size.default_players} civs · ${size.default_city_states} city-states · ${size.width}×${size.height}</option>`
-    ).join("");
-  }
-  render(await fetchJSON("/state"));
-  if (firstLoad) {
-    firstLoad = false;
-    document.getElementById("specchk").checked = SPEC;
-    if (SPEC) document.getElementById("specspeed").value = "100";
-    scheduleSpec(state);
+  if (bootBusy) return;
+  bootBusy = true;
+  try {
+    RULES = await fetchJSON("/rules");
+    if (Array.isArray(RULES.map_sizes)) {
+      document.getElementById("np").innerHTML = RULES.map_sizes.map(size =>
+        `<option value="${size.default_players}">${size.name} · ${size.default_players} civs · ${size.default_city_states} city-states · ${size.width}×${size.height}</option>`
+      ).join("");
+    }
+    render(await fetchJSON("/state"));
+    if (firstLoad) {
+      firstLoad = false;
+      document.getElementById("specchk").checked = SPEC;
+      if (SPEC) document.getElementById("specspeed").value = "100";
+      scheduleSpec(state);
+    }
+  } catch (e) {
+    clearTimeout(bootTimer);
+    bootTimer = setTimeout(boot, 2000);
+  } finally {
+    bootBusy = false;
   }
 }
 async function send(action) {
@@ -2209,15 +2229,21 @@ function openTree(kind) {
   document.getElementById("treecols").innerHTML = cols.map((col, era) =>
     `<div class="tcol"><div class="tera">${ERA_NAMES[era]} era</div>` + col.map(n => {
       const s = specs[n];
-      const avail = !known.has(n) && s.requires.every(r => known.has(r));
-      const cls = known.has(n) ? "done" : (n === current ? "cur" : (avail ? "avail" : "locked"));
+      const completed = known.has(n) && !s.repeatable;
+      const avail = !completed && s.requires.every(r => known.has(r));
+      const cls = completed ? "done" : (n === current ? "cur" : (avail ? "avail" : "locked"));
       const canPick = avail && !current;
+      const unlocks = (s.unlocks || []).map(u => `${titleCase(u.kind)}: ${titleCase(u.id)}`);
+      const abilities = Object.keys(s.effects || {}).map(titleCase);
       return `<div class="tnode ${cls}"` +
         (canPick ? ` onclick='pickTree("${kind}","${n}")'` : "") + `>` +
         `<b>${titleCase(n)}</b>` +
+        (s.repeatable ? ` <span class="boost">↻</span>` : "") +
         (boosted.includes(n) ? ` <span class="boost">⚡</span>` : "") +
         ` <span class="req">${s.cost}</span>` +
         (s.requires.length ? `<div class="req">← ${s.requires.map(x => x.replaceAll("_"," ")).join(", ")}</div>` : "") +
+        (unlocks.length ? `<div class="req">Unlocks ${unlocks.join(" · ")}</div>` : "") +
+        (abilities.length ? `<div class="req">Abilities ${abilities.join(" · ")}</div>` : "") +
         `</div>`;
     }).join("") + `</div>`).join("");
   document.getElementById("tree").classList.add("open");

@@ -231,6 +231,20 @@ fn main() {
         }
         "play" => {
             let players = arg(&args, "--players", 4);
+            let resumed: Option<Game> = args
+                .iter()
+                .position(|value| value == "--resume")
+                .and_then(|index| args.get(index + 1))
+                .map(|path| {
+                    let raw = std::fs::read_to_string(path).unwrap_or_else(|error| {
+                        eprintln!("cannot read checkpoint {path}: {error}");
+                        std::process::exit(2);
+                    });
+                    serde_json::from_str(&raw).unwrap_or_else(|error| {
+                        eprintln!("cannot load checkpoint {path}: {error}");
+                        std::process::exit(2);
+                    })
+                });
             let seed = {
                 let s = arg(&args, "--seed", -1);
                 if s >= 0 {
@@ -242,7 +256,7 @@ fn main() {
                         .subsec_nanos() as u64
                 }
             };
-            civvis::server::serve(
+            civvis::server::serve_with_game(
                 arg(&args, "--port", 8765) as u16,
                 !args.iter().any(|a| a == "--no-open"),
                 civvis::server::Params {
@@ -254,6 +268,7 @@ fn main() {
                     num_city_states: auto_cs(&args, players),
                     spectate: args.iter().any(|a| a == "--spectate" || a == "--watch"),
                 },
+                resumed,
             );
         }
         _ => {
@@ -261,7 +276,7 @@ fn main() {
                 "usage: civvis <simulate|soak|benchmark|tournament|play|evolve> \
                       [--players N] [--seed N] [--turns N] [--width N] [--height N] \
                       [--city-states N] [--games N] [--ais a,b] [--port N] [--no-open] \
-                      [--spectate]"
+                      [--spectate] [--resume checkpoint.json]"
             );
         }
     }

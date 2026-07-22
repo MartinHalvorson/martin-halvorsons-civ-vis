@@ -49,12 +49,20 @@ For an unattended spectator that checks for new code only between games:
 python3 tools/spectator_supervisor.py --players 4
 ```
 
-It keeps the result visible for 10 seconds, checks the current Git upstream,
-safely fast-forwards when possible, rebuilds local edits too, and automatically
-starts the next game. The supervisor fingerprints all runtime inputs before and
-after compilation. If code changes during the build or the newest source does
-not compile, it leaves the completed result server available and retries
-instead of starting a stale game.
+It keeps the result reachable for at least 10 seconds, checks the current Git
+upstream, safely fast-forwards when possible, rebuilds local edits too, and
+automatically starts the next game. Builds happen while the completed result
+server remains available; a promoted runtime is reused immediately when it
+already matches the source. Active matches are atomically checkpointed every
+five seconds. If the server crashes or stops responding, the supervisor resumes
+that checkpoint; if the same state repeatedly freezes, it quarantines the save
+and starts a fresh match instead of entering a restart loop. It also nudges a
+simulation that stops advancing, while browser requests use timeouts and retry
+after temporary server outages.
+
+The supervisor fingerprints all runtime inputs before and after compilation.
+If code changes during the build or the newest source does not compile, the
+known-good result/game stays available while it waits and retries.
 
 Player-count defaults use Civ VI's stock world rows: 2 players = Duel
 (`44×26`, 3 city-states), 4 = Tiny (`60×38`, 6 city-states), and 6 = Small

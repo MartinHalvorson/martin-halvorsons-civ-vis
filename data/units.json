@@ -287,7 +287,8 @@
     "charges": 3,
     "religious_strength": 110,
     "religious_spread": 220,
-    "requires_building": "temple"
+    "requires_building": "temple",
+    "promotion_class": "religious_apostle"
   },
   "guru": {
     "class": "religious",

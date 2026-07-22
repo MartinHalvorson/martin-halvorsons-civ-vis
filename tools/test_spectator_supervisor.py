@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -79,6 +80,7 @@ class SourceSnapshotTests(unittest.TestCase):
         ):
             self.assertTrue(supervisor.build_latest())
         self.assertEqual(len(builds), 2)
+        self.assertEqual(builds[0], ("cargo", "build", "--release", "--bin", "civvis"))
         promote.assert_called_once_with()
         metadata.assert_called_once_with("new")
 
@@ -91,6 +93,69 @@ class SourceSnapshotTests(unittest.TestCase):
         ):
             self.assertFalse(supervisor.build_latest())
         promote.assert_not_called()
+
+    def test_matching_runtime_skips_redundant_cargo_build(self):
+        with (
+            patch.object(supervisor, "source_snapshot", return_value="current"),
+            patch.object(supervisor, "runtime_matches", return_value=True),
+            patch.object(supervisor, "command") as command,
+            patch.object(supervisor, "promote_binary") as promote,
+        ):
+            self.assertTrue(supervisor.build_latest())
+        command.assert_not_called()
+        promote.assert_not_called()
+
+
+class RecoveryTests(unittest.TestCase):
+    def test_progress_marker_tracks_player_steps_within_a_turn(self):
+        first = {"seed": 7, "turn": 12, "current": 1, "winner": None}
+        stepped = {**first, "current": 2}
+        self.assertNotEqual(
+            supervisor.progress_marker(first), supervisor.progress_marker(stepped)
+        )
+
+    def test_server_command_can_resume_an_atomic_checkpoint(self):
+        settings = {
+            "players": 4,
+            "width": 60,
+            "height": 38,
+            "city_states": 6,
+            "turns": 500,
+        }
+        checkpoint = Path("/tmp/civvis-checkpoint.json")
+        command = supervisor.server_command(8766, settings, False, checkpoint)
+        self.assertEqual(command[command.index("--resume") + 1], str(checkpoint))
+        self.assertIn("--no-open", command)
+
+    def test_checkpoint_write_is_atomic_and_finished_saves_are_not_resumed(self):
+        class Response:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return self.payload
+
+        active = {"seed": 9, "turn": 22, "current": 3, "winner": None}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "save.json"
+            with patch.object(
+                supervisor,
+                "urlopen",
+                return_value=Response(json.dumps(active).encode()),
+            ):
+                self.assertTrue(supervisor.capture_checkpoint(8766, path))
+            self.assertEqual(json.loads(path.read_text()), active)
+            self.assertFalse(path.with_suffix(".json.new").exists())
+            self.assertEqual(supervisor.checkpoint_marker(path), (9, 22, 3, None))
+
+            path.write_text(json.dumps({**active, "winner": 1}), encoding="utf-8")
+            self.assertIsNone(supervisor.checkpoint_marker(path))
 
 
 if __name__ == "__main__":

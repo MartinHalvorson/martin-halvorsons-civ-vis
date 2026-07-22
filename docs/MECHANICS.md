@@ -41,16 +41,25 @@ Zone of control does **not** unlock through a technology or civic; it applies
 from turn 1. The Military Tradition civic unlocks the separate +2-per-unit
 flanking and support bonuses.
 
-The current units that exert ZOC are Scout, Warrior, Spearman, Swordsman,
-Horseman, Pikeman, Knight, Musketman, Galley, Legion, Hoplite, Eagle Warrior,
-and War-Cart. Horsemen, Knights, War-Carts, Maryannu Chariot Archers, and Saka
-Horse Archers ignore incoming ZOC as cavalry; the latter two do not exert it
-because they are ranged units. City Centers and Encampments exert ZOC in every
-adjacent domain. Religious units exert their separate ZOC only against units
-of a different religion.
+Every melee-capable land line in the roster exerts ZOC, including Scout,
+cavalry, anti-cavalry, and Giant Death Robot units. Ranged and bombard land
+units do not, unless a promotion such as Suppression grants it. Every naval
+surface unit exerts ZOC, including naval ranged ships, Privateers, and Aircraft
+Carriers; Submarines and Nuclear Submarines are the exceptions. City Centers,
+the Encampment family, and Oppidums project into every adjacent land or water
+tile until pillaged. Unit ZOC stays in the provider's native domain and cannot
+cross a river, while defensible-district ZOC crosses rivers.
 
-Military and religious units that enter ZOC keep unused Movement and may still
-attack or perform another legal action, but cannot move to another tile that
-turn. Civilian and support units lose all remaining Movement. Unit ZOC is
-limited to the unit's native domain and cannot cross a river; defensible
-district ZOC is not blocked by rivers.
+Cavalry (including ranged cavalry), Naval Raiders, and air units ignore
+incoming ZOC. A linked civilian or support unit inherits that immunity from
+its escort. Military and religious units that enter ZOC keep unused Movement
+and may still attack, pillage, spread religion, or promote, but cannot move to
+another tile that turn—even with move-after-attack. Civilian and support units
+lose all remaining Movement and receive no follow-up actions. A unit that
+begins its turn inside ZOC may leave as its first action, but cannot attack
+first and then leave while the ZOC remains.
+
+Religious units of different civilizations and different religions exert ZOC
+against one another regardless of war; units of the same religion never do.
+Defensible districts affect foreign religious units only while their owners
+are at war.

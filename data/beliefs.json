@@ -1,19 +1,45 @@
 {
   "pantheon": {
-    "fertility_rites": {"note": "city growth +10%"},
-    "god_of_the_forge": {"note": "+25% production toward ancient/classical military units"},
-    "religious_settlements": {"note": "border expansion 15% faster"},
-    "god_of_the_open_sky": {"note": "+1 culture per pasture"},
-    "god_of_the_sea": {"note": "+1 production per fishing boats"},
-    "divine_spark": {"note": "+1 great person point per campus, holy site and theater square"}
+    "fertility_rites": {"note":"city growth +10%","effects":{"growth_pct":10}},
+    "god_of_the_forge": {"note":"+25% production toward ancient/classical military units","effects":{"early_military_production_pct":25}},
+    "religious_settlements": {"note":"border expansion 15% faster","effects":{"border_growth_pct":15}},
+    "god_of_the_open_sky": {"note":"+1 culture per pasture","effects":{"pasture_culture":1}},
+    "god_of_the_sea": {"note":"+1 production per fishing boats","effects":{"fishing_boats_production":1}},
+    "divine_spark": {"note":"+1 great person point per campus, holy site and theater square","effects":{"district_gpp":1}}
   },
   "founder": {
-    "tithe": {"note": "+1 gold per 4 cities following this religion"},
-    "world_church": {"note": "+1 culture per 5 cities following this religion"}
+    "tithe": {"note":"+1 gold per 4 followers","effects":{"gold_per_followers":0.25}},
+    "world_church": {"note":"+1 culture per 5 followers","effects":{"culture_per_followers":0.2}},
+    "church_property": {"note":"+2 Gold for each city following this religion","effects":{"gold_per_city":2}},
+    "pilgrimage": {"note":"+2 Faith for each foreign city following this religion","effects":{"faith_per_foreign_city":2}},
+    "religious_unity": {"note":"first conversion of a city-state grants an Envoy","effects":{"envoy_first_city_state_conversion":1}}
   },
   "follower": {
-    "choral_music": {"note": "+2 culture in following cities with a shrine"},
-    "work_ethic": {"note": "+1 production per holy site in following cities"},
-    "feed_the_world": {"note": "+2 food in following cities with a shrine"}
+    "choral_music": {"note":"Shrines and Temples provide Culture equal to Faith","effects":{"holy_building_culture":1}},
+    "work_ethic": {"note":"Holy Site adjacency also provides Production","effects":{"holy_site_production_from_adjacency":1}},
+    "feed_the_world": {"note":"Shrines and Temples provide Food and Housing","effects":{"shrine_food":2,"temple_food":4,"shrine_housing":2,"temple_housing":2}},
+    "jesuit_education": {"note":"Campus and Theater buildings may be purchased with Faith","effects":{"faith_purchase_science_culture_buildings":1}},
+    "religious_community": {"note":"international routes gain Gold from Holy Site buildings","effects":{"trade_gold_per_holy_building":1}},
+    "zen_meditation": {"note":"+1 Amenity in cities with two specialty districts","effects":{"amenity_two_specialty":1}}
+  },
+  "enhancer": {
+    "holy_order": {"note":"Missionaries and Apostles are 30% cheaper","effects":{"religious_unit_faith_discount_pct":30}},
+    "itinerant_preachers": {"note":"religious pressure reaches 30% farther","effects":{"pressure_range_pct":30}},
+    "scripture": {"note":"religious pressure from adjacent cities is stronger","effects":{"pressure_strength_pct":25}},
+    "missionary_zeal": {"note":"religious units ignore terrain movement costs","effects":{"religious_flat_movement":1}},
+    "religious_colonization": {"note":"new cities begin with this religion","effects":{"new_city_religion":1}},
+    "crusade": {"note":"+10 Combat Strength near foreign cities following this religion","effects":{"foreign_city_combat_strength":10}},
+    "defender_of_the_faith": {"note":"+5 Combat Strength near friendly cities following this religion","effects":{"friendly_city_combat_strength":5}}
+  },
+  "worship": {
+    "cathedral": {"note":"unlocks the Cathedral worship building","effects":{"building":1}},
+    "dar_e_mehr": {"note":"unlocks the Dar-e Mehr worship building","effects":{"building":1}},
+    "gurdwara": {"note":"unlocks the Gurdwara worship building","effects":{"building":1}},
+    "meeting_house": {"note":"unlocks the Meeting House worship building","effects":{"building":1}},
+    "mosque": {"note":"unlocks the Mosque worship building","effects":{"building":1}},
+    "pagoda": {"note":"unlocks the Pagoda worship building","effects":{"building":1}},
+    "stupa": {"note":"unlocks the Stupa worship building","effects":{"building":1}},
+    "synagogue": {"note":"unlocks the Synagogue worship building","effects":{"building":1}},
+    "wat": {"note":"unlocks the Wat worship building","effects":{"building":1}}
   }
 }

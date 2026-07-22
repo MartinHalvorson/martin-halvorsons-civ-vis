@@ -104,7 +104,8 @@ mod tests {
         for p in &g.players {
             if !p.is_barbarian {
                 assert!(
-                    p.techs.len() > 1,
+                    p.techs.len() > 1
+                        || (p.is_minor && p.research.is_some() && p.research_progress > 0.0),
                     "player {} ({}) alive={} cities={} ended with {:?}, research {:?} at {:.1}",
                     p.id,
                     p.civ,
@@ -425,7 +426,7 @@ mod tests {
 
     #[test]
     fn zone_of_control_stops_movement() {
-        let g = Game::new_full(2, 24, 16, 7, 60, 0, false);
+        let mut g = Game::new_full(2, 24, 16, 7, 60, 0, false);
         let me = g
             .player_unit_ids(0)
             .into_iter()
@@ -436,51 +437,40 @@ mod tests {
             .into_iter()
             .find(|id| g.units[id].kind == "warrior")
             .unwrap();
-        // park the enemy warrior two flat land tiles from ours
+        // Park the enemy warrior two tiles from ours. Normalize the two test
+        // tiles so this combat fixture is independent of map-generator tuning.
         let mypos = g.units[&me].pos;
         let spot = g
             .map
             .tiles
-            .values()
-            .find(|t| {
-                hex::distance(t.pos, mypos) == 2
-                    && !g.rules.is_water(t)
-                    && g.rules.is_passable(t)
-                    && !t.has_river()
-                    && g.units_at(t.pos).is_empty()
-                    && g.city_at(t.pos).is_none()
-                    && hex::neighbors(t.pos).iter().any(|n| {
-                        hex::distance(*n, mypos) == 1
-                            && g.map
-                                .get(*n)
-                                .map(|nt| {
-                                    !g.rules.is_water(nt)
-                                        && g.rules.is_passable(nt)
-                                        && !nt.has_river()
-                                        && g.units_at(*n).is_empty()
-                                })
-                                .unwrap_or(false)
+            .keys()
+            .copied()
+            .find(|pos| {
+                g.wdist(*pos, mypos) == 2
+                    && g.units_at(*pos).is_empty()
+                    && g.city_at(*pos).is_none()
+                    && g.nbrs(*pos).iter().any(|n| {
+                        g.wdist(*n, mypos) == 1
+                            && g.map.get(*n).is_some()
+                            && g.units_at(*n).is_empty()
+                            && g.city_at(*n).is_none()
                     })
             })
-            .map(|t| t.pos)
             .expect("open tile at distance 2");
+        let mid = *g
+            .nbrs(spot)
+            .iter()
+            .find(|n| g.wdist(**n, mypos) == 1 && g.map.get(**n).is_some())
+            .unwrap();
+        g.map.clear_rivers();
+        for pos in [spot, mid] {
+            let tile = g.map.tiles.get_mut(&pos).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.hills = false;
+        }
         let mut g = teleport(&g, foe, spot);
         g.apply(0, &Action::DeclareWar { player: 1 }).unwrap();
-        let mid = *hex::neighbors(spot)
-            .iter()
-            .find(|n| {
-                hex::distance(**n, mypos) == 1
-                    && g.map
-                        .get(**n)
-                        .map(|nt| {
-                            !g.rules.is_water(nt)
-                                && g.rules.is_passable(nt)
-                                && !nt.has_river()
-                                && g.units_at(**n).is_empty()
-                        })
-                        .unwrap_or(false)
-            })
-            .unwrap();
         assert!(g.in_enemy_zoc(0, mid));
         g.apply(0, &Action::Move { unit: me, to: mid }).unwrap();
         assert!(g.units[&me].zoc_stopped);

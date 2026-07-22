@@ -821,7 +821,10 @@ impl From<GameSer> for Game {
         for uid in unit_ids {
             let max_attacks = g.unit_max_attacks(uid);
             let unit = g.units.get_mut(&uid).unwrap();
-            unit.attacks_left = unit.attacks_left.max(1).min(max_attacks);
+            // Missing legacy fields already deserialize through `one_attack`.
+            // Preserve a real mid-turn zero so save/load cannot restore an
+            // attack that the unit has already spent.
+            unit.attacks_left = unit.attacks_left.clamp(0, max_attacks);
             if unit.religion.is_none() && g.rules.units[unit.kind.as_str()].class == "religious" {
                 unit.religion = g.players[unit.owner].religion.clone();
             }
@@ -1308,6 +1311,11 @@ impl Game {
             }
         }
         cap += self.empire_wonder_effect(pid, "trade_route_capacity") as i64;
+        cap += p
+            .counters
+            .get("great_person_trade_capacity")
+            .copied()
+            .unwrap_or(0);
         if p.government.as_deref() == Some("merchant_republic") {
             cap += 2;
         }
@@ -1972,9 +1980,29 @@ impl Game {
         }
     }
 
-    /// Point cost of a player's next great person of a type (doubles per
-    /// claim, Civ 6-style era scaling).
+    pub fn current_great_person(
+        &self,
+        kind: &str,
+    ) -> Option<(&str, &crate::rules::GreatPersonSpec)> {
+        self.rules
+            .great_people
+            .iter()
+            .filter(|(id, spec)| {
+                spec.kind == kind
+                    && spec.era <= self.world_era + 1
+                    && !self.retired_great_people.contains(*id)
+            })
+            .min_by_key(|(id, spec)| (spec.era, *id))
+            .map(|(id, spec)| (id.as_str(), spec))
+    }
+
+    /// Point cost of the named person currently offered in this global
+    /// market. The legacy fallback keeps old/modded saves playable when a
+    /// ruleset has no named entry for a point type.
     pub fn gp_cost(&self, pid: usize, kind: &str) -> f64 {
+        if let Some((_, person)) = self.current_great_person(kind) {
+            return person.cost;
+        }
         let n = self.players[pid].gp_claimed.get(kind).copied().unwrap_or(0);
         60.0 * (1u64 << n.min(6) as u64) as f64
     }
@@ -2051,14 +2079,112 @@ impl Game {
             .map(|(t, _)| t.clone())
             .collect();
         for t in due {
-            let cost = self.gp_cost(pid, &t);
-            let p = &mut self.players[pid];
-            *p.gpp.get_mut(&t).unwrap() -= cost;
-            *p.gp_claimed.entry(t.clone()).or_insert(0) += 1;
-            p.era_score += 2;
-            bump(p, "great_people");
-            self.great_person_effect(pid, &t);
+            let _ = self.claim_great_person(pid, &t, None);
         }
+    }
+
+    fn claim_great_person(
+        &mut self,
+        pid: usize,
+        kind: &str,
+        patronage: Option<&str>,
+    ) -> Result<(), String> {
+        let (id, spec) = self
+            .current_great_person(kind)
+            .map(|(id, spec)| (id.to_string(), spec.clone()))
+            .ok_or_else(|| "no Great Person of that type is currently available".to_string())?;
+        let points = self.players[pid].gpp.get(kind).copied().unwrap_or(0.0);
+        let missing = (spec.cost - points).max(0.0);
+        match patronage {
+            None if missing > 0.0 => return Err("not enough Great Person points".into()),
+            Some("gold") => {
+                let price = missing * 15.0;
+                if missing <= 0.0 || self.players[pid].gold < price {
+                    return Err("cannot patronize with Gold".into());
+                }
+                self.players[pid].gold -= price;
+            }
+            Some("faith") => {
+                let discount =
+                    self.empire_wonder_effect(pid, "great_person_faith_patronage_discount_pct");
+                let price = missing * 10.0 * (1.0 - discount / 100.0);
+                if missing <= 0.0 || self.players[pid].faith < price {
+                    return Err("cannot patronize with Faith".into());
+                }
+                self.players[pid].faith -= price;
+            }
+            Some(_) => return Err("patronage currency must be gold or faith".into()),
+            None => {}
+        }
+        self.players[pid].gpp.insert(kind.to_string(), 0.0);
+        self.retired_great_people.insert(id.clone());
+        let player = &mut self.players[pid];
+        player.great_people.push(id);
+        *player.gp_claimed.entry(kind.to_string()).or_insert(0) += 1;
+        player.era_score += 2;
+        bump(player, "great_people");
+        self.named_great_person_effect(pid, &spec);
+        Ok(())
+    }
+
+    fn named_great_person_effect(&mut self, pid: usize, spec: &crate::rules::GreatPersonSpec) {
+        if let Some(amount) = spec.effects.get("gold") {
+            self.players[pid].gold += *amount;
+        }
+        if let Some(amount) = spec.effects.get("envoys") {
+            self.players[pid].envoys_free += *amount as i64;
+        }
+        if let Some(amount) = spec.effects.get("trade_capacity") {
+            *self.players[pid]
+                .counters
+                .entry("great_person_trade_capacity".to_string())
+                .or_insert(0) += *amount as i64;
+        }
+        if let Some(amount) = spec.effects.get("tech_boosts") {
+            self.grant_random_boosts(pid, *amount as usize, true);
+        }
+        if let Some(amount) = spec.effects.get("city_production") {
+            if let Some(cid) = self
+                .player_city_ids(pid)
+                .into_iter()
+                .max_by_key(|cid| self.cities[cid].pop)
+            {
+                self.cities.get_mut(&cid).unwrap().production += *amount;
+            }
+        }
+        for (effect, counter) in [
+            ("great_work_writing", "great_work:writing"),
+            ("great_work_art", "great_work:art"),
+            ("great_work_music", "great_work:music"),
+        ] {
+            if let Some(amount) = spec.effects.get(effect) {
+                *self.players[pid]
+                    .counters
+                    .entry(counter.to_string())
+                    .or_insert(0) += *amount as i64;
+            }
+        }
+        // The existing class effects cover Prophets and military people and
+        // remain the fallback primitive for modded named entries.
+        if spec.effects.contains_key("found_religion")
+            || spec.effects.contains_key("military_promotion")
+            || spec.effects.contains_key("naval_promotion")
+        {
+            self.great_person_effect(pid, &spec.kind);
+        }
+    }
+
+    fn do_recruit_great_person(&mut self, pid: usize, kind: &str) -> Result<(), String> {
+        self.claim_great_person(pid, kind, None)
+    }
+
+    fn do_patronize_great_person(
+        &mut self,
+        pid: usize,
+        kind: &str,
+        currency: &str,
+    ) -> Result<(), String> {
+        self.claim_great_person(pid, kind, Some(currency))
     }
 
     /// Simplified instant retirement effects for a claimed great person.
@@ -3309,7 +3435,7 @@ impl Game {
                 charges += 1; // China: First Emperor
             }
         }
-        let u = Unit {
+        let mut u = Unit {
             id: self.next_id,
             kind: kind.to_string(),
             owner,
@@ -3337,6 +3463,13 @@ impl Game {
             air_patrol: false,
             bonus_moves: 0.0,
         };
+        if kind == "apostle" {
+            // Apostles choose one promotion immediately after purchase.
+            u.xp = Self::promotion_threshold(1);
+            if self.empire_wonder_effect(owner, "apostles_gain_martyr") > 0.0 {
+                u.promotions.insert("martyr".to_string());
+            }
+        }
         self.next_id += 1;
         let id = u.id;
         let sight = spec.sight;
@@ -3676,7 +3809,11 @@ impl Game {
         }
         let action_locked = |id: u32| {
             self.units.get(&id).is_some_and(|unit| {
-                unit.started_turn_in_zoc && unit.acted && !unit.moved && !self.unit_ignores_zoc(id)
+                unit.started_turn_in_zoc
+                    && unit.acted
+                    && !unit.moved
+                    && !self.unit_ignores_zoc(id)
+                    && self.in_enemy_zoc_for(id, unit.pos)
             })
         };
         action_locked(uid)
@@ -6656,6 +6793,37 @@ impl Game {
                     }
                 }
             }
+            let gp_kinds: BTreeSet<String> = self
+                .rules
+                .great_people
+                .values()
+                .map(|person| person.kind.clone())
+                .collect();
+            for kind in gp_kinds {
+                let Some((_, person)) = self.current_great_person(&kind) else {
+                    continue;
+                };
+                let points = p.gpp.get(&kind).copied().unwrap_or(0.0);
+                let missing = (person.cost - points).max(0.0);
+                if missing <= 0.0 {
+                    acts.push(Action::RecruitGreatPerson { kind });
+                } else {
+                    if p.gold >= missing * 15.0 {
+                        acts.push(Action::PatronizeGreatPerson {
+                            kind: kind.clone(),
+                            currency: "gold".to_string(),
+                        });
+                    }
+                    let discount =
+                        self.empire_wonder_effect(pid, "great_person_faith_patronage_discount_pct");
+                    if p.faith >= missing * 10.0 * (1.0 - discount / 100.0) {
+                        acts.push(Action::PatronizeGreatPerson {
+                            kind,
+                            currency: "faith".to_string(),
+                        });
+                    }
+                }
+            }
             if p.pantheon.is_none() && p.faith >= 25.0 {
                 for b in self.rules.beliefs.pantheon.keys() {
                     if !self
@@ -6828,6 +6996,10 @@ impl Game {
             Action::UnslotPolicy { policy } => self.do_unslot_policy(pid, policy),
             Action::TradeRoute { unit, city } => self.do_trade_route(pid, *unit, *city),
             Action::SendEnvoy { player } => self.do_send_envoy(pid, *player),
+            Action::RecruitGreatPerson { kind } => self.do_recruit_great_person(pid, kind),
+            Action::PatronizeGreatPerson { kind, currency } => {
+                self.do_patronize_great_person(pid, kind, currency)
+            }
             Action::ChoosePantheon { belief } => self.do_choose_pantheon(pid, belief),
             Action::AssignGovernor { city } => self.do_assign_governor(pid, *city),
             Action::FoundReligion { follower, founder } => {
@@ -8472,8 +8644,19 @@ impl Game {
         {
             return Err("promotion unavailable".into());
         }
+        let extra_charges = self.rules.promotions[promotion]
+            .effects
+            .get("religious_charges")
+            .copied()
+            .unwrap_or(0.0)
+            + self.rules.promotions[promotion]
+                .effects
+                .get("natural_wonder_charges")
+                .copied()
+                .unwrap_or(0.0);
         let unit = self.units.get_mut(&uid).unwrap();
         unit.promotions.insert(promotion.to_string());
+        unit.charges += extra_charges as i32;
         unit.level = (unit.level + 1).min(8);
         unit.hp = (unit.hp + 50).min(100);
         unit.moves_left = 0.0;
@@ -9097,13 +9280,23 @@ impl Game {
         }
 
         work_slots.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-        let great_works = self.players[pid]
-            .gp_claimed
-            .get("artist")
-            .copied()
-            .unwrap_or(0)
-            .max(0) as usize
-            * 3;
+        let named_works = ["great_work:writing", "great_work:art", "great_work:music"]
+            .into_iter()
+            .map(|key| self.players[pid].counters.get(key).copied().unwrap_or(0))
+            .sum::<i64>()
+            .max(0) as usize;
+        let great_works = if named_works > 0 {
+            named_works
+        } else {
+            // Legacy saves used one generic Artist claim for three works.
+            self.players[pid]
+                .gp_claimed
+                .get("artist")
+                .copied()
+                .unwrap_or(0)
+                .max(0) as usize
+                * 3
+        };
         tourism += work_slots.into_iter().take(great_works).sum::<f64>();
 
         let culture = self
@@ -10818,6 +11011,14 @@ mod combat_scenarios {
             .into_iter()
             .find(|p| g.wdist(*p, provider_pos) == 2)
             .unwrap();
+        let reserve = g
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|p| g.wdist(*p, provider_pos) >= 4)
+            .unwrap();
+        g.spawn_unit("settler", 1, reserve);
         g.spawn_unit("warrior", 1, provider_pos);
         let victim = g.spawn_unit("scout", 1, target);
         g.units.get_mut(&victim).unwrap().hp = 1;
@@ -12114,6 +12315,33 @@ mod victory_conditions {
     }
 
     #[test]
+    fn great_work_tourism_uses_tree_and_slotted_policy_modifiers() {
+        let mut g = game_with_capitals(2, 412, 300);
+        let city = g.player_city_ids(0)[0];
+        g.cities.get_mut(&city).unwrap().buildings = vec![
+            "amphitheater".to_string(),
+            "art_museum".to_string(),
+            "broadcast_center".to_string(),
+        ];
+        g.players[0].gp_claimed.insert("artist".to_string(), 2);
+
+        let base = g.tourism_per_turn(0);
+        g.players[0].techs.insert("printing".to_string());
+        let printing = g.tourism_per_turn(0);
+        assert!((printing - base - 4.0).abs() < 1e-9);
+
+        g.players[0].policies.insert("heritage_tourism".to_string());
+        let heritage = g.tourism_per_turn(0);
+        assert!((heritage - printing - 18.0).abs() < 1e-9);
+
+        g.players[0]
+            .policies
+            .insert("satellite_broadcasts".to_string());
+        let broadcasts = g.tourism_per_turn(0);
+        assert!((broadcasts - heritage - 8.0).abs() < 1e-9);
+    }
+
+    #[test]
     fn diplomacy_requires_twenty_victory_points() {
         let mut g = Game::new_full(2, 26, 16, 405, 300, 1, false);
         let minor = g.players.iter().find(|p| p.is_minor).unwrap().id;
@@ -12661,6 +12889,9 @@ mod district_mechanics {
         assert!(!game.rules.districts["thanh"].specialty);
         assert!(!game.rules.districts["spaceport"].specialty);
         assert!(!game.rules.districts["city_center"].buildable);
+        assert_eq!(game.rules.districts["water_park"].cost, 54.0);
+        assert_eq!(game.rules.districts["copacabana"].cost, 27.0);
+        assert_eq!(game.rules.districts["dam"].max_per_city, None);
     }
 
     #[test]
@@ -12924,5 +13155,87 @@ mod district_mechanics {
         ));
         assert_eq!(game.map.tiles[&claim].owner_city, Some(city));
         assert!(game.cities[&city].owned_tiles.contains(&claim));
+    }
+
+    #[test]
+    fn special_placement_rules_cover_land_water_features_and_city_distance() {
+        let mut game = Game::new_full(1, 20, 14, 5154, 300, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|uid| game.units[uid].kind == "settler")
+            .unwrap();
+        let city = game.found_city_for(0, game.units[&settler].pos, None);
+        let center = game.cities[&city].pos;
+        game.cities.get_mut(&city).unwrap().pop = 100;
+        game.players[0].techs = game.rules.techs.keys().cloned().collect();
+        game.players[0].civics = game.rules.civics.keys().cloned().collect();
+        let owned = game.wdisk(center, 3);
+        game.cities.get_mut(&city).unwrap().owned_tiles = owned.clone();
+        for position in owned {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.hills = false;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.district = None;
+            tile.wonder = None;
+            tile.owner_city = Some(city);
+            tile.river_edges = [false; 6];
+        }
+        let near = game.nbrs(center)[0];
+        let far = game
+            .wdisk(center, 2)
+            .into_iter()
+            .find(|position| game.wdist(*position, center) == 2)
+            .unwrap();
+        let is_site = |game: &Game, district: &str, position: Pos| {
+            game.district_sites(city, district).contains(&position)
+        };
+
+        assert!(!is_site(&game, "encampment", near));
+        assert!(is_site(&game, "encampment", far));
+        assert!(!is_site(&game, "preserve", near));
+        assert!(is_site(&game, "preserve", far));
+
+        game.map.tiles.get_mut(&far).unwrap().hills = true;
+        assert!(is_site(&game, "acropolis", far));
+        assert!(!is_site(&game, "aerodrome", far));
+        assert!(!is_site(&game, "spaceport", far));
+        game.map.tiles.get_mut(&far).unwrap().hills = false;
+        assert!(is_site(&game, "aerodrome", far));
+        assert!(is_site(&game, "spaceport", far));
+
+        game.map.tiles.get_mut(&far).unwrap().terrain = "lake".to_string();
+        assert!(is_site(&game, "harbor", far));
+        assert!(!is_site(&game, "water_park", far));
+        game.map.tiles.get_mut(&far).unwrap().terrain = "coast".to_string();
+        assert!(is_site(&game, "water_park", far));
+        game.map.tiles.get_mut(&far).unwrap().feature = Some("reef".to_string());
+        assert!(!is_site(&game, "harbor", far));
+        assert!(!is_site(&game, "water_park", far));
+
+        {
+            let tile = game.map.tiles.get_mut(&far).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = Some("grassland_floodplains".to_string());
+        }
+        assert!(
+            is_site(&game, "campus", far),
+            "Gathering Storm allows ordinary districts on Floodplains"
+        );
+        game.map.tiles.get_mut(&far).unwrap().river_edges[0] = true;
+        game.map.tiles.get_mut(&far).unwrap().river_edges[1] = true;
+        assert!(is_site(&game, "dam", far));
+
+        let center_edge = game.map.direction_to(near, center).unwrap();
+        {
+            let tile = game.map.tiles.get_mut(&near).unwrap();
+            tile.feature = None;
+            tile.river_edges[(center_edge + 1) % 6] = true;
+        }
+        assert!(is_site(&game, "aqueduct", near));
+        assert!(!is_site(&game, "aqueduct", far));
     }
 }
