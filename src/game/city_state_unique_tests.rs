@@ -348,6 +348,8 @@ fn final_patch_envoy_thresholds_follow_active_building_tiers() {
     let (mut game, cities) = game_with_capitals(1, 89_007);
     let city = cities[0];
     let scientific = add_city_state(&mut game, "Hattusa");
+    install_district(&mut game, city, "campus");
+    install_district(&mut game, city, "diplomatic_quarter");
     game.cities.get_mut(&city).unwrap().buildings.extend(
         [
             "library",
@@ -380,6 +382,9 @@ fn trade_envoys_double_each_independent_commercial_and_harbor_tier() {
     let (mut game, cities) = game_with_capitals(1, 89_008);
     let city = cities[0];
     let trade = add_city_state(&mut game, "Zanzibar");
+    install_district(&mut game, city, "commercial_hub");
+    install_district(&mut game, city, "harbor");
+    install_district(&mut game, city, "diplomatic_quarter");
     game.cities.get_mut(&city).unwrap().buildings.extend(
         [
             "market",
@@ -409,6 +414,9 @@ fn production_envoys_obey_unit_and_infrastructure_queues() {
     let city = cities[0];
     let state = add_city_state(&mut game, "Carthage");
     game.players[0].envoys = vec![(state, 6)];
+    install_district(&mut game, city, "encampment");
+    install_district(&mut game, city, "industrial_zone");
+    install_district(&mut game, city, "diplomatic_quarter");
     game.cities.get_mut(&city).unwrap().buildings.extend(
         [
             "barracks",

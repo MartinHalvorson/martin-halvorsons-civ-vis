@@ -200,6 +200,31 @@ mod city_name_tests {
 }
 
 #[cfg(test)]
+fn install_test_district(game: &mut Game, city: u32, district: &str) -> Pos {
+    let center = game.cities[&city].pos;
+    let position = game.cities[&city]
+        .owned_tiles
+        .iter()
+        .copied()
+        .find(|position| {
+            *position != center
+                && game.map.tiles[position].district.is_none()
+                && game.map.tiles[position].wonder.is_none()
+                && game.map.tiles[position].improvement.is_none()
+        })
+        .expect("test city has an unused district tile");
+    let tile = game.map.tiles.get_mut(&position).unwrap();
+    tile.district = Some(district.to_string());
+    tile.pillaged = false;
+    game.cities
+        .get_mut(&city)
+        .unwrap()
+        .districts
+        .insert(district.to_string(), position);
+    position
+}
+
+#[cfg(test)]
 mod city_state_unique_tests;
 
 #[cfg(test)]
@@ -399,6 +424,8 @@ mod corporation_tests {
     #[test]
     fn industry_corporation_and_products_form_one_playable_save_stable_chain() {
         let (mut game, city, positions) = industry_game();
+        install_test_district(&mut game, city, "commercial_hub");
+        install_test_district(&mut game, city, "harbor");
         let builder = game.spawn_unit("builder", 0, positions[0]);
         assert_eq!(game.controlled_resource_count(0, "silk"), 3);
         game.map.tiles.get_mut(&positions[2]).unwrap().improvement = None;
@@ -430,7 +457,11 @@ mod corporation_tests {
 
         let merchant_before = game.players[0].gpp.get("merchant").copied().unwrap_or(0.0);
         game.process_great_people(0);
-        assert_eq!(game.players[0].gpp["merchant"], merchant_before + 1.0);
+        assert_eq!(
+            game.players[0].gpp["merchant"],
+            merchant_before + 2.0,
+            "the active Commercial Hub and the Industry each grant one Merchant point"
+        );
 
         game.players[0].techs.insert("economics".to_string());
         let merchant_cost = game.gp_cost(0, "merchant");
@@ -505,6 +536,7 @@ mod corporation_tests {
     #[test]
     fn products_move_between_exact_slots_and_pillaged_hosts_stop_their_effects() {
         let (mut game, origin, positions) = industry_game();
+        install_test_district(&mut game, origin, "commercial_hub");
         game.map.tiles.get_mut(&positions[0]).unwrap().improvement =
             Some("corporation".to_string());
         game.cities
@@ -532,6 +564,7 @@ mod corporation_tests {
             .unwrap();
         game.found_city_for(0, second_position, Some("Product Host".to_string()));
         let target = game.city_at(second_position).unwrap();
+        install_test_district(&mut game, target, "harbor");
         game.cities
             .get_mut(&target)
             .unwrap()
@@ -1867,6 +1900,8 @@ mod governor_runtime_tests {
             .unwrap()
             .buildings
             .push("hydroelectric_dam".to_string());
+        set_district(&mut game, city, sites[3], "dam");
+        set_district(&mut without_renewables, city, sites[3], "dam");
         assert!(
             game.city_yields(city).gold > without_renewables.city_yields(city).gold,
             "the hydroelectric dam receives Reyna's renewable Gold"
@@ -1887,9 +1922,8 @@ mod governor_runtime_tests {
             .unwrap()
             .wonders
             .insert("biosphere".to_string(), center);
-        assert_eq!(
-            game.tourism_per_turn(0) - without_renewables.tourism_per_turn(0),
-            12.0,
+        assert!(
+            (game.tourism_per_turn(0) - without_renewables.tourism_per_turn(0) - 12.0).abs() < 1e-9,
             "the Biosphere triples Reyna's four bonus renewable Power into Tourism"
         );
 
@@ -2174,6 +2208,7 @@ mod trade_deal_tests {
         let mut game = trade_game();
         for pid in 0..2 {
             let city = game.player_city_ids(pid)[0];
+            install_test_district(&mut game, city, "theater_square");
             game.cities
                 .get_mut(&city)
                 .unwrap()
@@ -2207,6 +2242,7 @@ mod trade_deal_tests {
 
         let mut blocked = trade_game();
         let seller = blocked.player_city_ids(1)[0];
+        install_test_district(&mut blocked, seller, "theater_square");
         blocked
             .cities
             .get_mut(&seller)
@@ -2335,7 +2371,7 @@ mod trade_deal_tests {
         resources.insert("iron".to_string(), 1);
         let action = Action::Trade {
             player: 1,
-            offer: DealItems {
+            offer: Box::new(DealItems {
                 gold: 12.0,
                 gold_per_turn: 2.0,
                 diplomatic_favor: 5.0,
@@ -2344,8 +2380,8 @@ mod trade_deal_tests {
                 captured_spies: vec![77],
                 cities: vec![42],
                 open_borders: true,
-            },
-            request: DealItems::default(),
+            }),
+            request: Box::new(DealItems::default()),
         };
         let encoded = serde_json::to_value(&action).unwrap();
         assert_eq!(serde_json::from_value::<Action>(encoded).unwrap(), action);
@@ -2445,6 +2481,7 @@ mod strategic_resource_tests {
         assert_eq!(game.strategic_stockpile_capacity(0), 50.0);
 
         let city = game.player_city_ids(0)[0];
+        install_test_district(&mut game, city, "encampment");
         game.cities
             .get_mut(&city)
             .unwrap()
@@ -2643,11 +2680,12 @@ mod project_runtime_tests {
     fn industrial_zone_logistics_supplies_full_power_without_burning_fuel() {
         let (mut game, city, positions) = project_game();
         install_district(&mut game, city, positions[0], "industrial_zone");
+        install_district(&mut game, city, positions[1], "campus");
         game.cities
             .get_mut(&city)
             .unwrap()
             .buildings
-            .push("factory".to_string());
+            .extend(["factory".to_string(), "research_lab".to_string()]);
         game.cities.get_mut(&city).unwrap().queue = vec![Item::Project {
             project: "industrial_zone_logistics".to_string(),
         }];
@@ -3498,6 +3536,7 @@ mod specialist_tests {
     fn royal_society_spends_all_builder_charges_and_can_finish_a_project() {
         let (mut game, city, position) = specialist_game();
         install_district(&mut game, city, position, "spaceport");
+        install_test_district(&mut game, city, "government_plaza");
         game.cities
             .get_mut(&city)
             .unwrap()
@@ -3545,6 +3584,7 @@ mod specialist_tests {
             .unwrap();
         install_district(&mut game, city, first, "spaceport");
         install_district(&mut game, city, second, "spaceport");
+        install_test_district(&mut game, city, "government_plaza");
         game.map.tiles.get_mut(&first).unwrap().pillaged = true;
         game.cities
             .get_mut(&city)
@@ -3653,6 +3693,7 @@ mod power_tests {
     fn coal_is_burned_in_whole_units_and_powered_yields_stop_when_stock_runs_out() {
         let (mut game, city) = power_game();
         install_power_plant(&mut game, city, "coal_power_plant");
+        install_test_district(&mut game, city, "campus");
         game.cities
             .get_mut(&city)
             .unwrap()
@@ -3688,6 +3729,7 @@ mod power_tests {
     fn renewable_power_prevents_fuel_burn() {
         let (mut game, city) = power_game();
         install_power_plant(&mut game, city, "coal_power_plant");
+        install_test_district(&mut game, city, "campus");
         game.cities
             .get_mut(&city)
             .unwrap()
@@ -3745,6 +3787,9 @@ mod power_tests {
         install_power_plant(&mut game, target, "nuclear_power_plant");
         install_power_plant(&mut game, oil_city, "oil_power_plant");
         install_power_plant(&mut game, coal_city, "coal_power_plant");
+        for district in ["campus", "commercial_hub", "theater_square", "aerodrome"] {
+            install_test_district(&mut game, target, district);
+        }
         game.cities.get_mut(&target).unwrap().buildings.extend([
             "research_lab".to_string(),
             "stock_exchange".to_string(),
@@ -4334,6 +4379,7 @@ mod district_building_wonder_runtime_tests {
     fn royal_society_consumes_all_builder_charges_once_per_city_turn() {
         let (mut game, city, position) = one_city(774_402);
         install_district(&mut game, city, position, "spaceport");
+        install_test_district(&mut game, city, "government_plaza");
         game.cities
             .get_mut(&city)
             .unwrap()
@@ -4482,7 +4528,8 @@ mod district_building_wonder_runtime_tests {
 
     #[test]
     fn foreign_ministry_halves_levies_and_buffs_city_state_units() {
-        let (mut game, city, _) = one_city(774_404);
+        let (mut game, city, position) = one_city(774_404);
+        install_district(&mut game, city, position, "government_plaza");
         game.cities
             .get_mut(&city)
             .unwrap()
@@ -4565,6 +4612,7 @@ mod district_building_wonder_runtime_tests {
     #[test]
     fn dar_e_mehr_ages_from_construction_and_resets_when_repaired() {
         let (mut game, city, position) = one_city(774_4051);
+        install_district(&mut game, city, position, "holy_site");
         game.world_era = 2;
         let baseline = game.city_yields(city).faith;
         let dar_e_mehr = Item::Building {
@@ -5783,6 +5831,10 @@ impl Districts {
         self.0.clear();
     }
 
+    pub fn remove(&mut self, name: &str) -> Option<Vec<Pos>> {
+        self.0.remove(name)
+    }
+
     pub fn get(&self, name: &str) -> Option<&Pos> {
         self.0.get(name).and_then(|positions| positions.first())
     }
@@ -6495,8 +6547,8 @@ pub enum Action {
     },
     Trade {
         player: usize,
-        offer: DealItems,
-        request: DealItems,
+        offer: Box<DealItems>,
+        request: Box<DealItems>,
     },
     CongressVote {
         resolution: String,
@@ -8369,18 +8421,18 @@ impl Game {
         for city in self.cities.values().filter(|city| city.owner == pid) {
             // Market and Lighthouse are alternative ways to earn this city's
             // one infrastructure route; owning both never grants two.
-            if self.city_has_building_family(city, "market")
-                || self.city_has_building_family(city, "lighthouse")
+            if self.city_has_active_building_family(city, "market")
+                || self.city_has_active_building_family(city, "lighthouse")
             {
                 cap += 1;
             }
             // The Owls of Minerva Gilded Vault is the explicit exception: a
             // Harbor in the same city grants one additional route.
-            if city
-                .buildings
-                .iter()
-                .any(|building| building == "gilded_vault")
-                && self.city_has_district_family(city, "harbor")
+            if city.buildings.iter().any(|building| {
+                building == "gilded_vault"
+                    && !city.pillaged_buildings.contains(building)
+                    && self.building_district_is_active(city, building)
+            }) && self.city_has_district_family(city, "harbor")
             {
                 cap += self.rules.buildings["gilded_vault"]
                     .effects
@@ -8430,7 +8482,11 @@ impl Game {
                 ys.gold += 4.0;
             }
         }
-        for d in city.districts.keys() {
+        for (d, _) in city
+            .districts
+            .iter()
+            .filter(|(district, position)| self.district_is_active(city, district, **position))
+        {
             match (self.district_family(d), domestic) {
                 ("campus", true)
                 | ("holy_site", true)
@@ -9635,20 +9691,19 @@ impl Game {
                     }
                 }
                 if d == "lavra" {
-                    if self.city_has_building_family(c, "shrine") {
+                    if self.city_has_active_building_family(c, "shrine") {
                         *city_earn.entry("writer".to_string()).or_insert(0.0) += 1.0;
                     }
-                    if self.city_has_building_family(c, "temple") {
+                    if self.city_has_active_building_family(c, "temple") {
                         *city_earn.entry("artist".to_string()).or_insert(0.0) += 1.0;
                     }
                     let has_worship_building = c.buildings.iter().any(|building| {
-                        self.rules.buildings.get(building).is_some_and(|building| {
-                            building.district.as_deref() == Some("holy_site")
-                                && building
-                                    .requires
-                                    .iter()
-                                    .any(|required| required == "temple")
-                        })
+                        !c.pillaged_buildings.contains(building)
+                            && self.building_district_is_active(c, building)
+                            && self.rules.buildings.get(building).is_some_and(|spec| {
+                                spec.district.as_deref() == Some("holy_site")
+                                    && spec.requires.iter().any(|required| required == "temple")
+                            })
                     });
                     if has_worship_building {
                         *city_earn.entry("musician".to_string()).or_insert(0.0) += 1.0;
@@ -9656,7 +9711,7 @@ impl Game {
                 }
             }
             for b in &c.buildings {
-                if c.pillaged_buildings.contains(b) {
+                if c.pillaged_buildings.contains(b) || !self.building_district_is_active(c, b) {
                     continue;
                 }
                 for (kind, points) in &self.rules.buildings[b.as_str()].great_person_points {
@@ -9763,8 +9818,7 @@ impl Game {
                 ] {
                     if self.city_has_active_district_family(c, district)
                         && building.is_none_or(|building| {
-                            self.city_has_building_family(c, building)
-                                && !c.pillaged_buildings.contains(building)
+                            self.city_has_active_building_family(c, building)
                         })
                     {
                         let city_multiplier =
@@ -10138,7 +10192,10 @@ impl Game {
             return city
                 .buildings
                 .iter()
-                .filter(|building| !city.pillaged_buildings.contains(*building))
+                .filter(|building| {
+                    !city.pillaged_buildings.contains(*building)
+                        && self.building_district_is_active(city, building)
+                })
                 .filter(|building| {
                     self.rules.buildings[building.as_str()]
                         .worship_belief
@@ -11345,11 +11402,10 @@ impl Game {
                     .unwrap_or(0.0);
             }
         }
-        for b in city
-            .buildings
-            .iter()
-            .filter(|building| !city.pillaged_buildings.contains(*building))
-        {
+        for b in city.buildings.iter().filter(|building| {
+            !city.pillaged_buildings.contains(*building)
+                && self.building_district_is_active(city, building)
+        }) {
             let building = &self.rules.buildings[b.as_str()];
             h += building.housing;
             if coastal {
@@ -11387,10 +11443,11 @@ impl Game {
             h += self.rules.wonders[wonder.as_str()].housing;
         }
         h += self.empire_wonder_effect(city.owner, "empire_housing");
-        if city.districts.len() >= 2 {
+        let specialty_districts = self.city_specialty_district_count(city);
+        if specialty_districts >= 2 {
             h += self.policy_effect(city.owner, "housing_at_2_districts");
         }
-        if city.districts.len() >= 3 {
+        if specialty_districts >= 3 {
             h += self.policy_effect(city.owner, "housing_at_3_districts");
         }
         if self.city_governor_active(city.owner, city.id) {
@@ -11431,9 +11488,10 @@ impl Game {
             .values()
             .filter(|c| c.owner == pid)
             .flat_map(|c| {
-                c.buildings
-                    .iter()
-                    .filter(|building| !c.pillaged_buildings.contains(*building))
+                c.buildings.iter().filter(|building| {
+                    !c.pillaged_buildings.contains(*building)
+                        && self.building_district_is_active(c, building)
+                })
             })
             .map(|b| f(&self.rules.buildings[b.as_str()]))
             .sum()
@@ -11442,7 +11500,10 @@ impl Game {
     fn city_building_effect(&self, city: &City, effect: &str) -> f64 {
         city.buildings
             .iter()
-            .filter(|building| !city.pillaged_buildings.contains(*building))
+            .filter(|building| {
+                !city.pillaged_buildings.contains(*building)
+                    && self.building_district_is_active(city, building)
+            })
             .map(|building| {
                 self.rules.buildings[building.as_str()]
                     .effects
@@ -11484,7 +11545,10 @@ impl Game {
     pub fn city_power_demand(&self, city: &City) -> f64 {
         city.buildings
             .iter()
-            .filter(|building| !city.pillaged_buildings.contains(*building))
+            .filter(|building| {
+                !city.pillaged_buildings.contains(*building)
+                    && self.building_district_is_active(city, building)
+            })
             .map(|building| self.rules.buildings[building.as_str()].power)
             .sum()
     }
@@ -11493,7 +11557,10 @@ impl Game {
         let mut renewable = city
             .buildings
             .iter()
-            .filter(|building| !city.pillaged_buildings.contains(*building))
+            .filter(|building| {
+                !city.pillaged_buildings.contains(*building)
+                    && self.building_district_is_active(city, building)
+            })
             .map(|building| {
                 self.rules.buildings[building.as_str()]
                     .effects
@@ -11616,16 +11683,12 @@ impl Game {
                         .values()
                         .filter_map(|source| {
                             if source.owner != pid
-                                || !source.buildings.iter().any(|building| building == plant)
-                                || source.pillaged_buildings.contains(*plant)
+                                || !self.city_has_active_building_family(source, plant)
                             {
                                 return None;
                             }
-                            self.city_district_family_position(source, "industrial_zone")
-                                .filter(|position| {
-                                    !self.map.tiles[position].pillaged
-                                        && self.wdist(*position, city.pos) <= 6
-                                })
+                            self.city_active_district_family_position(source, "industrial_zone")
+                                .filter(|position| self.wdist(*position, city.pos) <= 6)
                                 .map(|_| {
                                     self.governor_effect(pid, source.id, "power_per_resource_bonus")
                                 })
@@ -12116,7 +12179,9 @@ impl Game {
             .filter(|source| source.owner == city.owner)
         {
             for building in &source.buildings {
-                if source.pillaged_buildings.contains(building) {
+                if source.pillaged_buildings.contains(building)
+                    || !self.building_district_is_active(source, building)
+                {
                     continue;
                 }
                 let spec = &self.rules.buildings[building.as_str()];
@@ -12243,7 +12308,10 @@ impl Game {
         }
         for b in &city.buildings {
             let spec = &self.rules.buildings[b.as_str()];
-            if !city.pillaged_buildings.contains(b) && spec.regional_range <= 0 {
+            if !city.pillaged_buildings.contains(b)
+                && self.building_district_is_active(city, b)
+                && spec.regional_range <= 0
+            {
                 supply += spec.amenity;
                 if b == "stadium" {
                     supply += self.policy_effect(city.owner, "stadium_amenity");
@@ -12408,10 +12476,11 @@ impl Game {
         if garrison {
             supply += self.policy_effect(city.owner, "garrison_amenity");
         }
-        if city.districts.len() >= 2 {
+        let specialty_districts = self.city_specialty_district_count(city);
+        if specialty_districts >= 2 {
             supply += self.policy_effect(city.owner, "amenity_at_2_districts");
         }
-        if city.districts.len() >= 3 {
+        if specialty_districts >= 3 {
             supply += self.policy_effect(city.owner, "amenity_at_3_districts");
         }
         if self.city_governor_active(city.owner, city.id) {
@@ -12973,7 +13042,10 @@ impl Game {
     pub fn product_capacity(&self, city: &City) -> usize {
         city.buildings
             .iter()
-            .filter(|building| !city.pillaged_buildings.contains(*building))
+            .filter(|building| {
+                !city.pillaged_buildings.contains(*building)
+                    && self.building_district_is_active(city, building)
+            })
             .map(|building| {
                 self.rules.buildings[building.as_str()]
                     .effects
@@ -14238,11 +14310,12 @@ impl Game {
     fn city_defense_district_count(&self, city: &City) -> usize {
         city.districts
             .iter()
-            .filter(|(district, _)| {
-                !matches!(
-                    self.district_family(district),
-                    "preserve" | "aqueduct" | "canal" | "dam"
-                )
+            .filter(|(district, position)| {
+                self.district_is_active(city, district, **position)
+                    && !matches!(
+                        self.district_family(district),
+                        "preserve" | "aqueduct" | "canal" | "dam"
+                    )
             })
             .count()
     }
@@ -14421,6 +14494,13 @@ impl Game {
             .any(|district| self.district_is_family(district, family))
     }
 
+    fn city_specialty_district_count(&self, city: &City) -> usize {
+        city.districts
+            .keys()
+            .filter(|district| self.rules.districts[district.as_str()].specialty)
+            .count()
+    }
+
     fn city_foundation_count(&self, city: &City, family: Option<&str>) -> usize {
         city.owned_tiles
             .iter()
@@ -14540,7 +14620,9 @@ impl Game {
 
     fn city_has_active_building_family(&self, city: &City, family: &str) -> bool {
         city.buildings.iter().any(|building| {
-            !city.pillaged_buildings.contains(building) && self.building_is_family(building, family)
+            !city.pillaged_buildings.contains(building)
+                && self.building_district_is_active(city, building)
+                && self.building_is_family(building, family)
         })
     }
 
@@ -15856,6 +15938,7 @@ impl Game {
         }
         for b in &city.buildings {
             if city.pillaged_buildings.contains(b)
+                || !self.building_district_is_active(city, b)
                 || (city.encampment_pillaged
                     && self.rules.buildings[b.as_str()].district.as_deref() == Some("encampment"))
             {
@@ -16119,8 +16202,11 @@ impl Game {
                 if route_multiplier > 1.0 {
                     let district_gold = dc
                         .districts
-                        .keys()
-                        .map(|district| match self.district_family(district) {
+                        .iter()
+                        .filter(|(district, position)| {
+                            self.district_is_active(dc, district, **position)
+                        })
+                        .map(|(district, _)| match self.district_family(district) {
                             "commercial_hub" | "harbor" => 3.0,
                             "government_plaza" => 2.0,
                             _ => 0.0,
@@ -16142,7 +16228,10 @@ impl Game {
                         let holy_site_buildings = city
                             .buildings
                             .iter()
-                            .filter(|building| !city.pillaged_buildings.contains(*building))
+                            .filter(|building| {
+                                !city.pillaged_buildings.contains(*building)
+                                    && self.building_district_is_active(city, building)
+                            })
                             .filter(|building| {
                                 self.rules.buildings[building.as_str()]
                                     .district
@@ -16287,11 +16376,10 @@ impl Game {
             let choral_music = self.city_religion_belief_effect(city, "holy_building_culture");
             let shrine_food = self.city_religion_belief_effect(city, "shrine_food");
             let temple_food = self.city_religion_belief_effect(city, "temple_food");
-            for building in city
-                .buildings
-                .iter()
-                .filter(|building| !city.pillaged_buildings.contains(*building))
-            {
+            for building in city.buildings.iter().filter(|building| {
+                !city.pillaged_buildings.contains(*building)
+                    && self.building_district_is_active(city, building)
+            }) {
                 if self.building_is_family(building, "shrine") {
                     ys.culture += self.rules.buildings[building].yields.faith * choral_music;
                     ys.food += shrine_food;
@@ -16376,7 +16464,7 @@ impl Game {
         let eff = self.gov_effects(city.owner);
         ys.production += eff.production_per_pop * city.pop as f64;
         ys.faith += eff.faith_per_pop * city.pop as f64;
-        ys.culture += eff.culture_per_district * city.districts.len() as f64;
+        ys.culture += eff.culture_per_district * self.city_specialty_district_count(city) as f64;
         ys.science +=
             self.governor_effect(city.owner, city.id, "science_per_pop") * city.pop as f64;
         ys.culture +=
@@ -16399,6 +16487,7 @@ impl Game {
                 building.as_str(),
                 "coal_power_plant" | "oil_power_plant" | "nuclear_power_plant"
             ) && !city.pillaged_buildings.contains(building)
+                && self.building_district_is_active(city, building)
         }) {
             ys.production += self.governor_effect(city.owner, city.id, "power_plant_production");
         }
@@ -19079,8 +19168,8 @@ impl Game {
             for deal in self.quick_deals(pid) {
                 acts.push(Action::Trade {
                     player: deal.partner,
-                    offer: deal.offer,
-                    request: deal.request,
+                    offer: Box::new(deal.offer),
+                    request: Box::new(deal.request),
                 });
             }
             for dedication in self.available_dedications(pid) {
@@ -21431,43 +21520,39 @@ impl Game {
         if let Some(cid) = self.city_at(pos) {
             let city = &self.cities[&cid];
             if city.owner == pid {
-                capacity += city
-                    .districts
-                    .iter()
-                    .filter(|(district, _)| self.district_is_family(district, "aerodrome"))
-                    .map(|(district, _)| self.rules.districts[district.as_str()].air_slots)
-                    .sum::<i32>();
-                capacity += city
-                    .buildings
-                    .iter()
-                    .filter(|building| !city.pillaged_buildings.contains(*building))
-                    .map(|building| {
-                        self.rules.buildings[building.as_str()]
-                            .effects
-                            .get("air_slots")
-                            .copied()
-                            .unwrap_or(0.0) as i32
-                    })
-                    .sum::<i32>();
+                capacity += 1;
             }
         }
         if let Some(tile) = self.map.get(pos) {
-            if tile
-                .owner_city
-                .and_then(|cid| self.cities.get(&cid))
-                .is_some_and(|city| city.owner == pid)
-            {
-                if let Some(district) = tile.district.as_deref() {
-                    if self.district_is_family(district, "aerodrome") && !tile.pillaged {
-                        capacity += self.rules.districts[district].air_slots;
+            if let Some(city) = tile.owner_city.and_then(|cid| self.cities.get(&cid)) {
+                if city.owner == pid {
+                    if let Some(district) = tile.district.as_deref() {
+                        if self.district_is_family(district, "aerodrome") && !tile.pillaged {
+                            capacity += self.rules.districts[district].air_slots;
+                            capacity += city
+                                .buildings
+                                .iter()
+                                .filter(|building| {
+                                    !city.pillaged_buildings.contains(*building)
+                                        && self.building_district_is_active(city, building)
+                                })
+                                .map(|building| {
+                                    self.rules.buildings[building.as_str()]
+                                        .effects
+                                        .get("air_slots")
+                                        .copied()
+                                        .unwrap_or(0.0) as i32
+                                })
+                                .sum::<i32>();
+                        }
                     }
-                }
-                if tile.improvement.as_deref() == Some("airstrip") && !tile.pillaged {
-                    capacity += self.rules.improvements["airstrip"]
-                        .effects
-                        .get("air_slots")
-                        .copied()
-                        .unwrap_or(3.0) as i32;
+                    if tile.improvement.as_deref() == Some("airstrip") && !tile.pillaged {
+                        capacity += self.rules.improvements["airstrip"]
+                            .effects
+                            .get("air_slots")
+                            .copied()
+                            .unwrap_or(3.0) as i32;
+                    }
                 }
             }
         }
@@ -26128,11 +26213,10 @@ impl Game {
                     ));
                 }
             }
-            for building in city
-                .buildings
-                .iter()
-                .filter(|building| !city.pillaged_buildings.contains(*building))
-            {
+            for building in city.buildings.iter().filter(|building| {
+                !city.pillaged_buildings.contains(*building)
+                    && self.building_district_is_active(city, building)
+            }) {
                 for (kind, count) in &self.rules.buildings[building.as_str()].great_work_slots {
                     slots.extend(std::iter::repeat_n(
                         (city.id, kind.clone()),
@@ -26437,11 +26521,10 @@ impl Game {
                 let spec = &self.rules.wonders[wonder.as_str()];
                 tourism += spec.effects.get("tourism").copied().unwrap_or(0.0);
             }
-            for building in city
-                .buildings
-                .iter()
-                .filter(|building| !city.pillaged_buildings.contains(*building))
-            {
+            for building in city.buildings.iter().filter(|building| {
+                !city.pillaged_buildings.contains(*building)
+                    && self.building_district_is_active(city, building)
+            }) {
                 let spec = &self.rules.buildings[building.as_str()];
                 let mut building_tourism = spec.effects.get("tourism").copied().unwrap_or(0.0);
                 if self.tree_effect(pid, "wall_tourism") > 0.0 {
@@ -26611,7 +26694,10 @@ impl Game {
             let mut building_renewable_power = city
                 .buildings
                 .iter()
-                .filter(|building| !city.pillaged_buildings.contains(*building))
+                .filter(|building| {
+                    !city.pillaged_buildings.contains(*building)
+                        && self.building_district_is_active(city, building)
+                })
                 .map(|building| {
                     self.rules.buildings[building.as_str()]
                         .effects
@@ -28068,8 +28154,20 @@ impl Game {
     fn place_new_unit(&mut self, kind: &str, owner: usize, pos: Pos) -> Option<u32> {
         let spec = self.rules.units[kind].clone();
         if spec.domain.as_deref() == Some("air") {
-            let mut bases = vec![pos];
+            let mut bases = Vec::new();
+            if let Some(city_id) = self.city_at(pos) {
+                let city = &self.cities[&city_id];
+                bases.extend(city.districts.iter().filter_map(|(district, position)| {
+                    (self.district_is_family(district, "aerodrome")
+                        && self.district_is_active(city, district, *position))
+                    .then_some(*position)
+                }));
+            }
+            bases.push(pos);
             bases.extend(self.nbrs(pos));
+            bases.sort();
+            bases.dedup();
+            bases.sort_by_key(|base| usize::from(*base == pos));
             if let Some(base) = bases
                 .into_iter()
                 .find(|base| self.can_air_base_at(owner, *base, None))
@@ -29744,6 +29842,9 @@ mod combat_scenarios {
         }
         assert_eq!(g.city_defense_district_count(&g.cities[&city]), 2);
         assert_eq!(g.city_strength(city), base + 4.0);
+        g.map.tiles.get_mut(&positions[5]).unwrap().pillaged = true;
+        assert_eq!(g.city_defense_district_count(&g.cities[&city]), 1);
+        assert_eq!(g.city_strength(city), base + 2.0);
     }
 
     #[test]
@@ -30595,6 +30696,8 @@ mod victory_conditions {
             .next()
             .unwrap();
         let second_city = g.found_city_for(0, second_city_position, None);
+        install_test_district(&mut g, cid, "aerodrome");
+        install_test_district(&mut g, second_city, "aerodrome");
         g.cities
             .get_mut(&cid)
             .unwrap()
@@ -30628,7 +30731,11 @@ mod victory_conditions {
             .owned_tiles
             .iter()
             .copied()
-            .find(|pos| *pos != g.cities[&cid].pos && !g.rules.is_water(&g.map.tiles[pos]))
+            .find(|pos| {
+                *pos != g.cities[&cid].pos
+                    && !g.rules.is_water(&g.map.tiles[pos])
+                    && g.map.tiles[pos].district.is_none()
+            })
             .unwrap();
 
         assert!(!g.resource_visible_to(0, "uranium"));
@@ -31342,6 +31449,7 @@ mod victory_conditions {
     fn film_studio_bonus_applies_only_against_each_modern_era_rival() {
         let mut g = game_with_capitals(3, 4_043, 300);
         let city = g.player_city_ids(0)[0];
+        install_test_district(&mut g, city, "theater_square");
         g.cities
             .get_mut(&city)
             .unwrap()
@@ -31374,6 +31482,7 @@ mod victory_conditions {
     fn great_work_tourism_uses_tree_and_slotted_policy_modifiers() {
         let mut g = game_with_capitals(2, 412, 300);
         let city = g.player_city_ids(0)[0];
+        install_test_district(&mut g, city, "theater_square");
         g.cities.get_mut(&city).unwrap().buildings = vec![
             "amphitheater".to_string(),
             "art_museum".to_string(),
@@ -32005,6 +32114,7 @@ mod victory_conditions {
             .unwrap()
             .buildings
             .push("lighthouse".to_string());
+        let harbor = install_test_district(&mut g, cid, "harbor");
         assert_eq!(
             g.city_housing(&g.cities[&cid]),
             6.0,
@@ -32016,6 +32126,8 @@ mod victory_conditions {
             .unwrap()
             .buildings
             .retain(|b| b != "lighthouse");
+        g.cities.get_mut(&cid).unwrap().districts.remove("harbor");
+        g.map.tiles.get_mut(&harbor).unwrap().district = None;
         g.map.tiles.get_mut(&coast).unwrap().terrain = "plains".to_string();
         g.cities
             .get_mut(&cid)
@@ -32261,6 +32373,7 @@ mod great_work_tests {
             .find(|unit| game.units[unit].kind == "settler")
             .unwrap();
         let city = game.found_city_for(0, game.units[&settler].pos, None);
+        install_test_district(&mut game, city, "theater_square");
         (game, city)
     }
 
@@ -32311,7 +32424,9 @@ mod great_work_tests {
             .owned_tiles
             .iter()
             .copied()
-            .filter(|position| *position != game.cities[&city].pos)
+            .filter(|position| {
+                *position != game.cities[&city].pos && game.map.tiles[position].district.is_none()
+            })
             .take(4)
             .collect();
         assert_eq!(sites.len(), 4);
@@ -32377,6 +32492,7 @@ mod great_work_tests {
             game.found_city_for(pid, game.units[&settler].pos, None);
         }
         let museum_city = game.player_city_ids(0)[0];
+        install_test_district(&mut game, museum_city, "theater_square");
         game.cities
             .get_mut(&museum_city)
             .unwrap()
@@ -32960,6 +33076,139 @@ mod district_mechanics {
     }
 
     #[test]
+    fn pillaged_district_disables_its_building_yields_points_and_route_capacity() {
+        let (mut game, city, position, ring) = controlled_game();
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert("campus".to_string(), position);
+        game.map.tiles.get_mut(&position).unwrap().district = Some("campus".to_string());
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("library".to_string());
+        game.cities.get_mut(&city).unwrap().pop = 1;
+
+        let mut active = game.clone();
+        active.process_great_people(0);
+        assert_eq!(active.players[0].gpp.get("scientist"), Some(&2.0));
+        game.map.tiles.get_mut(&position).unwrap().pillaged = true;
+        let inactive_yields = game.city_yields(city);
+        game.process_great_people(0);
+        assert_eq!(game.players[0].gpp.get("scientist"), None);
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .retain(|building| building != "library");
+        assert_eq!(game.city_yields(city), inactive_yields);
+
+        let commercial = ring[0];
+        game.map.tiles.get_mut(&commercial).unwrap().pillaged = false;
+        game.map.tiles.get_mut(&commercial).unwrap().district = Some("commercial_hub".to_string());
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert("commercial_hub".to_string(), commercial);
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("market".to_string());
+        game.players[0].civics.insert("foreign_trade".to_string());
+        assert_eq!(game.trade_capacity(0), 2);
+        assert_eq!(game.route_yields(city, false).gold, 6.0);
+        game.map.tiles.get_mut(&commercial).unwrap().pillaged = true;
+        assert_eq!(game.trade_capacity(0), 1);
+        assert_eq!(game.route_yields(city, false).gold, 3.0);
+    }
+
+    #[test]
+    fn specialty_threshold_bonuses_ignore_repeatable_green_districts() {
+        let (mut game, city, position, ring) = controlled_game();
+        for (district, site) in [
+            ("neighborhood", position),
+            ("canal", ring[0]),
+            ("spaceport", ring[1]),
+        ] {
+            game.map.tiles.get_mut(&site).unwrap().district = Some(district.to_string());
+            game.cities
+                .get_mut(&city)
+                .unwrap()
+                .districts
+                .insert(district.to_string(), site);
+        }
+        let base_housing = game.city_housing(&game.cities[&city]);
+        let base_amenities = game.city_local_amenities(&game.cities[&city]);
+        game.players[0].policies.extend([
+            "insulae".to_string(),
+            "liberalism".to_string(),
+            "new_deal".to_string(),
+        ]);
+        assert_eq!(game.city_specialty_district_count(&game.cities[&city]), 0);
+        assert_eq!(game.city_housing(&game.cities[&city]), base_housing);
+        assert_eq!(
+            game.city_local_amenities(&game.cities[&city]),
+            base_amenities
+        );
+
+        for (district, site) in [("campus", ring[2]), ("holy_site", ring[3])] {
+            game.map.tiles.get_mut(&site).unwrap().district = Some(district.to_string());
+            game.cities
+                .get_mut(&city)
+                .unwrap()
+                .districts
+                .insert(district.to_string(), site);
+        }
+        assert_eq!(game.city_specialty_district_count(&game.cities[&city]), 2);
+        let mut without_threshold_policies = game.clone();
+        without_threshold_policies.players[0].policies.clear();
+        assert_eq!(
+            game.city_housing(&game.cities[&city]),
+            without_threshold_policies.city_housing(&without_threshold_policies.cities[&city])
+                + 1.0
+        );
+        assert_eq!(
+            game.city_local_amenities(&game.cities[&city]),
+            without_threshold_policies
+                .city_local_amenities(&without_threshold_policies.cities[&city])
+                + 1
+        );
+
+        game.map.tiles.get_mut(&ring[4]).unwrap().district = Some("theater_square".to_string());
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert("theater_square".to_string(), ring[4]);
+        assert_eq!(game.city_specialty_district_count(&game.cities[&city]), 3);
+        let mut without_threshold_policies = game.clone();
+        without_threshold_policies.players[0].policies.clear();
+        assert_eq!(
+            game.city_housing(&game.cities[&city]),
+            without_threshold_policies.city_housing(&without_threshold_policies.cities[&city])
+                + 5.0
+        );
+        assert_eq!(
+            game.city_local_amenities(&game.cities[&city]),
+            without_threshold_policies
+                .city_local_amenities(&without_threshold_policies.cities[&city])
+                + 3
+        );
+
+        game.players[0].government = Some("digital_democracy".to_string());
+        assert_eq!(game.gov_effects(0).culture_per_district, 2.0);
+        assert_eq!(
+            game.gov_effects(0).culture_per_district
+                * game.city_specialty_district_count(&game.cities[&city]) as f64,
+            6.0
+        );
+    }
+
+    #[test]
     fn naval_passage_uses_active_district_and_wonder_effects() {
         let (mut game, city, position, _) = controlled_game();
         game.cities
@@ -32976,6 +33225,34 @@ mod district_mechanics {
         game.map.tiles.get_mut(&position).unwrap().district = None;
         game.map.tiles.get_mut(&position).unwrap().wonder = Some("panama_canal".to_string());
         assert!(game.unit_can_traverse(galley, position));
+    }
+
+    #[test]
+    fn aircraft_slots_belong_to_the_city_center_and_active_aerodrome_tile() {
+        let (mut game, city, aerodrome, _) = controlled_game();
+        let center = game.cities[&city].pos;
+        game.map.tiles.get_mut(&aerodrome).unwrap().district = Some("aerodrome".to_string());
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert("aerodrome".to_string(), aerodrome);
+
+        assert_eq!(game.air_capacity_at(0, center), 1);
+        assert_eq!(game.air_capacity_at(0, aerodrome), 2);
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .extend(["hangar".to_string(), "airport".to_string()]);
+        assert_eq!(game.air_capacity_at(0, center), 1);
+        assert_eq!(game.air_capacity_at(0, aerodrome), 6);
+
+        let biplane = game.place_new_unit("biplane", 0, center).unwrap();
+        assert_eq!(game.units[&biplane].pos, aerodrome);
+        game.map.tiles.get_mut(&aerodrome).unwrap().pillaged = true;
+        assert_eq!(game.air_capacity_at(0, aerodrome), 0);
+        assert_eq!(game.air_capacity_at(0, center), 1);
     }
 
     #[test]

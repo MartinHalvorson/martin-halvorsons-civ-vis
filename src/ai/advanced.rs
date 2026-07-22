@@ -1827,8 +1827,8 @@ impl AdvancedAi {
                     pid,
                     &Action::Trade {
                         player: deal.partner,
-                        offer: deal.offer,
-                        request: deal.request,
+                        offer: Box::new(deal.offer),
+                        request: Box::new(deal.request),
                     },
                 )
                 .is_ok()
@@ -1860,8 +1860,8 @@ impl AdvancedAi {
                     pid,
                     &Action::Trade {
                         player: deal.partner,
-                        offer: deal.offer,
-                        request: deal.request,
+                        offer: Box::new(deal.offer),
+                        request: Box::new(deal.request),
                     },
                 )
                 .is_ok()
@@ -1894,8 +1894,8 @@ impl AdvancedAi {
                     pid,
                     &Action::Trade {
                         player: deal.partner,
-                        offer: deal.offer,
-                        request: deal.request,
+                        offer: Box::new(deal.offer),
+                        request: Box::new(deal.request),
                     },
                 );
             }
@@ -7185,23 +7185,32 @@ mod tests {
         game.city_at(position).unwrap()
     }
 
-    fn install_test_holy_site(game: &mut Game, city: u32) {
+    fn install_ai_test_district(game: &mut Game, city: u32, district: &str) -> Pos {
+        let center = game.cities[&city].pos;
         let position = game.cities[&city]
             .owned_tiles
             .iter()
             .copied()
             .find(|position| {
-                *position != game.cities[&city].pos
+                *position != center
                     && game.map.tiles[position].district.is_none()
                     && game.map.tiles[position].wonder.is_none()
+                    && game.map.tiles[position].improvement.is_none()
             })
-            .expect("test city needs a Holy Site tile");
-        game.map.tiles.get_mut(&position).unwrap().district = Some("holy_site".to_string());
+            .expect("test city has an unused district tile");
+        let tile = game.map.tiles.get_mut(&position).unwrap();
+        tile.district = Some(district.to_string());
+        tile.pillaged = false;
         game.cities
             .get_mut(&city)
             .unwrap()
             .districts
-            .insert("holy_site".to_string(), position);
+            .insert(district.to_string(), position);
+        position
+    }
+
+    fn install_test_holy_site(game: &mut Game, city: u32) {
+        install_ai_test_district(game, city, "holy_site");
         game.cities.get_mut(&city).unwrap().buildings =
             vec!["shrine".to_string(), "temple".to_string()];
     }
@@ -7276,6 +7285,9 @@ mod tests {
         )
         .unwrap();
         let target = game.city_at(target_position).unwrap();
+        install_ai_test_district(&mut game, origin, "commercial_hub");
+        install_ai_test_district(&mut game, target, "commercial_hub");
+        install_ai_test_district(&mut game, target, "theater_square");
         game.cities
             .get_mut(&origin)
             .unwrap()
@@ -8898,6 +8910,7 @@ mod tests {
             .unwrap();
         game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
         let city = game.player_city_ids(0)[0];
+        install_ai_test_district(&mut game, city, "industrial_zone");
         game.cities.get_mut(&city).unwrap().buildings =
             vec!["factory".to_string(), "nuclear_power_plant".to_string()];
         let plan = StrategicPlan {
@@ -9136,6 +9149,7 @@ mod tests {
             .unwrap()
             .buildings
             .push("amphitheater".to_string());
+        install_ai_test_district(&mut game, city, "theater_square");
         ai.advanced_great_people(&mut game, 0, GrandStrategy::Culture);
         assert_eq!(game.players[0].gp_claimed["writer"], 1);
     }
@@ -9441,6 +9455,7 @@ mod tests {
             game.apply(pid, &Action::FoundCity { unit: settler })
                 .unwrap();
             let city = game.player_city_ids(pid)[0];
+            install_ai_test_district(&mut game, city, "theater_square");
             game.cities
                 .get_mut(&city)
                 .unwrap()
@@ -9475,6 +9490,7 @@ mod tests {
                 .apply(pid, &Action::FoundCity { unit: settler })
                 .unwrap();
             let city = preserve.player_city_ids(pid)[0];
+            install_ai_test_district(&mut preserve, city, "theater_square");
             preserve
                 .cities
                 .get_mut(&city)
