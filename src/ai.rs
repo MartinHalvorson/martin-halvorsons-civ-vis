@@ -1266,11 +1266,38 @@ impl BasicAi {
                 if resolution.ballots.contains_key(&pid) {
                     continue;
                 }
-                let choice = if resolution.choices.contains(&pid.to_string()) {
-                    pid.to_string()
-                } else {
-                    resolution.choices[pid % resolution.choices.len()].clone()
-                };
+                let own_a = format!("A:{pid}");
+                let choice = resolution
+                    .ballots
+                    .values()
+                    .max_by_key(|(choice, votes)| (*votes, std::cmp::Reverse(choice.clone())))
+                    .map(|(choice, _)| choice.clone())
+                    .or_else(|| {
+                        (resolution.id == "world_leader"
+                            || resolution.id == "trade_policy"
+                            || resolution.id == "migration_treaty"
+                            || resolution.id == "public_relations")
+                            .then(|| {
+                                resolution
+                                    .choices
+                                    .iter()
+                                    .find(|choice| **choice == own_a)
+                                    .cloned()
+                            })
+                            .flatten()
+                    })
+                    .or_else(|| {
+                        (resolution.id == "mercenary_companies")
+                            .then(|| {
+                                resolution
+                                    .choices
+                                    .iter()
+                                    .find(|choice| choice.as_str() == "B:production")
+                                    .cloned()
+                            })
+                            .flatten()
+                    })
+                    .unwrap_or_else(|| resolution.choices[pid % resolution.choices.len()].clone());
                 let votes = if g.players[pid].diplomatic_favor >= 30.0 {
                     3
                 } else if g.players[pid].diplomatic_favor >= 10.0 {
@@ -2444,6 +2471,7 @@ impl BasicAi {
                     "settler" => self.settler_step(g, pid, uid),
                     "builder" => self.builder_step(g, pid, uid),
                     "naturalist" => self.naturalist_step(g, pid, uid),
+                    "archaeologist" => self.archaeologist_step(g, pid, uid),
                     "trader" => self.trader_step(g, pid, uid),
                     "missionary" => self.missionary_step(g, pid, uid),
                     "battering_ram" | "siege_tower" => self.siege_support_step(g, pid, uid),
@@ -3070,6 +3098,38 @@ impl BasicAi {
             })
             .max();
         target.is_some_and(|(_, _, position)| self.step_toward(g, pid, uid, position))
+    }
+
+    fn archaeologist_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
+        let current = g.units[&uid].pos;
+        if let Some(improvement) = g
+            .valid_improvements(pid, current)
+            .into_iter()
+            .find(|name| matches!(name.as_str(), "archaeological_dig" | "shipwreck_excavation"))
+        {
+            return g
+                .apply(
+                    pid,
+                    &Action::Improve {
+                        unit: uid,
+                        improvement,
+                    },
+                )
+                .is_ok();
+        }
+        let target = g
+            .excavation_sites(pid)
+            .into_iter()
+            .filter(|(position, _)| g.route_step(uid, *position, 0).is_some())
+            .min_by_key(|(position, improvement)| {
+                (
+                    g.wdist(current, *position),
+                    improvement == "shipwreck_excavation",
+                    *position,
+                )
+            })
+            .map(|(position, _)| position);
+        target.is_some_and(|position| self.step_toward(g, pid, uid, position))
     }
 
     fn is_enemy_tile(&self, g: &Game, pos: Pos, enemy_ids: &[usize]) -> bool {
@@ -4927,5 +4987,45 @@ mod tests {
         assert!(positions.iter().all(|position| {
             g.map.tiles[position].improvement.as_deref() == Some("national_park")
         }));
+    }
+
+    #[test]
+    fn headless_archaeologist_routes_to_and_extracts_an_artifact() {
+        let mut g = Game::new_full(1, 20, 14, 37, 40, 0, false);
+        let settler = g
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|id| g.units[id].kind == "settler")
+            .unwrap();
+        g.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = g.player_city_ids(0)[0];
+        g.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("archaeological_museum".to_string());
+        g.players[0].civics.insert("natural_history".to_string());
+        let site = g.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != g.cities[&city].pos && g.units_at(*position).is_empty())
+            .unwrap();
+        let tile = g.map.tiles.get_mut(&site).unwrap();
+        tile.terrain = "plains".to_string();
+        tile.feature = None;
+        tile.resource = Some("antiquity_site".to_string());
+        tile.improvement = None;
+        tile.district = None;
+        tile.wonder = None;
+        let archaeologist = g.spawn_test_unit("archaeologist", 0, g.cities[&city].pos);
+
+        let ai = BasicAi::new();
+        assert!(ai.archaeologist_step(&mut g, 0, archaeologist));
+        assert_eq!(g.units[&archaeologist].pos, site);
+        assert!(ai.archaeologist_step(&mut g, 0, archaeologist));
+        assert!(g.map.tiles[&site].resource.is_none());
+        assert_eq!(g.players[0].counters["great_work:artifact"], 1);
+        assert_eq!(g.units[&archaeologist].charges, 2);
     }
 }

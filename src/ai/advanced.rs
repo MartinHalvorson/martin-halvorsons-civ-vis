@@ -774,9 +774,23 @@ impl AdvancedAi {
         // city objective that the force-group planner can actually consume.
         let target_player = if wartime_rivals.is_empty() {
             denial.map(|(rival, _)| rival).or_else(|| {
-                major_rivals.iter().copied().min_by(|a, b| {
-                    self.rival_value(g, pid, *a)
-                        .partial_cmp(&self.rival_value(g, pid, *b))
+                let mut candidates = major_rivals.clone();
+                if strategy == GrandStrategy::Conquest {
+                    candidates.extend(
+                        g.players
+                            .iter()
+                            .filter(|player| {
+                                player.alive
+                                    && player.is_minor
+                                    && !player.is_barbarian
+                                    && g.suzerain_of(player.id) != Some(pid)
+                            })
+                            .map(|player| player.id),
+                    );
+                }
+                candidates.into_iter().min_by(|a, b| {
+                    self.campaign_target_value(g, pid, *a)
+                        .partial_cmp(&self.campaign_target_value(g, pid, *b))
                         .unwrap()
                         .then(a.cmp(b))
                 })
@@ -836,6 +850,43 @@ impl AdvancedAi {
         distance * 7.0 + g.military_power(other) * 1.5
             - g.score(other) as f64 * 0.35
             - victory_pressure * 2.4
+    }
+
+    /// Campaign value extends the major-rival heuristic to city-states.
+    /// Conquering a city-state is strategically possible, but it burns every
+    /// invested Envoy and permanently removes a potential Suzerain bonus, so
+    /// a nearby minor should displace a major target only when it is a clearly
+    /// cheaper objective. A city-state that can be secured immediately with
+    /// free Envoys is treated as an ally to win, not territory to destroy.
+    fn campaign_target_value(&self, g: &Game, pid: usize, other: usize) -> f64 {
+        let mut value = self.rival_value(g, pid, other);
+        if !g.players[other].is_minor {
+            return value;
+        }
+
+        let mine = g.envoys_at(pid, other);
+        value += 90.0 + mine as f64 * 45.0;
+        let rival_envoys = g
+            .players
+            .iter()
+            .filter(|player| !player.is_minor && !player.is_barbarian && player.id != pid)
+            .map(|player| g.envoys_at(player.id, other))
+            .max()
+            .unwrap_or(0);
+        let needed = (3_i64.max(rival_envoys + 1) - mine).max(1);
+        if g.players[pid].envoys_free >= needed {
+            value += 180.0;
+        }
+        if let Some(suzerain) = g.suzerain_of(other).filter(|suzerain| *suzerain != pid) {
+            value += 40.0 + g.military_power(suzerain) * 0.25;
+        }
+        value += match Game::cs_type(&g.players[other].civ) {
+            "militaristic" => 55.0,
+            "industrial" => 35.0,
+            "scientific" | "cultural" | "religious" => 25.0,
+            _ => 15.0,
+        };
+        value
     }
 
     fn yield_value(&self, yields: Yields, strategy: GrandStrategy) -> f64 {
@@ -1375,7 +1426,8 @@ impl AdvancedAi {
                 && g.turn.saturating_sub(self.last_campaign_progress) >= 12
         });
         let denied_partner = plan.target_player == Some(partner)
-            && (g.is_at_war(pid, partner)
+            && (plan.strategy == GrandStrategy::Conquest
+                || g.is_at_war(pid, partner)
                 || self.rival_victory_pressure(g, partner).progress >= 78);
 
         let mut value = deal.give_gold - deal.request_gold;
@@ -1430,66 +1482,288 @@ impl AdvancedAi {
         resolution: &CongressResolution,
         strategy: GrandStrategy,
     ) -> Option<String> {
-        let own_choice = pid.to_string();
-        let eligible = |choice: &String| {
-            choice
-                .parse::<usize>()
-                .ok()
-                .filter(|target| {
-                    g.players.get(*target).is_some_and(|player| {
-                        player.alive && !player.is_minor && !player.is_barbarian
-                    })
-                })
-                .map(|target| (choice.clone(), target))
-        };
-        match resolution.id.as_str() {
-            "world_leader" if strategy == GrandStrategy::Diplomacy => resolution
-                .choices
-                .iter()
-                .find(|choice| choice.as_str() == own_choice.as_str())
-                .cloned(),
-            "international_aid" if strategy == GrandStrategy::Diplomacy => resolution
-                .choices
-                .iter()
-                .find(|choice| choice.as_str() == own_choice.as_str())
-                .cloned(),
-            // If we cannot credibly win the leadership ballot ourselves,
-            // award its target points to the civilization furthest from a
-            // Diplomatic Victory. This is active denial, not abstention.
-            "world_leader" | "international_aid" => resolution
-                .choices
-                .iter()
-                .filter_map(eligible)
-                .min_by_key(|(_, target)| (g.players[*target].dvp, *target))
-                .map(|(choice, _)| choice),
-            "world_fair" if strategy == GrandStrategy::Culture => resolution
-                .choices
-                .iter()
-                .find(|choice| choice.as_str() == own_choice.as_str())
-                .cloned(),
-            "world_fair" => resolution
-                .choices
-                .iter()
-                .filter_map(eligible)
-                .max_by(|left, right| {
-                    g.players[left.1]
-                        .culture_lifetime
-                        .partial_cmp(&g.players[right.1].culture_lifetime)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                        .then_with(|| right.1.cmp(&left.1))
-                })
-                .map(|(choice, _)| choice),
-            _ => {
-                let mut totals: BTreeMap<&str, u32> = BTreeMap::new();
-                for (choice, votes) in resolution.ballots.values() {
-                    *totals.entry(choice.as_str()).or_default() += *votes;
+        // Legacy saves encoded only a target. Preserve their old strategic
+        // behavior while new sessions use explicit `A:target`/`B:target`
+        // ballots.
+        if resolution
+            .choices
+            .iter()
+            .all(|choice| !choice.contains(':'))
+        {
+            let own = pid.to_string();
+            return match resolution.id.as_str() {
+                "world_leader" | "international_aid" if strategy == GrandStrategy::Diplomacy => {
+                    resolution
+                        .choices
+                        .iter()
+                        .find(|choice| **choice == own)
+                        .cloned()
                 }
-                totals
-                    .into_iter()
-                    .max_by(|left, right| left.1.cmp(&right.1).then_with(|| right.0.cmp(left.0)))
-                    .map(|(choice, _)| choice.to_string())
-                    .or_else(|| resolution.choices.first().cloned())
-            }
+                "world_leader" | "international_aid" => resolution
+                    .choices
+                    .iter()
+                    .filter_map(|choice| {
+                        choice.parse::<usize>().ok().map(|target| (choice, target))
+                    })
+                    .min_by_key(|(_, target)| (g.players[*target].dvp, *target))
+                    .map(|(choice, _)| choice.clone()),
+                "world_fair" if strategy == GrandStrategy::Culture => resolution
+                    .choices
+                    .iter()
+                    .find(|choice| **choice == own)
+                    .cloned(),
+                "world_fair" => resolution
+                    .choices
+                    .iter()
+                    .filter_map(|choice| {
+                        choice.parse::<usize>().ok().map(|target| (choice, target))
+                    })
+                    .max_by(|left, right| {
+                        g.players[left.1]
+                            .culture_lifetime
+                            .partial_cmp(&g.players[right.1].culture_lifetime)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| right.1.cmp(&left.1))
+                    })
+                    .map(|(choice, _)| choice.clone()),
+                _ => resolution.choices.first().cloned(),
+            };
+        }
+
+        let diplomatic_leader = g
+            .players
+            .iter()
+            .filter(|player| player.alive && !player.is_minor && !player.is_barbarian)
+            .max_by_key(|player| (player.dvp, std::cmp::Reverse(player.id)))
+            .map(|player| player.id);
+        let preferred_district = match strategy {
+            GrandStrategy::Science => "campus",
+            GrandStrategy::Culture => "theater_square",
+            GrandStrategy::Religion => "holy_site",
+            GrandStrategy::Conquest | GrandStrategy::Recovery => "encampment",
+            GrandStrategy::Diplomacy => "diplomatic_quarter",
+            GrandStrategy::Expansion => "commercial_hub",
+        };
+        let preferred_person = match strategy {
+            GrandStrategy::Science => "scientist",
+            GrandStrategy::Culture => "artist",
+            GrandStrategy::Religion => "prophet",
+            GrandStrategy::Conquest | GrandStrategy::Recovery => "general",
+            GrandStrategy::Diplomacy | GrandStrategy::Expansion => "merchant",
+        };
+        let preferred_work = match strategy {
+            GrandStrategy::Culture => "art",
+            GrandStrategy::Religion => "relic",
+            _ => "writing",
+        };
+        let observed = |choice: &str| {
+            resolution
+                .ballots
+                .values()
+                .filter(|(cast, _)| cast == choice)
+                .map(|(_, votes)| *votes as f64)
+                .sum::<f64>()
+        };
+
+        resolution.choices.iter().cloned().max_by(|left, right| {
+            let score = |choice: &str| {
+                let (outcome, target) = Game::congress_choice_parts(choice);
+                let target_player = target.parse::<usize>().ok();
+                let base = match resolution.id.as_str() {
+                    "world_leader" => match (outcome, target_player) {
+                        ("A", Some(target))
+                            if target == pid && strategy == GrandStrategy::Diplomacy =>
+                        {
+                            1_000.0
+                        }
+                        ("B", Some(target))
+                            if Some(target) == diplomatic_leader && target != pid =>
+                        {
+                            900.0
+                        }
+                        ("A", Some(target)) => 100.0 - 12.0 * g.players[target].dvp as f64,
+                        ("B", Some(target)) => 20.0 + 18.0 * g.players[target].dvp as f64,
+                        _ => 0.0,
+                    },
+                    "mercenary_companies" => match (outcome, target) {
+                        ("B", "production") => 340.0,
+                        ("B", "gold") => 180.0,
+                        ("B", "faith") if strategy == GrandStrategy::Religion => 230.0,
+                        ("B", "faith") => 90.0,
+                        ("A", _) => -120.0,
+                        _ => 0.0,
+                    },
+                    "luxury_policy" => {
+                        let own = g.resource_access_count(pid, target) as f64;
+                        let rival = g
+                            .players
+                            .iter()
+                            .filter(|player| player.id != pid)
+                            .map(|player| g.resource_access_count(player.id, target))
+                            .max()
+                            .unwrap_or(0) as f64;
+                        if outcome == "A" {
+                            own * 75.0
+                        } else {
+                            rival * 55.0 - own * 85.0
+                        }
+                    }
+                    "trade_policy" => match target_player {
+                        Some(target) if outcome == "A" && target == pid => 260.0,
+                        Some(target)
+                            if outcome == "B"
+                                && Some(target) == diplomatic_leader
+                                && target != pid =>
+                        {
+                            150.0
+                        }
+                        Some(target)
+                            if outcome == "A" && g.alliance_with(pid, target).is_some() =>
+                        {
+                            120.0
+                        }
+                        _ => 10.0,
+                    },
+                    "world_religion" => {
+                        let mine = g.players[pid].religion.as_deref() == Some(target);
+                        if outcome == "A" && mine {
+                            320.0
+                        } else if outcome == "B" && !mine {
+                            150.0
+                        } else {
+                            0.0
+                        }
+                    }
+                    "urban_development_treaty" => {
+                        if outcome == "A" && target == preferred_district {
+                            280.0
+                        } else if outcome == "A" {
+                            80.0
+                        } else {
+                            -80.0
+                        }
+                    }
+                    "patronage" => {
+                        if outcome == "A" && target == preferred_person {
+                            280.0
+                        } else if outcome == "A" {
+                            70.0
+                        } else {
+                            -100.0
+                        }
+                    }
+                    "military_advisory" => {
+                        let own = g
+                            .units
+                            .values()
+                            .filter(|unit| {
+                                unit.owner == pid
+                                    && g.rules.units[unit.kind.as_str()].promotion_class == target
+                            })
+                            .count() as f64;
+                        let rival = g
+                            .units
+                            .values()
+                            .filter(|unit| {
+                                unit.owner != pid
+                                    && g.rules.units[unit.kind.as_str()].promotion_class == target
+                            })
+                            .count() as f64;
+                        if outcome == "A" {
+                            own * 45.0 - rival * 10.0
+                        } else {
+                            rival * 35.0 - own * 50.0
+                        }
+                    }
+                    "migration_treaty" => match (outcome, target_player) {
+                        ("A", Some(target))
+                            if target == pid && strategy == GrandStrategy::Expansion =>
+                        {
+                            220.0
+                        }
+                        ("B", Some(target)) if target == pid => 140.0,
+                        ("A", Some(target)) if target != pid => 35.0,
+                        _ => 0.0,
+                    },
+                    "public_relations" => match (outcome, target_player) {
+                        ("B", Some(target)) if target == pid => 230.0,
+                        ("A", Some(target))
+                            if Some(target) == diplomatic_leader && target != pid =>
+                        {
+                            150.0
+                        }
+                        _ => 0.0,
+                    },
+                    "heritage_organization" => {
+                        if outcome == "A" && target == preferred_work {
+                            300.0
+                        } else if outcome == "A" {
+                            90.0
+                        } else {
+                            -120.0
+                        }
+                    }
+                    _ => 0.0,
+                };
+                base + observed(choice) * 35.0
+            };
+            score(left)
+                .partial_cmp(&score(right))
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| right.cmp(left))
+        })
+    }
+
+    /// Prefer an available low-Grievance casus belli. If none is ready, a
+    /// major rival is denounced and the campaign waits for Formal War rather
+    /// than opening with a Surprise War. The sole exception is a rival already
+    /// on the brink of victory, where five setup turns can lose the game.
+    /// City-states cannot be denounced and therefore remain direct targets.
+    fn preferred_war_opening(&self, g: &Game, pid: usize, target: usize) -> Option<Action> {
+        let legal = g.legal_actions(pid);
+        let casus_belli = legal
+            .iter()
+            .filter_map(|action| match action {
+                Action::DeclareWarWithCasusBelli {
+                    player,
+                    casus_belli,
+                } if *player == target => {
+                    let grievance_cost = if casus_belli == "formal_war" { 100 } else { 50 };
+                    Some((grievance_cost, casus_belli, action))
+                }
+                _ => None,
+            })
+            .min_by_key(|(cost, name, _)| (*cost, *name))
+            .map(|(_, _, action)| action.clone());
+        if casus_belli.is_some() {
+            return casus_belli;
+        }
+
+        let surprise = legal.iter().find_map(|action| match action {
+            Action::DeclareWar { player } if *player == target => Some(action.clone()),
+            _ => None,
+        });
+        if g.players[target].is_minor {
+            return surprise;
+        }
+
+        let urgent = self.rival_victory_pressure(g, target).progress >= 90;
+        let denounced = g.players[pid]
+            .denounced_until
+            .get(&target)
+            .is_some_and(|until| *until > g.turn);
+        if !urgent && !denounced {
+            return legal.iter().find_map(|action| match action {
+                Action::Denounce { player } if *player == target => Some(action.clone()),
+                _ => None,
+            });
+        }
+        if urgent {
+            surprise
+        } else {
+            // The denouncement is active but its five-turn preparation period
+            // has not elapsed, so preserve the army and wait for Formal War.
+            None
         }
     }
 
@@ -1556,7 +1830,9 @@ impl AdvancedAi {
             }
         }
         let denied_partner = plan.target_player.filter(|target| {
-            g.is_at_war(pid, *target) || self.rival_victory_pressure(g, *target).progress >= 78
+            plan.strategy == GrandStrategy::Conquest
+                || g.is_at_war(pid, *target)
+                || self.rival_victory_pressure(g, *target).progress >= 78
         });
         self.base.bilateral_trade_excluding(g, pid, denied_partner);
         let my_power = g.military_power(pid);
@@ -1623,7 +1899,9 @@ impl AdvancedAi {
             my_power > target_power * 1.32 + 12.0
         };
         if close_enough && ready {
-            let _ = g.apply(pid, &Action::DeclareWar { player: target });
+            if let Some(action) = self.preferred_war_opening(g, pid, target) {
+                let _ = g.apply(pid, &action);
+            }
         }
     }
 
@@ -2208,6 +2486,18 @@ impl AdvancedAi {
                     -10_000.0
                 } else if g.players[pid].religion.is_some() && counts.missionaries < 2 {
                     150.0
+                } else {
+                    -10_000.0
+                }
+            }
+            Item::Unit { unit } if unit == "archaeologist" => {
+                let active = g
+                    .units
+                    .values()
+                    .any(|unit| unit.owner == pid && unit.kind == "archaeologist");
+                let sites = g.excavation_sites(pid).len();
+                if plan.strategy == GrandStrategy::Culture && !active && sites > 0 {
+                    2_700.0 + sites.min(3) as f64 * 180.0
                 } else {
                     -10_000.0
                 }
@@ -4204,6 +4494,7 @@ impl AdvancedAi {
                 "settler" => 0,
                 "builder" => 1,
                 "naturalist" => 1,
+                "archaeologist" => 1,
                 "trader" => 2,
                 "missionary" => 3,
                 "rock_band" => 3,
@@ -4224,6 +4515,7 @@ impl AdvancedAi {
                     "settler" => self.advanced_settler_step(g, pid, uid),
                     "builder" => self.advanced_builder_step(g, pid, uid, plan.strategy),
                     "naturalist" => self.base.naturalist_step(g, pid, uid),
+                    "archaeologist" => self.base.archaeologist_step(g, pid, uid),
                     "trader" => self.advanced_trader_step(g, pid, uid, plan.strategy),
                     "missionary" if self.victory_planning => {
                         self.advanced_missionary_step(g, pid, uid)
@@ -4886,6 +5178,59 @@ mod tests {
             ai.congress_choice(&game, 0, &resolution("world_fair"), GrandStrategy::Culture,),
             Some("0".to_string())
         );
+
+        let outcome_resolution = |id: &str, targets: &[&str]| CongressResolution {
+            id: id.to_string(),
+            title: id.to_string(),
+            choices: ["A", "B"]
+                .into_iter()
+                .flat_map(|outcome| {
+                    targets
+                        .iter()
+                        .map(move |target| format!("{outcome}:{target}"))
+                })
+                .collect(),
+            ballots: BTreeMap::new(),
+        };
+        assert_eq!(
+            ai.congress_choice(
+                &game,
+                0,
+                &outcome_resolution("world_leader", &["0", "1", "2"]),
+                GrandStrategy::Expansion,
+            ),
+            Some("B:1".to_string())
+        );
+        assert_eq!(
+            ai.congress_choice(
+                &game,
+                0,
+                &outcome_resolution("world_leader", &["0", "1", "2"]),
+                GrandStrategy::Diplomacy,
+            ),
+            Some("A:0".to_string())
+        );
+        assert_eq!(
+            ai.congress_choice(
+                &game,
+                0,
+                &outcome_resolution("mercenary_companies", &["production", "gold", "faith"]),
+                GrandStrategy::Conquest,
+            ),
+            Some("B:production".to_string())
+        );
+        assert_eq!(
+            ai.congress_choice(
+                &game,
+                0,
+                &outcome_resolution(
+                    "urban_development_treaty",
+                    &["campus", "theater_square", "holy_site"],
+                ),
+                GrandStrategy::Science,
+            ),
+            Some("A:campus".to_string())
+        );
     }
 
     #[test]
@@ -4917,6 +5262,13 @@ mod tests {
         assert!(ai.incoming_deal_value(&game, 0, &deal(0.0, 100.0, true, false), &plan) < 0.0);
         assert!(ai.incoming_deal_value(&game, 0, &deal(10.0, 0.0, true, false), &plan) > 0.0);
 
+        plan.strategy = GrandStrategy::Conquest;
+        assert!(
+            ai.incoming_deal_value(&game, 0, &deal(10.0, 0.0, true, false), &plan) < 0.0,
+            "a campaign target must not be protected by a new friendship"
+        );
+        plan.strategy = GrandStrategy::Expansion;
+
         game.players[1].science_projects.extend([
             "launch_earth_satellite".to_string(),
             "launch_moon_landing".to_string(),
@@ -4939,6 +5291,82 @@ mod tests {
         assert_eq!(plan.strategy, GrandStrategy::Expansion);
         assert!(plan.desired_cities >= 3);
         assert!(plan.target_player.is_some());
+    }
+
+    #[test]
+    fn conquest_can_target_an_exposed_city_state_but_preserves_its_suzerain() {
+        let mut game = Game::new_full(2, 30, 18, 711, 300, 1, false);
+        for pid in 0..2 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.current = pid;
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        game.current = 0;
+        game.turn = 200;
+        let minor = game
+            .players
+            .iter()
+            .find(|player| player.is_minor && !player.is_barbarian)
+            .unwrap()
+            .id;
+        let rival_capital = game.cities[&game.player_city_ids(1)[0]].pos;
+        for _ in 0..6 {
+            game.spawn_test_unit("giant_death_robot", 1, rival_capital);
+        }
+
+        let ai = AdvancedAi::targeting(VictoryTarget::Domination);
+        let exposed = ai.assess(&game, 0);
+        assert_eq!(exposed.strategy, GrandStrategy::Conquest);
+        assert_eq!(exposed.target_player, Some(minor));
+
+        game.players[0].envoys = vec![(minor, 3)];
+        assert_eq!(game.suzerain_of(minor), Some(0));
+        let allied = ai.assess(&game, 0);
+        assert_eq!(allied.target_player, Some(1));
+    }
+
+    #[test]
+    fn war_opening_waits_for_formal_war_but_interrupts_for_imminent_victory() {
+        let mut game = Game::new_full(2, 24, 16, 712, 300, 0, false);
+        game.current = 0;
+        game.turn = 60;
+        let ai = AdvancedAi::new();
+
+        assert_eq!(
+            ai.preferred_war_opening(&game, 0, 1),
+            Some(Action::Denounce { player: 1 })
+        );
+        game.apply(0, &Action::Denounce { player: 1 }).unwrap();
+        game.turn = 64;
+        assert_eq!(ai.preferred_war_opening(&game, 0, 1), None);
+        game.turn = 65;
+        assert_eq!(
+            ai.preferred_war_opening(&game, 0, 1),
+            Some(Action::DeclareWarWithCasusBelli {
+                player: 1,
+                casus_belli: "formal_war".to_string(),
+            })
+        );
+
+        let mut emergency = Game::new_full(2, 24, 16, 713, 300, 0, false);
+        emergency.current = 0;
+        emergency.turn = 60;
+        emergency.players[1].science_projects.extend([
+            "launch_earth_satellite".to_string(),
+            "launch_moon_landing".to_string(),
+            "launch_mars_colony".to_string(),
+            "exoplanet_expedition".to_string(),
+        ]);
+        emergency.players[1].exoplanet_distance = 49.0;
+        assert_eq!(
+            ai.preferred_war_opening(&emergency, 0, 1),
+            Some(Action::DeclareWar { player: 1 })
+        );
     }
 
     #[test]
@@ -5212,6 +5640,68 @@ mod tests {
         assert!(matches!(
             g.cities[&city].queue.first(),
             Some(Item::Project { project }) if project == "launch_earth_satellite"
+        ));
+    }
+
+    #[test]
+    fn culture_production_trains_one_archaeologist_for_available_artifact_slots() {
+        let mut game = Game::new(2, 24, 16, 7_100, 1_500, 0);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = game.player_city_ids(0)[0];
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("archaeological_museum".to_string());
+        game.players[0].civics.insert("natural_history".to_string());
+        let site = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != game.cities[&city].pos)
+            .unwrap();
+        let tile = game.map.tiles.get_mut(&site).unwrap();
+        tile.terrain = "plains".to_string();
+        tile.feature = None;
+        tile.resource = Some("antiquity_site".to_string());
+        tile.improvement = None;
+        tile.district = None;
+        tile.wonder = None;
+        let archaeologist_item = Item::Unit {
+            unit: "archaeologist".to_string(),
+        };
+        assert!(game.can_produce(0, city, &archaeologist_item));
+
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Culture,
+            target_player: None,
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+        let ai = AdvancedAi::targeting(VictoryTarget::Culture);
+        ai.advanced_production(&mut game, 0, &plan);
+        assert!(
+            matches!(
+                game.cities[&city].queue.first(),
+                Some(Item::Unit { unit }) if unit == "archaeologist"
+            ),
+            "queued {:?}",
+            game.cities[&city].queue.first()
+        );
+
+        game.cities.get_mut(&city).unwrap().queue.clear();
+        game.spawn_test_unit("archaeologist", 0, game.cities[&city].pos);
+        ai.advanced_production(&mut game, 0, &plan);
+        assert!(!matches!(
+            game.cities[&city].queue.first(),
+            Some(Item::Unit { unit }) if unit == "archaeologist"
         ));
     }
 

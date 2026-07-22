@@ -1303,7 +1303,7 @@ mod tests {
             }
         };
         // World Congress: a Medieval session opens on turn 30, accepts
-        // ballots for five rounds, then resolves its scored competition.
+        // outcome-and-target ballots for five rounds, then enacts the result.
         g.world_era = 2;
         g.turn = 29; // wraps to 30 after a full round
         let minor = g
@@ -1315,11 +1315,15 @@ mod tests {
         g.players[0].envoys = vec![(minor, 3)];
         round(&mut g);
         assert!(g.congress.is_some());
+        let (resolution, choice) = {
+            let resolution = &g.congress.as_ref().unwrap().resolutions[0];
+            (resolution.id.clone(), resolution.choices[0].clone())
+        };
         g.apply(
             0,
             &Action::CongressVote {
-                resolution: "world_fair".to_string(),
-                choice: "0".to_string(),
+                resolution,
+                choice,
                 votes: 1,
             },
         )
@@ -1327,7 +1331,7 @@ mod tests {
         for _ in 0..5 {
             round(&mut g);
         }
-        assert_eq!(g.players[0].dvp, 2);
+        assert_eq!(g.players[0].dvp, 1);
         // At the Modern-era World Leader resolution, 20 points wins.
         g.players[0].dvp = 18;
         g.world_era = 5;
@@ -1337,7 +1341,7 @@ mod tests {
             0,
             &Action::CongressVote {
                 resolution: "world_leader".to_string(),
-                choice: "0".to_string(),
+                choice: "A:0".to_string(),
                 votes: 1,
             },
         )

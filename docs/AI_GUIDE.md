@@ -62,12 +62,16 @@ use the lightweight agent.
 
 The six pipelines are concrete rather than score labels. Science reserves a
 Spaceport and completes the launch chain; Culture builds a Theater Square
-network, recruits cultural Great People, reaches the Conservation/Professional
-Sports tourism unlocks, improves tourism tiles, and sends promoted Rock Bands
-to the best risk-adjusted foreign venues; Religion founds, enhances, defends,
+network, recruits cultural Great People, trains and routes capacity-aware
+Archaeologists, reaches the Conservation/Professional Sports tourism unlocks,
+improves tourism tiles, and sends promoted Rock Bands to the best risk-adjusted
+foreign venues; Religion founds, enhances, defends,
 and spreads its faith while reconverting its own core first;
 Diplomacy prioritizes Favor, envoys, alliances, city-state liberation, and
-World Congress; Domination coordinates production and force objectives; Score
+strategic World Congress voting. Congress choices score both the A/B outcome
+and its target, coordinate with visible ballots, contest a rival DVP leader,
+and spend additional Favor when pursuing a diplomatic victory; Domination
+coordinates production and force objectives; Score
 balances expansion and near-term empire value. Society choice supports the
 same goal: Hermetic Order for Science, Voidsingers for Culture/Religion, and
 Owls of Minerva for economic, diplomatic, and conquest plans.
@@ -101,7 +105,9 @@ diagnostics. Map dimensions can be overridden with `--width` and `--height`.
 The current engine passes exact, unassisted full-game victories for every
 target on two independent seeds. On seeds 20000 and 20001 respectively, the
 winning turns were Science 1021/940, Culture 559/586, Religion 79/177,
-Diplomacy 305/335, Domination 82/136, and Score 301/301.
+Diplomacy 395/425, Domination 82/136, and Score 301/301. The diplomatic turns
+reflect the stock two-stage resolution model rather than the former
+target-only ballots.
 
 Against the frozen `advanced_v1` control on mirrored current-engine maps,
 Advanced v2 won 61–39 across 100 four-player games and 26–24 across 50
@@ -121,6 +127,13 @@ odds discourage unsupported advances, and stragglers rejoin their group.
 Orders are recomputed before every combat-unit step, so a kill, retreat, newly
 opened line, or local-power swing immediately changes the remaining force's
 focus and movement instead of waiting for the next turn.
+Campaign selection evaluates major civilizations and exposed city-states in
+the same distance, strength, development, and victory-pressure frame. A
+city-state is discounted as a target when the attacker has invested Envoys,
+can secure it immediately with free Envoys, already controls it as Suzerain, or
+would discard a valuable type bonus. Major wars prefer an available low-cost
+casus belli; otherwise the planner denounces and waits for Formal War, except
+when an imminent rival victory makes the five-turn delay strategically fatal.
 Positional ties favor taking at least one useful step each turn; remaining in
 place is reserved for recovery, attacks, explicit defensive/muster positions,
 or cases where every legal move is materially worse. At peace, troops that

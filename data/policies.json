@@ -85,7 +85,7 @@
   "defense_of_motherland": {"slot":"wildcard","civic":"class_struggle","note":"No home-territory war weariness and +100% late support-unit Production.","effects":{"support_production_pct":100,"home_war_weariness_reduction_pct":100}},
   "economic_union": {"slot":"economic","civic":"ideology","replaces":"town_charters","note":"+100% Commercial Hub and Harbor adjacency bonuses.","effects":{"commercial_hub_adjacency_pct":100,"harbor_adjacency_pct":100}},
   "five_year_plan": {"slot":"economic","civic":"ideology","replaces":"craftsmen","note":"+100% Campus and Industrial Zone adjacency bonuses.","effects":{"campus_adjacency_pct":100,"industrial_zone_adjacency_pct":100}},
-  "gunboat_diplomacy": {"slot":"diplomatic","civic":"ideology","note":"Open city-state borders and +4 Influence per turn.","effects":{"influence_per_turn":4}},
+  "gunboat_diplomacy": {"slot":"diplomatic","civic":"ideology","note":"Open city-state borders and +4 Influence per turn.","effects":{"influence_per_turn":4,"open_city_state_borders":1}},
   "lightning_warfare": {"slot":"military","civic":"ideology","replaces":"chivalry","note":"+50% Production toward all cavalry units.","effects":{"cavalry_production_pct":50}},
   "finest_hour": {"slot":"wildcard","civic":"suffrage","note":"+5 Combat Strength in or adjacent to home territory.","effects":{"friendly_combat":5}},
   "new_deal": {"slot":"economic","civic":"suffrage","note":"+4 Housing and +2 Amenities in cities with 3 specialty districts.","effects":{"housing_at_3_districts":4,"amenity_at_3_districts":2}},

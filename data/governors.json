@@ -4,7 +4,7 @@
     "effects":{"loyalty":8,"city_state_envoys":2},
     "promotions":{
       "emissary":{"tier":1,"effects":{"foreign_city_loyalty":-2}},
-      "affluence":{"tier":1,"effects":{"strategic_resources":1,"luxury_resources":1}},
+      "affluence":{"tier":1,"effects":{"luxury_resources":1}},
       "local_informants":{"tier":2,"requires":["emissary"],"effects":{"enemy_spy_level":-3}},
       "foreign_investor":{"tier":2,"requires":["affluence"],"effects":{"city_state_resource_access":1}},
       "puppeteer":{"tier":3,"requires":["local_informants","foreign_investor"],"effects":{"city_state_envoys_multiplier":2}}
@@ -17,7 +17,7 @@
       "zoning_commissioner":{"tier":1,"effects":{"district_production_pct":20}},
       "aquaculture":{"tier":1,"effects":{"fishery":1}},
       "reinforced_materials":{"tier":2,"requires":["zoning_commissioner"],"effects":{"disaster_immunity":1}},
-      "water_works":{"tier":2,"requires":["aquaculture"],"effects":{"water_building_housing":2,"water_building_amenity":1}},
+      "water_works":{"tier":2,"requires":["aquaculture"],"effects":{"neighborhood_aqueduct_housing":2,"canal_dam_amenity":1}},
       "parks_and_recreation":{"tier":3,"requires":["reinforced_materials","water_works"],"effects":{"city_park":1}}
     }
   },
