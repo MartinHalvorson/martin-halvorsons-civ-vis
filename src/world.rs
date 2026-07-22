@@ -34,6 +34,9 @@ pub struct Tile {
     /// Stock Civ VI continent region, zero-based. Water has no continent.
     #[serde(default)]
     pub continent: Option<usize>,
+    /// Permanent Faith added by Great Bath flood mitigation.
+    #[serde(default)]
+    pub disaster_faith: f64,
 }
 
 impl Tile {
@@ -53,6 +56,7 @@ impl Tile {
             cliff_edges: [false; 6],
             road: false,
             continent: None,
+            disaster_faith: 0.0,
         }
     }
 }

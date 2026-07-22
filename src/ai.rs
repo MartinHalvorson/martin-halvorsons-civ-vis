@@ -728,7 +728,7 @@ impl BasicAi {
         ) {
             return None;
         }
-        let legal = g.legal_actions(pid);
+        let legal = g.legal_doctrine_actions(pid, uid);
         match doctrine {
             UnitDoctrine::Mobile => legal
                 .iter()
@@ -908,7 +908,7 @@ impl BasicAi {
         prefer_conquest: bool,
     ) {
         loop {
-            let legal = g.legal_actions(pid);
+            let legal = g.legal_city_disposition_actions(pid);
             let Some(cid) = legal.iter().find_map(|action| match action {
                 Action::KeepCity { city }
                 | Action::RazeCity { city }
@@ -3750,6 +3750,23 @@ mod tests {
         let bomber = g.spawn_test_unit("bomber", 0, positions[2]);
         g.spawn_test_unit("modern_armor", 1, air_target);
         let ai = BasicAi::new();
+
+        let full_legal = g.legal_actions(0);
+        for uid in [raider, assault, fighter, bomber] {
+            let expected: Vec<Action> = full_legal
+                .iter()
+                .filter(|action| match action {
+                    Action::Pillage { unit }
+                    | Action::AirRebase { unit, .. }
+                    | Action::AirStrike { unit, .. }
+                    | Action::AirPatrol { unit }
+                    | Action::CoastalRaid { unit, .. } => *unit == uid,
+                    _ => false,
+                })
+                .cloned()
+                .collect();
+            assert_eq!(g.legal_doctrine_actions(0, uid), expected);
+        }
 
         assert!(matches!(
             ai.doctrine_action(&g, 0, raider),

@@ -68,9 +68,11 @@ If code changes during the build or the newest source does not compile, the
 known-good result/game stays available while it waits and retries.
 
 Player-count defaults use Civ VI's stock world rows: 2 players = Duel
-(`44×26`, 3 city-states), 4 = Tiny (`60×38`, 6 city-states), and 6 = Small
-(`74×46`, 9 city-states). `--width`, `--height`, and `--city-states` remain
-available as explicit advanced overrides.
+(`44×26`, 3 city-states), 4 = Tiny (`60×38`, 6 city-states), 6 = Small
+(`74×46`, 9 city-states), 8 = Standard (`84×54`, 12 city-states), 10 = Large
+(`96×60`, 15 city-states), and 12 = Huge (`106×66`, 18 city-states).
+`--width`, `--height`, and `--city-states` remain available as explicit
+advanced overrides.
 
 GUI: click/right-click to select and order units, drag to pan, wheel to zoom,
 **1** next action, **2** settler lens, **3** map tacks, **D** Quick Deals,

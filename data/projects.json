@@ -83,7 +83,7 @@
     "effects": {"thermonuclear_devices": 1}
   },
   "carbon_recapture": {
-    "cost": 600, "civic": "global_warming_mitigation", "district": "industrial_zone",
+    "cost": 400, "civic": "global_warming_mitigation", "district": "industrial_zone",
     "repeatable": true,
     "effects": {"co2_recaptured": 50, "diplomatic_favor": 30}
   }

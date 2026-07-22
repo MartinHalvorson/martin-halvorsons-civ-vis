@@ -197,6 +197,7 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             "alliances": p.alliances,
             "age": p.age,
             "tourism": round1(p.tourism_lifetime),
+            "religious_tourism": round1(p.religious_tourism_lifetime),
             "secret_society": p.secret_society,
             "domestic_tourists": g.domestic_tourists(pid),
             "foreign_tourists": g.foreign_tourists(pid),

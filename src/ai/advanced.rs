@@ -472,6 +472,111 @@ impl AdvancedAi {
         best
     }
 
+    /// Public victory-screen information distilled into a single urgency
+    /// signal. Strong opponents must be judged by how close they are to ending
+    /// the game, not only by how cheap their nearest city looks to capture.
+    fn rival_victory_pressure(&self, g: &Game, pid: usize) -> VictoryFocus {
+        let player = &g.players[pid];
+        let majors: Vec<usize> = g
+            .players
+            .iter()
+            .filter(|candidate| !candidate.is_minor && !candidate.is_barbarian)
+            .map(|candidate| candidate.id)
+            .collect();
+
+        let science = if player.science_projects.contains("exoplanet_expedition") {
+            75 + (25.0 * player.exoplanet_distance / 50.0).clamp(0.0, 25.0) as i32
+        } else if player.science_projects.contains("launch_mars_colony") {
+            65
+        } else if player.science_projects.contains("launch_moon_landing") {
+            45
+        } else if player.science_projects.contains("launch_earth_satellite") {
+            25
+        } else {
+            0
+        };
+
+        let culture_target = majors
+            .iter()
+            .filter(|other| **other != pid)
+            .map(|other| g.domestic_tourists(*other))
+            .max()
+            .unwrap_or(1)
+            .max(1);
+        let culture = (100 * g.foreign_tourists(pid) / culture_target).clamp(0, 100) as i32;
+
+        let converted = player.religion.as_ref().map_or(0, |religion| {
+            majors
+                .iter()
+                .filter(|other| {
+                    let cities = g.player_city_ids(**other);
+                    let following = cities
+                        .iter()
+                        .filter(|city| g.city_religion(&g.cities[city]) == Some(religion.as_str()))
+                        .count();
+                    !cities.is_empty() && following * 2 > cities.len()
+                })
+                .count()
+        });
+        let religion = if player.religion.is_some() {
+            (100 * converted / majors.len().max(1)) as i32
+        } else {
+            0
+        };
+        let diplomacy = (player.dvp * 5).clamp(0, 100) as i32;
+
+        let foreign_capitals = majors.iter().filter(|owner| **owner != pid).count();
+        let controlled_capitals = g
+            .cities
+            .values()
+            .filter(|city| city.is_capital && city.original_owner != pid && city.owner == pid)
+            .count();
+        let domination = if foreign_capitals == 0 {
+            0
+        } else {
+            (100 * controlled_capitals / foreign_capitals) as i32
+        };
+
+        let score = if g.max_turns > 0
+            && g.turn.saturating_mul(4) >= g.max_turns.saturating_mul(3)
+            && majors.iter().map(|candidate| g.score(*candidate)).max() == Some(g.score(pid))
+        {
+            (40 + 60 * g.turn.min(g.max_turns) / g.max_turns) as i32
+        } else {
+            0
+        };
+
+        [
+            VictoryFocus {
+                strategy: GrandStrategy::Science,
+                progress: science,
+            },
+            VictoryFocus {
+                strategy: GrandStrategy::Culture,
+                progress: culture,
+            },
+            VictoryFocus {
+                strategy: GrandStrategy::Religion,
+                progress: religion,
+            },
+            VictoryFocus {
+                strategy: GrandStrategy::Diplomacy,
+                progress: diplomacy,
+            },
+            VictoryFocus {
+                strategy: GrandStrategy::Conquest,
+                progress: domination,
+            },
+            VictoryFocus {
+                strategy: GrandStrategy::Expansion,
+                progress: score,
+            },
+        ]
+        .into_iter()
+        .max_by_key(|focus| focus.progress)
+        .unwrap()
+    }
+
     fn assess(&self, g: &Game, pid: usize) -> StrategicPlan {
         let cities = g.player_city_ids(pid);
         let my_power = g.military_power(pid);
@@ -551,6 +656,36 @@ impl AdvancedAi {
             "Sumeria" | "Aztec" | "Nubia" | "Scythia"
         );
         let victory = self.victory_focus(g, pid);
+        let leading_rival = major_rivals
+            .iter()
+            .map(|rival| (*rival, self.rival_victory_pressure(g, *rival)))
+            .max_by(|left, right| {
+                left.1
+                    .progress
+                    .cmp(&right.1.progress)
+                    .then_with(|| right.0.cmp(&left.0))
+            });
+        let denial = leading_rival
+            .filter(|(_, pressure)| {
+                self.victory_target.is_none()
+                    && pressure.progress >= 78
+                    && pressure.progress >= victory.progress + 15
+            })
+            .map(|(rival, pressure)| {
+                let counter = match pressure.strategy {
+                    GrandStrategy::Science => GrandStrategy::Conquest,
+                    GrandStrategy::Culture => GrandStrategy::Culture,
+                    GrandStrategy::Religion if g.players[pid].religion.is_some() => {
+                        GrandStrategy::Religion
+                    }
+                    GrandStrategy::Religion => GrandStrategy::Conquest,
+                    GrandStrategy::Diplomacy => GrandStrategy::Diplomacy,
+                    GrandStrategy::Conquest => GrandStrategy::Recovery,
+                    GrandStrategy::Expansion => GrandStrategy::Conquest,
+                    GrandStrategy::Recovery => GrandStrategy::Recovery,
+                };
+                (rival, counter)
+            });
         let strategy = if at_war && (threatened_city.is_some() || my_power * 1.25 < strongest_rival)
         {
             GrandStrategy::Recovery
@@ -562,6 +697,8 @@ impl AdvancedAi {
             } else {
                 target.strategy()
             }
+        } else if let Some((_, counter)) = denial {
+            counter
         } else if at_war
             || (g.turn >= 55 && cities.len() >= 2 && my_power > weakest_rival * 1.80 + 20.0)
             || (military_civ
@@ -581,20 +718,23 @@ impl AdvancedAi {
         // Finish wars already in progress before selecting the next major
         // rival. In particular, this gives hostile city-states an explicit
         // city objective that the force-group planner can actually consume.
-        let target_pool = if wartime_rivals.is_empty() {
-            &major_rivals
+        let target_player = if wartime_rivals.is_empty() {
+            denial.map(|(rival, _)| rival).or_else(|| {
+                major_rivals.iter().copied().min_by(|a, b| {
+                    self.rival_value(g, pid, *a)
+                        .partial_cmp(&self.rival_value(g, pid, *b))
+                        .unwrap()
+                        .then(a.cmp(b))
+                })
+            })
         } else {
-            &wartime_rivals
-        };
-        let target_player = target_pool
-            .iter()
-            .min_by(|a, b| {
-                self.rival_value(g, pid, **a)
-                    .partial_cmp(&self.rival_value(g, pid, **b))
+            wartime_rivals.iter().copied().min_by(|a, b| {
+                self.rival_value(g, pid, *a)
+                    .partial_cmp(&self.rival_value(g, pid, *b))
                     .unwrap()
                     .then(a.cmp(b))
             })
-            .copied();
+        };
         let target_city = target_player.and_then(|target| {
             let from = cities
                 .iter()
@@ -638,7 +778,10 @@ impl AdvancedAi {
             })
             .min()
             .unwrap_or(40) as f64;
-        distance * 7.0 + g.military_power(other) * 1.5 - g.score(other) as f64 * 0.35
+        let victory_pressure = self.rival_victory_pressure(g, other).progress as f64;
+        distance * 7.0 + g.military_power(other) * 1.5
+            - g.score(other) as f64 * 0.35
+            - victory_pressure * 2.4
     }
 
     fn yield_value(&self, yields: Yields, strategy: GrandStrategy) -> f64 {
@@ -3522,7 +3665,7 @@ impl AdvancedAi {
     fn resolve_city_dispositions(&mut self, g: &mut Game, pid: usize, strategy: GrandStrategy) {
         loop {
             let candidates: Vec<Action> = g
-                .legal_actions(pid)
+                .legal_city_disposition_actions(pid)
                 .into_iter()
                 .filter(|action| {
                     matches!(
@@ -4081,6 +4224,53 @@ mod tests {
             ai.victory_focus(&culture, 0).strategy,
             GrandStrategy::Culture
         );
+    }
+
+    #[test]
+    fn strategic_plan_denies_an_imminent_victory_instead_of_farming_a_weak_rival() {
+        let establish_capitals = |game: &mut Game| {
+            for pid in 0..3 {
+                let settler = game
+                    .player_unit_ids(pid)
+                    .into_iter()
+                    .find(|unit| game.units[unit].kind == "settler")
+                    .unwrap();
+                game.current = pid;
+                game.apply(pid, &Action::FoundCity { unit: settler })
+                    .unwrap();
+            }
+            game.current = 0;
+            game.turn = 190;
+        };
+
+        let mut science = Game::new_full(3, 36, 22, 761, 300, 0, false);
+        establish_capitals(&mut science);
+        science.players[2].science_projects.extend([
+            "launch_earth_satellite".to_string(),
+            "launch_moon_landing".to_string(),
+            "launch_mars_colony".to_string(),
+            "exoplanet_expedition".to_string(),
+        ]);
+        science.players[2].exoplanet_distance = 42.0;
+        let ai = AdvancedAi::new();
+        let pressure = ai.rival_victory_pressure(&science, 2);
+        assert_eq!(pressure.strategy, GrandStrategy::Science);
+        assert!(pressure.progress >= 95);
+        let plan = ai.assess(&science, 0);
+        assert_eq!(plan.strategy, GrandStrategy::Conquest);
+        assert_eq!(plan.target_player, Some(2));
+
+        let mut culture = Game::new_full(3, 36, 22, 762, 300, 0, false);
+        establish_capitals(&mut culture);
+        culture.players[1].tourism_lifetime = 300_000.0;
+        culture.players[0].culture_lifetime = 100.0;
+        culture.players[2].culture_lifetime = 100.0;
+        let pressure = ai.rival_victory_pressure(&culture, 1);
+        assert_eq!(pressure.strategy, GrandStrategy::Culture);
+        assert_eq!(pressure.progress, 100);
+        let plan = ai.assess(&culture, 0);
+        assert_eq!(plan.strategy, GrandStrategy::Culture);
+        assert_eq!(plan.target_player, Some(1));
     }
 
     #[test]

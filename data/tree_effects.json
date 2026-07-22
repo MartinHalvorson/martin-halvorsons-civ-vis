@@ -32,7 +32,7 @@
     "robotics": {"gdr_air_defense": 1},
     "seasteads": {"diplomatic_victory_points": 1},
     "advanced_ai": {"gdr_anti_air_strength": 25, "gdr_anti_air_range": 3},
-    "advanced_power_cells": {"gdr_movement": 3},
+    "advanced_power_cells": {"gdr_movement": 3, "unit_co2_reduction_pct": 50},
     "cybernetics": {"gdr_heal": 20},
     "smart_materials": {"gdr_armor": 10},
     "predictive_systems": {"quarry_production": 1, "oil_improvement_production": 1},

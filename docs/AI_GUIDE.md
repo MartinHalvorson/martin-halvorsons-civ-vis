@@ -32,6 +32,14 @@ remains the frozen deterministic control and the lightweight agent for
 city-states/barbarians. Both read full state (cheat on fog); fair-play agents
 should restrict themselves to `civvis::obs::observation(&game, pid)`.
 
+Default strategic planning also reads the public victory-race information for
+every rival. An imminent science or score win becomes a military-denial target,
+a culture lead triggers defensive Culture and Tourism investment, a religious
+lead is met with theological pressure (or military denial when no religion is
+available), a Diplomatic Victory lead redirects Favor and envoys, and captured
+foreign Capitals force a recovery posture. This urgency can override a nearer,
+weaker distraction, while an explicit benchmark victory target remains fixed.
+
 ## Victory targeting and full-game validation
 
 Every major can be assigned an explicit victory objective. Targeted agents
@@ -167,9 +175,11 @@ Multiplayer games score as pairwise Elo results by final placement
   AI opponents, returns the new state (+`error` string on illegal actions)
 - `GET /rules` — the full ruleset (techs, units, costs, ...)
 - `POST /new` body `{"seed": 7, "num_players": 4}` — fresh game; selecting a
-  player count also applies its full stock Civ VI map profile (4 = Tiny
-  60×38/6 city-states, 6 = Small 74×46/9 city-states). Explicit `width`,
-  `height`, or `num_city_states` fields override individual profile values.
+  player count also applies its full stock Civ VI map profile: 2 = Duel
+  (44×26/3 city-states), 4 = Tiny (60×38/6), 6 = Small (74×46/9), 8 = Standard
+  (84×54/12), 10 = Large (96×60/15), and 12 = Huge (106×66/18). Explicit
+  `width`, `height`, or `num_city_states` fields override individual profile
+  values.
 
 Actions are plain JSON dicts identical to what `legal_actions` returns —
 feed them straight into LLM tool-calling or an RL policy. One process per
