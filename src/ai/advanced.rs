@@ -5478,7 +5478,8 @@ impl AdvancedAi {
             })
             .collect();
 
-        let mut ordered = Vec::new();
+        let mut reply_branches = Vec::new();
+        let mut direct_attackers = BTreeSet::new();
         for reply in replies {
             let reply_unit = match &reply {
                 Action::Attack { unit, .. }
@@ -5486,12 +5487,74 @@ impl AdvancedAi {
                 | Action::AirStrike { unit, .. } => Some(*unit),
                 _ => None,
             };
+            direct_attackers.extend(reply_unit);
             let reply_hp =
                 reply_unit.and_then(|unit| position.units.get(&unit).map(|candidate| candidate.hp));
             let mut branch = position.clone();
             if branch.apply(enemy, &reply).is_err() {
                 continue;
             }
+            reply_branches.push((format!("{reply:?}"), branch, reply_unit, reply_hp));
+        }
+
+        // A Civ unit can normally move and attack in the same turn. Search
+        // only one-step forcing approaches whose resulting position already
+        // has a legal attack on the victim. This is the tactical analogue of
+        // a check extension: it closes the horizon gap around an exposed
+        // capture without admitting every quiet movement into quiescence.
+        let mobile_attackers: Vec<u32> = position
+            .units
+            .values()
+            .filter(|unit| unit.owner == enemy && !direct_attackers.contains(&unit.id))
+            .filter(|unit| {
+                let spec = &position.rules.units[unit.kind.as_str()];
+                spec.class == "military"
+                    && spec.domain.as_deref() != Some("air")
+                    && position.wdist(unit.pos, victim_pos) <= spec.range.max(1) + 2
+            })
+            .map(|unit| unit.id)
+            .collect();
+        for attacker in mobile_attackers {
+            let reply_hp = position.units[&attacker].hp;
+            for to in position
+                .nbrs(position.units[&attacker].pos)
+                .into_iter()
+                .filter(|to| position.can_move(attacker, *to))
+            {
+                let movement = Action::Move { unit: attacker, to };
+                let mut moved = position.clone();
+                if moved.apply(enemy, &movement).is_err() {
+                    continue;
+                }
+                let followups: Vec<Action> = moved
+                    .legal_actions(enemy)
+                    .into_iter()
+                    .filter(|action| match action {
+                        Action::Attack { unit, target }
+                        | Action::Ranged { unit, target }
+                        | Action::AirStrike { unit, target } => {
+                            *unit == attacker && *target == victim_pos
+                        }
+                        _ => false,
+                    })
+                    .collect();
+                for followup in followups {
+                    let mut branch = moved.clone();
+                    if branch.apply(enemy, &followup).is_err() {
+                        continue;
+                    }
+                    reply_branches.push((
+                        format!("{movement:?} -> {followup:?}"),
+                        branch,
+                        Some(attacker),
+                        Some(reply_hp),
+                    ));
+                }
+            }
+        }
+
+        let mut ordered = Vec::new();
+        for (label, branch, reply_unit, reply_hp) in reply_branches {
             let loss = branch
                 .units
                 .get(&victim)
@@ -5505,11 +5568,7 @@ impl AdvancedAi {
                     .unwrap_or(hp as f64 + 20.0),
                 _ => 0.0,
             };
-            ordered.push((
-                (loss - 0.35 * counter_loss).max(0.0),
-                format!("{reply:?}"),
-                branch,
-            ));
+            ordered.push(((loss - 0.35 * counter_loss).max(0.0), label, branch));
         }
 
         // Chess-style move ordering keeps the extension bounded: examine all
@@ -8710,6 +8769,83 @@ mod tests {
         assert!(!g.units.contains_key(&safe_defender));
         assert!(g.units.contains_key(&risky_defender));
         assert_eq!(g.units[&attacker].pos, safe);
+    }
+
+    #[test]
+    fn forcing_reply_search_prices_a_move_then_attack_counter() {
+        let mut game = Game::new_full(2, 24, 16, 8_118, 80, 0, false);
+        game.at_war.insert((0, 1));
+        game.current = 0;
+        let (anchor, prize, counter) = game
+            .map
+            .tiles
+            .iter()
+            .filter(|(position, tile)| {
+                game.rules.is_passable(tile)
+                    && !game.rules.is_water(tile)
+                    && game.units_at(**position).is_empty()
+                    && game.city_at(**position).is_none()
+                    && game
+                        .cities
+                        .values()
+                        .all(|city| game.wdist(**position, city.pos) > 5)
+                    && game
+                        .units
+                        .values()
+                        .all(|unit| game.wdist(**position, unit.pos) > 5)
+            })
+            .find_map(|(anchor, _)| {
+                game.nbrs(*anchor).into_iter().find_map(|prize| {
+                    let prize_tile = game.map.get(prize)?;
+                    if !game.rules.is_passable(prize_tile)
+                        || game.rules.is_water(prize_tile)
+                        || !game.units_at(prize).is_empty()
+                        || game.city_at(prize).is_some()
+                    {
+                        return None;
+                    }
+                    game.wdisk(prize, 3).into_iter().find_map(|counter| {
+                        let tile = game.map.get(counter)?;
+                        (game.wdist(prize, counter) == 3
+                            && game.rules.is_passable(tile)
+                            && !game.rules.is_water(tile)
+                            && game.units_at(counter).is_empty()
+                            && game.city_at(counter).is_none()
+                            && game.nbrs(counter).into_iter().any(|step| {
+                                game.wdist(step, prize) == 2
+                                    && game.map.get(step).is_some_and(|tile| {
+                                        game.rules.is_passable(tile) && !game.rules.is_water(tile)
+                                    })
+                                    && game.units_at(step).is_empty()
+                                    && game.city_at(step).is_none()
+                            }))
+                        .then_some((*anchor, prize, counter))
+                    })
+                })
+            })
+            .expect("test map has a one-step ranged-counter geometry");
+
+        for position in game.wdisk(prize, 3) {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.hills = false;
+        }
+        let attacker = game.spawn_test_unit("swordsman", 0, anchor);
+        let defender = game.spawn_test_unit("warrior", 1, prize);
+        game.units.get_mut(&defender).unwrap().hp = 1;
+        let capture = Action::Attack {
+            unit: attacker,
+            target: prize,
+        };
+        let ai = AdvancedAi::new();
+        let quiet = ai.forcing_reply_penalty(&game, 0, attacker, &capture);
+        game.spawn_test_unit("archer", 1, counter);
+        let mobile_counter = ai.forcing_reply_penalty(&game, 0, attacker, &capture);
+        assert!(
+            mobile_counter > quiet + 5.0,
+            "a ranged unit one step outside range must still count as a forcing reply: {mobile_counter} <= {quiet}"
+        );
     }
 
     #[test]
