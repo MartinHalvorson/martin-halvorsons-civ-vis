@@ -6404,7 +6404,6 @@ impl AdvancedAi {
         plan: &StrategicPlan,
     ) -> Option<Action> {
         let unit = &g.units[&uid];
-        let spec = &g.rules.units[unit.kind.as_str()];
         let doctrine = BasicAi::unit_doctrine(g, uid);
         let legal = g.legal_doctrine_actions(pid, uid);
         let best_strike = legal

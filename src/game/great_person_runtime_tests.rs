@@ -34,6 +34,15 @@ fn recruit_current_engineer(game: &mut Game) -> String {
     expected
 }
 
+fn recruit_current_merchant(game: &mut Game) -> String {
+    let expected = game.current_great_person("merchant").unwrap().0.to_string();
+    let cost = game.gp_cost(0, "merchant");
+    game.players[0].gpp.insert("merchant".to_string(), cost);
+    game.claim_great_person(0, "merchant", None).unwrap();
+    assert_eq!(game.players[0].great_people.last(), Some(&expected));
+    expected
+}
+
 #[test]
 fn named_scientists_grant_exact_buildings_science_and_era_boosts() {
     let (mut game, city, _) = scientist_game(95_001);
@@ -193,4 +202,108 @@ fn named_engineers_apply_exact_charges_wonder_gates_and_workshop_culture() {
         .pillaged_buildings
         .insert("workshop".to_string());
     assert_eq!(game.city_yields(city).culture, culture_before);
+}
+
+#[test]
+fn named_merchants_annex_tiles_and_apply_exact_trade_and_oil_effects() {
+    let mut game = Game::new_full(2, 28, 18, 95_004, 300, 0, false);
+    let mut cities = Vec::new();
+    for pid in 0..2 {
+        let settler = game
+            .player_unit_ids(pid)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        cities.push(game.found_city_for(pid, game.units[&settler].pos, None));
+    }
+    let merchant_city = cities[0];
+    let foreign_city = cities[1];
+    install_test_district(&mut game, merchant_city, "commercial_hub");
+    game.players[0].civics.insert("foreign_trade".to_string());
+
+    let gold_before_crassus = game.players[0].gold;
+    let tiles_before_crassus = game.cities[&merchant_city].owned_tiles.len();
+    assert_eq!(
+        recruit_current_merchant(&mut game),
+        "marcus_licinius_crassus"
+    );
+    assert_eq!(game.players[0].gold - gold_before_crassus, 180.0);
+    assert_eq!(
+        game.cities[&merchant_city].owned_tiles.len() - tiles_before_crassus,
+        3
+    );
+
+    game.routes.push(TradeRoute {
+        origin: foreign_city,
+        dest: merchant_city,
+        owner: 1,
+        ends: game.turn + 30,
+    });
+    let foreign_origin_gold = game.city_yields(foreign_city).gold;
+    let merchant_destination_gold = game.city_yields(merchant_city).gold;
+    let traders_before = game
+        .units
+        .values()
+        .filter(|unit| unit.owner == 0 && unit.kind == "trader")
+        .count();
+    let capacity_before = game.trade_capacity(0);
+    assert_eq!(recruit_current_merchant(&mut game), "marco_polo");
+    assert_eq!(game.trade_capacity(0) - capacity_before, 1);
+    assert_eq!(
+        game.units
+            .values()
+            .filter(|unit| unit.owner == 0 && unit.kind == "trader")
+            .count()
+            - traders_before,
+        1
+    );
+    assert_eq!(
+        game.city_yields(foreign_city).gold - foreign_origin_gold,
+        2.0
+    );
+    assert_eq!(
+        game.city_yields(merchant_city).gold - merchant_destination_gold,
+        2.0
+    );
+
+    let resource_tiles: Vec<Pos> = game.cities[&foreign_city]
+        .owned_tiles
+        .iter()
+        .copied()
+        .filter(|position| *position != game.cities[&foreign_city].pos)
+        .take(2)
+        .collect();
+    assert_eq!(resource_tiles.len(), 2);
+    for (position, resource, improvement) in [
+        (resource_tiles[0], "iron", "mine"),
+        (resource_tiles[1], "horses", "pasture"),
+    ] {
+        let tile = game.map.tiles.get_mut(&position).unwrap();
+        tile.resource = Some(resource.to_string());
+        tile.improvement = Some(improvement.to_string());
+        tile.pillaged = false;
+    }
+    game.routes.push(TradeRoute {
+        origin: merchant_city,
+        dest: foreign_city,
+        owner: 0,
+        ends: game.turn + 30,
+    });
+    game.players[0].techs.insert("refining".to_string());
+    let rockefeller_route_gold = game.city_yields(merchant_city).gold;
+    assert_eq!(recruit_current_merchant(&mut game), "john_rockefeller");
+    assert_eq!(
+        game.city_yields(merchant_city).gold - rockefeller_route_gold,
+        4.0
+    );
+    assert_eq!(game.strategic_resource_rate(0, "oil"), 3.0);
+    game.process_strategic_resources(0);
+    assert_eq!(game.strategic_stockpile(0, "oil"), 3.0);
+
+    let restored: Game = serde_json::from_str(&serde_json::to_string(&game).unwrap()).unwrap();
+    assert_eq!(
+        restored.city_yields(merchant_city),
+        game.city_yields(merchant_city)
+    );
+    assert_eq!(restored.strategic_resource_rate(0, "oil"), 3.0);
 }
