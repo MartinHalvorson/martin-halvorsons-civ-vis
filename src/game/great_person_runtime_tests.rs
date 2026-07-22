@@ -155,6 +155,7 @@ fn named_engineers_apply_exact_charges_wonder_gates_and_workshop_culture() {
         .unwrap();
 
     game.players[0].gpp.insert("engineer".to_string(), 60.0);
+    assert_eq!(game.current_great_person("engineer").unwrap().1.era, 2);
     assert!(game.claim_great_person(0, "engineer", None).is_err());
     assert!(!game.retired_great_people.contains("imhotep"));
 
@@ -182,6 +183,7 @@ fn named_engineers_apply_exact_charges_wonder_gates_and_workshop_culture() {
         wonder: "eiffel_tower".to_string(),
         pos: wonder_site,
     }];
+    assert_eq!(game.current_great_person("engineer").unwrap().1.era, 4);
     assert_eq!(recruit_current_engineer(&mut game), "gustave_eiffel");
     assert_eq!(game.cities[&city].production, 960.0);
 
