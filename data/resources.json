@@ -8,17 +8,17 @@
   "bananas": {"class": "bonus", "yields": {"food": 1}, "feature": ["jungle"], "improvement": "plantation"},
   "copper": {"class": "bonus", "yields": {"gold": 2}, "terrain": ["grassland", "plains", "desert", "tundra"], "improvement": "mine"},
 
-  "horses": {"class": "strategic", "tech": "animal_husbandry", "yields": {"production": 1}, "terrain": ["grassland", "plains"], "improvement": "pasture"},
-  "iron": {"class": "strategic", "tech": "bronze_working", "yields": {"production": 1}, "terrain": ["grassland", "plains", "desert", "tundra"], "improvement": "mine"},
-  "niter": {"class": "strategic", "tech": "military_engineering", "yields": {"production": 1}, "terrain": ["grassland", "plains", "desert", "tundra"], "improvement": "mine"},
+  "horses": {"class": "strategic", "tech": "animal_husbandry", "yields": {"production": 1, "food": 1}, "terrain": ["grassland", "plains"], "improvement": "pasture"},
+  "iron": {"class": "strategic", "tech": "bronze_working", "yields": {"science": 1}, "terrain": ["grassland", "plains", "desert", "tundra"], "improvement": "mine"},
+  "niter": {"class": "strategic", "tech": "military_engineering", "yields": {"production": 1, "food": 1}, "terrain": ["grassland", "plains", "desert", "tundra"], "improvement": "mine"},
   "coal": {"class": "strategic", "tech": "industrialization", "yields": {"production": 2}, "terrain": ["grassland", "plains"], "improvement": "mine"},
   "oil": {"class": "strategic", "tech": "refining", "yields": {"production": 3}, "terrain": ["desert", "tundra", "coast"], "improvement": "oil_well"},
   "aluminum": {"class": "strategic", "tech": "radio", "yields": {"science": 1}, "terrain": ["desert", "plains"], "improvement": "mine"},
   "uranium": {"class": "strategic", "tech": "combined_arms", "yields": {"production": 2}, "terrain": ["desert", "plains", "tundra"], "improvement": "mine"},
 
-  "silk": {"class": "luxury", "yields": {"gold": 1, "culture": 1}, "feature": ["forest"], "improvement": "plantation"},
+  "silk": {"class": "luxury", "yields": {"culture": 1}, "feature": ["forest"], "improvement": "plantation"},
   "wine": {"class": "luxury", "yields": {"food": 1, "gold": 1}, "terrain": ["grassland", "plains"], "improvement": "plantation"},
-  "salt": {"class": "luxury", "yields": {"gold": 2}, "terrain": ["desert", "plains"], "improvement": "mine"},
+  "salt": {"class": "luxury", "yields": {"food": 1, "gold": 1}, "terrain": ["desert", "plains"], "improvement": "mine"},
 
   "antiquity_site": {"class": "artifact", "civic": "natural_history", "yields": {"culture": 2}, "terrain": ["grassland", "plains", "desert", "tundra"], "improvement": "archaeological_dig"},
   "shipwreck": {"class": "artifact", "civic": "cultural_heritage", "yields": {"culture": 2}, "terrain": ["coast", "ocean"], "improvement": "shipwreck_excavation"}

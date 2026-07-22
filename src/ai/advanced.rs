@@ -12159,34 +12159,20 @@ mod tests {
             .iter()
             .filter(|p| !p.is_minor && p.alive)
             .all(|p| p.techs.len() > 1));
-        // Captured enemy Settlers legitimately make the on-map total exceed
-        // one. Guard the behavior this test actually cares about: the AI must
-        // never manufacture an accumulating backlog of its own Settlers.
+        // Settlers lost to Barbarians or captured legitimately break any
+        // lifetime produced-vs-founded accounting. Guard the behavior this
+        // test actually cares about instead: the production gate only queues a
+        // Settler while the player holds none, so a player must never end the
+        // game sitting on a backlog of idle Settlers.
         for player in g.players.iter().filter(|p| !p.is_minor && p.alive) {
-            let produced = g
-                .log
-                .iter()
-                .filter(|(pid, action)| {
-                    *pid == player.id
-                        && matches!(
-                            action,
-                            Action::Produce {
-                                item: Item::Unit { unit },
-                                ..
-                            } if unit == "settler"
-                        )
-                })
-                .count();
-            let founded = g
-                .log
-                .iter()
-                .filter(|(pid, action)| {
-                    *pid == player.id && matches!(action, Action::FoundCity { .. })
-                })
+            let idle = g
+                .units
+                .values()
+                .filter(|u| u.owner == player.id && u.kind == "settler")
                 .count();
             assert!(
-                produced <= founded + 1,
-                "advanced AI accumulated self-produced Settlers: player {}, {produced} produced and {founded} used",
+                idle <= 1,
+                "advanced AI accumulated idle Settlers: player {} holds {idle}",
                 player.id
             );
         }
