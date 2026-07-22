@@ -178,7 +178,7 @@ def build_latest(max_attempts: int = 3) -> bool:
 def prepare_latest_once() -> bool:
     """Try one stable-source build without abandoning live monitoring forever."""
     sync_current_branch()
-    return build_latest()
+    return build_latest(max_attempts=1)
 
 
 def prepare_latest(retry_seconds: float) -> None:

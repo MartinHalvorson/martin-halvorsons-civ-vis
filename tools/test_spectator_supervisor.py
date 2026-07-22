@@ -112,7 +112,7 @@ class SourceSnapshotTests(unittest.TestCase):
         ):
             self.assertFalse(supervisor.prepare_latest_once())
         sync.assert_called_once_with()
-        build.assert_called_once_with()
+        build.assert_called_once_with(max_attempts=1)
 
 
 class RecoveryTests(unittest.TestCase):
