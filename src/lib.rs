@@ -1197,12 +1197,16 @@ mod tests {
             "expected 2 scientist gpp, got {pts}"
         );
         assert_eq!(g.gp_cost(0, "scientist"), 60.0);
-        // reaching the threshold auto-claims and grants two eurekas
+        // Reaching the threshold auto-claims Hypatia. Because this Campus
+        // already has a Library, her instant building is a no-op while her
+        // permanent +1 Science to Libraries still applies.
         g.players[0].gpp.insert("scientist".to_string(), 59.0);
-        let boosts_before = g.players[0].boosted_techs.len();
+        let boosts_before = g.players[0].boosted_techs.clone();
+        let science_before = g.city_yields(cid).science;
         round(&mut g);
         assert_eq!(g.players[0].gp_claimed.get("scientist"), Some(&1));
-        assert!(g.players[0].boosted_techs.len() > boosts_before);
+        assert_eq!(g.players[0].boosted_techs, boosts_before);
+        assert_eq!(g.city_yields(cid).science - science_before, 1.0);
         // The global market advances to the next named Scientist rather than
         // fabricating a generic doubled threshold.
         assert_eq!(

@@ -1,7 +1,7 @@
 {
-  "hypatia": {"name":"Hypatia","kind":"scientist","era":1,"cost":60,"effects":{"tech_boosts":1,"libraries_science":1}},
-  "isaac_newton": {"name":"Isaac Newton","kind":"scientist","era":3,"cost":240,"effects":{"tech_boosts":2,"universities_science":2}},
-  "albert_einstein": {"name":"Albert Einstein","kind":"scientist","era":5,"cost":720,"effects":{"tech_boosts":1,"research_labs_science":4}},
+  "hypatia": {"name":"Hypatia","kind":"scientist","era":1,"cost":60,"effects":{"free_library":1,"libraries_science":1}},
+  "isaac_newton": {"name":"Isaac Newton","kind":"scientist","era":3,"cost":240,"effects":{"free_library":1,"free_university":1,"universities_science":2}},
+  "albert_einstein": {"name":"Albert Einstein","kind":"scientist","era":5,"cost":720,"effects":{"modern_atomic_tech_boosts":1,"research_labs_science":4}},
 
   "homer": {"name":"Homer","kind":"writer","era":1,"cost":60,"effects":{"great_work_writing":2}},
   "william_shakespeare": {"name":"William Shakespeare","kind":"writer","era":3,"cost":240,"effects":{"great_work_writing":2}},
