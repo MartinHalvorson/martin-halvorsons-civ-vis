@@ -2681,6 +2681,334 @@ impl AdvancedAi {
         }
     }
 
+    fn governor_priority(strategy: GrandStrategy) -> &'static [&'static str] {
+        match strategy {
+            GrandStrategy::Expansion => &[
+                "magnus", "pingala", "liang", "reyna", "victor", "moksha", "amani",
+            ],
+            GrandStrategy::Science => &[
+                "pingala", "magnus", "reyna", "liang", "victor", "moksha", "amani",
+            ],
+            GrandStrategy::Culture => &[
+                "pingala", "reyna", "liang", "magnus", "moksha", "victor", "amani",
+            ],
+            GrandStrategy::Religion => &[
+                "moksha", "pingala", "magnus", "amani", "liang", "victor", "reyna",
+            ],
+            GrandStrategy::Diplomacy => &[
+                "amani", "pingala", "reyna", "magnus", "liang", "victor", "moksha",
+            ],
+            GrandStrategy::Conquest => &[
+                "victor", "magnus", "pingala", "liang", "reyna", "moksha", "amani",
+            ],
+            GrandStrategy::Recovery => &[
+                "victor", "reyna", "magnus", "pingala", "liang", "moksha", "amani",
+            ],
+        }
+    }
+
+    fn governor_promotion_priority(
+        strategy: GrandStrategy,
+        governor: &str,
+    ) -> &'static [&'static str] {
+        match governor {
+            "pingala" if strategy == GrandStrategy::Culture => &[
+                "connoisseur",
+                "researcher",
+                "grants",
+                "curator",
+                "space_initiative",
+            ],
+            "pingala" => &[
+                "researcher",
+                "connoisseur",
+                "grants",
+                "space_initiative",
+                "curator",
+            ],
+            "magnus" => &[
+                "provision",
+                "surplus_logistics",
+                "black_marketeer",
+                "industrialist",
+                "vertical_integration",
+            ],
+            "liang" => &[
+                "zoning_commissioner",
+                "aquaculture",
+                "reinforced_materials",
+                "water_works",
+                "parks_and_recreation",
+            ],
+            "reyna" => &[
+                "harbormaster",
+                "forestry_management",
+                "tax_collector",
+                "contractor",
+                "renewable_subsidizer",
+            ],
+            "victor" => &[
+                "garrison_commander",
+                "defense_logistics",
+                "embrasure",
+                "air_defense_initiative",
+                "arms_race_proponent",
+            ],
+            "moksha" => &[
+                "grand_inquisitor",
+                "laying_on_of_hands",
+                "citadel_of_god",
+                "patron_saint",
+                "divine_architect",
+            ],
+            "amani" => &[
+                "emissary",
+                "affluence",
+                "local_informants",
+                "foreign_investor",
+                "puppeteer",
+            ],
+            _ => &[],
+        }
+    }
+
+    fn best_governor_city(
+        &self,
+        g: &Game,
+        pid: usize,
+        governor: &str,
+        plan: &StrategicPlan,
+    ) -> Option<u32> {
+        let occupied: BTreeSet<u32> = g.players[pid]
+            .governor_roster
+            .values()
+            .filter_map(|state| state.city)
+            .collect();
+        let mut candidates: Vec<u32> = g
+            .player_city_ids(pid)
+            .into_iter()
+            .filter(|city| !occupied.contains(city))
+            .collect();
+        if governor == "amani" {
+            candidates.extend(
+                g.players
+                    .iter()
+                    .filter(|player| {
+                        player.alive
+                            && player.is_minor
+                            && !player.is_barbarian
+                            && !g.is_at_war(pid, player.id)
+                    })
+                    .flat_map(|player| g.player_city_ids(player.id))
+                    .filter(|city| !occupied.contains(city)),
+            );
+        }
+        candidates.into_iter().max_by(|left, right| {
+            let value = |city_id: u32| {
+                let city = &g.cities[&city_id];
+                let yields = g.city_yields(city_id);
+                let own = city.owner == pid;
+                let commercial = city.districts.keys().any(|district| {
+                    matches!(g.district_family(district), "commercial_hub" | "harbor")
+                }) as i32 as f64;
+                let holy = city
+                    .districts
+                    .keys()
+                    .any(|district| g.district_family(district) == "holy_site")
+                    as i32 as f64;
+                let base = if own {
+                    (100.0 - city.loyalty).max(0.0) * 2.0
+                } else {
+                    0.0
+                };
+                base + match governor {
+                    "pingala" => {
+                        city.pop as f64 * 14.0 + yields.science * 9.0 + yields.culture * 9.0
+                    }
+                    "magnus" => {
+                        city.pop as f64 * 5.0
+                            + yields.food * 5.0
+                            + yields.production * 11.0
+                            + matches!(
+                                city.queue.first(),
+                                Some(Item::Unit { unit }) if unit == "settler"
+                            ) as i32 as f64
+                                * 180.0
+                    }
+                    "liang" => yields.production * 10.0 + city.owned_tiles.len() as f64 * 2.0,
+                    "reyna" => city.pop as f64 * 8.0 + yields.gold * 13.0 + commercial * 150.0,
+                    "victor" => {
+                        plan.threatened_city.is_some_and(|target| target == city_id) as i32 as f64
+                            * 600.0
+                            + city.wall_hp.max(0) as f64
+                            + city.pop as f64 * 5.0
+                    }
+                    "moksha" => {
+                        yields.faith * 14.0
+                            + holy * 180.0
+                            + (g.players[pid].holy_city == Some(city_id)) as i32 as f64 * 220.0
+                    }
+                    "amani" if !own => 600.0 + g.envoys_at(pid, city.owner) as f64 * 55.0,
+                    "amani" => (100.0 - city.loyalty).max(0.0) * 5.0,
+                    _ => 0.0,
+                }
+            };
+            value(*left)
+                .partial_cmp(&value(*right))
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| right.cmp(left))
+        })
+    }
+
+    fn preferred_governor_promotion(
+        &self,
+        g: &Game,
+        pid: usize,
+        strategy: GrandStrategy,
+        governor: &str,
+    ) -> Option<String> {
+        let available = g.available_governor_promotions(pid, governor);
+        Self::governor_promotion_priority(strategy, governor)
+            .iter()
+            .find(|promotion| available.iter().any(|candidate| candidate == **promotion))
+            .map(|promotion| (*promotion).to_string())
+    }
+
+    fn strategic_governors(&self, g: &mut Game, pid: usize, plan: &StrategicPlan) {
+        let priority = Self::governor_priority(plan.strategy);
+        while g.governor_titles_available(pid) > 0 {
+            let primary = priority[0];
+            if !g.players[pid].governor_roster.contains_key(primary) {
+                if let Some(city) = self.best_governor_city(g, pid, primary, plan) {
+                    if g.apply(
+                        pid,
+                        &Action::AppointGovernor {
+                            governor: primary.to_string(),
+                            city,
+                        },
+                    )
+                    .is_ok()
+                    {
+                        continue;
+                    }
+                }
+            }
+
+            let primary_promotions = g.players[pid]
+                .governor_roster
+                .get(primary)
+                .map(|state| state.promotions.len())
+                .unwrap_or(0);
+            if primary_promotions < 2 {
+                if let Some(promotion) =
+                    self.preferred_governor_promotion(g, pid, plan.strategy, primary)
+                {
+                    if g.apply(
+                        pid,
+                        &Action::PromoteGovernor {
+                            governor: primary.to_string(),
+                            promotion,
+                        },
+                    )
+                    .is_ok()
+                    {
+                        continue;
+                    }
+                }
+            }
+
+            // After both tier-one promotions are online, establish one
+            // complementary governor before completing the primary's tree.
+            if g.players[pid].governor_roster.len() < 2 {
+                if let Some((governor, city)) = priority.iter().skip(1).find_map(|governor| {
+                    (!g.players[pid].governor_roster.contains_key(*governor))
+                        .then(|| {
+                            self.best_governor_city(g, pid, governor, plan)
+                                .map(|city| ((*governor).to_string(), city))
+                        })
+                        .flatten()
+                }) {
+                    if g.apply(pid, &Action::AppointGovernor { governor, city })
+                        .is_ok()
+                    {
+                        continue;
+                    }
+                }
+            }
+
+            if let Some(promotion) =
+                self.preferred_governor_promotion(g, pid, plan.strategy, primary)
+            {
+                if g.apply(
+                    pid,
+                    &Action::PromoteGovernor {
+                        governor: primary.to_string(),
+                        promotion,
+                    },
+                )
+                .is_ok()
+                {
+                    continue;
+                }
+            }
+
+            // Add a third regional anchor before investing deeply in the
+            // complementary governor. Further titles finish existing trees;
+            // only then does the roster widen again.
+            if g.players[pid].governor_roster.len() < 3 {
+                if let Some((governor, city)) = priority.iter().skip(1).find_map(|governor| {
+                    (!g.players[pid].governor_roster.contains_key(*governor))
+                        .then(|| {
+                            self.best_governor_city(g, pid, governor, plan)
+                                .map(|city| ((*governor).to_string(), city))
+                        })
+                        .flatten()
+                }) {
+                    if g.apply(pid, &Action::AppointGovernor { governor, city })
+                        .is_ok()
+                    {
+                        continue;
+                    }
+                }
+            }
+
+            let next_promotion = priority.iter().find_map(|governor| {
+                self.preferred_governor_promotion(g, pid, plan.strategy, governor)
+                    .map(|promotion| ((*governor).to_string(), promotion))
+            });
+            if let Some((governor, promotion)) = next_promotion {
+                if g.apply(
+                    pid,
+                    &Action::PromoteGovernor {
+                        governor,
+                        promotion,
+                    },
+                )
+                .is_ok()
+                {
+                    continue;
+                }
+            }
+
+            let appointment = priority.iter().find_map(|governor| {
+                (!g.players[pid].governor_roster.contains_key(*governor))
+                    .then(|| {
+                        self.best_governor_city(g, pid, governor, plan)
+                            .map(|city| ((*governor).to_string(), city))
+                    })
+                    .flatten()
+            });
+            let Some((governor, city)) = appointment else {
+                break;
+            };
+            if g.apply(pid, &Action::AppointGovernor { governor, city })
+                .is_err()
+            {
+                break;
+            }
+        }
+    }
+
     fn science_production(&self, g: &mut Game, pid: usize) {
         let completed = &g.players[pid].science_projects;
         let project = if !completed.contains("launch_earth_satellite") {
@@ -5510,8 +5838,11 @@ impl Ai for AdvancedAi {
             self.advanced_envoys(g, pid, plan.strategy, denied_rival);
             self.advanced_secret_society(g, pid, plan.strategy);
         }
+        // Spend Governor Titles against the same strategic plan before the
+        // baseline ancillary pass can dilute them across empty cities.
+        self.strategic_governors(g, pid, &plan);
         // Keep the mature ancillary systems: governments, policies, beliefs,
-        // governors, religions, and envoys. Research is already selected.
+        // religions, and envoys. Research is already selected.
         self.base.research(g, pid);
         self.strategic_government(g, pid, plan.strategy);
         self.base.corporations(g, pid);
@@ -6135,6 +6466,92 @@ mod tests {
         assert_eq!(plan.strategy, GrandStrategy::Expansion);
         assert!(plan.desired_cities >= 3);
         assert!(plan.target_player.is_some());
+    }
+
+    #[test]
+    fn governor_titles_promote_the_primary_before_widening_the_roster() {
+        let mut game = Game::new_full(1, 24, 16, 7_111, 200, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        game.players[0].civics.extend([
+            "political_philosophy".to_string(),
+            "civil_service".to_string(),
+            "guilds".to_string(),
+        ]);
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Science,
+            target_player: None,
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+        let ai = AdvancedAi::new();
+        ai.strategic_governors(&mut game, 0, &plan);
+
+        assert_eq!(game.players[0].governor_roster.len(), 1);
+        let pingala = &game.players[0].governor_roster["pingala"];
+        assert!(pingala.promotions.contains("researcher"));
+        assert!(pingala.promotions.contains("connoisseur"));
+        assert_eq!(pingala.promotions.len(), 2);
+        assert_eq!(game.governor_titles_available(0), 0);
+
+        found_test_city(&mut game, 0);
+        game.players[0]
+            .counters
+            .insert("district_governor_titles".to_string(), 1);
+        ai.strategic_governors(&mut game, 0, &plan);
+        assert_eq!(game.players[0].governor_roster.len(), 2);
+        assert!(game.players[0].governor_roster.contains_key("magnus"));
+        assert_eq!(
+            game.players[0].governor_roster["pingala"].promotions.len(),
+            2
+        );
+    }
+
+    #[test]
+    fn first_governor_matches_the_empire_strategy() {
+        for (index, (strategy, expected)) in [
+            (GrandStrategy::Expansion, "magnus"),
+            (GrandStrategy::Science, "pingala"),
+            (GrandStrategy::Culture, "pingala"),
+            (GrandStrategy::Religion, "moksha"),
+            (GrandStrategy::Diplomacy, "amani"),
+            (GrandStrategy::Conquest, "victor"),
+            (GrandStrategy::Recovery, "victor"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut game = Game::new_full(1, 18, 10, 7_120 + index as u64, 120, 0, false);
+            let settler = game
+                .player_unit_ids(0)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+            game.players[0]
+                .civics
+                .insert("political_philosophy".to_string());
+            let plan = StrategicPlan {
+                strategy,
+                target_player: None,
+                target_city: None,
+                threatened_city: None,
+                desired_cities: 3,
+                assessed_turn: game.turn,
+            };
+            AdvancedAi::new().strategic_governors(&mut game, 0, &plan);
+            assert!(
+                game.players[0].governor_roster.contains_key(expected),
+                "{strategy:?} appointed {:?}",
+                game.players[0].governor_roster.keys().collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]
