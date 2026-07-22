@@ -8921,6 +8921,60 @@ mod tests {
     }
 
     #[test]
+    fn support_search_builds_air_defense_only_for_a_real_hostile_air_threat() {
+        let mut game = Game::new_full(2, 24, 16, 71_011, 160, 0, false);
+        for pid in 0..2 {
+            game.current = pid;
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        game.current = 0;
+        game.players[0]
+            .techs
+            .insert("advanced_ballistics".to_string());
+        game.at_war.insert((0, 1));
+        let city = game.player_city_ids(0)[0];
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Conquest,
+            target_player: Some(1),
+            target_city: game.player_city_ids(1).first().copied(),
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+        let mut ai = AdvancedAi::targeting(VictoryTarget::Domination);
+        ai.base.book_pos = 4;
+        let item = Item::Unit {
+            unit: "anti_air_gun".to_string(),
+        };
+        let counts = ai.counts(&game, 0);
+        assert_eq!(counts.air_defense, 0);
+        assert!(ai.production_value(&game, 0, city, &item, &plan, &counts) < -9_000.0);
+
+        let hostile_base = game.cities[&game.player_city_ids(1)[0]].pos;
+        game.spawn_test_unit("bomber", 1, hostile_base);
+        let counts = ai.counts(&game, 0);
+        assert!(ai.production_value(&game, 0, city, &item, &plan, &counts) > 0.0);
+        ai.advanced_support_production(&mut game, 0, &plan);
+        assert!(matches!(
+            game.cities[&city].queue.first(),
+            Some(Item::Unit { unit }) if unit == "anti_air_gun"
+        ));
+
+        game.cities.get_mut(&city).unwrap().queue.clear();
+        let city_pos = game.cities[&city].pos;
+        game.spawn_test_unit("anti_air_gun", 0, city_pos);
+        let counts = ai.counts(&game, 0);
+        assert_eq!(counts.air_defense, 1);
+        assert!(ai.production_value(&game, 0, city, &item, &plan, &counts) < -9_000.0);
+    }
+
+    #[test]
     fn force_readiness_excludes_aircraft_from_ground_armies() {
         let mut game = Game::new_full(2, 24, 16, 71_004, 120, 0, false);
         game.at_war.insert((0, 1));

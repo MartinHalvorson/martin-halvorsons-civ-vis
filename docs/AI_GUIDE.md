@@ -208,11 +208,17 @@ one logistics capability for a real land force (and a second for a large one):
 Rams/Towers only for eligible wall eras, Balloons/Drones when siege can exploit
 them, and Medic/Convoy support for wounded or mobility-constrained armies. If no recon unit exists, one
 ordinary combat unit explores at peace instead of sending the whole army.
-Before committing an attack, a bounded quiescence search clones the resulting
-position, orders the opponent's forcing replies, and extends the four strongest
-branches through a second focus-fire action. This catches poisoned captures
-and coordinated ranged kills without expanding quiet movement into a full
-turn-tree search.
+When hostile aircraft actually exist, the same reserve searches for the
+strongest available Anti-Air Gun or Mobile SAM and sizes coverage to the air
+threat instead of counting support weapons as frontline land strength. Before
+committing an ordinary melee or ranged attack, the principal evaluator makes
+every candidate on a clone and values the seeded damage, kills, survival,
+wall/Encampment damage, and actual city transfer. A bounded quiescence search
+then orders the opponent's forcing replies and extends the four strongest
+branches through a second focus-fire action. This catches poisoned captures,
+selects melee city finishes for hybrid units, and distinguishes high-value
+kills that static exchanges score as ties without expanding quiet movement
+into a full turn-tree search.
 
 ```rust
 for force in ai.force_groups() {

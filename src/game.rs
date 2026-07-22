@@ -74,6 +74,9 @@ mod city_state_unique_tests;
 mod city_trade_tests;
 
 #[cfg(test)]
+mod great_person_runtime_tests;
+
+#[cfg(test)]
 mod gold_building_purchase_tests {
     use super::*;
 
@@ -10530,6 +10533,9 @@ impl Game {
         if let Some(amount) = spec.effects.get("tech_boosts") {
             self.grant_random_boosts(pid, *amount as usize, true);
         }
+        if let Some(amount) = spec.effects.get("modern_atomic_tech_boosts") {
+            self.grant_random_tech_boosts_in_eras(pid, *amount as usize, 5, 6);
+        }
         if let Some(amount) = spec.effects.get("city_production") {
             if let Some(cid) = self
                 .player_city_ids(pid)
@@ -10537,6 +10543,54 @@ impl Game {
                 .max_by_key(|cid| self.cities[cid].pop)
             {
                 self.cities.get_mut(&cid).unwrap().production += *amount;
+            }
+        }
+        for (effect, counter) in [
+            ("libraries_science", "great_person:library_science"),
+            ("universities_science", "great_person:university_science"),
+            ("research_labs_science", "great_person:research_lab_science"),
+        ] {
+            if let Some(amount) = spec.effects.get(effect) {
+                *self.players[pid]
+                    .counters
+                    .entry(counter.to_string())
+                    .or_insert(0) += amount.round() as i64;
+            }
+        }
+        if spec.effects.contains_key("free_library") || spec.effects.contains_key("free_university")
+        {
+            let target = self
+                .cities
+                .values()
+                .filter(|city| city.owner == pid)
+                .filter(|city| self.city_has_active_district_family(city, "campus"))
+                .max_by_key(|city| (city.pop, Reverse(city.id)))
+                .map(|city| city.id);
+            if let Some(city_id) = target {
+                for (effect, family) in [
+                    ("free_library", "library"),
+                    ("free_university", "university"),
+                ] {
+                    if spec.effects.get(effect).copied().unwrap_or(0.0) <= 0.0
+                        || self.city_has_building_family(&self.cities[&city_id], family)
+                    {
+                        continue;
+                    }
+                    let civilization = self.players[pid].civ.as_str();
+                    let building = self
+                        .rules
+                        .buildings
+                        .iter()
+                        .find(|(_, candidate)| {
+                            candidate.replaces.as_deref() == Some(family)
+                                && candidate.unique_to.as_deref() == Some(civilization)
+                        })
+                        .map(|(name, _)| name.clone())
+                        .unwrap_or_else(|| family.to_string());
+                    let city = self.cities.get_mut(&city_id).unwrap();
+                    city.buildings.push(building.clone());
+                    city.building_eras.insert(building, self.world_era);
+                }
             }
         }
         for (effect, counter) in [
@@ -10670,6 +10724,38 @@ impl Game {
                 if p.civic.as_deref() == Some(name.as_str()) {
                     p.civic_progress += f * cost;
                 }
+            }
+        }
+    }
+
+    fn grant_random_tech_boosts_in_eras(
+        &mut self,
+        pid: usize,
+        n: usize,
+        minimum_era: usize,
+        maximum_era: usize,
+    ) {
+        for _ in 0..n {
+            let candidates: Vec<(String, f64)> = self
+                .rules
+                .techs
+                .iter()
+                .filter(|(name, tech)| {
+                    (minimum_era..=maximum_era).contains(&tech.era)
+                        && !self.players[pid].techs.contains(*name)
+                        && !self.players[pid].boosted_techs.contains(*name)
+                })
+                .map(|(name, tech)| (name.clone(), tech.cost))
+                .collect();
+            if candidates.is_empty() {
+                return;
+            }
+            let (name, cost) = candidates[self.rng.below(candidates.len())].clone();
+            let fraction = self.boost_frac(pid);
+            let player = &mut self.players[pid];
+            player.boosted_techs.insert(name.clone());
+            if player.research.as_deref() == Some(name.as_str()) {
+                player.research_progress += fraction * cost;
             }
         }
     }
@@ -16578,6 +16664,19 @@ impl Game {
             yields.add(self.district_building_yields(city, b));
             if building.regional_range <= 0 && self.city_is_powered(city) {
                 Self::add_powered_building_yields(building, &mut yields);
+            }
+            for (family, counter) in [
+                ("library", "great_person:library_science"),
+                ("university", "great_person:university_science"),
+                ("research_lab", "great_person:research_lab_science"),
+            ] {
+                if self.building_is_family(b, family) {
+                    yields.science += self.players[city.owner]
+                        .counters
+                        .get(counter)
+                        .copied()
+                        .unwrap_or(0) as f64;
+                }
             }
             match building.district.as_deref() {
                 Some("campus") => {
@@ -28960,29 +29059,34 @@ impl Game {
             .map(|(name, _)| name.clone())
             .collect();
         let captor_civ = self.players[new_owner].civ.clone();
-        let converted_districts: Vec<(String, Pos, bool)> = self.cities[&cid]
-            .districts
-            .iter()
-            .map(|(district, position)| {
-                let family = self.district_family(district).to_string();
-                let replacement = self
-                    .rules
-                    .districts
-                    .iter()
-                    .find(|(_, spec)| {
-                        spec.unique_to.as_deref() == Some(captor_civ.as_str())
-                            && spec.replaces.as_deref() == Some(family.as_str())
-                    })
-                    .map(|(name, _)| name.clone())
-                    .unwrap_or_else(|| family.clone());
-                let retained = self
-                    .rules
-                    .districts
-                    .get(&replacement)
-                    .is_some_and(|spec| self.unlocked(new_owner, &spec.tech, &spec.civic));
-                (replacement, *position, retained)
-            })
-            .collect();
+        let converted_districts: Vec<(String, Pos, bool)> =
+            self.cities[&cid]
+                .districts
+                .iter()
+                .map(|(district, position)| {
+                    let family = self.district_family(district).to_string();
+                    let replacement = self
+                        .rules
+                        .districts
+                        .iter()
+                        .find(|(_, spec)| {
+                            spec.unique_to.as_deref() == Some(captor_civ.as_str())
+                                && spec.replaces.as_deref() == Some(family.as_str())
+                        })
+                        .map(|(name, _)| name.clone())
+                        .unwrap_or_else(|| family.clone());
+                    // Empire-unique administrative districts are never captured;
+                    // changing the parent city's owner removes the district and
+                    // all of its buildings. Other districts survive only when the
+                    // new owner has unlocked the required technology or civic.
+                    let retained =
+                        !matches!(family.as_str(), "government_plaza" | "diplomatic_quarter")
+                            && self.rules.districts.get(&replacement).is_some_and(|spec| {
+                                self.unlocked(new_owner, &spec.tech, &spec.civic)
+                            });
+                    (replacement, *position, retained)
+                })
+                .collect();
         let retained_families: BTreeSet<String> = converted_districts
             .iter()
             .filter(|(_, _, retained)| *retained)
@@ -30736,6 +30840,14 @@ mod combat_scenarios {
         let spec = &game.rules.units["giant_death_robot"];
         assert!(spec.is_melee_capable());
         assert!(spec.has_ranged_attack());
+        assert!(!spec.can_formations);
+        assert!(!spec.earns_xp);
+        game.players[0].civics.insert("nationalism".to_string());
+        let second_robot = game.spawn_unit("giant_death_robot", 0, ring[1]);
+        assert_eq!(game.can_combine_units(0, robot, second_robot), None);
+        game.award_xp(robot, 20.0);
+        assert_eq!(game.units[&robot].xp, 0);
+        assert!(game.available_promotions(robot).is_empty());
         let legal = game.legal_actions(0);
         assert!(legal.contains(&Action::Attack {
             unit: robot,
@@ -32003,6 +32115,61 @@ mod victory_conditions {
         let before = g.cities[&city].loyalty;
         g.process_loyalty(0);
         assert_eq!(g.cities[&city].loyalty - before, ungarrisoned_gain + 5.0);
+    }
+
+    #[test]
+    fn conquest_removes_non_capturable_empire_unique_districts_and_their_buildings() {
+        let mut game = game_with_capitals(2, 4_218, 300);
+        game.players[0]
+            .techs
+            .extend(["writing".to_string(), "mathematics".to_string()]);
+        game.players[0].civics.insert("state_workforce".to_string());
+        let position = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|position| game.city_at(*position).is_none())
+            .unwrap();
+        let city = game.found_city_for(1, position, Some("Administrative Prize".to_string()));
+        let sites: Vec<Pos> = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .filter(|site| *site != position)
+            .take(3)
+            .collect();
+        for (district, site) in [
+            ("government_plaza", sites[0]),
+            ("diplomatic_quarter", sites[1]),
+            ("campus", sites[2]),
+        ] {
+            game.cities
+                .get_mut(&city)
+                .unwrap()
+                .districts
+                .insert(district.to_string(), site);
+            game.map.tiles.get_mut(&site).unwrap().district = Some(district.to_string());
+        }
+        game.cities.get_mut(&city).unwrap().buildings = ["ancestral_hall", "consulate", "library"]
+            .map(str::to_string)
+            .to_vec();
+
+        game.capture_city(city, 0);
+
+        let captured = &game.cities[&city];
+        assert!(!captured.districts.contains_key("government_plaza"));
+        assert!(!captured.districts.contains_key("diplomatic_quarter"));
+        assert!(!captured.buildings.contains(&"ancestral_hall".to_string()));
+        assert!(!captured.buildings.contains(&"consulate".to_string()));
+        assert_eq!(game.map.tiles[&sites[0]].district, None);
+        assert_eq!(game.map.tiles[&sites[1]].district, None);
+        assert!(captured.districts.contains_key("campus"));
+        assert!(captured.buildings.contains(&"library".to_string()));
+        assert_eq!(
+            game.map.tiles[&sites[2]].district.as_deref(),
+            Some("campus")
+        );
     }
 
     #[test]
