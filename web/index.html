@@ -366,7 +366,7 @@
     <div id="specbar" style="display:none">
       <div class="spec-controls">
         <button class="primary" id="specpause">⏸ Pause</button>
-        <button class="icon active" id="specdirector" title="Camera director on" aria-label="Toggle camera director">◉</button>
+        <button class="icon" id="specdirector" title="Camera locked (click for auto-focus)" aria-label="Toggle camera auto-focus">○</button>
         <button class="icon" id="specstep" title="Advance one civilization" aria-label="Step once">›</button>
       </div>
       <div class="speed-row"><span>Watch pace</span>
@@ -435,7 +435,9 @@ let worldEvents = [], lastLeader = null;
 let TMAP = new Map();
 let VIEW = localStorage.getItem("civvis-view") || "cinematic";
 let SHOW_YIELDS = localStorage.getItem("civvis-show-yields") === "1";
-let DIRECTOR = localStorage.getItem("civvis-director") !== "0";
+// A stable map is easier to watch at Lightning speed. Action-following remains
+// available as an explicit spectator option, but every browser starts locked.
+let DIRECTOR = localStorage.getItem("civvis-director-v2") === "1";
 let directorGoal = null, directorLast = 0;
 // migrate legacy mode names (performance mode lives on as headless sims)
 if (VIEW === "beautiful") VIEW = "cinematic";
@@ -2110,11 +2112,11 @@ function updateDirectorButton() {
   const button = document.getElementById("specdirector");
   button.classList.toggle("active", DIRECTOR);
   button.textContent = DIRECTOR ? "◉" : "○";
-  button.title = DIRECTOR ? "Camera director on" : "Camera director off";
+  button.title = DIRECTOR ? "Auto-focus camera on" : "Camera locked (click for auto-focus)";
 }
 function setDirector(on) {
   DIRECTOR = !!on;
-  localStorage.setItem("civvis-director", DIRECTOR ? "1" : "0");
+  localStorage.setItem("civvis-director-v2", DIRECTOR ? "1" : "0");
   directorGoal = null;
   updateDirectorButton();
   if (DIRECTOR && SPEC) centerMainLandmass();
