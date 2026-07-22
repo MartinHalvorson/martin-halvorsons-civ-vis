@@ -462,6 +462,8 @@ pub struct ProjectSpec {
     #[serde(default)]
     pub district: Option<String>,
     #[serde(default)]
+    pub alternate_districts: Vec<String>,
+    #[serde(default)]
     pub requires: Vec<String>,
     #[serde(default)]
     pub requires_buildings: Vec<String>,
@@ -924,13 +926,13 @@ mod tests {
         let rules = Rules::embedded();
         assert_eq!(rules.techs.len(), 77);
         assert_eq!(rules.civics.len(), 61);
-        assert_eq!(rules.units.len(), 81);
+        assert_eq!(rules.units.len(), 82);
         assert_eq!(rules.buildings.len(), 85);
         assert_eq!(rules.districts.len(), 35);
         assert_eq!(rules.wonders.len(), 53);
         assert_eq!(rules.improvements.len(), 35);
         assert_eq!(rules.resources.len(), 20);
-        assert_eq!(rules.projects.len(), 24);
+        assert_eq!(rules.projects.len(), 25);
         assert_eq!(rules.policies.len(), 118);
         assert_eq!(rules.governments.len(), 13);
 

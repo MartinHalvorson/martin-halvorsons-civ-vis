@@ -892,6 +892,7 @@ impl Ai for BasicAi {
             self.research(g, pid);
             self.corporations(g, pid);
             self.diplomacy(g, pid);
+            self.spies(g, pid);
             self.cities(g, pid);
         }
         self.units(g, pid);
@@ -903,6 +904,133 @@ impl Ai for BasicAi {
 }
 
 impl BasicAi {
+    /// Run each available agent once. The baseline establishes sources before
+    /// attempting the highest expected-value operation and otherwise embeds
+    /// agents in the most developed non-allied foreign city.
+    pub(crate) fn spies(&self, g: &mut Game, pid: usize) {
+        let ids: Vec<u32> = g
+            .spies
+            .values()
+            .filter(|spy| spy.owner == pid)
+            .map(|spy| spy.id)
+            .collect();
+        for spy_id in ids {
+            let legal = g.legal_spy_actions(pid, spy_id);
+            if legal.is_empty() {
+                continue;
+            }
+            if let Some(action) = [
+                "technologist",
+                "con_artist",
+                "disguise",
+                "linguist",
+                "quartermaster",
+                "seduction",
+            ]
+            .into_iter()
+            .find_map(|wanted| {
+                legal.iter().find(|action| {
+                    matches!(action, Action::PromoteSpy { promotion, .. } if promotion == wanted)
+                })
+            })
+            .or_else(|| {
+                legal
+                    .iter()
+                    .find(|action| matches!(action, Action::PromoteSpy { .. }))
+            }) {
+                let _ = g.apply(pid, action);
+                continue;
+            }
+            let current_city = g.spies.get(&spy_id).and_then(|spy| spy.city);
+            let offensive = current_city
+                .and_then(|city| g.cities.get(&city))
+                .is_some_and(|city| city.owner != pid);
+            if offensive {
+                if let Some(action) = legal.iter().find(|action| {
+                    matches!(action, Action::SpyMission { mission, .. } if mission == "gain_sources")
+                }) {
+                    let _ = g.apply(pid, action);
+                    continue;
+                }
+                let operation = legal
+                    .iter()
+                    .filter_map(|action| {
+                        let Action::SpyMission {
+                            spy,
+                            mission,
+                            target,
+                        } = action
+                        else {
+                            return None;
+                        };
+                        let active = crate::game::SpyMission {
+                            kind: mission.clone(),
+                            city: current_city?,
+                            target: *target,
+                            started: g.turn,
+                            ends: g.turn,
+                        };
+                        let value = match mission.as_str() {
+                            "steal_tech_boost" => 105.0,
+                            "siphon_funds" => 95.0,
+                            "great_work_heist" => 90.0,
+                            "neutralize_governor" => 82.0,
+                            "disrupt_rocketry" => 80.0,
+                            "fabricate_scandal" => 74.0,
+                            "sabotage_production" => 70.0,
+                            "foment_unrest" => 62.0,
+                            "breach_dam" => 58.0,
+                            "recruit_partisans" => 55.0,
+                            "listening_post" => 42.0,
+                            _ => 0.0,
+                        };
+                        Some((g.spy_success_chance(*spy, &active) * value, mission, action))
+                    })
+                    .max_by(|left, right| {
+                        left.0
+                            .partial_cmp(&right.0)
+                            .unwrap()
+                            .then_with(|| right.1.cmp(left.1))
+                    })
+                    .map(|(_, _, action)| action);
+                if let Some(action) = operation {
+                    let _ = g.apply(pid, action);
+                    continue;
+                }
+            }
+            let assignment = legal
+                .iter()
+                .filter_map(|action| match action {
+                    Action::AssignSpy { city, .. } => {
+                        let target = &g.cities[city];
+                        (target.owner != pid).then_some((
+                            target.pop as i64 * 8
+                                + target.districts.len() as i64 * 12
+                                + target.wonders.len() as i64 * 20
+                                - i64::from(g.players[target.owner].is_minor) * 20,
+                            std::cmp::Reverse(*city),
+                            action,
+                        ))
+                    }
+                    _ => None,
+                })
+                .max_by(|left, right| {
+                    left.0
+                        .cmp(&right.0)
+                        .then_with(|| left.1.cmp(&right.1))
+                })
+                .map(|(_, _, action)| action)
+                .or_else(|| {
+                    legal
+                        .iter()
+                        .find(|action| matches!(action, Action::SpyMission { mission, .. } if mission == "counterspy"))
+                });
+            if let Some(action) = assignment {
+                let _ = g.apply(pid, action);
+            }
+        }
+    }
+
     pub(crate) fn corporations(&self, g: &mut Game, pid: usize) {
         if let Some(action) = g
             .legal_actions(pid)
@@ -2038,6 +2166,12 @@ impl BasicAi {
                         return Some(item);
                     }
                 }
+            }
+            let spy = Item::Unit {
+                unit: "spy".to_string(),
+            };
+            if g.can_produce(pid, cid, &spy) {
+                return Some(spy);
             }
             if let Some(product) = g
                 .producible_items(pid, cid)

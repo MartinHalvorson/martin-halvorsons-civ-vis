@@ -793,6 +793,7 @@ mod governor_runtime_tests {
             GovernorState {
                 city: Some(city),
                 assigned_turn: 0,
+                disabled_until: 0,
                 promotions: promotions
                     .iter()
                     .map(|promotion| promotion.to_string())
@@ -2342,6 +2343,221 @@ mod project_runtime_tests {
         game.map.tiles.get_mut(&positions[0]).unwrap().pillaged = true;
         game.process_power(0);
         assert!(!game.city_is_powered(&game.cities[&city]));
+    }
+
+    #[test]
+    fn bread_and_circuses_projects_pressure_from_either_entertainment_district() {
+        let mut game = Game::new_full(2, 24, 16, 774_259, 120, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        let source = game.found_city_for(0, game.units[&settler].pos, None);
+        let source_pos = game.cities[&source].pos;
+        let target_pos = game
+            .wdisk(source_pos, 6)
+            .into_iter()
+            .filter(|position| game.wdist(source_pos, *position) >= 3)
+            .find(|position| game.city_at(*position).is_none())
+            .unwrap();
+        let target = game.found_city_for(1, target_pos, Some("Pressure Target".to_string()));
+        let district = game.cities[&source]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != source_pos)
+            .unwrap();
+        install_district(&mut game, source, district, "water_park");
+        game.cities.get_mut(&source).unwrap().pop = 10;
+        game.cities.get_mut(&target).unwrap().pop = 5;
+        game.cities.get_mut(&target).unwrap().loyalty = 50.0;
+        let project = Item::Project {
+            project: "bread_and_circuses".to_string(),
+        };
+        assert!(game.can_produce(0, source, &project));
+
+        let mut baseline = game.clone();
+        game.cities.get_mut(&source).unwrap().queue = vec![project.clone()];
+        assert_eq!(
+            game.city_active_project_effect(&game.cities[&source], "citizen_loyalty_pressure"),
+            0.5
+        );
+        baseline.process_loyalty(1);
+        game.process_loyalty(1);
+        assert!(
+            game.cities[&target].loyalty < baseline.cities[&target].loyalty,
+            "the active project must exert stronger offensive citizen pressure"
+        );
+
+        game.cities.get_mut(&source).unwrap().loyalty = 70.0;
+        assert!(game.complete_item(0, source, &project));
+        assert_eq!(game.cities[&source].loyalty, 90.0);
+        game.map.tiles.get_mut(&district).unwrap().pillaged = true;
+        assert!(!game.can_produce(0, source, &project));
+        assert_eq!(
+            game.city_active_project_effect(&game.cities[&source], "citizen_loyalty_pressure"),
+            0.0
+        );
+    }
+}
+
+#[cfg(test)]
+mod espionage_runtime_tests {
+    use super::*;
+
+    fn game_with_spy_cities(seed: u64) -> (Game, u32, u32, Pos) {
+        let mut game = Game::new_full(2, 24, 16, seed, 250, 0, false);
+        let mut cities = Vec::new();
+        for pid in 0..2 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            cities.push(game.found_city_for(pid, game.units[&settler].pos, None));
+        }
+        let target = cities[1];
+        let district = game.cities[&target]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != game.cities[&target].pos)
+            .unwrap();
+        {
+            let tile = game.map.tiles.get_mut(&district).unwrap();
+            tile.district = Some("commercial_hub".to_string());
+            tile.feature = None;
+            tile.improvement = None;
+            tile.pillaged = false;
+        }
+        game.cities
+            .get_mut(&target)
+            .unwrap()
+            .districts
+            .insert("commercial_hub".to_string(), district);
+        game.players[0].explored.insert(game.cities[&target].pos);
+        (game, cities[0], target, district)
+    }
+
+    #[test]
+    fn spies_train_to_capacity_assign_run_sources_and_survive_saves() {
+        let (mut game, home, target, district) = game_with_spy_cities(774_260);
+        game.players[0]
+            .civics
+            .insert("diplomatic_service".to_string());
+        let item = Item::Unit {
+            unit: "spy".to_string(),
+        };
+        assert!(game.can_produce(0, home, &item));
+        assert!(game.complete_item(0, home, &item));
+        let spy = *game.spies.keys().next().unwrap();
+        assert!(!game.units.values().any(|unit| unit.kind == "spy"));
+        assert!(!game.can_produce(0, home, &item), "capacity one is full");
+
+        let assignment = Action::AssignSpy { spy, city: target };
+        let legal = game.legal_spy_actions(0, spy);
+        assert!(
+            legal.contains(&assignment),
+            "home={home} target={target} target_owner={} alive={} alliance={:?} spy_city={:?}; legal={legal:?}",
+            game.cities[&target].owner,
+            game.players[game.cities[&target].owner].alive,
+            game.alliance_with(0, game.cities[&target].owner),
+            game.spies[&spy].city
+        );
+        game.apply(0, &assignment).unwrap();
+        game.turn = game.spies[&spy].ready_turn;
+        assert!(game
+            .legal_spy_actions(0, spy)
+            .contains(&Action::SpyMission {
+                spy,
+                mission: "siphon_funds".to_string(),
+                target: district,
+            }));
+        game.apply(
+            0,
+            &Action::SpyMission {
+                spy,
+                mission: "gain_sources".to_string(),
+                target: game.cities[&target].pos,
+            },
+        )
+        .unwrap();
+        let ends = game.spies[&spy].mission.as_ref().unwrap().ends;
+        assert_eq!(ends, game.turn + 8);
+
+        let mut restored: Game =
+            serde_json::from_str(&serde_json::to_string(&game).unwrap()).unwrap();
+        assert_eq!(restored.spies[&spy].mission, game.spies[&spy].mission);
+        restored.turn = ends;
+        restored.process_spies(0);
+        assert_eq!(restored.spies[&spy].sources_city, Some(target));
+        assert_eq!(restored.spies[&spy].sources_until, ends + 24);
+    }
+
+    #[test]
+    fn counterspies_reduce_operation_odds_and_successful_siphons_transfer_gold() {
+        let (mut game, home, target, district) = game_with_spy_cities(774_261);
+        let attacker = game.next_id;
+        game.next_id += 1;
+        game.spies.insert(
+            attacker,
+            Spy {
+                id: attacker,
+                owner: 0,
+                level: 1,
+                promotions: ["con_artist".to_string()].into_iter().collect(),
+                city: Some(target),
+                ready_turn: game.turn,
+                mission: None,
+                sources_city: Some(target),
+                sources_until: game.turn + 24,
+                captured_by: None,
+            },
+        );
+        let defender = game.next_id;
+        game.next_id += 1;
+        game.spies.insert(
+            defender,
+            Spy {
+                id: defender,
+                owner: 1,
+                level: 2,
+                promotions: ["seduction".to_string()].into_iter().collect(),
+                city: Some(target),
+                ready_turn: game.turn,
+                mission: Some(SpyMission {
+                    kind: "counterspy".to_string(),
+                    city: target,
+                    target: district,
+                    started: game.turn,
+                    ends: game.turn + 16,
+                }),
+                sources_city: None,
+                sources_until: 0,
+                captured_by: None,
+            },
+        );
+        let mission = SpyMission {
+            kind: "siphon_funds".to_string(),
+            city: target,
+            target: district,
+            started: game.turn,
+            ends: game.turn + 8,
+        };
+        let defended = game.spy_success_chance(attacker, &mission);
+        let mut undefended = game.clone();
+        undefended.spies.remove(&defender);
+        assert!(undefended.spy_success_chance(attacker, &mission) > defended);
+
+        game.spies.remove(&defender);
+        game.players[1].gold = 200.0;
+        let attacker_gold = game.players[0].gold;
+        game.apply_spy_mission_effect(attacker, &mission, true);
+        assert!(game.players[0].gold > attacker_gold);
+        assert!(game.players[1].gold < 200.0);
+        assert_eq!(game.spies[&attacker].city, Some(target));
+        assert_eq!(game.cities[&home].owner, 0);
     }
 }
 
@@ -4699,6 +4915,39 @@ pub struct Unit {
     pub levied_until: u32,
 }
 
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct SpyMission {
+    pub kind: String,
+    pub city: u32,
+    pub target: Pos,
+    pub started: u32,
+    pub ends: u32,
+}
+
+/// Spies are city-based agents rather than map units. `ready_turn` covers
+/// travel, establishment, and temporary captivity; active operations live in
+/// `mission`, while Gain Sources remains tied to one foreign city.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct Spy {
+    pub id: u32,
+    pub owner: usize,
+    pub level: i64,
+    #[serde(default)]
+    pub promotions: BTreeSet<String>,
+    #[serde(default)]
+    pub city: Option<u32>,
+    #[serde(default)]
+    pub ready_turn: u32,
+    #[serde(default)]
+    pub mission: Option<SpyMission>,
+    #[serde(default)]
+    pub sources_city: Option<u32>,
+    #[serde(default)]
+    pub sources_until: u32,
+    #[serde(default)]
+    pub captured_by: Option<usize>,
+}
+
 /// The four location classes used for passive unit healing.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HealingLocation {
@@ -4990,6 +5239,9 @@ fn normal_age() -> String {
 pub struct GovernorState {
     pub city: Option<u32>,
     pub assigned_turn: u32,
+    /// Neutralize Governor suppresses every local effect through this turn.
+    #[serde(default)]
+    pub disabled_until: u32,
     #[serde(default)]
     pub promotions: BTreeSet<String>,
 }
@@ -5032,6 +5284,10 @@ pub struct DealItems {
     pub resources: BTreeMap<String, i32>,
     #[serde(default)]
     pub great_works: BTreeMap<String, i32>,
+    /// Captured enemy agents returned to their original civilization.
+    /// Captives remain in custody until a deal explicitly transfers them.
+    #[serde(default)]
+    pub captured_spies: Vec<u32>,
     #[serde(default)]
     pub open_borders: bool,
 }
@@ -5043,6 +5299,7 @@ impl DealItems {
             && self.diplomatic_favor == 0.0
             && self.resources.values().all(|amount| *amount == 0)
             && self.great_works.values().all(|amount| *amount == 0)
+            && self.captured_spies.is_empty()
             && !self.open_borders
     }
 }
@@ -5102,7 +5359,7 @@ pub struct EmergencyProposal {
 
 /// A passed Military or City-State Emergency. Contributions are deterministic
 /// participation points earned by maintaining military units in the target's
-/// territory and by liberating the objective city.
+/// territory, attacking or killing its units, and liberating the objective.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Emergency {
     pub id: u32,
@@ -5495,6 +5752,19 @@ pub enum Action {
         choice: String,
         votes: u32,
     },
+    AssignSpy {
+        spy: u32,
+        city: u32,
+    },
+    SpyMission {
+        spy: u32,
+        mission: String,
+        target: Pos,
+    },
+    PromoteSpy {
+        spy: u32,
+        promotion: String,
+    },
     ChooseDedication {
         dedication: String,
     },
@@ -5636,6 +5906,7 @@ pub struct Game {
     pub map: WorldMap,
     pub players: Vec<Player>,
     pub units: BTreeMap<u32, Unit>,
+    pub spies: BTreeMap<u32, Spy>,
     pub cities: BTreeMap<u32, City>,
     pub at_war: BTreeSet<(usize, usize)>,
     pub barb_pid: Option<usize>,
@@ -5721,6 +5992,8 @@ struct GameSer {
     map: WorldMap,
     players: Vec<Player>,
     units: Vec<Unit>,
+    #[serde(default)]
+    spies: Vec<Spy>,
     cities: Vec<City>,
 }
 
@@ -5739,6 +6012,7 @@ impl From<GameSer> for Game {
             map: s.map,
             players: s.players,
             units: s.units.into_iter().map(|u| (u.id, u)).collect(),
+            spies: s.spies.into_iter().map(|spy| (spy.id, spy)).collect(),
             cities: s.cities.into_iter().map(|c| (c.id, c)).collect(),
             at_war: s.at_war.into_iter().collect(),
             barb_pid: s.barb_pid,
@@ -5826,6 +6100,7 @@ impl From<GameSer> for Game {
                         GovernorState {
                             city: Some(city),
                             assigned_turn: 0,
+                            disabled_until: 0,
                             promotions: BTreeSet::new(),
                         },
                     );
@@ -5869,6 +6144,7 @@ impl From<Game> for GameSer {
             map: g.map,
             players: g.players,
             units: g.units.into_values().collect(),
+            spies: g.spies.into_values().collect(),
             cities: g.cities.into_values().collect(),
         }
     }
@@ -5930,6 +6206,7 @@ impl Game {
             map,
             players: Vec::new(),
             units: BTreeMap::new(),
+            spies: BTreeMap::new(),
             cities: BTreeMap::new(),
             at_war: BTreeSet::new(),
             barb_pid: None,
@@ -6493,6 +6770,26 @@ impl Game {
             .sum()
     }
 
+    /// Technology/civic visibility plus active Listening Posts. Secret Agents
+    /// and Master Spies provide two levels instead of one while embedded in a
+    /// rival city.
+    pub fn diplomatic_visibility(&self, source: usize, target: usize) -> f64 {
+        self.tree_effect(source, "diplomatic_visibility")
+            + self
+                .spies
+                .values()
+                .filter(|spy| spy.owner == source && spy.captured_by.is_none())
+                .filter_map(|spy| {
+                    let mission = spy.mission.as_ref()?;
+                    let city = self.cities.get(&mission.city)?;
+                    (mission.kind == "listening_post"
+                        && mission.ends > self.turn
+                        && city.owner == target)
+                        .then_some(if spy.level >= 2 { 2.0 } else { 1.0 })
+                })
+                .sum::<f64>()
+    }
+
     pub fn spy_capacity(&self, pid: usize) -> i64 {
         (self.tree_effect(pid, "spy_capacity")
             + self.empire_building_sum(pid, |building| {
@@ -6543,6 +6840,747 @@ impl Game {
                 .copied()
                 .unwrap_or(0.0)
         }) * spy_level.max(0) as f64
+    }
+
+    const SPY_PROMOTIONS: [&'static str; 17] = [
+        "ace_driver",
+        "cat_burglar",
+        "con_artist",
+        "covert_action",
+        "demolitions",
+        "disguise",
+        "guerrilla_leader",
+        "license_to_kill",
+        "linguist",
+        "polygraph",
+        "quartermaster",
+        "rocket_scientist",
+        "satchel_charges",
+        "seduction",
+        "smear_campaign",
+        "surveillance",
+        "technologist",
+    ];
+
+    fn spy_needs_promotion(spy: &Spy) -> bool {
+        spy.level.max(0) as usize > spy.promotions.len() && spy.promotions.len() < 3
+    }
+
+    /// Promotion offers are stable across saves and action enumeration. Non-
+    /// State Actors exposes the complete tree; otherwise each earned level
+    /// receives a deterministic three-node offer, mirroring Civ VI's choice.
+    pub(crate) fn available_spy_promotions(&self, spy_id: u32) -> Vec<String> {
+        let Some(spy) = self.spies.get(&spy_id) else {
+            return Vec::new();
+        };
+        if !Self::spy_needs_promotion(spy) || spy.captured_by.is_some() {
+            return Vec::new();
+        }
+        let available: Vec<&str> = Self::SPY_PROMOTIONS
+            .iter()
+            .copied()
+            .filter(|promotion| !spy.promotions.contains(*promotion))
+            .collect();
+        if self.spy_modifiers(spy.owner).5 {
+            return available.into_iter().map(str::to_string).collect();
+        }
+        let start = (spy.id as usize + spy.level.max(0) as usize * 5) % available.len().max(1);
+        (0..available.len().min(3))
+            .map(|offset| available[(start + offset) % available.len()].to_string())
+            .collect()
+    }
+
+    fn spy_mission_spec(kind: &str) -> Option<(u32, f64)> {
+        match kind {
+            "gain_sources" | "listening_post" => Some((8, 1.0)),
+            "counterspy" => Some((16, 1.0)),
+            "fabricate_scandal" => Some((16, 0.56)),
+            "siphon_funds" | "foment_unrest" => Some((8, 0.56)),
+            "steal_tech_boost" | "sabotage_production" | "neutralize_governor" => Some((8, 0.35)),
+            "great_work_heist" | "disrupt_rocketry" | "breach_dam" => Some((8, 0.20)),
+            "recruit_partisans" => Some((8, 0.10)),
+            _ => None,
+        }
+    }
+
+    fn spy_mission_promotion(kind: &str) -> Option<&'static str> {
+        match kind {
+            "siphon_funds" => Some("con_artist"),
+            "steal_tech_boost" => Some("technologist"),
+            "great_work_heist" => Some("cat_burglar"),
+            "sabotage_production" => Some("demolitions"),
+            "recruit_partisans" => Some("guerrilla_leader"),
+            "foment_unrest" => Some("covert_action"),
+            "neutralize_governor" => Some("license_to_kill"),
+            "disrupt_rocketry" => Some("rocket_scientist"),
+            "breach_dam" => Some("satchel_charges"),
+            "fabricate_scandal" => Some("smear_campaign"),
+            _ => None,
+        }
+    }
+
+    fn spy_city_has_stealable_tech(&self, owner: usize, target: usize) -> bool {
+        self.players[target]
+            .techs
+            .iter()
+            .any(|tech| !self.players[owner].techs.contains(tech))
+    }
+
+    fn spy_city_has_stealable_work(&self, owner: usize, cid: u32) -> bool {
+        (self.can_house_additional_great_work(owner, "writing")
+            || self.can_house_additional_great_work(owner, "art")
+            || self.can_house_additional_great_work(owner, "religious_art")
+            || self.can_house_additional_great_work(owner, "artifact")
+            || self.can_house_additional_great_work(owner, "music"))
+            && self
+                .housed_great_works(self.cities[&cid].owner)
+                .get(&cid)
+                .is_some_and(|works| works.values().any(|count| *count > 0))
+    }
+
+    fn active_spy_target_position(&self, city: &City, family: &str) -> Option<Pos> {
+        city.districts.iter().find_map(|(district, position)| {
+            (self.district_is_family(district, family)
+                && self.district_is_active(city, district, *position))
+            .then_some(*position)
+        })
+    }
+
+    fn spy_mission_already_running(&self, owner: usize, cid: u32, kind: &str) -> bool {
+        self.spies.values().any(|spy| {
+            spy.owner == owner
+                && spy
+                    .mission
+                    .as_ref()
+                    .is_some_and(|mission| mission.city == cid && mission.kind == kind)
+        })
+    }
+
+    fn city_governor_active(&self, pid: usize, cid: u32) -> bool {
+        self.players[pid].governors.contains(&cid)
+            && self.players[pid]
+                .governor_roster
+                .values()
+                .any(|state| state.city == Some(cid) && self.turn >= state.disabled_until)
+    }
+
+    fn spy_operation_actions(&self, spy: &Spy, city: &City) -> Vec<Action> {
+        let mut actions = Vec::new();
+        let offensive = city.owner != spy.owner;
+        let mut add = |mission: &str, target: Pos| {
+            if !self.spy_mission_already_running(spy.owner, city.id, mission) {
+                actions.push(Action::SpyMission {
+                    spy: spy.id,
+                    mission: mission.to_string(),
+                    target,
+                });
+            }
+        };
+        if !offensive {
+            add("counterspy", city.pos);
+            for (_, position) in &city.districts {
+                if !self.map.tiles[position].pillaged {
+                    add("counterspy", *position);
+                }
+            }
+            return actions;
+        }
+        if self.alliance_with(spy.owner, city.owner).is_some() {
+            return actions;
+        }
+        if self.players[city.owner].is_minor {
+            add("fabricate_scandal", city.pos);
+            return actions;
+        }
+        if spy.sources_city != Some(city.id) || spy.sources_until <= self.turn {
+            add("gain_sources", city.pos);
+        }
+        add("listening_post", city.pos);
+        add("foment_unrest", city.pos);
+        if self.city_governor_active(city.owner, city.id) {
+            add("neutralize_governor", city.pos);
+        }
+        for (family, mission) in [
+            ("commercial_hub", "siphon_funds"),
+            ("campus", "steal_tech_boost"),
+            ("theater_square", "great_work_heist"),
+            ("industrial_zone", "sabotage_production"),
+            ("neighborhood", "recruit_partisans"),
+            ("spaceport", "disrupt_rocketry"),
+            ("dam", "breach_dam"),
+        ] {
+            let Some(target) = self.active_spy_target_position(city, family) else {
+                continue;
+            };
+            let useful = match mission {
+                "steal_tech_boost" => self.spy_city_has_stealable_tech(spy.owner, city.owner),
+                "great_work_heist" => self.spy_city_has_stealable_work(spy.owner, city.id),
+                "recruit_partisans" => self.barb_pid.is_some(),
+                _ => true,
+            };
+            if useful {
+                add(mission, target);
+            }
+        }
+        actions
+    }
+
+    /// Agent-local action generation is also used by both built-in AIs, so
+    /// espionage decisions do not require rebuilding the complete empire
+    /// action space for each Spy.
+    pub(crate) fn legal_spy_actions(&self, pid: usize, spy_id: u32) -> Vec<Action> {
+        if self.winner.is_some() || self.current != pid {
+            return Vec::new();
+        }
+        let Some(spy) = self.spies.get(&spy_id) else {
+            return Vec::new();
+        };
+        if spy.owner != pid || spy.captured_by.is_some() || spy.mission.is_some() {
+            return Vec::new();
+        }
+        if Self::spy_needs_promotion(spy) {
+            return self
+                .available_spy_promotions(spy_id)
+                .into_iter()
+                .map(|promotion| Action::PromoteSpy {
+                    spy: spy_id,
+                    promotion,
+                })
+                .collect();
+        }
+        if spy.ready_turn > self.turn {
+            return Vec::new();
+        }
+        let mut actions = Vec::new();
+        for city in self.cities.values().filter(|city| {
+            self.players[city.owner].alive
+                && !self.players[city.owner].is_barbarian
+                && Some(city.id) != spy.city
+                && (city.owner == pid || self.alliance_with(pid, city.owner).is_none())
+                && (city.owner == pid || self.players[pid].explored.contains(&city.pos))
+        }) {
+            actions.push(Action::AssignSpy {
+                spy: spy_id,
+                city: city.id,
+            });
+        }
+        if let Some(city) = spy.city.and_then(|city| self.cities.get(&city)) {
+            actions.extend(self.spy_operation_actions(spy, city));
+        }
+        actions
+    }
+
+    fn counterspy_protects(&self, counterspy: &Spy, city: u32, target: Pos) -> bool {
+        let Some(mission) = counterspy.mission.as_ref() else {
+            return false;
+        };
+        mission.kind == "counterspy"
+            && mission.city == city
+            && (counterspy.promotions.contains("surveillance")
+                || mission.target == target
+                || self.nbrs(mission.target).contains(&target))
+    }
+
+    fn defending_counterspy(&self, defender: usize, city: u32, target: Pos) -> Option<u32> {
+        self.spies
+            .values()
+            .filter(|spy| {
+                spy.owner == defender
+                    && spy.captured_by.is_none()
+                    && self.counterspy_protects(spy, city, target)
+            })
+            .max_by_key(|spy| {
+                (
+                    spy.level
+                        + i64::from(spy.promotions.contains("seduction")) * 2
+                        + i64::from(spy.promotions.contains("surveillance")),
+                    std::cmp::Reverse(spy.id),
+                )
+            })
+            .map(|spy| spy.id)
+    }
+
+    /// Net offensive level after sources, promotions, policy/building hooks,
+    /// governors, Diplomatic Quarter defenses, and active Counterspies.
+    pub(crate) fn spy_effective_level(&self, spy_id: u32, mission: &SpyMission) -> i64 {
+        let Some(spy) = self.spies.get(&spy_id) else {
+            return 0;
+        };
+        let Some(city) = self.cities.get(&mission.city) else {
+            return spy.level;
+        };
+        let mut level = spy.level + self.spy_modifiers(spy.owner).2;
+        if spy.sources_city == Some(city.id) && spy.sources_until > self.turn {
+            level += 2;
+        }
+        if Self::spy_mission_promotion(&mission.kind)
+            .is_some_and(|promotion| spy.promotions.contains(promotion))
+        {
+            level += 2;
+        }
+        if self.spies.values().any(|other| {
+            other.owner == spy.owner
+                && other.captured_by.is_none()
+                && other.promotions.contains("quartermaster")
+                && other
+                    .mission
+                    .as_ref()
+                    .is_some_and(|active| active.kind == "counterspy")
+        }) {
+            level += 1;
+        }
+        if city.owner == spy.owner {
+            return level;
+        }
+        level += self.spy_modifiers(city.owner).3;
+        level += self.governor_effect(city.owner, city.id, "enemy_spy_level") as i64;
+        level -= self.spy_defense_level(city.id, mission.target);
+        if self.spies.values().any(|other| {
+            other.owner == city.owner
+                && other.captured_by.is_none()
+                && other.promotions.contains("polygraph")
+                && other
+                    .mission
+                    .as_ref()
+                    .is_some_and(|active| active.kind == "counterspy")
+        }) {
+            level -= 1;
+        }
+        if let Some(counterspy) = self.defending_counterspy(city.owner, city.id, mission.target) {
+            let defender = &self.spies[&counterspy];
+            level -= 1 + defender.level;
+            if defender.promotions.contains("seduction") {
+                level -= 2;
+            }
+        }
+        level
+    }
+
+    pub(crate) fn spy_success_chance(&self, spy_id: u32, mission: &SpyMission) -> f64 {
+        let base = Self::spy_mission_spec(&mission.kind)
+            .map(|(_, chance)| chance)
+            .unwrap_or(0.0);
+        if base >= 1.0 {
+            return 1.0;
+        }
+        (base + 0.10 * self.spy_effective_level(spy_id, mission) as f64).clamp(0.05, 0.95)
+    }
+
+    fn level_up_spy(&mut self, spy_id: u32) {
+        if let Some(spy) = self.spies.get_mut(&spy_id) {
+            if spy.level < 3 && !Self::spy_needs_promotion(spy) {
+                spy.level += 1;
+            }
+        }
+    }
+
+    fn spy_home_city(&self, pid: usize) -> Option<u32> {
+        self.cities
+            .values()
+            .filter(|city| city.owner == pid)
+            .min_by_key(|city| (!city.is_capital, city.id))
+            .map(|city| city.id)
+    }
+
+    fn spy_return_home(&mut self, spy_id: u32, delay: u32) {
+        let Some(owner) = self.spies.get(&spy_id).map(|spy| spy.owner) else {
+            return;
+        };
+        let home = self.spy_home_city(owner);
+        if let Some(spy) = self.spies.get_mut(&spy_id) {
+            spy.city = home;
+            spy.ready_turn = self.turn + delay;
+            spy.mission = None;
+            spy.sources_city = None;
+            spy.sources_until = 0;
+            spy.captured_by = None;
+        }
+    }
+
+    fn do_assign_spy(&mut self, pid: usize, spy_id: u32, cid: u32) -> Result<(), String> {
+        let action = Action::AssignSpy {
+            spy: spy_id,
+            city: cid,
+        };
+        if !self.legal_spy_actions(pid, spy_id).contains(&action) {
+            return Err("Spy cannot be assigned to that city".into());
+        }
+        let spy = self.spies[&spy_id].clone();
+        let destination = &self.cities[&cid];
+        let distance = spy
+            .city
+            .and_then(|old| self.cities.get(&old))
+            .map(|old| self.wdist(old.pos, destination.pos).max(0) as u32)
+            .unwrap_or(0);
+        let mut travel = (1 + distance / 6).min(5);
+        if destination.owner != pid && spy.promotions.contains("disguise") {
+            travel = travel.min(1);
+        }
+        let spy = self.spies.get_mut(&spy_id).unwrap();
+        spy.city = Some(cid);
+        spy.ready_turn = self.turn + travel;
+        spy.mission = None;
+        spy.sources_city = None;
+        spy.sources_until = 0;
+        Ok(())
+    }
+
+    fn do_spy_mission(
+        &mut self,
+        pid: usize,
+        spy_id: u32,
+        kind: &str,
+        target: Pos,
+    ) -> Result<(), String> {
+        let action = Action::SpyMission {
+            spy: spy_id,
+            mission: kind.to_string(),
+            target,
+        };
+        if !self.legal_spy_actions(pid, spy_id).contains(&action) {
+            return Err("Spy mission is unavailable at that target".into());
+        }
+        let (base_duration, _) =
+            Self::spy_mission_spec(kind).ok_or_else(|| "unknown Spy mission".to_string())?;
+        let spy = self.spies[&spy_id].clone();
+        let linguist = if spy.promotions.contains("linguist") {
+            0.75
+        } else {
+            1.0
+        };
+        let duration =
+            ((base_duration as f64 * self.spy_modifiers(pid).1 * linguist).ceil() as u32).max(1);
+        let city = spy.city.ok_or_else(|| "Spy is not in a city".to_string())?;
+        self.spies.get_mut(&spy_id).unwrap().mission = Some(SpyMission {
+            kind: kind.to_string(),
+            city,
+            target,
+            started: self.turn,
+            ends: self.turn + duration,
+        });
+        Ok(())
+    }
+
+    fn do_promote_spy(&mut self, pid: usize, spy_id: u32, promotion: &str) -> Result<(), String> {
+        if self.spies.get(&spy_id).is_none_or(|spy| spy.owner != pid)
+            || !self
+                .available_spy_promotions(spy_id)
+                .iter()
+                .any(|available| available == promotion)
+        {
+            return Err("Spy promotion is unavailable".into());
+        }
+        self.spies
+            .get_mut(&spy_id)
+            .unwrap()
+            .promotions
+            .insert(promotion.to_string());
+        Ok(())
+    }
+
+    fn steal_tech_boosts(&mut self, attacker: usize, defender: usize, count: usize) {
+        let candidates: Vec<String> = self.players[defender]
+            .techs
+            .iter()
+            .filter(|tech| {
+                !self.players[attacker].techs.contains(*tech)
+                    && !self.players[attacker].boosted_techs.contains(*tech)
+            })
+            .cloned()
+            .take(count)
+            .collect();
+        for tech in candidates {
+            let cost = self.rules.techs[tech.as_str()].cost;
+            let fraction = self.boost_frac(attacker);
+            let player = &mut self.players[attacker];
+            player.boosted_techs.insert(tech.clone());
+            if player.research.as_deref() == Some(tech.as_str()) {
+                player.research_progress += cost * fraction;
+            }
+        }
+    }
+
+    fn steal_great_work(&mut self, attacker: usize, defender: usize, cid: u32) {
+        let works = self
+            .housed_great_works(defender)
+            .remove(&cid)
+            .unwrap_or_default();
+        let kind = ["writing", "art", "religious_art", "artifact", "music"]
+            .into_iter()
+            .find(|kind| {
+                works.get(*kind).copied().unwrap_or(0) > 0
+                    && self.can_house_additional_great_work(attacker, kind)
+            });
+        let Some(kind) = kind else {
+            return;
+        };
+        let key = format!("great_work:{kind}");
+        *self.players[defender]
+            .counters
+            .entry(key.clone())
+            .or_insert(0) -= 1;
+        *self.players[attacker].counters.entry(key).or_insert(0) += 1;
+    }
+
+    fn spawn_partisans(&mut self, cid: u32) {
+        let Some(barbarian) = self.barb_pid else {
+            return;
+        };
+        let era = self.world_era;
+        let kind = if era >= 6 {
+            "modern_at"
+        } else if era >= 5 {
+            "at_crew"
+        } else if era >= 3 {
+            "pike_and_shot"
+        } else if era >= 2 {
+            "pikeman"
+        } else {
+            "spearman"
+        };
+        let center = self.cities[&cid].pos;
+        let positions: Vec<Pos> =
+            self.nbrs(center)
+                .into_iter()
+                .filter(|position| {
+                    self.map.get(*position).is_some_and(|tile| {
+                        self.rules.is_passable(tile) && !self.rules.is_water(tile)
+                    }) && !self.units_at(*position).iter().any(|unit| {
+                        self.rules.units[self.units[unit].kind.as_str()].class == "military"
+                    })
+                })
+                .take(2)
+                .collect();
+        for position in positions {
+            self.spawn_unit(kind, barbarian, position);
+        }
+    }
+
+    fn apply_spy_mission_effect(&mut self, spy_id: u32, mission: &SpyMission, undetected: bool) {
+        let Some(spy) = self.spies.get(&spy_id).cloned() else {
+            return;
+        };
+        let Some(city) = self.cities.get(&mission.city).cloned() else {
+            return;
+        };
+        let defender = city.owner;
+        match mission.kind.as_str() {
+            "gain_sources" => {
+                let spy = self.spies.get_mut(&spy_id).unwrap();
+                spy.sources_city = Some(city.id);
+                spy.sources_until = self.turn + 24;
+            }
+            "siphon_funds" => {
+                let amount = (self.city_yields(city.id).gold * 8.0)
+                    .max(25.0)
+                    .min(self.players[defender].gold.max(0.0));
+                self.players[defender].gold -= amount;
+                self.players[spy.owner].gold += amount;
+            }
+            "steal_tech_boost" => {
+                let bonus = if undetected {
+                    self.spy_modifiers(spy.owner).4.max(0) as usize
+                } else {
+                    0
+                };
+                self.steal_tech_boosts(spy.owner, defender, 1 + bonus);
+            }
+            "great_work_heist" => self.steal_great_work(spy.owner, defender, city.id),
+            "sabotage_production" => {
+                let buildings: Vec<String> = city
+                    .buildings
+                    .iter()
+                    .filter(|building| {
+                        self.rules.buildings[building.as_str()]
+                            .district
+                            .as_deref()
+                            .is_some_and(|family| {
+                                self.district_is_family(family, "industrial_zone")
+                            })
+                    })
+                    .cloned()
+                    .collect();
+                self.cities
+                    .get_mut(&city.id)
+                    .unwrap()
+                    .pillaged_buildings
+                    .extend(buildings);
+            }
+            "recruit_partisans" => self.spawn_partisans(city.id),
+            "foment_unrest" => {
+                self.cities.get_mut(&city.id).unwrap().loyalty =
+                    (city.loyalty - 20.0 - 5.0 * spy.level.max(0) as f64).max(0.0);
+            }
+            "neutralize_governor" => {
+                let until = self.turn + 7 + spy.level.max(0) as u32;
+                for state in self.players[defender]
+                    .governor_roster
+                    .values_mut()
+                    .filter(|state| state.city == Some(city.id))
+                {
+                    state.disabled_until = state.disabled_until.max(until);
+                }
+            }
+            "disrupt_rocketry" => {
+                self.map.tiles.get_mut(&mission.target).unwrap().pillaged = true;
+                let city = self.cities.get_mut(&city.id).unwrap();
+                if city.queue.first().is_some_and(|item| {
+                    matches!(item, Item::Project { project } if self.rules.projects.get(project).is_some_and(|spec| spec.district.as_deref() == Some("spaceport")))
+                }) {
+                    city.production = 0.0;
+                }
+                city.production_progress.retain(|key, _| {
+                    let Some(project) = key.strip_prefix("project:") else {
+                        return true;
+                    };
+                    self.rules
+                        .projects
+                        .get(project)
+                        .is_none_or(|spec| spec.district.as_deref() != Some("spaceport"))
+                });
+            }
+            "breach_dam" => {
+                self.map.tiles.get_mut(&mission.target).unwrap().pillaged = true;
+                let floodplains: Vec<Pos> = city
+                    .owned_tiles
+                    .iter()
+                    .copied()
+                    .filter(|position| {
+                        matches!(
+                            self.map.tiles[position].feature.as_deref(),
+                            Some("floodplains" | "grassland_floodplains" | "plains_floodplains")
+                        )
+                    })
+                    .collect();
+                self.resolve_flood(&floodplains);
+            }
+            "fabricate_scandal" => {
+                let victim = self
+                    .players
+                    .iter()
+                    .filter(|player| {
+                        player.id != spy.owner
+                            && player.alive
+                            && !player.is_minor
+                            && !player.is_barbarian
+                    })
+                    .map(|player| (self.envoys_at(player.id, defender), player.id))
+                    .filter(|(envoys, _)| *envoys > 0)
+                    .max_by_key(|(envoys, player)| (*envoys, std::cmp::Reverse(*player)))
+                    .map(|(_, player)| player);
+                if let Some(victim) = victim {
+                    let remove = 3 + spy.level.max(0);
+                    if let Some((_, envoys)) = self.players[victim]
+                        .envoys
+                        .iter_mut()
+                        .find(|(minor, _)| *minor == defender)
+                    {
+                        *envoys = (*envoys - remove).max(0);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn reward_defending_spy(
+        &mut self,
+        defender: usize,
+        defender_spy: Option<u32>,
+        defeated_level: i64,
+    ) {
+        if let Some(spy) = defender_spy {
+            self.level_up_spy(spy);
+        }
+        self.players[defender].research_overflow +=
+            self.spy_capture_science(defender, defeated_level + 1);
+    }
+
+    fn resolve_spy_mission(&mut self, spy_id: u32) {
+        let Some(spy) = self.spies.get(&spy_id).cloned() else {
+            return;
+        };
+        let Some(mission) = spy.mission.clone() else {
+            return;
+        };
+        let Some(defender) = self.cities.get(&mission.city).map(|city| city.owner) else {
+            self.spy_return_home(spy_id, 1);
+            return;
+        };
+        if matches!(mission.kind.as_str(), "counterspy" | "listening_post") {
+            self.spies.get_mut(&spy_id).unwrap().mission = None;
+            return;
+        }
+        if mission.kind == "gain_sources" {
+            self.apply_spy_mission_effect(spy_id, &mission, true);
+            self.spies.get_mut(&spy_id).unwrap().mission = None;
+            return;
+        }
+        let success = self.rng.chance(self.spy_success_chance(spy_id, &mission));
+        let detected = self.rng.chance(if success { 0.25 } else { 0.70 });
+        if success {
+            self.apply_spy_mission_effect(spy_id, &mission, !detected);
+            self.level_up_spy(spy_id);
+        }
+        if !detected {
+            if let Some(spy) = self.spies.get_mut(&spy_id) {
+                spy.mission = None;
+            }
+            return;
+        }
+        self.add_grievances(defender, spy.owner, 25.0);
+        let counterspy = self.defending_counterspy(defender, mission.city, mission.target);
+        let ace = if spy.promotions.contains("ace_driver") {
+            4.0
+        } else {
+            0.0
+        };
+        let escape = (0.35 + 0.10 * (spy.level.max(0) as f64 + ace)).min(0.95);
+        if self.rng.chance(escape) {
+            self.spy_return_home(spy_id, 2);
+            return;
+        }
+        let captured = counterspy.is_some() || self.rng.chance(0.55);
+        self.reward_defending_spy(defender, counterspy, spy.level);
+        if captured {
+            if let Some(spy) = self.spies.get_mut(&spy_id) {
+                spy.mission = None;
+                spy.sources_city = None;
+                spy.sources_until = 0;
+                spy.captured_by = Some(defender);
+                spy.city = Some(mission.city);
+                spy.ready_turn = u32::MAX;
+            }
+        } else {
+            self.spies.remove(&spy_id);
+        }
+    }
+
+    fn process_spies(&mut self, pid: usize) {
+        let ids: Vec<u32> = self
+            .spies
+            .values()
+            .filter(|spy| spy.owner == pid)
+            .map(|spy| spy.id)
+            .collect();
+        for spy_id in ids {
+            let Some(spy) = self.spies.get(&spy_id).cloned() else {
+                continue;
+            };
+            if spy.sources_until <= self.turn {
+                let spy = self.spies.get_mut(&spy_id).unwrap();
+                spy.sources_city = None;
+                spy.sources_until = 0;
+            }
+            if spy.captured_by.is_none()
+                && spy
+                    .mission
+                    .as_ref()
+                    .is_some_and(|mission| mission.ends <= self.turn)
+            {
+                self.resolve_spy_mission(spy_id);
+            }
+        }
     }
 
     /// Leader/civ ability check (data in civs.json, effects keyed by name).
@@ -8794,6 +9832,9 @@ impl Game {
                 if unit == "aircraft_carrier" {
                     bonus += self.policy_effect(pid, "carrier_production_pct") / 100.0;
                 }
+                if unit == "spy" {
+                    bonus += self.policy_effect(pid, "spy_production_pct") / 100.0;
+                }
                 if spec.ranged_strength > 0.0
                     && spec.class == "military"
                     && self.has_ability(pid, "ta_seti")
@@ -9371,7 +10412,7 @@ impl Game {
                     .copied()
                     .unwrap_or(0.0);
             }
-            if self.players[city.owner].governors.contains(&city.id) {
+            if self.city_governor_active(city.owner, city.id) {
                 h += building
                     .effects
                     .get("governor_city_housing")
@@ -9405,7 +10446,7 @@ impl Game {
         if city.districts.len() >= 3 {
             h += self.policy_effect(city.owner, "housing_at_3_districts");
         }
-        if self.players[city.owner].governors.contains(&city.id) {
+        if self.city_governor_active(city.owner, city.id) {
             h += self.policy_effect(city.owner, "governor_housing");
         }
         let mut salt_industry_units = city
@@ -9610,10 +10651,7 @@ impl Game {
                     return false;
                 };
                 self.rules.projects.get(project).is_some_and(|spec| {
-                    spec.full_power_while_active
-                        && spec.district.as_deref().is_none_or(|district| {
-                            self.city_has_active_district_family(city, district)
-                        })
+                    spec.full_power_while_active && self.project_has_active_district(city, spec)
                 })
             });
             if project_fully_powers {
@@ -10270,7 +11308,7 @@ impl Game {
             }
         }
         supply += self.empire_wonder_effect(city.owner, "empire_amenity");
-        if self.players[city.owner].governors.contains(&city.id) {
+        if self.city_governor_active(city.owner, city.id) {
             supply += self.city_building_effect(city, "governor_city_amenity");
         }
         let geothermal = self.city_building_effect(city, "geothermal_fissure_amenity");
@@ -10422,7 +11460,7 @@ impl Game {
         if city.districts.len() >= 3 {
             supply += self.policy_effect(city.owner, "amenity_at_3_districts");
         }
-        if self.players[city.owner].governors.contains(&city.id) {
+        if self.city_governor_active(city.owner, city.id) {
             supply += self.policy_effect(city.owner, "governor_amenity");
         }
         supply.round() as i64
@@ -14358,7 +15396,7 @@ impl Game {
         ys.science *= 1.0 + local_wonder_effect("city_science_pct") / 100.0;
         ys.culture *= 1.0 + local_wonder_effect("city_culture_pct") / 100.0;
         ys.faith *= 1.0 + local_wonder_effect("city_faith_pct") / 100.0;
-        if self.players[city.owner].governors.contains(&city.id)
+        if self.city_governor_active(city.owner, city.id)
             && self.on_foreign_continent(city.owner, city.pos)
         {
             let pct = self
@@ -15167,6 +16205,31 @@ impl Game {
         }
     }
 
+    fn project_has_active_district(
+        &self,
+        city: &City,
+        project: &crate::rules::ProjectSpec,
+    ) -> bool {
+        project.district.as_deref().is_none_or(|district| {
+            std::iter::once(district)
+                .chain(project.alternate_districts.iter().map(String::as_str))
+                .any(|family| self.city_has_active_district_family(city, family))
+        })
+    }
+
+    fn city_active_project_effect(&self, city: &City, effect: &str) -> f64 {
+        let Some(Item::Project { project }) = city.queue.first() else {
+            return 0.0;
+        };
+        self.rules.projects.get(project).map_or(0.0, |spec| {
+            if self.project_has_active_district(city, spec) {
+                spec.effects.get(effect).copied().unwrap_or(0.0)
+            } else {
+                0.0
+            }
+        })
+    }
+
     fn district_type_available(&self, pid: usize, district: &str) -> bool {
         let spec = &self.rules.districts[district];
         spec.buildable
@@ -15469,6 +16532,22 @@ impl Game {
                 if !spec.buildable || !self.unlocked(pid, &spec.tech, &spec.civic) {
                     return false;
                 }
+                if unit == "spy" {
+                    let existing = self.spies.values().filter(|spy| spy.owner == pid).count();
+                    let queued = self
+                        .cities
+                        .values()
+                        .filter(|candidate| candidate.owner == pid)
+                        .filter(|candidate| {
+                            candidate.queue.iter().any(
+                                |queued| matches!(queued, Item::Unit { unit } if unit == "spy"),
+                            )
+                        })
+                        .count();
+                    if existing + queued >= self.spy_capacity(pid).max(0) as usize {
+                        return false;
+                    }
+                }
                 if unit == "settler" && city.pop < 2 {
                     return false;
                 }
@@ -15755,11 +16834,7 @@ impl Game {
                 {
                     return false;
                 }
-                if spec
-                    .district
-                    .as_ref()
-                    .is_some_and(|d| !self.city_has_active_district_family(city, d))
-                {
+                if !self.project_has_active_district(city, spec) {
                     return false;
                 }
                 if !spec
@@ -15931,7 +17006,7 @@ impl Game {
             .filter(|city| city.owner == pid && city.captured_from.is_some())
         {
             actions.push(Action::KeepCity { city: city.id });
-            if !city.is_capital && !self.players[city.original_owner].is_minor {
+            if self.city_can_be_razed_by(pid, city) {
                 actions.push(Action::RazeCity { city: city.id });
             }
             if city.original_owner != pid
@@ -15945,6 +17020,17 @@ impl Game {
             }
         }
         actions
+    }
+
+    /// Original Capitals, former city-states, a civilization's own recaptured
+    /// cities, and cities founded by its active ally cannot be razed in Civ VI.
+    /// The latter two cases matter most after a Loyalty revolt or a third-party
+    /// occupation, where ownership immediately before capture is misleading.
+    fn city_can_be_razed_by(&self, pid: usize, city: &City) -> bool {
+        !city.is_capital
+            && !self.players[city.original_owner].is_minor
+            && city.original_owner != pid
+            && self.alliance_with(pid, city.original_owner).is_none()
     }
 
     /// Captured-city decisions are mandatory and exclusive, so callers that
@@ -16026,6 +17112,14 @@ impl Game {
         }
         let p = &self.players[pid];
         let mut acts = Vec::new();
+        for spy_id in self
+            .spies
+            .values()
+            .filter(|spy| spy.owner == pid)
+            .map(|spy| spy.id)
+        {
+            acts.extend(self.legal_spy_actions(pid, spy_id));
+        }
         for uid in self.player_unit_ids(pid) {
             let u = self.units[&uid].clone();
             let spec = self.rules.units[u.kind.as_str()].clone();
@@ -17074,6 +18168,13 @@ impl Game {
                 choice,
                 votes,
             } => self.do_congress_vote(pid, resolution, choice, *votes),
+            Action::AssignSpy { spy, city } => self.do_assign_spy(pid, *spy, *city),
+            Action::SpyMission {
+                spy,
+                mission,
+                target,
+            } => self.do_spy_mission(pid, *spy, mission, *target),
+            Action::PromoteSpy { spy, promotion } => self.do_promote_spy(pid, *spy, promotion),
             Action::ChooseDedication { dedication } => self.do_choose_dedication(pid, dedication),
             Action::Fortify { unit } => self.do_fortify(pid, *unit),
             Action::Promote { unit, promotion } => self.do_promote(pid, *unit, promotion),
@@ -17311,8 +18412,8 @@ impl Game {
             bonus += 2.0;
         }
         bonus += 3.0
-            * (self.tree_effect(u.owner, "diplomatic_visibility")
-                - self.tree_effect(opponent.owner, "diplomatic_visibility"))
+            * (self.diplomatic_visibility(u.owner, opponent.owner)
+                - self.diplomatic_visibility(opponent.owner, u.owner))
             .max(0.0);
         if self.players[u.owner].religion.is_some()
             && self.players[opponent.owner].religion.is_some()
@@ -17832,6 +18933,7 @@ impl Game {
             self.units.get_mut(&uid).unwrap().hp -= dmg_in;
             let d_dead = self.units[&did].hp <= 0;
             let downer = self.units[&did].owner;
+            self.record_emergency_combat(pid, downer, d_dead);
             if d_dead && self.has_ability(pid, "killer_of_cyrus") {
                 if let Some(mu) = self.units.get_mut(&uid) {
                     mu.hp = (mu.hp + 30).min(100); // Tomyris
@@ -18104,6 +19206,7 @@ impl Game {
             let dmg = damage(att, ds, &mut self.rng);
             self.units.get_mut(&did).unwrap().hp -= dmg;
             let defender_dead = self.units[&did].hp <= 0;
+            self.record_emergency_combat(pid, downer, defender_dead);
             self.award_unit_combat_xp(uid, &defender, true, true, defender_dead);
             if !defender_dead {
                 self.award_unit_combat_xp(did, &attacker, true, false, false);
@@ -18505,9 +19608,14 @@ impl Game {
         if project.starts_with("repair_") {
             return None;
         }
-        let district = self.rules.projects[project.as_str()].district.as_deref()?;
-        self.city_district_family_position(city, district)
-            .filter(|position| self.district_is_active(city, district, *position))
+        let spec = &self.rules.projects[project.as_str()];
+        let district = spec.district.as_deref()?;
+        std::iter::once(district)
+            .chain(spec.alternate_districts.iter().map(String::as_str))
+            .find_map(|family| {
+                self.city_district_family_position(city, family)
+                    .filter(|position| self.district_is_active(city, family, *position))
+            })
     }
 
     pub(crate) fn can_contribute_project(&self, pid: usize, uid: u32, cid: u32) -> bool {
@@ -19323,6 +20431,7 @@ impl Game {
             let dealt = damage(attack, defense, &mut self.rng);
             self.units.get_mut(&defender_id).unwrap().hp -= dealt;
             let killed = self.units[&defender_id].hp <= 0;
+            self.record_emergency_combat(pid, defender.owner, killed);
             self.award_unit_combat_xp(uid, &defender, true, true, killed);
             if killed {
                 bump(&mut self.players[pid], "kills");
@@ -19450,6 +20559,9 @@ impl Game {
             .get(unit)
             .map(|s| s.class == "religious")
             .unwrap_or(false);
+        if unit == "spy" {
+            return Err("Spies cannot be purchased with Gold or Faith".into());
+        }
         if !matches!(currency, "gold" | "faith") {
             return Err("unknown purchase currency".into());
         }
@@ -20075,7 +21187,9 @@ impl Game {
         let att = self.city_ranged_strength(cid) + emergency_bonus - if naval { 17.0 } else { 0.0 };
         let dmg = damage(att, ds, &mut self.rng);
         self.units.get_mut(&did).unwrap().hp -= dmg;
-        if self.units[&did].hp > 0 {
+        let defender_dead = self.units[&did].hp <= 0;
+        self.record_emergency_combat(pid, d.owner, defender_dead);
+        if !defender_dead {
             self.award_xp(did, 2.0);
         } else {
             bump(&mut self.players[pid], "kills");
@@ -20146,7 +21260,9 @@ impl Game {
             self.city_ranged_strength(cid) + emergency_bonus - if naval { 17.0 } else { 0.0 };
         let dealt = damage(attack, defense, &mut self.rng);
         self.units.get_mut(&defender_id).unwrap().hp -= dealt;
-        if self.units[&defender_id].hp > 0 {
+        let defender_dead = self.units[&defender_id].hp <= 0;
+        self.record_emergency_combat(pid, defender.owner, defender_dead);
+        if !defender_dead {
             self.award_xp(defender_id, 2.0);
         } else {
             bump(&mut self.players[pid], "kills");
@@ -20344,6 +21460,7 @@ impl Game {
             || give_gold > self.players[pid].gold
             || request_gold > self.players[other].gold
             || (peace && !self.is_at_war(pid, other))
+            || (peace && self.emergency_war_pair(pid, other))
             || ((friendship || open_borders || alliance.is_some()) && self.is_at_war(pid, other))
             || (open_borders && self.tree_effect(pid, "open_borders") <= 0.0)
             || (friendship
@@ -20405,6 +21522,11 @@ impl Game {
             .iter()
             .position(|deal| deal.id == deal_id && deal.to == pid)
             .ok_or_else(|| "no such incoming deal".to_string())?;
+        if self.pending_deals[index].peace
+            && self.emergency_war_pair(self.pending_deals[index].from, self.pending_deals[index].to)
+        {
+            return Err("active Emergency members cannot make peace with its target".into());
+        }
         let deal = self.pending_deals.remove(index);
         if deal.expires < self.turn
             || self.players[deal.from].gold < deal.give_gold
@@ -20415,7 +21537,7 @@ impl Game {
         self.players[deal.from].gold += deal.request_gold - deal.give_gold;
         self.players[deal.to].gold += deal.give_gold - deal.request_gold;
         if deal.peace {
-            self.at_war.remove(&pair(deal.from, deal.to));
+            self.conclude_peace(deal.from, deal.to);
         }
         if deal.open_borders {
             let until = self.turn + 30;
@@ -20481,10 +21603,14 @@ impl Game {
     }
 
     fn unit_gold_maintenance(&self, pid: usize) -> f64 {
-        self.player_unit_ids(pid)
+        let units = self
+            .player_unit_ids(pid)
             .into_iter()
             .map(|uid| self.unit_gold_maintenance_cost(pid, &self.units[&uid]))
-            .sum()
+            .sum::<f64>();
+        units
+            + self.spies.values().filter(|spy| spy.owner == pid).count() as f64
+                * self.rules.units["spy"].maintenance
     }
 
     fn building_district_is_active(&self, city: &City, building: &str) -> bool {
@@ -21520,10 +22646,26 @@ impl Game {
         if self.emergency_war_pair(pid, other) {
             return Err("active Emergency members cannot make peace with its target".into());
         }
-        if !self.at_war.remove(&pair(pid, other)) {
+        if !self.is_at_war(pid, other) {
             return Err("not at war".into());
         }
+        self.conclude_peace(pid, other);
         Ok(())
+    }
+
+    /// A peace agreement in this compact diplomacy model accepts the current
+    /// borders: cities held by either signatory are ceded, ending Occupation's
+    /// ungarrisoned -5 Loyalty pressure. Explicit city return can be layered
+    /// onto negotiated deals later without duplicating this invariant.
+    fn conclude_peace(&mut self, first: usize, second: usize) {
+        self.at_war.remove(&pair(first, second));
+        for city in self.cities.values_mut() {
+            if (city.owner == first && city.occupied_from == Some(second))
+                || (city.owner == second && city.occupied_from == Some(first))
+            {
+                city.occupied_from = None;
+            }
+        }
     }
 
     // -------------------------------------------------- loyalty & governors
@@ -21580,7 +22722,9 @@ impl Game {
         let Some(spec) = self.rules.governors.get(governor) else {
             return false;
         };
-        state.city.is_some() && self.turn >= state.assigned_turn + spec.establish_turns
+        state.city.is_some()
+            && self.turn >= state.assigned_turn + spec.establish_turns
+            && self.turn >= state.disabled_until
     }
 
     fn established_governor_city(&self, pid: usize, governor: &str) -> Option<u32> {
@@ -21662,6 +22806,7 @@ impl Game {
             GovernorState {
                 city: Some(cid),
                 assigned_turn: self.turn,
+                disabled_until: 0,
                 promotions: BTreeSet::new(),
             },
         );
@@ -21695,6 +22840,7 @@ impl Game {
         }
         state.city = Some(cid);
         state.assigned_turn = self.turn;
+        state.disabled_until = 0;
         self.sync_governor_cities(pid);
         Ok(())
     }
@@ -21790,7 +22936,9 @@ impl Game {
                 if d > 9 {
                     continue;
                 }
-                let mut w = o.pop as f64 * (10.0 - d as f64) * age_factor(o.owner);
+                let pressure_per_citizen = age_factor(o.owner)
+                    + self.city_active_project_effect(o, "citizen_loyalty_pressure");
+                let mut w = o.pop as f64 * (10.0 - d as f64) * pressure_per_citizen;
                 if o.is_capital && o.original_owner == o.owner {
                     w += o.pop as f64;
                 }
@@ -21814,7 +22962,7 @@ impl Game {
             let mut delta = (10.0 * (domestic_pressure - foreign_pressure)
                 / (domestic_pressure.min(foreign_pressure) + 0.5))
                 .clamp(-20.0, 20.0);
-            if self.players[pid].governors.contains(&cid) {
+            if self.city_governor_active(pid, cid) {
                 delta += 8.0 + self.policy_effect(pid, "governor_loyalty");
             } else {
                 delta += self
@@ -22704,6 +23852,21 @@ impl Game {
                     .find(|emergency| emergency.id == id)
                     .unwrap();
                 *emergency.contributions.entry(member).or_insert(0) += points;
+            }
+        }
+    }
+
+    /// Combat is a stock Emergency contribution even when the attacker never
+    /// finishes a turn inside the target's territory. One point records the
+    /// attack and a second records a kill; rewards only require a positive
+    /// contribution, while the score remains useful for observation/replays.
+    fn record_emergency_combat(&mut self, member: usize, target: usize, killed: bool) {
+        for emergency in &mut self.active_emergencies {
+            if emergency.ends > self.turn
+                && emergency.target == target
+                && emergency.members.contains(&member)
+            {
+                *emergency.contributions.entry(member).or_insert(0) += 1 + i64::from(killed);
             }
         }
     }
@@ -23806,6 +24969,7 @@ impl Game {
 
     fn begin_turn(&mut self, pid: usize) {
         self.process_levies(pid);
+        self.process_spies(pid);
         self.advance_exoplanet(pid);
         if self.winner.is_some() {
             return;
@@ -24177,10 +25341,8 @@ impl Game {
                 return None;
             };
             let spec = self.rules.projects.get(project)?;
-            let district_active = spec.district.as_deref().is_none_or(|district| {
-                self.city_has_active_district_family(&self.cities[&cid], district)
-            });
-            district_active.then_some(spec)
+            self.project_has_active_district(&self.cities[&cid], spec)
+                .then_some(spec)
         });
         if let Some(project) = active_project {
             let invested = base_produced * production_multiplier;
@@ -24200,12 +25362,10 @@ impl Game {
         let district_project_stalled = matches!(
             self.cities[&cid].queue.first(),
             Some(Item::Project { project })
-                if self.rules.projects[project]
-                    .district
-                    .as_deref()
-                    .is_some_and(|district| {
-                        !self.city_has_active_district_family(&self.cities[&cid], district)
-                    })
+                if !self.project_has_active_district(
+                    &self.cities[&cid],
+                    &self.rules.projects[project]
+                )
         );
         let mut growth_bonus = self.empire_building_sum(pid, |b| b.growth_pct);
         growth_bonus += self.empire_wonder_effect(pid, "empire_growth_pct");
@@ -24612,6 +25772,26 @@ impl Game {
                 if !self.commit_unit_resource(pid, cid, item) {
                     return false;
                 }
+                if unit == "spy" {
+                    let id = self.next_id;
+                    self.next_id += 1;
+                    self.spies.insert(
+                        id,
+                        Spy {
+                            id,
+                            owner: pid,
+                            level: 0,
+                            promotions: BTreeSet::new(),
+                            city: Some(cid),
+                            ready_turn: self.turn,
+                            mission: None,
+                            sources_city: None,
+                            sources_until: 0,
+                            captured_by: None,
+                        },
+                    );
+                    return true;
+                }
                 let pos = self.cities[&cid].pos;
                 let Some(placed) = self.place_new_unit(unit, pid, pos) else {
                     return false;
@@ -24921,6 +26101,10 @@ impl Game {
                         .counters
                         .entry(format!("project_effect:{effect}"))
                         .or_insert(0) += *amount as i64;
+                }
+                if let Some(loyalty) = spec.effects.get("completion_loyalty") {
+                    let city = self.cities.get_mut(&cid).unwrap();
+                    city.loyalty = (city.loyalty + loyalty).min(100.0);
                 }
                 if project == "carbon_recapture" {
                     // Gathering Storm tracks this as lifetime emissions. The
@@ -25501,8 +26685,8 @@ impl Game {
     fn do_raze_city(&mut self, pid: usize, cid: u32) -> Result<(), String> {
         let defeated = self.pending_city_capture(pid, cid)?;
         let city = self.cities[&cid].clone();
-        if city.is_capital || self.players[city.original_owner].is_minor {
-            return Err("original capitals and former city-states cannot be razed".into());
+        if !self.city_can_be_razed_by(pid, &city) {
+            return Err("that captured city cannot be razed".into());
         }
         self.capture_rewards(pid, defeated, 150.0);
 
@@ -30718,5 +31902,105 @@ mod district_mechanics {
         assert_eq!(game.players[0].diplomatic_favor, 200.0);
         assert_eq!(game.players[0].counters["emergency_city_strike_vs:2"], 2);
         assert!(game.do_make_peace(0, 2).is_ok());
+    }
+
+    #[test]
+    fn emergency_combat_qualifies_a_remote_member_and_blocks_deal_peace() {
+        let mut game = emergency_game_with_capitals(2, 88_106, 300);
+        let target_city = game.player_city_ids(1)[0];
+        game.at_war.insert(pair(0, 1));
+        game.active_emergencies.push(Emergency {
+            id: 901,
+            kind: "military".to_string(),
+            target: 1,
+            city: target_city,
+            original_owner: 0,
+            members: [0].into_iter().collect(),
+            contributions: BTreeMap::new(),
+            started: game.turn,
+            ends: game.turn + 30,
+        });
+
+        assert!(game
+            .do_propose_deal(0, 1, 0.0, 0.0, false, false, true, None)
+            .is_err());
+        game.pending_deals.push(DiplomaticDeal {
+            id: 902,
+            from: 0,
+            to: 1,
+            give_gold: 0.0,
+            request_gold: 0.0,
+            open_borders: false,
+            friendship: false,
+            peace: true,
+            alliance: None,
+            expires: game.turn + 10,
+        });
+        assert!(game.do_accept_deal(1, 902).is_err());
+        assert!(game.is_at_war(0, 1));
+
+        let (attacker_pos, defender_pos) = game
+            .map
+            .tiles
+            .iter()
+            .filter(|(position, tile)| {
+                game.rules.is_passable(tile)
+                    && !game.rules.is_water(tile)
+                    && game.city_at(**position).is_none()
+                    && game.units_at(**position).is_empty()
+            })
+            .find_map(|(position, _)| {
+                game.nbrs(*position).into_iter().find_map(|neighbor| {
+                    game.map.get(neighbor).and_then(|tile| {
+                        (game.rules.is_passable(tile)
+                            && !game.rules.is_water(tile)
+                            && game.city_at(neighbor).is_none()
+                            && game.units_at(neighbor).is_empty())
+                        .then_some((*position, neighbor))
+                    })
+                })
+            })
+            .expect("test map has an open land skirmish");
+        let attacker = game.spawn_test_unit("warrior", 0, attacker_pos);
+        game.spawn_test_unit("warrior", 1, defender_pos);
+        game.do_attack(0, attacker, defender_pos).unwrap();
+        assert!(game.active_emergencies[0].contributions[&0] > 0);
+
+        game.resolve_emergency(901, true);
+        assert_eq!(game.players[0].diplomatic_favor, 100.0);
+    }
+
+    #[test]
+    fn negotiated_peace_cedes_occupied_cities_and_own_cities_cannot_be_razed() {
+        let mut game = emergency_game_with_capitals(2, 88_107, 300);
+        let position = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|position| {
+                game.city_at(*position).is_none()
+                    && game
+                        .cities
+                        .values()
+                        .all(|city| game.wdist(city.pos, *position) >= 4)
+            })
+            .unwrap();
+        let city = game.found_city_for(1, position, Some("Ceded City".to_string()));
+        game.at_war.insert(pair(0, 1));
+        game.capture_city(city, 0);
+        game.do_keep_city(0, city).unwrap();
+        assert_eq!(game.cities[&city].occupied_from, Some(1));
+
+        game.do_make_peace(0, 1).unwrap();
+        assert_eq!(game.cities[&city].occupied_from, None);
+
+        game.at_war.insert(pair(0, 1));
+        game.capture_city(city, 1);
+        assert!(!game
+            .pending_city_capture_actions(1)
+            .contains(&Action::RazeCity { city }));
+        assert!(game.do_raze_city(1, city).is_err());
+        assert!(game.cities.contains_key(&city));
     }
 }

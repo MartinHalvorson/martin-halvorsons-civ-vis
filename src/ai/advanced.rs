@@ -2836,6 +2836,214 @@ impl AdvancedAi {
         }
     }
 
+    fn advanced_spies(&self, g: &mut Game, pid: usize, plan: &StrategicPlan) {
+        let ids: Vec<u32> = g
+            .spies
+            .values()
+            .filter(|spy| spy.owner == pid)
+            .map(|spy| spy.id)
+            .collect();
+        let home_defender = ids.iter().copied().min();
+        for spy_id in ids {
+            let legal = g.legal_spy_actions(pid, spy_id);
+            if legal.is_empty() {
+                continue;
+            }
+            let promotion_priority: &[&str] = match plan.strategy {
+                GrandStrategy::Science => &[
+                    "technologist",
+                    "rocket_scientist",
+                    "disguise",
+                    "linguist",
+                    "quartermaster",
+                ],
+                GrandStrategy::Culture => &[
+                    "cat_burglar",
+                    "con_artist",
+                    "disguise",
+                    "linguist",
+                    "surveillance",
+                ],
+                GrandStrategy::Diplomacy => &[
+                    "smear_campaign",
+                    "polygraph",
+                    "quartermaster",
+                    "seduction",
+                    "disguise",
+                ],
+                GrandStrategy::Conquest => &[
+                    "license_to_kill",
+                    "demolitions",
+                    "guerrilla_leader",
+                    "covert_action",
+                    "ace_driver",
+                ],
+                _ => &[
+                    "quartermaster",
+                    "seduction",
+                    "con_artist",
+                    "technologist",
+                    "linguist",
+                ],
+            };
+            if let Some(action) = promotion_priority
+                .iter()
+                .find_map(|wanted| {
+                    legal.iter().find(|action| {
+                        matches!(action, Action::PromoteSpy { promotion, .. } if promotion == *wanted)
+                    })
+                })
+                .or_else(|| {
+                    legal
+                        .iter()
+                        .find(|action| matches!(action, Action::PromoteSpy { .. }))
+                })
+            {
+                let _ = g.apply(pid, action);
+                continue;
+            }
+            let current_city = g.spies.get(&spy_id).and_then(|spy| spy.city);
+            if Some(spy_id) == home_defender
+                && matches!(
+                    plan.strategy,
+                    GrandStrategy::Science | GrandStrategy::Recovery
+                )
+                && current_city.is_some_and(|city| {
+                    g.cities[&city].owner == pid
+                        && (g.cities[&city].is_capital
+                            || g.cities[&city].districts.contains_key("spaceport"))
+                })
+            {
+                if let Some(action) = legal.iter().find(|action| {
+                    matches!(action, Action::SpyMission { mission, .. } if mission == "counterspy")
+                }) {
+                    let _ = g.apply(pid, action);
+                    continue;
+                }
+            }
+            let offensive = current_city
+                .and_then(|city| g.cities.get(&city))
+                .is_some_and(|city| city.owner != pid);
+            if offensive {
+                if g.spies[&spy_id].level < 2 {
+                    if let Some(action) = legal.iter().find(|action| {
+                        matches!(action, Action::SpyMission { mission, .. } if mission == "gain_sources")
+                    }) {
+                        let _ = g.apply(pid, action);
+                        continue;
+                    }
+                }
+                let operation = legal
+                    .iter()
+                    .filter_map(|action| {
+                        let Action::SpyMission {
+                            spy,
+                            mission,
+                            target,
+                        } = action
+                        else {
+                            return None;
+                        };
+                        if matches!(mission.as_str(), "gain_sources" | "counterspy") {
+                            return None;
+                        }
+                        let city = current_city?;
+                        let defender = g.cities[&city].owner;
+                        let active = crate::game::SpyMission {
+                            kind: mission.clone(),
+                            city,
+                            target: *target,
+                            started: g.turn,
+                            ends: g.turn,
+                        };
+                        let strategic = match (plan.strategy, mission.as_str()) {
+                            (GrandStrategy::Science, "steal_tech_boost") => 320.0,
+                            (GrandStrategy::Science, "disrupt_rocketry") => 290.0,
+                            (GrandStrategy::Culture, "great_work_heist") => 340.0,
+                            (GrandStrategy::Culture, "siphon_funds") => 135.0,
+                            (GrandStrategy::Diplomacy, "fabricate_scandal") => 330.0,
+                            (GrandStrategy::Diplomacy, "listening_post") => 185.0,
+                            (GrandStrategy::Conquest, "neutralize_governor") => 310.0,
+                            (GrandStrategy::Conquest, "sabotage_production") => 260.0,
+                            (GrandStrategy::Conquest, "recruit_partisans") => 245.0,
+                            (GrandStrategy::Conquest, "foment_unrest") => 230.0,
+                            (GrandStrategy::Conquest, "breach_dam") => 210.0,
+                            (_, "siphon_funds") => 150.0,
+                            (_, "steal_tech_boost") => 145.0,
+                            (_, "great_work_heist") => 135.0,
+                            (_, "neutralize_governor") => 125.0,
+                            (_, "fabricate_scandal") => 120.0,
+                            (_, "listening_post") => 75.0,
+                            _ => 100.0,
+                        } + if plan.target_player == Some(defender) {
+                            90.0
+                        } else {
+                            0.0
+                        };
+                        Some((
+                            strategic * g.spy_success_chance(*spy, &active),
+                            mission,
+                            action,
+                        ))
+                    })
+                    .max_by(|left, right| {
+                        left.0
+                            .partial_cmp(&right.0)
+                            .unwrap()
+                            .then_with(|| right.1.cmp(left.1))
+                    })
+                    .map(|(_, _, action)| action);
+                if let Some(action) = operation {
+                    let _ = g.apply(pid, action);
+                    continue;
+                }
+            }
+            let assignment = legal
+                .iter()
+                .filter_map(|action| match action {
+                    Action::AssignSpy { city, .. } if g.cities[city].owner != pid => {
+                        let target = &g.cities[city];
+                        let strategic = if plan.target_player == Some(target.owner) {
+                            180
+                        } else {
+                            0
+                        } + match plan.strategy {
+                            GrandStrategy::Science => {
+                                i32::from(target.districts.contains_key("campus")) * 90
+                                    + i32::from(target.districts.contains_key("spaceport")) * 150
+                            }
+                            GrandStrategy::Culture => {
+                                i32::from(target.districts.contains_key("theater_square")) * 140
+                            }
+                            GrandStrategy::Diplomacy => {
+                                i32::from(g.players[target.owner].is_minor) * 180
+                            }
+                            GrandStrategy::Conquest => {
+                                i32::from(g.city_can_strike(target)) * 35
+                                    + i32::from(g.players[target.owner].governors.contains(city))
+                                        * 120
+                            }
+                            _ => i32::from(target.districts.contains_key("commercial_hub")) * 70,
+                        };
+                        Some((
+                            strategic
+                                + target.pop * 8
+                                + target.districts.len() as i32 * 14
+                                + target.wonders.len() as i32 * 24,
+                            std::cmp::Reverse(*city),
+                            action,
+                        ))
+                    }
+                    _ => None,
+                })
+                .max_by_key(|(score, city, _)| (*score, *city))
+                .map(|(_, _, action)| action);
+            if let Some(action) = assignment {
+                let _ = g.apply(pid, action);
+            }
+        }
+    }
+
     #[allow(dead_code)]
     fn advanced_production(&self, g: &mut Game, pid: usize, plan: &StrategicPlan) {
         let mut counts = self.counts(g, pid);
@@ -2944,6 +3152,20 @@ impl AdvancedAi {
             Item::Unit { unit } if unit == "trader" => {
                 if g.active_routes(pid) + (counts.traders as i64) < g.trade_capacity(pid) {
                     255.0
+                } else {
+                    -10_000.0
+                }
+            }
+            Item::Unit { unit } if unit == "spy" => {
+                let active = g.spies.values().filter(|spy| spy.owner == pid).count();
+                let strategic = match plan.strategy {
+                    GrandStrategy::Science | GrandStrategy::Culture => 850.0,
+                    GrandStrategy::Diplomacy | GrandStrategy::Conquest => 1_050.0,
+                    GrandStrategy::Recovery => 650.0,
+                    _ => 500.0,
+                };
+                if active < g.spy_capacity(pid).max(0) as usize {
+                    1_500.0 + strategic + active as f64 * 90.0
                 } else {
                     -10_000.0
                 }
@@ -5730,6 +5952,7 @@ impl Ai for AdvancedAi {
         self.faith_building_spending(g, pid, plan.strategy);
         self.strategic_policies(g, pid, plan.strategy);
         self.advanced_diplomacy(g, pid, &plan);
+        self.advanced_spies(g, pid, &plan);
 
         // Preserve the proven four-build opening before switching every city
         // to utility planning. This also keeps the frozen baseline comparable.
