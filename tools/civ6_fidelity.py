@@ -35,14 +35,46 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 # Gathering Storm ruleset: base game, then the two expansion overlays, applied
-# in the order the game applies them. DLC civilization packs add unique units
-# and buildings but do not restate the base rules, so they are out of scope
-# here (their content is gated behind civilization ownership anyway).
+# in the order the game applies them, then the content packs a standard
+# all-content game enables (civilization, leader and landmark packs).
+# Scenario and optional-game-mode packs stay out: their rules only apply
+# inside those modes.
+CONTENT_PACKS = [
+    "Aztec_Montezuma",
+    "Poland_Jadwiga",
+    "Australia",
+    "Macedonia_Persia",
+    "Nubia_Amanitore",
+    "Indonesia_Khmer",
+    "Maya_GranColombia",
+    "GranColombia_Maya",
+    "Ethiopia",
+    "Byzantium_Gaul",
+    "Babylon",
+    "KublaiKhan_Vietnam",
+    "Portugal",
+    "VikingsLandmarks",
+    "CatherineDeMedici",
+    "TeddyRoosevelt",
+    "GreatBuilders",
+    "GreatNegotiators",
+    "GreatWarlords",
+    "RulersOfChina",
+    "RulersOfEngland",
+    "RulersOfTheSahara",
+    "JuliusCaesar",
+]
 LOAD_ORDER = [
     "Base/Assets/Gameplay/Data",
     "DLC/Expansion1/Data",
     "DLC/Expansion2/Data",
-]
+] + [f"DLC/{pack}/Data" for pack in CONTENT_PACKS]
+
+# Pack files that never carry rules tables, or that belong to optional modes.
+PACK_EXCLUDE = re.compile(
+    r"_MODE|Icons|Colors|Config|Civilopedia|RemoveData|Loc_|Text|Audio|ARX",
+    re.IGNORECASE,
+)
 
 INSTALL_CANDIDATES = [
     r"C:\Program Files (x86)\Steam\steamapps\common\Sid Meier's Civilization VI",
@@ -60,20 +92,40 @@ TABLE_KEYS = {
     "Districts": "DistrictType",
     "TechnologyPrereqs": ("Technology", "PrereqTech"),
     "CivicPrereqs": ("Civic", "PrereqCivic"),
+    "Terrains": "TerrainType",
+    "Terrain_YieldChanges": ("TerrainType", "YieldType"),
+    "Features": "FeatureType",
+    "Feature_YieldChanges": ("FeatureType", "YieldType"),
+    "Feature_AdjacentYields": ("FeatureType", "YieldType"),
+    "Resources": "ResourceType",
+    "Resource_YieldChanges": ("ResourceType", "YieldType"),
+    "Resource_ValidTerrains": ("ResourceType", "TerrainType"),
+    "Resource_ValidFeatures": ("ResourceType", "FeatureType"),
+    "Improvements": "ImprovementType",
+    "Improvement_YieldChanges": ("ImprovementType", "YieldType"),
+    "Improvement_ValidTerrains": ("ImprovementType", "TerrainType"),
+    "Improvement_ValidFeatures": ("ImprovementType", "FeatureType"),
+    "Improvement_ValidResources": ("ImprovementType", "ResourceType"),
+    "Improvement_ValidBuildUnits": ("ImprovementType", "UnitType"),
+    "Improvement_BonusYieldChanges": ("Id",),
     "District_Adjacencies": ("DistrictType", "YieldChangeId"),
     "Adjacency_YieldChanges": "ID",
     "Building_YieldChanges": ("BuildingType", "YieldType"),
+    "Building_GreatPersonPoints": ("BuildingType", "GreatPersonClassType"),
+    "Building_GreatWorks": ("BuildingType", "GreatWorkSlotType"),
+    "Building_ValidTerrains": ("BuildingType", "TerrainType"),
+    "Building_ValidFeatures": ("BuildingType", "FeatureType"),
+    "Building_RequiredFeatures": ("BuildingType", "FeatureType"),
+    "Policies": "PolicyType",
+    "ObsoletePolicies": ("PolicyType", "ObsoletePolicy"),
     "Governments": "GovernmentType",
     "Government_SlotCounts": ("GovernmentType", "GovernmentSlotType"),
-    "Terrains": "TerrainType",
-    "Features": "FeatureType",
-    "Resources": "ResourceType",
-    "Improvements": "ImprovementType",
-    "Terrain_YieldChanges": ("TerrainType", "YieldType"),
-    "Feature_YieldChanges": ("FeatureType", "YieldType"),
-    "Resource_YieldChanges": ("ResourceType", "YieldType"),
-    "Improvement_YieldChanges": ("ImprovementType", "YieldType"),
-    "Improvement_BonusYieldChanges": ("Id",),
+    "Beliefs": "BeliefType",
+    "UnitPromotions": "UnitPromotionType",
+    "UnitPromotionPrereqs": ("UnitPromotion", "PrereqUnitPromotion"),
+    "Projects": "ProjectType",
+    "Project_GreatPersonPoints": ("ProjectType", "GreatPersonClassType"),
+    "Project_YieldConversions": ("ProjectType", "YieldType"),
 }
 
 # Only parse files that can carry those tables. Parsing every gameplay XML
@@ -83,8 +135,8 @@ TABLE_KEYS = {
 # filename order already gives us ('.' sorts before '_').
 FILE_PATTERN = re.compile(
     r"^(Expansion[12]_)?"
-    r"(Units|Technologies|Civics|Buildings|Districts"
-    r"|Terrains|Features|Resources|Improvements|Governments)"
+    r"(Units|Technologies|Civics|Buildings|Districts|Terrains|Features|Resources"
+    r"|Improvements|Policies|Governments|Beliefs|UnitPromotions|Projects|GreatWorks)"
     r"(_Major)?\.xml$",
     re.IGNORECASE,
 )
@@ -198,10 +250,19 @@ def load_database(install: Path) -> Database:
     for relative in LOAD_ORDER:
         directory = install / relative
         if not directory.is_dir():
-            print(f"warning: missing load-order directory {relative}", file=sys.stderr)
+            if not relative.startswith("DLC/"):
+                print(f"warning: missing load-order directory {relative}", file=sys.stderr)
             continue
+        core = relative in LOAD_ORDER[:3]
         for path in sorted(directory.rglob("*.xml")):
-            if FILE_PATTERN.match(path.name):
+            if core:
+                if FILE_PATTERN.match(path.name):
+                    database.apply_file(path)
+            elif not PACK_EXCLUDE.search(path.name):
+                # Content packs interleave tables freely (and ship
+                # ``<Pack>_Expansion2.xml`` compat overlays), so parse
+                # everything that is not clearly cosmetic; apply_file skips
+                # tables the audit does not track.
                 database.apply_file(path)
     return database
 
@@ -302,97 +363,304 @@ def project_civics(database: Database) -> dict[str, dict]:
     return projected
 
 
-def project_buildings(database: Database) -> dict[str, dict]:
-    projected = {}
-    for row in database.rows("Buildings"):
-        projected[slug(row["BuildingType"], "BUILDING_")] = {
-            "cost": number(row.get("Cost")),
-            "maintenance": number(row.get("Maintenance")),
-        }
-    return projected
-
-
-# The game names every yield table's rows with a type prefix and a YIELD_
-# column; CIVVIS stores the same numbers as a yields object per entry. One
-# helper projects all four.
-def project_yields(
-    database: Database, table: str, key: str, prefix: str, base: str
-) -> dict[str, dict]:
-    # Seed from the entity table, not the yield table: an entry the game gives
-    # no yields at all is exactly the case where CIVVIS is most likely to have
-    # invented one, and seeding from yield rows alone would hide it.
-    projected: dict[str, dict] = {
-        slug(row[key], prefix): {} for row in database.rows(base) if key in row
-    }
-    for row in database.rows(table):
-        entry = projected.setdefault(slug(row[key], prefix), {})
-        amount = number(row.get("YieldChange"))
-        if amount:
-            entry[slug(row["YieldType"], "YIELD_")] = amount
-    return {
-        name: {field: yields.get(field, 0) for field in YIELD_FIELDS}
-        for name, yields in projected.items()
-    }
-
-
-# CIVVIS folds Hills into a flat +1 Production modifier rather than carrying a
-# separate terrain per hills variant, so each variant is checked against its
-# flat parent plus that modifier instead of being looked up directly.
-HILLS_PARENT = {
-    "grass_hills": "grassland",
-    "plains_hills": "plains",
-    "desert_hills": "desert",
-    "tundra_hills": "tundra",
-    "snow_hills": "snow",
+YIELDS = {
+    "YIELD_FOOD": "food",
+    "YIELD_PRODUCTION": "production",
+    "YIELD_GOLD": "gold",
+    "YIELD_SCIENCE": "science",
+    "YIELD_CULTURE": "culture",
+    "YIELD_FAITH": "faith",
 }
 
-TERRAIN_NAMES = {"grass": "grassland"}
-
-FEATURE_NAMES = {
-    "barrier_reef": "great_barrier_reef",
-    "everest": "mount_everest",
+# CIVVIS names a handful of terrain-layer entries differently from the game's
+# type constants. Naming, not rules.
+TERRAIN_ALIASES = {"grass": "grassland"}
+DISTRICT_ALIASES = {
+    "theater": "theater_square",
+    "government": "government_plaza",
+    "water_entertainment_complex": "water_park",
+}
+FEATURE_ALIASES = {
     "floodplains_grassland": "grassland_floodplains",
     "floodplains_plains": "plains_floodplains",
+    "barrier_reef": "great_barrier_reef",
+    "everest": "mount_everest",
+    "forest": "forest",
 }
+
+
+def yield_map(database: Database, table: str, key_column: str, prefix: str, aliases=None) -> dict[str, dict]:
+    """``*_YieldChanges`` rows folded into {entry: {yield: amount}}."""
+    folded: dict[str, dict] = {}
+    for row in database.rows(table):
+        yield_type = YIELDS.get(row.get("YieldType"))
+        if yield_type is None:
+            continue
+        name = slug(row[key_column], prefix)
+        if aliases:
+            name = aliases.get(name, name)
+        amount = number(row.get("YieldChange"))
+        if amount:
+            folded.setdefault(name, {})[yield_type] = amount
+    return folded
+
+
+def terrain_base(game_terrain: str) -> tuple[str, str]:
+    """Split TERRAIN_GRASS_HILLS into (grassland, hills)."""
+    name = slug(game_terrain, "TERRAIN_")
+    for form in ("hills", "mountain"):
+        if name.endswith("_" + form):
+            base = name[: -len(form) - 1]
+            return TERRAIN_ALIASES.get(base, base), form
+    return TERRAIN_ALIASES.get(name, name), "flat"
 
 
 def project_terrains(database: Database) -> dict[str, dict]:
-    raw = project_yields(database, "Terrain_YieldChanges", "TerrainType", "TERRAIN_", "Terrains")
-    projected = {}
-    for name, yields in raw.items():
-        if parent := HILLS_PARENT.get(name):
-            # Fold the variant back onto its parent: the audit compares the
-            # flat terrain, and a hills row that is not parent + 1 Production
-            # would mean CIVVIS' single modifier cannot express the ruleset.
-            flat = dict(yields)
-            flat["production"] = flat.get("production", 0) - 1
-            projected.setdefault(TERRAIN_NAMES.get(parent, parent), {})
-            expected = {k: v for k, v in flat.items() if v}
-            if projected[TERRAIN_NAMES.get(parent, parent)] not in ({}, expected):
-                continue
-            projected[TERRAIN_NAMES.get(parent, parent)] = expected
-        else:
-            projected[TERRAIN_NAMES.get(name, name)] = yields
+    yields = yield_map(database, "Terrain_YieldChanges", "TerrainType", "TERRAIN_")
+    projected: dict[str, dict] = {}
+    hills: dict[str, dict] = {}
+    for row in database.rows("Terrains"):
+        base, form = terrain_base(row["TerrainType"])
+        entry = {
+            "yields": yields.get(slug(row["TerrainType"], "TERRAIN_"), {}),
+            "water": truthy(row.get("Water")),
+            "passable": not truthy(row.get("Impassable")),
+            "move_cost": number(row.get("MovementCost"), 1),
+            "defense": number(row.get("DefenseModifier")),
+        }
+        if form == "flat":
+            projected[base] = entry
+        elif form == "hills":
+            hills[base] = entry
+        elif form == "mountain":
+            # CIVVIS models one impassable mountain terrain; the game ships a
+            # variant per base terrain. All of them must agree for the single
+            # entry to be faithful.
+            merged = projected.setdefault(
+                "mountain", {"yields": {}, "water": False, "passable": True, "defense": 0}
+            )
+            merged["passable"] = merged["passable"] and entry["passable"]
+            merged["yields"] = merged["yields"] or entry["yields"]
+    # CIVVIS stores hills as a tile flag with one engine-wide rule set. The
+    # synthetic ``hills`` entry checks that rule against every game variant:
+    # each must add the same yields on top of its base terrain.
+    if hills:
+        deltas = set()
+        for base, entry in hills.items():
+            flat = projected.get(base, {"yields": {}})
+            delta = {
+                yield_type: amount - flat["yields"].get(yield_type, 0)
+                for yield_type, amount in entry["yields"].items()
+                if amount != flat["yields"].get(yield_type, 0)
+            }
+            deltas.add(
+                (
+                    tuple(sorted(delta.items())),
+                    entry["move_cost"],
+                    entry["defense"],
+                )
+            )
+        if len(deltas) == 1:
+            ((delta, move_cost, defense),) = deltas
+            projected["hills"] = {
+                "yield_delta": dict(delta),
+                "move_cost": move_cost,
+                "defense": defense,
+            }
+    # Lakes are coast-terrain plots flagged as lakes; CIVVIS spells the flag
+    # as its own terrain. Same rules row either way.
+    if "coast" in projected:
+        projected["lake"] = dict(projected["coast"])
     return projected
 
 
 def project_features(database: Database) -> dict[str, dict]:
-    return {
-        FEATURE_NAMES.get(name, name): yields
-        for name, yields in project_yields(
-            database, "Feature_YieldChanges", "FeatureType", "FEATURE_", "Features"
-        ).items()
-    }
+    yields = yield_map(
+        database, "Feature_YieldChanges", "FeatureType", "FEATURE_", FEATURE_ALIASES
+    )
+    adjacent = yield_map(
+        database, "Feature_AdjacentYields", "FeatureType", "FEATURE_", FEATURE_ALIASES
+    )
+    projected = {}
+    for row in database.rows("Features"):
+        name = slug(row["FeatureType"], "FEATURE_")
+        name = FEATURE_ALIASES.get(name, name)
+        entry = {
+            "yields": yields.get(name, {}),
+            "move_cost": number(row.get("MovementChange")),
+            "impassable": truthy(row.get("Impassable")),
+            "natural_wonder": truthy(row.get("NaturalWonder")),
+            "defense": number(row.get("DefenseModifier")),
+        }
+        if adjacent.get(name):
+            entry["adjacent_yields"] = adjacent[name]
+        projected[name] = entry
+    return projected
+
+
+RESOURCE_CLASSES = {
+    "RESOURCECLASS_BONUS": "bonus",
+    "RESOURCECLASS_LUXURY": "luxury",
+    "RESOURCECLASS_STRATEGIC": "strategic",
+    "RESOURCECLASS_ARTIFACT": "artifact",
+}
+
+
+LAND_BASES = {"desert", "grassland", "plains", "snow", "tundra"}
+
+
+def collapse_terrains(rows) -> tuple[set, bool, bool, bool]:
+    """Valid-terrain rows folded to CIVVIS base names.
+
+    Returns (bases, any_flat_land, any_hills, any_mountain): the game encodes
+    "hills only" and "flat only" by which variant rows exist, CIVVIS by
+    boolean flags next to a base-terrain list.
+    """
+    bases, flat_land, hills, mountain = set(), False, False, False
+    for game_terrain in rows:
+        base, form = terrain_base(game_terrain)
+        if form == "mountain":
+            # CIVVIS spells every mountain variant as the one impassable
+            # ``mountain`` terrain (Mountain Tunnels, Ski Resorts).
+            bases.add("mountain")
+            mountain = True
+            continue
+        bases.add(base)
+        if form == "hills":
+            hills = True
+        elif base not in ("coast", "ocean", "lake"):
+            flat_land = True
+    return bases, flat_land, hills, mountain
 
 
 def project_resources(database: Database) -> dict[str, dict]:
-    return project_yields(database, "Resource_YieldChanges", "ResourceType", "RESOURCE_", "Resources")
+    yields = yield_map(database, "Resource_YieldChanges", "ResourceType", "RESOURCE_")
+    terrains: dict[str, list] = {}
+    for row in database.rows("Resource_ValidTerrains"):
+        terrains.setdefault(slug(row["ResourceType"], "RESOURCE_"), []).append(
+            row["TerrainType"]
+        )
+    features: dict[str, set] = {}
+    for row in database.rows("Resource_ValidFeatures"):
+        name = slug(row["FeatureType"], "FEATURE_")
+        features.setdefault(slug(row["ResourceType"], "RESOURCE_"), set()).add(
+            FEATURE_ALIASES.get(name, name)
+        )
+    # A resource's improvement, preferring the land improvement when a sea
+    # counterpart also accepts it (Oil: Oil Wells on land, Oil Rigs at sea —
+    # CIVVIS keys the resource on the land build and lets the improvement's
+    # own resource list cover the water case).
+    sea_improvements = {
+        slug(row["ImprovementType"], "IMPROVEMENT_")
+        for row in database.rows("Improvements")
+        if truthy(row.get("Coast")) or row.get("Domain") == "DOMAIN_SEA"
+    }
+    improvements: dict[str, str] = {}
+    for row in database.rows("Improvement_ValidResources"):
+        name = slug(row["ResourceType"], "RESOURCE_")
+        improvement = slug(row["ImprovementType"], "IMPROVEMENT_")
+        current = improvements.get(name)
+        if current is None or (current in sea_improvements and improvement not in sea_improvements):
+            improvements[name] = improvement
+    civvis_features = set(load_ours("features"))
+    projected = {}
+    for row in database.rows("Resources"):
+        name = slug(row["ResourceType"], "RESOURCE_")
+        bases, _, _, _ = collapse_terrains(terrains.get(name, []))
+        entry = {
+            "class": RESOURCE_CLASSES.get(row.get("ResourceClassType"), "?"),
+            "yields": yields.get(name, {}),
+            "terrain": bases,
+            # Placement on features CIVVIS does not model at all (volcanic
+            # soil) is tracked by the Features table's missing-entry count,
+            # not as noise on every resource.
+            "feature": features.get(name, set()) & civvis_features,
+        }
+        if row.get("PrereqTech"):
+            entry["tech"] = slug(row["PrereqTech"], "TECH_")
+        if row.get("PrereqCivic"):
+            entry["civic"] = slug(row["PrereqCivic"], "CIVIC_")
+        if name in improvements:
+            entry["improvement"] = improvements[name]
+        projected[name] = entry
+    return projected
 
 
 def project_improvements(database: Database) -> dict[str, dict]:
-    return project_yields(
-        database, "Improvement_YieldChanges", "ImprovementType", "IMPROVEMENT_", "Improvements"
-    )
+    yields = yield_map(database, "Improvement_YieldChanges", "ImprovementType", "IMPROVEMENT_")
+    terrains: dict[str, list] = {}
+    gated: dict[str, set] = {}
+    for row in database.rows("Improvement_ValidTerrains"):
+        name = slug(row["ImprovementType"], "IMPROVEMENT_")
+        if row.get("PrereqCivic") or row.get("PrereqTech"):
+            # Conditional rows (farms on Hills with Civil Engineering) are a
+            # separate rule; the base terrain set is what is always legal.
+            gated.setdefault(name, set()).add(terrain_base(row["TerrainType"])[0])
+            continue
+        terrains.setdefault(name, []).append(row["TerrainType"])
+    features: dict[str, set] = {}
+    for row in database.rows("Improvement_ValidFeatures"):
+        feature = slug(row["FeatureType"], "FEATURE_")
+        features.setdefault(slug(row["ImprovementType"], "IMPROVEMENT_"), set()).add(
+            FEATURE_ALIASES.get(feature, feature)
+        )
+    resources: dict[str, set] = {}
+    for row in database.rows("Improvement_ValidResources"):
+        resources.setdefault(slug(row["ImprovementType"], "IMPROVEMENT_"), set()).add(
+            slug(row["ResourceType"], "RESOURCE_")
+        )
+    builder_built: set[str] = set()
+    for row in database.rows("Improvement_ValidBuildUnits"):
+        if row.get("UnitType") == "UNIT_BUILDER":
+            builder_built.add(slug(row["ImprovementType"], "IMPROVEMENT_"))
+    civvis_features = set(load_ours("features"))
+    projected = {}
+    for row in database.rows("Improvements"):
+        name = slug(row["ImprovementType"], "IMPROVEMENT_")
+        bases, flat_land, hills, mountain = collapse_terrains(terrains.get(name, []))
+        entry = {
+            "yields": yields.get(name, {}),
+            # The game column counts half-Housing steps: Farms carry 1 for
+            # their +0.5, Seasteads 4 for their +2.
+            "housing": number(row.get("Housing")),
+            "terrain": bases,
+            "feature": features.get(name, set()) & civvis_features,
+            "resources": resources.get(name, set()),
+            "builder_buildable": name in builder_built,
+            "requires_flat": flat_land and not hills and not mountain,
+            "requires_hills": hills and not flat_land and not resources.get(name),
+            "hills_or_resource": hills and not flat_land and bool(resources.get(name)),
+        }
+        if row.get("PrereqTech"):
+            entry["tech"] = slug(row["PrereqTech"], "TECH_")
+        if row.get("PrereqCivic"):
+            entry["civic"] = slug(row["PrereqCivic"], "CIVIC_")
+        projected[name] = entry
+    return projected
+
+
+def project_improvement_upgrades(database: Database) -> dict[str, dict]:
+    """Tech- and civic-gated improvement yields, keyed the way CIVVIS keys them.
+
+    ``data/tree_effects.json`` records these as ``<improvement>_<yield>`` grants
+    hung off the unlocking node, so the projection reshapes the game's rows into
+    the same ``node -> {effect: amount}`` form.
+    """
+    projected: dict[str, dict] = {}
+    for row in database.rows("Improvement_BonusYieldChanges"):
+        node = row.get("PrereqTech") or row.get("PrereqCivic")
+        if not node:
+            continue
+        node = slug(node, "TECH_" if row.get("PrereqTech") else "CIVIC_")
+        improvement = slug(row["ImprovementType"], "IMPROVEMENT_")
+        yield_name = slug(row["YieldType"], "YIELD_")
+        effect = f"{improvement}_{yield_name}"
+        amount = number(row.get("BonusYieldChange"))
+        # An expansion restating a grant supersedes the base row rather than
+        # stacking on top of it, so the larger value is the shipped one.
+        entry = projected.setdefault(node, {})
+        entry[effect] = max(entry.get(effect, 0), amount)
+    return projected
 
 
 # CIVVIS names the adjacency source; the game names the column that matched.
@@ -464,58 +732,269 @@ def project_adjacency(database: Database) -> dict[str, dict]:
     return projected
 
 
-def project_building_yields(database: Database) -> dict[str, dict]:
-    return project_yields(
-        database, "Building_YieldChanges", "BuildingType", "BUILDING_", "Buildings"
-    )
+def ours_adjacency() -> dict[str, dict]:
+    return {
+        name: {
+            f"{source}_{field}": amount
+            for source, yields in (entry.get("adjacency") or {}).items()
+            for field, amount in yields.items()
+        }
+        for name, entry in load_ours("districts").items()
+    }
 
 
-SLOTS = ("military", "economic", "diplomatic", "wildcard")
+GREAT_WORK_SLOTS = {
+    "GREATWORKSLOT_WRITING": "writing",
+    "GREATWORKSLOT_ART": "art",
+    "GREATWORKSLOT_MUSIC": "music",
+    "GREATWORKSLOT_RELIC": "relic",
+    "GREATWORKSLOT_ARTIFACT": "artifact",
+    "GREATWORKSLOT_PALACE": "any",
+    "GREATWORKSLOT_CATHEDRAL": "religious_art",
+}
+
+
+def building_extras(database: Database):
+    yields = yield_map(database, "Building_YieldChanges", "BuildingType", "BUILDING_")
+    gpp: dict[str, dict] = {}
+    for row in database.rows("Building_GreatPersonPoints"):
+        gpp.setdefault(slug(row["BuildingType"], "BUILDING_"), {})[
+            slug(row["GreatPersonClassType"], "GREAT_PERSON_CLASS_")
+        ] = number(row.get("PointsPerTurn"))
+    works: dict[str, dict] = {}
+    for row in database.rows("Building_GreatWorks"):
+        slot = GREAT_WORK_SLOTS.get(row.get("GreatWorkSlotType"))
+        if slot:
+            entry = works.setdefault(slug(row["BuildingType"], "BUILDING_"), {})
+            entry[slot] = entry.get(slot, 0) + number(row.get("NumSlots"), 1)
+    return yields, gpp, works
+
+
+def project_buildings(database: Database) -> dict[str, dict]:
+    yields, gpp, works = building_extras(database)
+    projected = {}
+    for row in database.rows("Buildings"):
+        if truthy(row.get("IsWonder")):
+            continue  # audited as Wonders, CIVVIS' spelling
+        name = slug(row["BuildingType"], "BUILDING_")
+        entry = {
+            "cost": number(row.get("Cost")),
+            "maintenance": number(row.get("Maintenance")),
+            "housing": number(row.get("Housing")),
+            "amenity": number(row.get("Entertainment")),
+            "citizen_slots": number(row.get("CitizenSlots")),
+            "yields": yields.get(name, {}),
+            "regional_range": number(row.get("RegionalRange")),
+        }
+        if row.get("PrereqTech"):
+            entry["tech"] = slug(row["PrereqTech"], "TECH_")
+        if row.get("PrereqCivic"):
+            entry["civic"] = slug(row["PrereqCivic"], "CIVIC_")
+        if row.get("PrereqDistrict"):
+            district = slug(row["PrereqDistrict"], "DISTRICT_")
+            entry["district"] = DISTRICT_ALIASES.get(district, district)
+        if gpp.get(name):
+            entry["great_person_points"] = gpp[name]
+        if works.get(name):
+            entry["great_work_slots"] = works[name]
+        projected[name] = entry
+    return projected
+
+
+def project_wonders(database: Database) -> dict[str, dict]:
+    yields, gpp, works = building_extras(database)
+    terrains: dict[str, list] = {}
+    for row in database.rows("Building_ValidTerrains"):
+        terrains.setdefault(slug(row["BuildingType"], "BUILDING_"), []).append(
+            row["TerrainType"]
+        )
+    # CIVVIS wonder feature lists are placement requirements — the game's
+    # ``Building_RequiredFeatures`` (Chichen Itza on Rainforest). The softer
+    # ``Building_ValidFeatures`` merely widens placement (Petra also on its
+    # Floodplains) and stays unaudited until CIVVIS models the distinction.
+    features: dict[str, set] = {}
+    for row in database.rows("Building_RequiredFeatures"):
+        feature = slug(row["FeatureType"], "FEATURE_")
+        features.setdefault(slug(row["BuildingType"], "BUILDING_"), set()).add(
+            FEATURE_ALIASES.get(feature, feature)
+        )
+    civvis_features = set(load_ours("features"))
+    projected = {}
+    for row in database.rows("Buildings"):
+        if not truthy(row.get("IsWonder")):
+            continue
+        name = slug(row["BuildingType"], "BUILDING_")
+        bases, _, hills, _ = collapse_terrains(terrains.get(name, []))
+        if bases == LAND_BASES:
+            bases = set()
+        coast = truthy(row.get("Coast"))
+        if bases and bases <= {"coast", "ocean"}:
+            # Valid-terrain rows on water terrain are the game's spelling of
+            # "stands on a coastal water tile"; CIVVIS spells that coast.
+            bases = set()
+            coast = True
+        if truthy(row.get("MustBeLake")):
+            # Huey Teocalli: the lake tile is the placement, the redundant
+            # Coast column is not the rule.
+            bases = {"lake"}
+            coast = False
+        entry = {
+            "cost": number(row.get("Cost")),
+            "yields": yields.get(name, {}),
+            "housing": number(row.get("Housing")),
+            "amenity": number(row.get("Entertainment")),
+            "regional_range": number(row.get("RegionalRange")),
+            "coast": coast,
+            "river": truthy(row.get("RequiresRiver"))
+            or truthy(row.get("RequiresAdjacentRiver")),
+            "adjacent_mountain": truthy(row.get("AdjacentToMountain")),
+            "terrain": bases,
+            "feature": features.get(name, set()) & civvis_features,
+        }
+        if hills is False and bases and "mountain" not in bases:
+            # Wonders whose valid-terrain rows are flat variants only must be
+            # placed on flat ground; CIVVIS spells that hills: false.
+            entry["flat_only"] = True
+        if row.get("PrereqTech"):
+            entry["tech"] = slug(row["PrereqTech"], "TECH_")
+        if row.get("PrereqCivic"):
+            entry["civic"] = slug(row["PrereqCivic"], "CIVIC_")
+        if row.get("AdjacentDistrict"):
+            district = slug(row["AdjacentDistrict"], "DISTRICT_")
+            entry["adjacent_district"] = DISTRICT_ALIASES.get(district, district)
+        if row.get("AdjacentResource"):
+            entry["adjacent_resource"] = slug(row["AdjacentResource"], "RESOURCE_")
+        if row.get("AdjacentImprovement"):
+            entry["adjacent_improvement"] = slug(row["AdjacentImprovement"], "IMPROVEMENT_")
+        if gpp.get(name):
+            entry["great_person_points"] = gpp[name]
+        if works.get(name):
+            entry["great_work_slots"] = works[name]
+        projected[name] = entry
+    return projected
+
+
+POLICY_SLOTS = {
+    "SLOT_MILITARY": "military",
+    "SLOT_ECONOMIC": "economic",
+    "SLOT_DIPLOMATIC": "diplomatic",
+    "SLOT_WILDCARD": "wildcard",
+    "SLOT_GREAT_PERSON": "wildcard",
+    "SLOT_DARKAGE": "dark_age",
+}
+
+
+def project_policies(database: Database) -> dict[str, dict]:
+    projected = {}
+    for row in database.rows("Policies"):
+        entry = {"slot": POLICY_SLOTS.get(row.get("GovernmentSlotType"), "?")}
+        if row.get("PrereqCivic"):
+            entry["civic"] = slug(row["PrereqCivic"], "CIVIC_")
+        projected[slug(row["PolicyType"], "POLICY_")] = entry
+    return projected
 
 
 def project_governments(database: Database) -> dict[str, dict]:
     slots: dict[str, dict] = {}
     for row in database.rows("Government_SlotCounts"):
-        name = slug(row["GovernmentType"], "GOVERNMENT_")
-        slot = slug(row["GovernmentSlotType"], "SLOT_")
-        slots.setdefault(name, {})[slot] = number(row.get("NumSlots"))
+        slot = POLICY_SLOTS.get(row.get("GovernmentSlotType"))
+        if slot:
+            entry = slots.setdefault(slug(row["GovernmentType"], "GOVERNMENT_"), {})
+            entry[slot] = entry.get(slot, 0) + number(row.get("NumSlots"))
     projected = {}
     for row in database.rows("Governments"):
         name = slug(row["GovernmentType"], "GOVERNMENT_")
         entry = {
+            "slots": slots.get(name, {}),
             "influence_per_turn": number(row.get("InfluencePointsPerTurn")),
             "influence_threshold": number(row.get("InfluencePointsThreshold")),
             "envoys_per_threshold": number(row.get("InfluenceTokensPerThreshold")),
         }
-        for slot in SLOTS:
-            entry[f"slot_{slot}"] = slots.get(name, {}).get(slot, 0)
-        if civic := row.get("PrereqCivic"):
-            entry["civic"] = slug(civic, "CIVIC_")
+        if row.get("PrereqCivic"):
+            entry["civic"] = slug(row["PrereqCivic"], "CIVIC_")
         projected[name] = entry
     return projected
 
 
-def project_improvement_upgrades(database: Database) -> dict[str, dict]:
-    """Tech- and civic-gated improvement yields, keyed the way CIVVIS keys them.
+def project_beliefs(database: Database) -> dict[str, dict]:
+    projected = {}
+    for row in database.rows("Beliefs"):
+        projected[slug(row["BeliefType"], "BELIEF_")] = {
+            "class": slug(row.get("BeliefClassType", ""), "BELIEF_CLASS_"),
+        }
+    return projected
 
-    ``data/tree_effects.json`` records these as ``<improvement>_<yield>`` grants
-    hung off the unlocking node, so the projection reshapes the game's rows into
-    the same ``node -> {effect: amount}`` form.
-    """
-    projected: dict[str, dict] = {}
-    for row in database.rows("Improvement_BonusYieldChanges"):
-        node = row.get("PrereqTech") or row.get("PrereqCivic")
-        if not node:
-            continue
-        node = slug(node, "TECH_" if row.get("PrereqTech") else "CIVIC_")
-        improvement = slug(row["ImprovementType"], "IMPROVEMENT_")
-        yield_name = slug(row["YieldType"], "YIELD_")
-        effect = f"{improvement}_{yield_name}"
-        amount = number(row.get("BonusYieldChange"))
-        # An expansion restating a grant supersedes the base row rather than
-        # stacking on top of it, so the larger value is the shipped one.
-        entry = projected.setdefault(node, {})
-        entry[effect] = max(entry.get(effect, 0), amount)
+
+PROMOTION_CLASSES = {
+    "PROMOTION_CLASS_RECON": "recon",
+    "PROMOTION_CLASS_MELEE": "melee",
+    "PROMOTION_CLASS_RANGED": "ranged",
+    "PROMOTION_CLASS_SIEGE": "siege",
+    "PROMOTION_CLASS_LIGHT_CAVALRY": "light_cavalry",
+    "PROMOTION_CLASS_HEAVY_CAVALRY": "heavy_cavalry",
+    "PROMOTION_CLASS_ANTI_CAVALRY": "anti_cavalry",
+    "PROMOTION_CLASS_NAVAL_MELEE": "naval_melee",
+    "PROMOTION_CLASS_NAVAL_RANGED": "naval_ranged",
+    "PROMOTION_CLASS_NAVAL_RAIDER": "naval_raider",
+    "PROMOTION_CLASS_NAVAL_CARRIER": "naval_carrier",
+    "PROMOTION_CLASS_AIR_FIGHTER": "air_fighter",
+    "PROMOTION_CLASS_AIR_BOMBER": "air_bomber",
+    "PROMOTION_CLASS_MONK": "warrior_monk",
+    "PROMOTION_CLASS_APOSTLE": "religious_apostle",
+    "PROMOTION_CLASS_ROCK_BAND": "rock_band",
+    "PROMOTION_CLASS_GIANT_DEATH_ROBOT": "giant_death_robot",
+    "PROMOTION_CLASS_SUPPORT": "support",
+}
+
+
+def project_promotions(database: Database) -> dict[str, dict]:
+    prereqs: dict[str, set] = {}
+    for row in database.rows("UnitPromotionPrereqs"):
+        prereqs.setdefault(slug(row["UnitPromotion"], "PROMOTION_"), set()).add(
+            slug(row["PrereqUnitPromotion"], "PROMOTION_")
+        )
+    projected = {}
+    for row in database.rows("UnitPromotions"):
+        name = slug(row["UnitPromotionType"], "PROMOTION_")
+        projected[name] = {
+            "class": PROMOTION_CLASSES.get(row.get("PromotionClass"), "?"),
+            "tier": number(row.get("Level")),
+            "requires": prereqs.get(name, set()),
+        }
+    return projected
+
+
+def project_projects(database: Database) -> dict[str, dict]:
+    gpp: dict[str, dict] = {}
+    for row in database.rows("Project_GreatPersonPoints"):
+        gpp.setdefault(slug(row["ProjectType"], "PROJECT_"), {})[
+            slug(row["GreatPersonClassType"], "GREAT_PERSON_CLASS_")
+        ] = number(row.get("Points"))
+    conversions: dict[str, dict] = {}
+    for row in database.rows("Project_YieldConversions"):
+        yield_type = YIELDS.get(row.get("YieldType"))
+        if yield_type:
+            conversions.setdefault(slug(row["ProjectType"], "PROJECT_"), {})[
+                yield_type
+            ] = number(row.get("PercentOfProductionRate"))
+    projected = {}
+    for row in database.rows("Projects"):
+        name = slug(row["ProjectType"], "PROJECT_")
+        entry = {
+            "cost": number(row.get("Cost")),
+            "repeatable": number(row.get("MaxPlayerInstances"), 0) != 1,
+        }
+        if row.get("CostProgressionModel") == "COST_PROGRESSION_GAME_PROGRESS":
+            entry["cost_progression_max_pct"] = number(row.get("CostProgressionParam1"))
+        if row.get("PrereqDistrict"):
+            entry["district"] = slug(row["PrereqDistrict"], "DISTRICT_")
+        if row.get("PrereqTech"):
+            entry["tech"] = slug(row["PrereqTech"], "TECH_")
+        if gpp.get(name):
+            entry["completion_gpp"] = gpp[name]
+        if conversions.get(name):
+            entry["ongoing_yields"] = conversions[name]
+        projected[name] = entry
     return projected
 
 
@@ -571,32 +1050,122 @@ def ours_tree(name: str, key: str) -> dict[str, dict]:
     return out
 
 
-def ours_buildings() -> dict[str, dict]:
-    return {
-        name: {"cost": entry.get("cost", 0), "maintenance": entry.get("maintenance", 0)}
-        for name, entry in load_ours("buildings").items()
-    }
+# Rules CIVVIS hardcodes in the engine rather than in data. Each mirrors a
+# specific site in src/: change one side, change the other.
+ENGINE_HILLS = {"yield_delta": {"production": 1}, "move_cost": 2, "defense": 3}  # rules.rs tile_yields/move_cost, game.rs tile_defense_bonus
+ENGINE_FEATURE_DEFENSE = {  # game.rs tile_defense_bonus
+    "forest": 3,
+    "jungle": 3,
+    "reef": 3,
+    "marsh": -2,
+    "floodplains": -2,
+    "grassland_floodplains": -2,
+    "plains_floodplains": -2,
+    "pantanal": -2,
+}
 
 
-YIELD_FIELDS = ("food", "production", "gold", "science", "culture", "faith")
-
-
-def ours_yields(name: str) -> dict[str, dict]:
-    # Every yield is listed, zeros included, so that a yield CIVVIS grants and
-    # the game does not shows up as a divergence rather than as a silent skip.
-    return {
-        entry_name: {
-            field: (entry.get("yields") or {}).get(field, 0) for field in YIELD_FIELDS
+def ours_terrains() -> dict[str, dict]:
+    out = {}
+    for name, entry in load_ours("terrains").items():
+        out[name] = {
+            "yields": {k: v for k, v in entry.get("yields", {}).items() if v},
+            "water": entry.get("water", False),
+            "passable": entry.get("passable", True),
+            "move_cost": entry.get("move_cost", 1),
         }
-        for entry_name, entry in load_ours(name).items()
-    }
+    out["hills"] = dict(ENGINE_HILLS)
+    return out
+
+
+def ours_features() -> dict[str, dict]:
+    out = {}
+    for name, entry in load_ours("features").items():
+        row = {
+            "yields": {k: v for k, v in entry.get("yields", {}).items() if v},
+            "move_cost": entry.get("move_cost", 0),
+            "impassable": entry.get("impassable", False),
+            "natural_wonder": entry.get("natural_wonder", False),
+            "defense": ENGINE_FEATURE_DEFENSE.get(name, 0),
+        }
+        if entry.get("adjacent_yields"):
+            row["adjacent_yields"] = entry["adjacent_yields"]
+        out[name] = row
+    return out
+
+
+def lakes_are_coast(terrains: set) -> set:
+    """CIVVIS spells lakes as their own terrain; the game's lake plots are
+    coast-terrain rows, so a valid-terrain list treats the two as one."""
+    return {"coast" if terrain == "lake" else terrain for terrain in terrains}
+
+
+def ours_resources() -> dict[str, dict]:
+    out = {}
+    for name, entry in load_ours("resources").items():
+        row = {
+            "class": entry.get("class", "bonus"),
+            "yields": {k: v for k, v in entry.get("yields", {}).items() if v},
+            "terrain": lakes_are_coast(set(entry.get("terrain", []))),
+            "feature": set(entry.get("feature", [])),
+        }
+        for key in ("tech", "civic", "improvement"):
+            if entry.get(key):
+                row[key] = entry[key]
+        out[name] = row
+    return out
+
+
+def ours_improvements() -> dict[str, dict]:
+    out = {}
+    for name, entry in load_ours("improvements").items():
+        row = {
+            "yields": {k: v for k, v in entry.get("yields", {}).items() if v},
+            "housing": entry.get("housing", 0) * 2,
+            "terrain": lakes_are_coast(set(entry.get("terrain", []))),
+            "feature": set(entry.get("feature", [])),
+            "resources": set(entry.get("resources", [])),
+            "builder_buildable": entry.get("builder_buildable", True)
+            and not entry.get("unbuildable", False),
+            "requires_flat": entry.get("requires_flat", False),
+            "requires_hills": entry.get("requires_hills", False),
+            "hills_or_resource": entry.get("hills_or_resource", False),
+        }
+        for key in ("tech", "civic"):
+            if entry.get(key):
+                row[key] = entry[key]
+        out[name] = row
+    return out
+
+
+def ours_buildings() -> dict[str, dict]:
+    out = {}
+    for name, entry in load_ours("buildings").items():
+        row = {
+            "cost": entry.get("cost", 0),
+            "maintenance": entry.get("maintenance", 0),
+            "housing": entry.get("housing", 0),
+            "amenity": entry.get("amenity", 0),
+            "citizen_slots": entry.get("citizen_slots", 0),
+            "yields": {k: v for k, v in entry.get("yields", {}).items() if v},
+            "regional_range": entry.get("regional_range", 0),
+        }
+        for key in ("tech", "civic", "district", "great_person_points", "great_work_slots"):
+            if entry.get(key):
+                row[key] = entry[key]
+        # The Palace is placed, never produced, and CIVVIS prices it
+        # symbolically; the game's row carries a production cost no player
+        # pays either.
+        if name == "palace":
+            del row["cost"]
+        out[name] = row
+    return out
 
 
 # Effects that are not improvement yield grants live in the same file; the
 # audit only claims the ones the game database can speak to.
 def ours_improvement_upgrades() -> dict[str, dict]:
     known = set(load_ours("improvements"))
-    yields = YIELD_FIELDS
     tree = load_ours("tree_effects")
     out: dict[str, dict] = {}
     for node, effects in list(tree["techs"].items()) + list(tree["civics"].items()):
@@ -606,7 +1175,7 @@ def ours_improvement_upgrades() -> dict[str, dict]:
             if any(
                 effect == f"{improvement}_{yield_name}"
                 for improvement in known
-                for yield_name in yields
+                for yield_name in YIELDS.values()
             )
         }
         if kept:
@@ -614,32 +1183,102 @@ def ours_improvement_upgrades() -> dict[str, dict]:
     return out
 
 
-def ours_adjacency() -> dict[str, dict]:
-    return {
-        name: {
-            f"{source}_{field}": amount
-            for source, yields in (entry.get("adjacency") or {}).items()
-            for field, amount in yields.items()
+def ours_wonders() -> dict[str, dict]:
+    out = {}
+    for name, entry in load_ours("wonders").items():
+        effects = entry.get("effects", {})
+        yields = {k: v for k, v in entry.get("yields", {}).items() if v}
+        regional_range = entry.get("regional_range", 0)
+        # Jebel Barkal's Faith is spelled as a regional effect pair; the game
+        # spells the same rule as a building yield with a regional range.
+        if effects.get("regional_faith"):
+            yields["faith"] = yields.get("faith", 0) + effects["regional_faith"]
+            regional_range = regional_range or effects.get("regional_faith_range", 0)
+        row = {
+            "cost": entry.get("cost", 0),
+            "yields": yields,
+            "housing": entry.get("housing", 0),
+            "amenity": entry.get("amenity", 0),
+            "regional_range": regional_range,
+            "coast": entry.get("coast", False),
+            "river": entry.get("river", False),
+            "adjacent_mountain": entry.get("adjacent_mountain", False),
+            "terrain": set(entry.get("terrain", [])),
+            "feature": set(entry.get("feature", [])),
         }
-        for name, entry in load_ours("districts").items()
-    }
+        if entry.get("hills") is False:
+            row["flat_only"] = True
+        for key in (
+            "tech",
+            "civic",
+            "adjacent_district",
+            "adjacent_resource",
+            "adjacent_improvement",
+            "great_person_points",
+            "great_work_slots",
+        ):
+            if entry.get(key):
+                row[key] = entry[key]
+        out[name] = row
+    return out
+
+
+def ours_policies() -> dict[str, dict]:
+    out = {}
+    for name, entry in load_ours("policies").items():
+        row = {"slot": entry.get("slot", "?")}
+        if entry.get("civic"):
+            row["civic"] = entry["civic"]
+        out[name] = row
+    return out
 
 
 def ours_governments() -> dict[str, dict]:
     out = {}
     for name, entry in load_ours("governments").items():
         row = {
-            field: entry.get(field, 0)
-            for field in (
-                "influence_per_turn",
-                "influence_threshold",
-                "envoys_per_threshold",
-            )
+            "slots": entry.get("slots", {}),
+            "influence_per_turn": entry.get("influence_per_turn", 0),
+            "influence_threshold": entry.get("influence_threshold", 0),
+            "envoys_per_threshold": entry.get("envoys_per_threshold", 0),
         }
-        for slot in SLOTS:
-            row[f"slot_{slot}"] = (entry.get("slots") or {}).get(slot, 0)
-        if civic := entry.get("civic"):
-            row["civic"] = civic
+        if entry.get("civic"):
+            row["civic"] = entry["civic"]
+        out[name] = row
+    return out
+
+
+def ours_beliefs() -> dict[str, dict]:
+    out = {}
+    for belief_class, entries in load_ours("beliefs").items():
+        for name in entries:
+            out[name] = {"class": belief_class}
+    return out
+
+
+def ours_promotions() -> dict[str, dict]:
+    out = {}
+    for name, entry in load_ours("promotions").items():
+        out[name] = {
+            "class": entry.get("class", "?"),
+            "tier": entry.get("tier", 0),
+            "requires": set(entry.get("requires", [])),
+        }
+    return out
+
+
+def ours_projects() -> dict[str, dict]:
+    out = {}
+    for name, entry in load_ours("projects").items():
+        row = {
+            "cost": entry.get("cost", 0),
+            "repeatable": entry.get("repeatable", False),
+        }
+        if entry.get("cost_progression_max_pct"):
+            row["cost_progression_max_pct"] = entry["cost_progression_max_pct"]
+        for key in ("district", "tech", "completion_gpp", "ongoing_yields"):
+            if entry.get(key):
+                row[key] = entry[key]
         out[name] = row
     return out
 
@@ -783,18 +1422,22 @@ def main() -> int:
         ("Civics", ours_tree("civics", "civic"), project_civics(database)),
         ("Buildings", ours_buildings(), project_buildings(database)),
         ("Districts", ours_districts(), project_districts(database)),
-        ("Terrains", ours_yields("terrains"), project_terrains(database)),
-        ("Features", ours_yields("features"), project_features(database)),
-        ("Resources", ours_yields("resources"), project_resources(database)),
-        ("Improvements", ours_yields("improvements"), project_improvements(database)),
-        ("BuildingYields", ours_yields("buildings"), project_building_yields(database)),
-        ("Governments", ours_governments(), project_governments(database)),
-        ("DistrictAdjacency", ours_adjacency(), project_adjacency(database)),
+        ("Adjacency", ours_adjacency(), project_adjacency(database)),
+        ("Terrains", ours_terrains(), project_terrains(database)),
+        ("Features", ours_features(), project_features(database)),
+        ("Resources", ours_resources(), project_resources(database)),
+        ("Improvements", ours_improvements(), project_improvements(database)),
         (
             "ImprovementUpgrades",
             ours_improvement_upgrades(),
             project_improvement_upgrades(database),
         ),
+        ("Wonders", ours_wonders(), project_wonders(database)),
+        ("Policies", ours_policies(), project_policies(database)),
+        ("Governments", ours_governments(), project_governments(database)),
+        ("Beliefs", ours_beliefs(), project_beliefs(database)),
+        ("Promotions", ours_promotions(), project_promotions(database)),
+        ("Projects", ours_projects(), project_projects(database)),
     ]
     if args.table:
         wanted = {name.lower() for name in args.table}

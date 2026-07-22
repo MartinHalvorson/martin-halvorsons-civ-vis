@@ -113,6 +113,12 @@
       "entry": "city_center",
       "field": "cost",
       "reason": "The City Center is never produced in CIVVIS - founding a city places it - so it carries no production cost."
+    },
+    {
+      "table": "Projects",
+      "entry": "repair_outer_defenses",
+      "field": "cost",
+      "reason": "The database stores 0: the real repair cost is computed from accumulated wall damage. CIVVIS prices the project symbolically at 1 and scales by damage the same way."
     }
   ]
 }

@@ -79,59 +79,72 @@ produced. **That file is the fidelity roadmap: shrinking it is the work.**
 Anything not listed there counts against the ratchet, which now stands at
 zero for these five tables.
 
-### Tile yields (shipped)
+**Second wave (terrain layer):** the audit now also projects `Terrains`,
+`Features`, `Resources` and `Improvements` — yields, movement, defense
+modifiers, passability, housing, valid terrain/feature/resource placement,
+reveal prerequisites, and the tech/civic-gated improvement upgrades of
+`Improvement_BonusYieldChanges` against `tree_effects.json` — and loads the content packs a standard all-content
+game enables (civilization, leader and landmark packs; scenario and
+optional-mode data stays out). Where the game enumerates variant rows the
+projection folds them onto CIVVIS' spelling: hills rows become the engine's
+single hills rule, `*_MOUNTAIN` rows the one impassable mountain terrain,
+lake plots the coast rows they really are, and an all-land enumeration means
+"no terrain restriction". The wave surfaced 88 more real divergences, all
+resolved. The largest:
 
-The audit now also projects `Terrain_YieldChanges`, `Feature_YieldChanges`,
-`Resource_YieldChanges`, `Improvement_YieldChanges` and
-`Improvement_BonusYieldChanges`, the last against `data/tree_effects.json`
-(the game hangs tech- and civic-gated improvement yields off the unlocking
-node, which is exactly how CIVVIS stores them).
+| Fixed | Detail |
+|---|---|
+| Movement was max-based, the game's is additive | `move_cost = terrain + hills + feature`: Woods on Hills is 3 MP, not 2. Feature data now stores the database's `MovementChange` |
+| Floodplains carried vanilla values | Desert floodplains 3→2 Food; grassland/plains floodplains add no yields at all; all three impose −2 defense like Marsh |
+| Reef defense was on the wrong feature | The bonus Reef grants +3, Great Barrier Reef grants nothing |
+| Pamukkale modeled as tile culture | Its real effect: +1 Amenity to the owning city, +1 more while its plot is adjacent to an Entertainment Complex |
+| 32 resources missing | Every Gathering Storm luxury and bonus resource now exists with exact class, yields, placement and improvement — including the manufactured four (Toys, Jeans, Perfume, Cosmetics) no tile improvement works |
+| Wrong valid-placement lists | Wheat is plains-only (plus floodplains), Stone grassland-only, Sheep spawn on grassland too, Uranium anywhere including snow; camps/mines/quarries/plantations/fishing boats accept their full resource sets |
+| Oil Wells unlocked two eras early | Steel → Refining, as shipped |
 
-Two projection details carry their weight here:
+The "Only in Civ VI" column measures scope rather than error — the units and
+buildings CIVVIS does not model are almost all civilization uniques from DLC
+packs, and the missing features are natural wonders plus the volcano system.
+That column is the content backlog.
 
-- Each side lists **every** yield explicitly, zeros included. Comparing only
-  the yields CIVVIS names lets an invented yield through: the game grants
-  Antiquity Sites, Shipwrecks, Pamukkale and the Grassland/Plains Floodplains
-  none at all, and CIVVIS was granting five of them.
-- Both sides are seeded from the **entity** table rather than the yield table,
-  so an entry with no yield rows is still compared instead of silently
-  skipped — which is the case that hides invented yields.
+**District adjacency (parallel session):** `District_Adjacencies` joined to
+`Adjacency_YieldChanges` against each district's per-source `adjacency` map,
+dividing every rule's yield by its `TilesRequired`. It surfaced one wrong
+Industrial Zone Mine rule, now fixed. This projection is the case that
+justifies the whole approach: reading the XML by hand said Wonder adjacency
+was +1 Culture, because the base row says `YieldChange="1"` and Rise and
+Fall raises it to 2 through a separate `<Update>` element. The loader
+applies overlays; eyes skimming a dump do not.
 
-CIVVIS folds Hills into a flat +1 Production modifier instead of carrying a
-terrain per hills variant, so each `_HILLS` terrain is checked against its flat
-parent plus that modifier. All five agree, which is what licenses the
-simplification.
+**Third wave (content layer):** `Wonders` (cost, prereqs, yields, housing,
+amenities, regional ranges, great-work slots, great-person points, and the
+whole placement predicate — terrain, required features, coast/lake/river,
+adjacency), richer `Buildings` (housing, amenities, citizen slots, yields,
+districts, great-work slots), `Policies` (slot + civic), `Governments`
+(slots, influence, prereqs), `Beliefs` (classes), `UnitPromotions`
+(class/tier/prerequisite trees), and `Projects` (costs, districts, GPP,
+yield conversions, cost progressions). Policies, governments and beliefs
+were already exact; the rest surfaced 62 divergences, all resolved:
 
-### Building yields, governments and adjacency (shipped)
-
-`Building_YieldChanges` against `buildings.json`, `Governments` plus
-`Government_SlotCounts` against `governments.json`, and
-`District_Adjacencies` joined to `Adjacency_YieldChanges` against each
-district's per-source `adjacency` map, dividing every rule's yield by its
-`TilesRequired`. All three came back clean apart from one Industrial Zone
-Mine rule.
-
-The adjacency projection is the case that justifies the whole approach.
-Reading the XML by hand said Wonder adjacency was +1 Culture, because the base
-row says `YieldChange="1"` and Rise and Fall raises it to 2 through a separate
-`<Update>` element. The loader applies overlays; eyes skimming a dump do not.
+| Fixed | Detail |
+|---|---|
+| Naval Raider and Carrier promotion trees rearranged | Loot is tier 1 with no prerequisite, Homing Torpedoes tier 2, Silent Running tier 3, Wolfpack tier 4 — plus five wrong prerequisite lists (Armor Piercing, Hangar Deck, Folding Wings, Observation, Swift Keel) |
+| Reactor-era project costs | Coal/Oil/Uranium conversions 300/360/480 → 200/300/400, Recommission Reactor 200 → 400, Operation Ivy 1200 → 1000 |
+| Gathering Storm building buffs missed | Palace grants 2 Amenities (not 1), Biosphère +8 Science, Prasat 2 Relic slots and 4 Faith, Sukiennice 3 Gold, Tlachtli 1 Culture |
+| Jebel Barkal double-counted | Its +4 Faith reaches every city within 6 tiles including its host; CIVVIS carried a local copy on top of the regional effect |
+| Estádio do Maracanã was local | The game gives its 6 Culture and 2 Amenities to every city in the empire (regional range 100000) |
+| Improvement siting was intersection-based | Civ 6 sites improvements through any of three routes — valid terrain OR valid feature OR valid resource. Farms on desert Floodplains and flat resource mines now place exactly as shipped |
 
 ### Next inside phase 1
 
-The tables still unprojected: `UnitPromotions`, `Policies`, `Beliefs`,
-`District_CitizenYieldChanges`, `District_GreatPersonPoints`,
-`Building_GreatPersonPoints`. Each is a mechanical extension of the same
-pattern.
-
-The "Only in Civ VI" column on the yield tables is a content backlog with one
-entry that is not scope: **Ziggurat**, Sumeria's unique improvement — CIVVIS
-models Sumeria and Gilgamesh but not their improvement. The 26 unmodelled
-resources (every luxury past Silk/Wine/Salt, plus Rice, Crabs and Whales) need
-mapgen placement before their yields mean anything.
-
-The "Only in Civ VI" column measures scope rather than error — 51 units and 62
-buildings CIVVIS does not model, almost all of them civilization uniques from
-DLC packs. That column is the content backlog.
+Remaining tables on the same projection pattern: `District_Adjacencies` /
+`Adjacency_YieldChanges` (the adjacency formulas themselves), `Boosts`
+(Eureka/Inspiration triggers), `GoodyHuts`, `GreatPersonIndividuals`, and
+`GlobalParameters` against the engine's hardcoded constants. Known
+placement simplifications not yet expressed in data: hills-only resource
+spawns (Sheep), civic-gated valid terrain (farms on Hills at Civil
+Engineering), feature-based map placement of resources (Fish on Reef rows),
+and wonders' widening `Building_ValidFeatures` rows (Petra on Floodplains).
 
 ## Phase 2 (next): the modifier engine
 
