@@ -6395,7 +6395,78 @@ impl AdvancedAi {
         value
     }
 
-    /// Choose among exact air-strike results, a useful patrol, and a rebase
+    /// Evaluate infrastructure bombing on an exact cloned position. Besides
+    /// the pillaged layer, this prices interception losses and the operational
+    /// disruption from scattering aircraft out of a disabled air base.
+    fn air_pillage_value(&self, g: &Game, pid: usize, uid: u32, target: Pos) -> f64 {
+        let attacker = &g.units[&uid];
+        let attacker_spec = &g.rules.units[attacker.kind.as_str()];
+        let before_tile = &g.map.tiles[&target];
+        let before_aircraft: Vec<(u32, f64)> = g
+            .units_at(target)
+            .into_iter()
+            .filter_map(|unit| {
+                let candidate = &g.units[&unit];
+                (candidate.owner != pid
+                    && g.rules.units[candidate.kind.as_str()].domain.as_deref() == Some("air"))
+                .then_some((unit, g.rules.units[candidate.kind.as_str()].cost))
+            })
+            .collect();
+        let city_id = before_tile.owner_city;
+        let before_pillaged_buildings = city_id
+            .and_then(|city| g.cities.get(&city))
+            .map(|city| city.pillaged_buildings.clone())
+            .unwrap_or_default();
+        let action = Action::AirPillage { unit: uid, target };
+        let mut after = g.clone();
+        if after.apply(pid, &action).is_err() {
+            return f64::NEG_INFINITY;
+        }
+
+        let attacker_loss = match after.units.get(&uid) {
+            Some(survivor) => {
+                (attacker.hp - survivor.hp).max(0) as f64 * (1.4 + attacker_spec.cost / 700.0)
+            }
+            None => 260.0 + attacker_spec.cost * 0.7,
+        };
+        let mut value = -attacker_loss;
+        let after_tile = &after.map.tiles[&target];
+        if let Some(improvement) = before_tile.improvement.as_deref() {
+            if !before_tile.pillaged && after_tile.pillaged {
+                value += match improvement {
+                    "airstrip" => 185.0,
+                    "oil_well" | "offshore_oil_rig" | "mine" | "quarry" => 115.0,
+                    "farm" | "fishing_boats" => 65.0,
+                    _ => 85.0,
+                };
+            }
+        } else if let Some(district) = before_tile.district.as_deref() {
+            if !before_tile.pillaged && after_tile.pillaged {
+                value += match g.district_family(district) {
+                    "aerodrome" | "industrial_zone" | "campus" | "spaceport" => 175.0,
+                    "commercial_hub" | "harbor" | "holy_site" | "theater_square" => 145.0,
+                    _ => 115.0,
+                };
+            } else if let Some(city) = city_id.and_then(|city| after.cities.get(&city)) {
+                value += city
+                    .pillaged_buildings
+                    .difference(&before_pillaged_buildings)
+                    .map(|building| 80.0 + after.rules.buildings[building.as_str()].cost * 0.32)
+                    .sum::<f64>();
+            }
+        }
+        for (aircraft, cost) in before_aircraft {
+            value += match after.units.get(&aircraft) {
+                None => 150.0 + cost * 0.55,
+                Some(unit) if unit.pos != target => 55.0 + cost * 0.08,
+                _ => 0.0,
+            };
+        }
+        value
+    }
+
+    /// Choose among exact air-strike or air-pillage results, a useful patrol,
+    /// and a rebase
     /// that materially improves reach to the active front. Fighters preserve
     /// interception coverage when hostile aircraft threaten the theater;
     /// bombers avoid suicidal missions and reposition when no profitable
@@ -6425,6 +6496,31 @@ impl AdvancedAi {
                     .total_cmp(&right.0)
                     .then_with(|| right.1.cmp(&left.1))
             });
+        let best_pillage = legal
+            .iter()
+            .filter_map(|action| match action {
+                Action::AirPillage { unit, target } if *unit == uid => Some((
+                    self.air_pillage_value(g, pid, uid, *target),
+                    *target,
+                    action.clone(),
+                )),
+                _ => None,
+            })
+            .max_by(|left, right| {
+                left.0
+                    .total_cmp(&right.0)
+                    .then_with(|| right.1.cmp(&left.1))
+            });
+        let best_mission =
+            best_strike
+                .clone()
+                .into_iter()
+                .chain(best_pillage)
+                .max_by(|left, right| {
+                    left.0
+                        .total_cmp(&right.0)
+                        .then_with(|| right.1.cmp(&left.1))
+                });
 
         let objective = match doctrine {
             UnitDoctrine::AirDefense => plan.threatened_city.or(plan.target_city),
@@ -6464,7 +6560,7 @@ impl AdvancedAi {
         });
 
         if doctrine == UnitDoctrine::AirStrike {
-            return best_strike
+            return best_mission
                 .filter(|(value, _, _)| *value > 0.0)
                 .map(|(_, _, action)| action)
                 .or_else(|| best_rebase.map(|(_, _, action)| action));
@@ -9202,6 +9298,74 @@ mod tests {
                 unit: bomber,
                 target: targets[1],
             })
+        );
+    }
+
+    #[test]
+    fn bomber_planners_choose_high_value_air_pillage_over_low_value_strikes() {
+        let mut game = Game::new_full(2, 24, 16, 71_006, 120, 0, false);
+        game.at_war.insert((0, 1));
+        for unit in game.units.keys().copied().collect::<Vec<_>>() {
+            game.remove_unit(unit);
+        }
+        let enemy_center = game
+            .map
+            .tiles
+            .iter()
+            .find(|(_, tile)| game.rules.is_passable(tile) && !game.rules.is_water(tile))
+            .map(|(position, _)| *position)
+            .unwrap();
+        let enemy_city = game.found_city_for(1, enemy_center, None);
+        let target = game
+            .nbrs(enemy_center)
+            .into_iter()
+            .find(|position| {
+                game.map
+                    .get(*position)
+                    .is_some_and(|tile| game.rules.is_passable(tile) && !game.rules.is_water(tile))
+            })
+            .unwrap();
+        {
+            let tile = game.map.tiles.get_mut(&target).unwrap();
+            tile.owner_city = Some(enemy_city);
+            tile.improvement = Some("airstrip".to_string());
+            tile.pillaged = false;
+        }
+        let base = game
+            .wdisk(target, game.rules.units["bomber"].range)
+            .into_iter()
+            .find(|position| {
+                *position != target
+                    && *position != enemy_center
+                    && game.wdist(*position, target) >= 3
+                    && game.map.get(*position).is_some_and(|tile| {
+                        game.rules.is_passable(tile) && !game.rules.is_water(tile)
+                    })
+            })
+            .unwrap();
+        game.found_city_for(0, base, None);
+        let bomber = game.spawn_test_unit("bomber", 0, base);
+        let expected = Action::AirPillage {
+            unit: bomber,
+            target,
+        };
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Conquest,
+            target_player: Some(1),
+            target_city: Some(enemy_city),
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+
+        assert_eq!(
+            BasicAi::new().doctrine_action(&game, 0, bomber),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            AdvancedAi::targeting(VictoryTarget::Domination)
+                .advanced_air_action(&game, 0, bomber, &plan),
+            Some(expected)
         );
     }
 

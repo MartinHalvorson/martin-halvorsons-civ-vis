@@ -2239,6 +2239,8 @@ function drawUbar() {
       h += `<button onclick='send(${JSON.stringify(a)})'>✈ Rebase @ ${a.to.join(",")}</button>`;
     if (a.type === "air_strike")
       h += `<button class="danger" onclick='send(${JSON.stringify(a)})'>✈ Air strike @ ${a.target.join(",")}</button>`;
+    if (a.type === "air_pillage")
+      h += `<button class="danger" onclick='send(${JSON.stringify(a)})'>✈ Air pillage @ ${a.target.join(",")}</button>`;
     if (a.type === "air_patrol")
       h += `<button onclick='send(${JSON.stringify(a)})'>✈ Air patrol</button>`;
     if (a.type === "fortify")
