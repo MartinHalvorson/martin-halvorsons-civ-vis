@@ -10351,50 +10351,83 @@ impl Game {
     /// latter two tiers also applying in the Consulate/Chancery. Trade
     /// city-states grant twice those Gold amounts. Militaristic and Industrial
     /// Production only applies to their respective queue categories.
-    fn envoy_yields(&self, pid: usize, city: &City) -> Yields {
-        let mut ys = Yields::default();
-        for m in self
-            .players
-            .iter()
-            .filter(|m| m.is_minor && !m.is_barbarian && m.alive)
-        {
-            let n = self.envoys_at(pid, m.id);
-            if n == 0 {
-                continue;
+    fn envoy_type_yields_for_count(&self, city: &City, kind: &str, n: i64) -> Yields {
+        if n <= 0 || !Self::envoy_production_applies(kind, city.queue.first()) {
+            return Yields::default();
+        }
+        let scale = if kind == "trade" { 2.0 } else { 1.0 };
+        let mut amount = 0.0;
+        if n >= 1 {
+            if self.city_has_palace(city) {
+                amount += scale;
             }
-            let kind = Self::cs_type(&m.civ);
-            if !Self::envoy_production_applies(kind, city.queue.first()) {
-                continue;
-            }
-            let scale = if kind == "trade" { 2.0 } else { 1.0 };
-            let mut amt = 0.0;
-            if n >= 1 {
-                if self.city_has_palace(city) {
-                    amt += scale;
-                }
-                amt += scale * self.envoy_tier_building_count(city, kind, 1) as f64;
-            }
-            if n >= 3 {
-                amt += 2.0 * scale * self.envoy_tier_building_count(city, kind, 2) as f64;
-                if self.city_has_active_building_family(city, "consulate") {
-                    amt += 2.0 * scale;
-                }
-            }
-            if n >= 6 {
-                amt += 3.0 * scale * self.envoy_tier_building_count(city, kind, 3) as f64;
-                if self.city_has_active_building_family(city, "chancery") {
-                    amt += 3.0 * scale;
-                }
-            }
-            match kind {
-                "scientific" => ys.science += amt,
-                "cultural" => ys.culture += amt,
-                "religious" => ys.faith += amt,
-                "militaristic" | "industrial" => ys.production += amt,
-                _ => ys.gold += amt,
+            amount += scale * self.envoy_tier_building_count(city, kind, 1) as f64;
+        }
+        if n >= 3 {
+            amount += 2.0 * scale * self.envoy_tier_building_count(city, kind, 2) as f64;
+            if self.city_has_active_building_family(city, "consulate") {
+                amount += 2.0 * scale;
             }
         }
-        ys
+        if n >= 6 {
+            amount += 3.0 * scale * self.envoy_tier_building_count(city, kind, 3) as f64;
+            if self.city_has_active_building_family(city, "chancery") {
+                amount += 3.0 * scale;
+            }
+        }
+        let mut yields = Yields::default();
+        match kind {
+            "scientific" => yields.science = amount,
+            "cultural" => yields.culture = amount,
+            "religious" => yields.faith = amount,
+            "militaristic" | "industrial" => yields.production = amount,
+            _ => yields.gold = amount,
+        }
+        yields
+    }
+
+    /// Return the number of additional Envoys and the empire-wide yield gain
+    /// at the next type-bonus threshold. This gives strategic AI an exact
+    /// marginal value for the civilization's active buildings and queues.
+    pub(crate) fn next_envoy_type_bonus(&self, pid: usize, minor: usize) -> Option<(i64, Yields)> {
+        let state = self
+            .players
+            .get(minor)
+            .filter(|state| state.alive && state.is_minor && !state.is_barbarian)?;
+        let current = self.envoys_at(pid, minor);
+        let threshold = [1, 3, 6]
+            .into_iter()
+            .find(|threshold| *threshold > current)?;
+        let kind = Self::cs_type(&state.civ);
+        let mut gain = Yields::default();
+        for city in self.cities.values().filter(|city| city.owner == pid) {
+            let before = self.envoy_type_yields_for_count(city, kind, current);
+            let mut after = self.envoy_type_yields_for_count(city, kind, threshold);
+            after.food -= before.food;
+            after.production -= before.production;
+            after.gold -= before.gold;
+            after.science -= before.science;
+            after.culture -= before.culture;
+            after.faith -= before.faith;
+            gain.add(after);
+        }
+        Some((threshold - current, gain))
+    }
+
+    fn envoy_yields(&self, pid: usize, city: &City) -> Yields {
+        let mut yields = Yields::default();
+        for state in self
+            .players
+            .iter()
+            .filter(|state| state.is_minor && !state.is_barbarian && state.alive)
+        {
+            yields.add(self.envoy_type_yields_for_count(
+                city,
+                Self::cs_type(&state.civ),
+                self.envoys_at(pid, state.id),
+            ));
+        }
+        yields
     }
 
     /// Apply unit-specific experience modifiers, then round to the nearest

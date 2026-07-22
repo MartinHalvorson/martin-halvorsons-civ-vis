@@ -2786,11 +2786,18 @@ impl AdvancedAi {
                                 alliance.kind == "economic" && alliance.level >= 3
                             })
                     });
+                    let type_bonus_value = g
+                        .next_envoy_type_bonus(pid, minor.id)
+                        .map(|(envoys, yields)| {
+                            (self.yield_value(yields, strategy) * 14.0 / envoys as f64).round()
+                                as i64
+                        })
+                        .unwrap_or(0);
                     let denial = denied_rival
                         .is_some_and(|leader| g.suzerain_of(minor.id) == Some(leader))
                         as i64
                         * 140;
-                    let score = (alignment + unique_alignment) * 10 + denial
+                    let score = (alignment + unique_alignment) * 10 + type_bonus_value + denial
                         - needed * 7
                         - already_secure as i64 * 80
                         - shared_from_partner as i64 * 300;
@@ -8804,6 +8811,48 @@ mod tests {
         AdvancedAi::new().advanced_envoys(&mut g, 0, GrandStrategy::Diplomacy, None);
         assert_eq!(g.players[0].envoys_free, 0);
         assert!(g.players[0].envoys.iter().any(|(_, count)| *count >= 3));
+    }
+
+    #[test]
+    fn envoy_strategy_prices_the_next_active_building_threshold_per_envoy() {
+        let mut game = Game::new_full(1, 28, 18, 7_710, 120, 2, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        let city = game.found_city_for(0, game.units[&settler].pos, None);
+        game.remove_unit(settler);
+        install_ai_test_district(&mut game, city, "commercial_hub");
+        install_ai_test_district(&mut game, city, "harbor");
+        install_ai_test_district(&mut game, city, "diplomatic_quarter");
+        game.cities.get_mut(&city).unwrap().buildings.extend(
+            ["stock_exchange", "seaport", "chancery"]
+                .into_iter()
+                .map(str::to_string),
+        );
+
+        let states: Vec<usize> = game
+            .players
+            .iter()
+            .filter(|player| player.is_minor && !player.is_barbarian)
+            .map(|player| player.id)
+            .collect();
+        let hattusa = states[0];
+        let zanzibar = states[1];
+        game.players[hattusa].civ = "Hattusa".to_string();
+        game.players[zanzibar].civ = "Zanzibar".to_string();
+        game.players[0].envoys = vec![(hattusa, 4), (zanzibar, 5)];
+        game.players[0].envoys_free = 1;
+
+        let (science_steps, science_gain) = game.next_envoy_type_bonus(0, hattusa).unwrap();
+        let (gold_steps, gold_gain) = game.next_envoy_type_bonus(0, zanzibar).unwrap();
+        assert_eq!((science_steps, science_gain.science), (2, 3.0));
+        assert_eq!((gold_steps, gold_gain.gold), (1, 18.0));
+
+        AdvancedAi::new().advanced_envoys(&mut game, 0, GrandStrategy::Science, None);
+        assert_eq!(game.envoys_at(0, hattusa), 4);
+        assert_eq!(game.envoys_at(0, zanzibar), 6);
     }
 
     #[test]

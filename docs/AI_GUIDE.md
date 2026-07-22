@@ -55,9 +55,11 @@ city-state network complements the plan. Both AI tiers prioritize the first
 bilateral route that accelerates Alliance experience; Advanced Traders also
 price the exact route yield and Cultural Alliance Great Person benefit.
 Advanced envoy placement values each named suzerain bonus against the active
-victory plan, avoids contesting a Level 3 Economic partner whose bonus is
-already shared, and uses actual Valletta Faith prices when converting reserves
-into immediate infrastructure or defenses.
+victory plan, prices the next 1/3/6 threshold from the empire's actual active
+building tiers and production queues on a per-Envoy basis, avoids contesting a
+Level 3 Economic partner whose bonus is already shared, and uses actual
+Valletta Faith prices when converting reserves into immediate infrastructure
+or defenses.
 Congress ballots follow the same plan: Diplomatic agents back themselves for
 World Leader, other strategies steer target rewards toward the civilization
 furthest from victory, and competition votes predict the strongest public
