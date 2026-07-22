@@ -6,3 +6,4 @@ civvis-play*.log
 evolved/
 *.log
 target-tools/
+bin-run/
