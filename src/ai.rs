@@ -5,6 +5,9 @@ use crate::rng::Rng;
 use crate::Pos;
 use std::collections::HashSet;
 
+mod advanced;
+pub use advanced::{AdvancedAi, GrandStrategy, StrategicPlan};
+
 const TECH_PRIORITY: [&str; 15] = ["pottery", "animal_husbandry", "mining", "writing",
     "archery", "bronze_working", "currency", "masonry", "irrigation", "iron_working",
     "mathematics", "construction", "engineering", "education", "machinery"];
@@ -369,7 +372,7 @@ impl BasicAi {
                     let spec = &g.rules.units[kind.as_str()];
                     if spec.class == "military" {
                         military += 1;
-                        if spec.ranged_strength > 0.0 {
+                        if spec.has_ranged_attack() {
                             ranged += 1;
                         } else {
                             melee += 1;
@@ -393,7 +396,7 @@ impl BasicAi {
                         let spec = &g.rules.units[unit.as_str()];
                         if spec.class == "military" {
                             military += 1;
-                            if spec.ranged_strength > 0.0 {
+                            if spec.has_ranged_attack() {
                                 ranged += 1;
                             } else {
                                 melee += 1;
@@ -450,7 +453,7 @@ impl BasicAi {
                                 let spec = &g.rules.units[unit.as_str()];
                                 if spec.class == "military" {
                                     military += 1;
-                                    if spec.ranged_strength > 0.0 {
+                                    if spec.has_ranged_attack() {
                                         ranged += 1;
                                     } else {
                                         melee += 1;
@@ -479,7 +482,7 @@ impl BasicAi {
                             let spec = &g.rules.units[unit.as_str()];
                             if spec.class == "military" {
                                 military += 1;
-                                if spec.ranged_strength > 0.0 {
+                                if spec.has_ranged_attack() {
                                     ranged += 1;
                                 } else {
                                     melee += 1;
@@ -526,13 +529,13 @@ impl BasicAi {
             if spec.class != "military" || spec.domain.as_deref() == Some("sea") {
                 continue;
             }
-            if want_ranged.map(|want| want != (spec.ranged_strength > 0.0)).unwrap_or(false) {
+            if want_ranged.map(|want| want != spec.has_ranged_attack()).unwrap_or(false) {
                 continue;
             }
             if !g.can_produce(pid, cid, &Item::Unit { unit: name.clone() }) {
                 continue;
             }
-            let power = spec.strength.max(spec.ranged_strength);
+            let power = spec.strength.max(spec.ranged_attack_strength());
             if best.as_ref().map(|(b, _)| power > *b).unwrap_or(true) {
                 best = Some((power, name.clone()));
             }
@@ -585,7 +588,7 @@ impl BasicAi {
             for cid in city_ids {
                 for (name, spec) in &g.rules.units {
                     if spec.class != "military" || spec.domain.as_deref() == Some("sea")
-                        || role.map(|r| r != (spec.ranged_strength > 0.0)).unwrap_or(false)
+                        || role.map(|r| r != spec.has_ranged_attack()).unwrap_or(false)
                     {
                         continue;
                     }
@@ -595,7 +598,7 @@ impl BasicAi {
                     {
                         continue;
                     }
-                    let power = spec.strength.max(spec.ranged_strength);
+                    let power = spec.strength.max(spec.ranged_attack_strength());
                     let replace = match &best {
                         None => true,
                         Some((bp, bc, bn, bid)) => {
@@ -1151,7 +1154,7 @@ impl BasicAi {
             .collect();
         if !enemy_ids.is_empty() {
             // pick the best exchange among all attackable tiles, not the first
-            let ranged = spec.ranged_strength > 0.0;
+            let ranged = spec.has_ranged_attack();
             let radius = if ranged { spec.range.max(1) } else { 1 };
             let mut best: Option<(f64, Pos)> = None;
             for pos in g.wdisk(upos, radius) {
@@ -1237,10 +1240,10 @@ mod tests {
         let ai = BasicAi::new();
 
         let ranged = ai.combined_arms_unit(&g, 0, cid, 2, 0).unwrap();
-        assert!(g.rules.units[ranged.as_str()].ranged_strength > 0.0);
+        assert!(g.rules.units[ranged.as_str()].has_ranged_attack());
 
         let melee = ai.combined_arms_unit(&g, 0, cid, 2, 2).unwrap();
-        assert_eq!(g.rules.units[melee.as_str()].ranged_strength, 0.0);
+        assert!(!g.rules.units[melee.as_str()].has_ranged_attack());
     }
 
     #[test]

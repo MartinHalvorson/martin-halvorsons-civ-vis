@@ -366,6 +366,101 @@ mod tests {
         assert!(g.available_policies(0).iter().any(|c| c == "feudal_contract"));
     }
 
+    #[test]
+    fn citizen_governor_meets_food_target_and_tracks_city_plan() {
+        let mut g = Game::new_full(1, 20, 14, 41, 40, 0, false);
+        let settler = g.player_unit_ids(0).into_iter()
+            .find(|id| g.units[id].kind == "settler").unwrap();
+        g.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let cid = g.player_city_ids(0)[0];
+        let center = g.cities[&cid].pos;
+        let ring: Vec<_> = g.cities[&cid].owned_tiles.iter()
+            .filter(|p| **p != center).copied().collect();
+        assert!(ring.len() >= 4);
+
+        // A controlled housing-capped city needs two food from its two worked
+        // tiles. It also has a culture option and a production option.
+        for pos in g.cities[&cid].owned_tiles.clone() {
+            let tile = g.map.tiles.get_mut(&pos).unwrap();
+            tile.terrain = "desert".to_string();
+            tile.feature = None;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.district = None;
+            tile.hills = false;
+            tile.river = false;
+        }
+        g.map.tiles.get_mut(&ring[0]).unwrap().terrain = "grassland".to_string();
+        g.map.tiles.get_mut(&ring[1]).unwrap().hills = true;
+        g.map.tiles.get_mut(&ring[2]).unwrap().resource = Some("silk".to_string());
+        g.cities.get_mut(&cid).unwrap().pop = 2;
+
+        // Every playable civilization contributes priorities through its
+        // ruleset ability (city-states/custom civs retain the balanced base).
+        g.players[0].civ = "Kabul".to_string();
+        let balanced = g.citizen_strategy(cid).weights;
+        for (civ, food, production, gold, science, culture) in [
+            ("Rome", false, true, false, false, true),
+            ("Egypt", false, true, true, false, false),
+            ("Greece", false, false, false, false, true),
+            ("China", false, true, false, true, true),
+            ("Sumeria", false, true, true, false, false),
+            ("Aztec", true, true, true, false, false),
+            ("Nubia", true, true, false, false, false),
+            ("Scythia", true, true, false, false, false),
+        ] {
+            g.players[0].civ = civ.to_string();
+            let w = g.citizen_strategy(cid).weights;
+            assert_eq!(w.food > balanced.food, food, "{civ} food priority");
+            assert_eq!(w.production > balanced.production, production,
+                       "{civ} production priority");
+            assert_eq!(w.gold > balanced.gold, gold, "{civ} gold priority");
+            assert_eq!(w.science > balanced.science, science,
+                       "{civ} science priority");
+            assert_eq!(w.culture > balanced.culture, culture,
+                       "{civ} culture priority");
+        }
+
+        g.players[0].civ = "Greece".to_string();
+        let greek = g.city_citizen_plan(cid);
+        assert_eq!(greek.worked_tiles.len(), 2);
+        let collected_food = 2.0 + greek.worked_tiles.iter()
+            .map(|p| g.rules.tile_yields(&g.map.tiles[p]).food).sum::<f64>();
+        assert!(collected_food + 1e-9 >= greek.strategy.food_target);
+        assert!(greek.worked_tiles.contains(&ring[0]), "food safety tile not worked");
+        assert!(greek.worked_tiles.contains(&ring[2]), "Greece should favor culture");
+
+        // The identical city under Nubia keeps the food tile but switches its
+        // discretionary citizen from culture to production.
+        g.players[0].civ = "Nubia".to_string();
+        let nubian = g.city_citizen_plan(cid);
+        assert!(nubian.worked_tiles.contains(&ring[0]));
+        assert!(nubian.worked_tiles.contains(&ring[1]), "Nubia should favor production");
+        assert!(!nubian.worked_tiles.contains(&ring[2]));
+
+        let before = g.citizen_strategy(cid);
+        g.cities.get_mut(&cid).unwrap().queue.push(crate::game::Item::Building {
+            building: "pyramids".to_string(),
+        });
+        let wonder = g.citizen_strategy(cid);
+        assert_eq!(wonder.focus, "wonder");
+        assert!(wonder.weights.production > before.weights.production);
+
+        // Fixed food from infrastructure frees both citizens for strategic
+        // jobs; the governor does not redundantly force the grassland tile.
+        g.rules.buildings.get_mut("granary").unwrap().housing = 0.0;
+        g.cities.get_mut(&cid).unwrap().buildings.push("granary".to_string());
+        let fed_by_infrastructure = g.city_citizen_plan(cid);
+        assert!(!fed_by_infrastructure.worked_tiles.contains(&ring[0]));
+        assert!(fed_by_infrastructure.worked_tiles.contains(&ring[1]));
+
+        let observed = crate::obs::observation(&g, 0);
+        let city = observed["cities"].as_array().unwrap().iter()
+            .find(|c| c["id"] == serde_json::json!(cid)).unwrap();
+        assert_eq!(city["citizens"]["focus"], "wonder");
+        assert_eq!(city["citizens"]["worked_tiles"].as_array().unwrap().len(), 2);
+    }
+
     /// Add a fresh unit of `kind` at `pos` for player 0 via save-edit.
     fn conjure(g: &Game, kind: &str, pos: crate::Pos) -> (Game, u32) {
         let mut v = serde_json::to_value(g).unwrap();

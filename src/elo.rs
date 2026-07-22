@@ -3,11 +3,11 @@
 //! (K/(n-1) scaling for multiplayer).
 use std::collections::BTreeMap;
 
-use crate::ai::{run_game, Ai, BasicAi, RandomAi};
+use crate::ai::{run_game, AdvancedAi, Ai, BasicAi, RandomAi};
 use crate::game::Game;
 use crate::rng::Rng;
 
-pub const BUILTIN_AIS: [&str; 4] = ["basic", "random", "evolved", "neural"];
+pub const BUILTIN_AIS: [&str; 5] = ["advanced", "basic", "random", "evolved", "neural"];
 
 pub fn expected(ra: f64, rb: f64) -> f64 {
     1.0 / (1.0 + 10f64.powf((rb - ra) / 400.0))
@@ -60,6 +60,9 @@ impl EloPool {
 
 pub fn builtin_ai(name: &str, seed: u64) -> Box<dyn Ai> {
     match name {
+        // Keep the advanced agent's strategic layer isolated from the older
+        // GA champion so `advanced` vs `basic` is a clean architecture test.
+        "advanced" => Box::new(AdvancedAi::new()),
         "random" => Box::new(RandomAi::new(seed)),
         "evolved" => Box::new(
             crate::evolve::load_champion("evolved")

@@ -15,13 +15,17 @@
     "class": "military",
     "cost": 30,
     "moves": 3,
-    "strength": 10
+    "strength": 10,
+    "promotion_class": "recon",
+    "zone_of_control": true
   },
   "warrior": {
     "class": "military",
     "cost": 40,
     "moves": 2,
-    "strength": 20
+    "strength": 20,
+    "promotion_class": "melee",
+    "zone_of_control": true
   },
   "slinger": {
     "class": "military",
@@ -29,7 +33,8 @@
     "moves": 2,
     "strength": 5,
     "ranged_strength": 15,
-    "range": 1
+    "range": 1,
+    "promotion_class": "ranged"
   },
   "archer": {
     "class": "military",
@@ -38,22 +43,27 @@
     "strength": 15,
     "ranged_strength": 25,
     "range": 2,
-    "tech": "archery"
+    "tech": "archery",
+    "promotion_class": "ranged"
   },
   "spearman": {
     "class": "military",
     "cost": 65,
     "moves": 2,
     "strength": 25,
-    "tech": "bronze_working"
+    "tech": "bronze_working",
+    "promotion_class": "anti_cavalry",
+    "zone_of_control": true
   },
   "swordsman": {
     "class": "military",
     "cost": 90,
     "moves": 2,
-    "strength": 36,
+    "strength": 35,
     "tech": "iron_working",
-    "requires_resource": "iron"
+    "requires_resource": "iron",
+    "promotion_class": "melee",
+    "zone_of_control": true
   },
   "horseman": {
     "class": "military",
@@ -62,17 +72,20 @@
     "strength": 36,
     "tech": "horseback_riding",
     "requires_resource": "horses",
-    "cavalry": true
+    "cavalry": true,
+    "promotion_class": "light_cavalry",
+    "zone_of_control": true
   },
   "catapult": {
     "class": "military",
     "cost": 120,
     "moves": 2,
-    "strength": 23,
-    "ranged_strength": 35,
+    "strength": 25,
+    "bombard_strength": 35,
     "range": 2,
-    "tech": "mathematics",
-    "siege": true
+    "tech": "engineering",
+    "siege": true,
+    "promotion_class": "siege"
   },
   "crossbowman": {
     "class": "military",
@@ -81,30 +94,37 @@
     "strength": 30,
     "ranged_strength": 40,
     "range": 2,
-    "tech": "machinery"
+    "tech": "machinery",
+    "promotion_class": "ranged"
   },
   "pikeman": {
     "class": "military",
-    "cost": 200,
+    "cost": 180,
     "moves": 2,
-    "strength": 41,
-    "tech": "military_tactics"
+    "strength": 45,
+    "tech": "military_tactics",
+    "promotion_class": "anti_cavalry",
+    "zone_of_control": true
   },
   "knight": {
     "class": "military",
     "cost": 220,
     "moves": 4,
-    "strength": 48,
+    "strength": 50,
     "tech": "stirrups",
-    "requires_resource": "horses",
-    "cavalry": true
+    "requires_resource": "iron",
+    "cavalry": true,
+    "promotion_class": "heavy_cavalry",
+    "zone_of_control": true
   },
   "musketman": {
     "class": "military",
     "cost": 240,
     "moves": 2,
     "strength": 55,
-    "tech": "gunpowder"
+    "tech": "gunpowder",
+    "promotion_class": "melee",
+    "zone_of_control": true
   },
   "galley": {
     "class": "military",
@@ -112,7 +132,9 @@
     "moves": 3,
     "strength": 30,
     "domain": "sea",
-    "tech": "sailing"
+    "tech": "sailing",
+    "promotion_class": "naval_melee",
+    "zone_of_control": true
   },
   "trader": {
     "class": "civilian",
@@ -138,7 +160,7 @@
     "class": "support",
     "cost": 100,
     "moves": 2,
-    "tech": "construction"
+    "tech": "machinery"
   },
   "legion": {
     "class": "military",
@@ -148,7 +170,9 @@
     "tech": "iron_working",
     "requires_resource": "iron",
     "unique_to": "Rome",
-    "replaces": "swordsman"
+    "replaces": "swordsman",
+    "promotion_class": "melee",
+    "zone_of_control": true
   },
   "hoplite": {
     "class": "military",
@@ -157,7 +181,9 @@
     "strength": 28,
     "tech": "bronze_working",
     "unique_to": "Greece",
-    "replaces": "spearman"
+    "replaces": "spearman",
+    "promotion_class": "anti_cavalry",
+    "zone_of_control": true
   },
   "eagle_warrior": {
     "class": "military",
@@ -165,7 +191,9 @@
     "moves": 2,
     "strength": 28,
     "unique_to": "Aztec",
-    "replaces": "warrior"
+    "replaces": "warrior",
+    "promotion_class": "melee",
+    "zone_of_control": true
   },
   "war_cart": {
     "class": "military",
@@ -173,7 +201,9 @@
     "moves": 3,
     "strength": 30,
     "unique_to": "Sumeria",
-    "cavalry": true
+    "cavalry": true,
+    "promotion_class": "heavy_cavalry",
+    "zone_of_control": true
   },
   "pitati_archer": {
     "class": "military",
@@ -184,18 +214,20 @@
     "range": 2,
     "tech": "archery",
     "unique_to": "Nubia",
-    "replaces": "archer"
+    "replaces": "archer",
+    "promotion_class": "ranged"
   },
   "maryannu_chariot_archer": {
     "class": "military",
-    "cost": 120,
+    "cost": 90,
     "moves": 2,
-    "strength": 23,
-    "ranged_strength": 33,
+    "strength": 25,
+    "ranged_strength": 35,
     "range": 2,
     "tech": "horseback_riding",
     "unique_to": "Egypt",
-    "cavalry": true
+    "cavalry": true,
+    "promotion_class": "ranged"
   },
   "saka_horse_archer": {
     "class": "military",
@@ -206,17 +238,19 @@
     "range": 1,
     "tech": "horseback_riding",
     "unique_to": "Scythia",
-    "cavalry": true
+    "cavalry": true,
+    "promotion_class": "ranged"
   },
   "crouching_tiger": {
     "class": "military",
-    "cost": 160,
+    "cost": 140,
     "moves": 2,
-    "strength": 28,
+    "strength": 30,
     "ranged_strength": 50,
     "range": 1,
     "tech": "machinery",
     "unique_to": "China",
-    "replaces": "crossbowman"
+    "replaces": "crossbowman",
+    "promotion_class": "ranged"
   }
 }
