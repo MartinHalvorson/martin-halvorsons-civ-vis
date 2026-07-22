@@ -367,7 +367,7 @@ pub fn serve(port: u16, open_browser: bool, params: Params) {
     }
     let shared = Arc::new(Shared {
         session: Mutex::new(Session::new(params)),
-        pace_ms: AtomicU64::new(250), // blitz by default
+        pace_ms: AtomicU64::new(100), // lightning by default
         paused: AtomicBool::new(false),
         restart_in: AtomicU64::new(u64::MAX),
     });

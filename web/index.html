@@ -231,8 +231,9 @@
   .event-text { color: #cad5cf; font-size: 10px; }
   .event-turn { color: var(--faint); font-size: 8px; letter-spacing: .1em; text-transform: uppercase; }
   .empty-state { padding: 10px 0 2px; color: var(--faint); font-size: 10px; text-align: center; }
-  .spec-controls { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+  .spec-controls { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; }
   .spec-controls button { margin: 0; }
+  #specdirector.active { color: var(--gold-bright); border-color: #b88f45; box-shadow: 0 0 16px #d7b66a24; }
   .speed-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; margin-top: 9px; }
   .speed-row span { color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
   .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; color: var(--muted); font-size: 10px; cursor: pointer; }
@@ -365,6 +366,7 @@
     <div id="specbar" style="display:none">
       <div class="spec-controls">
         <button class="primary" id="specpause">⏸ Pause</button>
+        <button class="icon active" id="specdirector" title="Camera director on" aria-label="Toggle camera director">◉</button>
         <button class="icon" id="specstep" title="Advance one civilization" aria-label="Step once">›</button>
       </div>
       <div class="speed-row"><span>Watch pace</span>
@@ -433,6 +435,8 @@ let worldEvents = [], lastLeader = null;
 let TMAP = new Map();
 let VIEW = localStorage.getItem("civvis-view") || "cinematic";
 let SHOW_YIELDS = localStorage.getItem("civvis-show-yields") === "1";
+let DIRECTOR = localStorage.getItem("civvis-director") !== "0";
+let directorGoal = null, directorLast = 0;
 // migrate legacy mode names (performance mode lives on as headless sims)
 if (VIEW === "beautiful") VIEW = "cinematic";
 if (VIEW === "simple" || VIEW === "minimal") VIEW = "strategic";
@@ -639,6 +643,49 @@ async function send(action) {
 // --- spectate is SERVER-DRIVEN: a thread in the server steps the game at the
 // chosen pace and auto-restarts 10s after a victory, with or without viewers.
 // The page is a live viewer: poll /state, render, and control via /pace.
+function directorCue(prev, next) {
+  if (!DIRECTOR || !prev || prev.seed !== next.seed) return null;
+  let best = null;
+  const offer = (pos, priority) => {
+    if (!Array.isArray(pos) || pos.length !== 2) return;
+    if (!best || priority >= best.priority) best = { pos: [pos[0], pos[1]], priority };
+  };
+  const oldCities = new Map(prev.cities.map(c => [c.id, c]));
+  for (const city of next.cities) {
+    const old = oldCities.get(city.id);
+    if (!old) offer(city.pos, 5);
+    else if (old.owner !== city.owner) offer(city.pos, 7);
+    else if (city.hp < old.hp || (city.wall_hp || 0) < (old.wall_hp || 0)) offer(city.pos, 5);
+  }
+  const oldUnits = new Map(prev.units.map(u => [u.id, u]));
+  const nextUnits = new Map(next.units.map(u => [u.id, u]));
+  for (const unit of next.units) {
+    const old = oldUnits.get(unit.id);
+    if (old && unit.hp < old.hp) offer(unit.pos, 4);
+  }
+  for (const unit of prev.units) if (!nextUnits.has(unit.id)) offer(unit.pos, 4);
+  for (const action of Array.isArray(next.actions_taken) ? next.actions_taken : []) {
+    if (action.type === "attack" || action.type === "ranged" || action.type === "city_strike")
+      offer(action.target, 4);
+  }
+  return best;
+}
+function queueDirectorCue(cue) {
+  if (!DIRECTOR || !cue) return;
+  const now = performance.now();
+  if (cue.priority >= 7 || now - directorLast >= 1400) {
+    directorGoal = cue.pos;
+    directorLast = now;
+  }
+}
+function advanceDirector() {
+  if (!DIRECTOR || !directorGoal || !state || dragState) return;
+  const gx = wrapX(S * SQ3 * (directorGoal[0] + directorGoal[1] / 2));
+  const gy = S * 1.5 * directorGoal[1];
+  const dx = gx - cam.x, dy = gy - cam.y;
+  cam.x += dx * 0.22; cam.y += dy * 0.22;
+  if (Math.abs(dx) + Math.abs(dy) < 2) directorGoal = null;
+}
 let lastSeed2 = null;
 async function specPoll() {
   if (!SPEC || specBusy) return;
@@ -652,7 +699,7 @@ async function specPoll() {
   } catch (e) { /* server hiccup: next poll retries */ }
   finally { specBusy = false; }
 }
-setInterval(specPoll, 200);
+setInterval(specPoll, 100);
 async function setPace(opts) {
   try {
     render(await fetchJSON("/pace", { method: "POST",
@@ -746,7 +793,10 @@ function chronicle(prev, next) {
 
 function render(st, recordChronicle = true) {
   if (recordChronicle) chronicle(state, st);
-  animateDiff(state, st);
+  const sameWorld = state && state.seed === st.seed;
+  queueDirectorCue(directorCue(state, st));
+  animateDiff(sameWorld ? state : null, st);
+  if (!sameWorld) directorGoal = null;
   state = st;
   SPEC = !!st.spectate;
   if (SPEC && st.paused !== undefined && st.paused !== specPaused) {
@@ -763,6 +813,7 @@ function render(st, recordChronicle = true) {
   const errEl = document.getElementById("err");
   if (st.error) { errEl.textContent = st.error; errEl.style.display = "block";
     setTimeout(() => errEl.style.display = "none", 2500); }
+  advanceDirector();
   const w = document.getElementById("winner");
   if (st.winner !== null && st.winner !== undefined) {
     const p = st.players[st.winner];
@@ -2055,8 +2106,22 @@ function centerMainLandmass() {
   centerWorld(anchor.pos);
 }
 function centerOn(pos) { centerWorld(pos); }
+function updateDirectorButton() {
+  const button = document.getElementById("specdirector");
+  button.classList.toggle("active", DIRECTOR);
+  button.textContent = DIRECTOR ? "◉" : "○";
+  button.title = DIRECTOR ? "Camera director on" : "Camera director off";
+}
+function setDirector(on) {
+  DIRECTOR = !!on;
+  localStorage.setItem("civvis-director", DIRECTOR ? "1" : "0");
+  directorGoal = null;
+  updateDirectorButton();
+  if (DIRECTOR && SPEC) centerMainLandmass();
+}
 function focusPlayer(pid) {
   if (!state) return;
+  if (SPEC) setDirector(false);
   const anchor = state.cities.find(c => c.owner === pid && c.is_capital) ||
                  state.cities.find(c => c.owner === pid) ||
                  state.units.find(u => u.owner === pid);
@@ -2071,7 +2136,10 @@ area.addEventListener("wheel", ev => {
 }, { passive: false });
 document.getElementById("zin").onclick = () => zoomAt(1.15);
 document.getElementById("zout").onclick = () => zoomAt(1 / 1.15);
-document.getElementById("zhome").onclick = centerHome;
+document.getElementById("zhome").onclick = () => {
+  if (SPEC) setDirector(false);
+  centerHome();
+};
 
 // ---------------------------------------------------------------- input
 let dragState = null, dragMoved = false, rdrag = null, rdragTo = null;
@@ -2097,6 +2165,7 @@ window.addEventListener("mousemove", ev => {
   if (dragState) {
     const dx = ev.clientX - dragState.x, dy = ev.clientY - dragState.y;
     if (Math.abs(dx) + Math.abs(dy) > 5) dragMoved = true;
+    if (dragMoved && SPEC && DIRECTOR) setDirector(false);
     if (dragMoved && dragState.rotate) {
       // alt+drag: rotate the world; the angle persists until rotated again
       altTap = false;
@@ -2272,6 +2341,8 @@ document.addEventListener("keyup", ev => {
 });
 document.getElementById("endturn").onclick = () => { sel = null; send({type: "end_turn"}); };
 document.getElementById("paneltoggle").onclick = () => togglePanel();
+document.getElementById("specdirector").onclick = () => setDirector(!DIRECTOR);
+updateDirectorButton();
 document.getElementById("specpause").onclick = () => {
   specPaused = !specPaused;
   document.getElementById("specpause").textContent =
