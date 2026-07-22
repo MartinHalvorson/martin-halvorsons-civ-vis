@@ -14,6 +14,8 @@ Firaxis or 2K; no assets, art, text, or code from Civilization VI are used.
 ## What's implemented (v0.6)
 
 - Hex map, random continents, climate bands, features, resources, fog of war
+- Stock Civ VI map-size profiles (dimensions, players/city-states, natural
+  wonders, continents, and religion caps)
 - Cities: Civ 6 growth curve, border expansion, **housing & amenities**
 - **Districts with adjacency bonuses**, buildings, improvements, builder charges
 - Tech tree **and civics tree** (28 early-game techs plus 5 space-race techs,
@@ -34,6 +36,11 @@ Firaxis or 2K; no assets, art, text, or code from Civilization VI are used.
 cargo build --release
 ./target/release/civvis play --players 4        # browser GUI; you are player 0
 ```
+
+Player-count defaults use Civ VI's stock world rows: 2 players = Duel
+(`44×26`, 3 city-states), 4 = Tiny (`60×38`, 6 city-states), and 6 = Small
+(`74×46`, 9 city-states). `--width`, `--height`, and `--city-states` remain
+available as explicit advanced overrides.
 
 GUI: click/right-click to select and order units, drag to pan, wheel to zoom,
 **1** next action, **2** settler lens, **3** map tacks, Enter ends turn; tech

@@ -14,6 +14,7 @@ pub mod obs;
 pub mod rng;
 pub mod rules;
 pub mod server;
+pub mod setup;
 pub mod valuenet;
 pub mod world;
 
@@ -358,8 +359,8 @@ mod tests {
         assert!(!g.city_can_strike(&g.cities[&cid]));
         let base_cs = g.city_strength(cid);
         g.cities.get_mut(&cid).unwrap().buildings.push("walls".to_string());
-        g.cities.get_mut(&cid).unwrap().wall_hp = 50;
-        assert_eq!(g.city_max_wall_hp(&g.cities[&cid]), 50);
+        g.cities.get_mut(&cid).unwrap().wall_hp = 100;
+        assert_eq!(g.city_max_wall_hp(&g.cities[&cid]), 100);
         assert!(g.city_can_strike(&g.cities[&cid]));
         assert_eq!(g.city_strength(cid), base_cs + 3.0);
         // city ranged strength floors at 3 and tracks best ranged unit
@@ -386,7 +387,7 @@ mod tests {
         g.apply(0, &Action::EndTurn).unwrap();
         let city_hp = g.cities[&cid].hp;
         g.apply(1, &Action::Attack { unit: foe, target: cpos }).unwrap();
-        assert!(g.cities[&cid].wall_hp < 50); // walls took the hit
+        assert!(g.cities[&cid].wall_hp < 100); // walls took the hit
         assert!(g.cities[&cid].hp >= city_hp - 1); // city behind walls: 1 dmg
     }
 

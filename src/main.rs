@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use civvis::ai::{run_game, BasicAi};
 use civvis::game::Game;
+use civvis::setup::MapSize;
 
 fn arg(args: &[String], key: &str, default: i64) -> i64 {
     args.iter()
@@ -17,8 +18,13 @@ fn auto_cs(args: &[String], players: i64) -> usize {
     if cs >= 0 {
         cs as usize
     } else {
-        2.max(players as usize / 2)
+        MapSize::for_players(players.max(1) as usize).default_city_states
     }
+}
+
+fn auto_dimension(args: &[String], key: &str, players: i64, width: bool) -> i32 {
+    let size = MapSize::for_players(players.max(1) as usize);
+    arg(args, key, if width { size.width } else { size.height } as i64) as i32
 }
 
 fn standings(g: &Game) {
@@ -66,8 +72,8 @@ fn main() {
             let g0 = Instant::now();
             let mut g = Game::new(
                 players as usize,
-                arg(&args, "--width", 28) as i32,
-                arg(&args, "--height", 18) as i32,
+                auto_dimension(&args, "--width", players, true),
+                auto_dimension(&args, "--height", players, false),
                 arg(&args, "--seed", 0) as u64,
                 arg(&args, "--turns", 250) as u32,
                 auto_cs(&args, players),
@@ -87,8 +93,8 @@ fn main() {
                 let result = std::panic::catch_unwind(|| {
                     let mut g = Game::new(
                         players as usize,
-                        arg(&args, "--width", 28) as i32,
-                        arg(&args, "--height", 18) as i32,
+                        auto_dimension(&args, "--width", players, true),
+                        auto_dimension(&args, "--height", players, false),
                         seed as u64,
                         arg(&args, "--turns", 120) as u32,
                         auto_cs(&args, players),
@@ -174,10 +180,12 @@ fn main() {
             let cfg = civvis::elo::TourneyCfg {
                 games: arg(&args, "--games", 20) as u32,
                 players_per_game: arg(&args, "--players", 4) as usize,
-                width: arg(&args, "--width", 24) as i32,
-                height: arg(&args, "--height", 16) as i32,
+                width: auto_dimension(&args, "--width",
+                                      arg(&args, "--players", 4), true),
+                height: auto_dimension(&args, "--height",
+                                       arg(&args, "--players", 4), false),
                 max_turns: arg(&args, "--turns", 150) as u32,
-                num_city_states: 2,
+                num_city_states: auto_cs(&args, arg(&args, "--players", 4)),
                 seed: arg(&args, "--seed", 0) as u64,
                 k: arg(&args, "--k", 24) as f64,
                 verbose: !args.iter().any(|a| a == "--quiet"),
@@ -193,8 +201,8 @@ fn main() {
                 pop: arg(&args, "--pop", 16) as usize,
                 games: arg(&args, "--games", 8) as usize,
                 players: players as usize,
-                width: arg(&args, "--width", 24) as i32,
-                height: arg(&args, "--height", 16) as i32,
+                width: auto_dimension(&args, "--width", players, true),
+                height: auto_dimension(&args, "--height", players, false),
                 max_turns: arg(&args, "--turns", 160) as u32,
                 seed: arg(&args, "--seed", 1) as u64,
                 threads: arg(&args, "--threads", 8) as usize,
@@ -218,8 +226,8 @@ fn main() {
                 !args.iter().any(|a| a == "--no-open"),
                 civvis::server::Params {
                     num_players: players as usize,
-                    width: arg(&args, "--width", 28) as i32,
-                    height: arg(&args, "--height", 18) as i32,
+                    width: auto_dimension(&args, "--width", players, true),
+                    height: auto_dimension(&args, "--height", players, false),
                     seed,
                     max_turns: arg(&args, "--turns", 500) as u32,
                     num_city_states: auto_cs(&args, players),

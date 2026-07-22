@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 use crate::ai::{Ai, BasicAi};
 use crate::game::{Action, Game};
 use crate::obs::{observation, observation_spectator};
+use crate::setup::{MapSize, CIV6_MAP_SIZES};
 
 const EMBEDDED_INDEX: &str = include_str!("../web/index.html");
 const EMBEDDED_TERRAIN_ATLAS: &[u8] = include_bytes!("../web/assets/terrain-atlas.png");
@@ -159,6 +160,35 @@ fn respond_json(stream: &mut TcpStream, v: &Value) {
     respond(stream, "200 OK", "application/json", v.to_string().as_bytes());
 }
 
+fn new_game_params(current: &Params, request: &Value) -> Params {
+    let mut p = current.clone();
+    if let Some(v) = request["num_players"].as_u64() {
+        p.num_players = v as usize;
+        let size = MapSize::for_players(p.num_players);
+        p.width = size.width;
+        p.height = size.height;
+        p.num_city_states = size.default_city_states;
+    }
+    if let Some(v) = request["seed"].as_u64() {
+        p.seed = v;
+    }
+    // Advanced clients can still deliberately override individual stock
+    // settings by sending them alongside num_players.
+    if let Some(v) = request["width"].as_i64() {
+        p.width = v as i32;
+    }
+    if let Some(v) = request["height"].as_i64() {
+        p.height = v as i32;
+    }
+    if let Some(v) = request["num_city_states"].as_u64() {
+        p.num_city_states = v as usize;
+    }
+    if let Some(v) = request["spectate"].as_bool() {
+        p.spectate = v;
+    }
+    p
+}
+
 fn handle(stream: &mut TcpStream, session: &mut Session) {
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut line = String::new();
@@ -209,6 +239,7 @@ fn handle(stream: &mut TcpStream, session: &mut Session) {
                 "buildings": r.buildings, "districts": r.districts,
                 "projects": r.projects,
                 "policies": r.policies, "beliefs": r.beliefs, "civs": r.civs,
+                "map_sizes": CIV6_MAP_SIZES,
             }));
         }
         ("POST", "/action") => {
@@ -234,30 +265,50 @@ fn handle(stream: &mut TcpStream, session: &mut Session) {
             respond_json(stream, &out);
         }
         ("POST", "/new") => {
-            let mut p = session.params.clone();
-            if let Some(v) = parsed["num_players"].as_u64() {
-                p.num_players = v as usize;
-            }
-            if let Some(v) = parsed["seed"].as_u64() {
-                p.seed = v;
-            }
-            if let Some(v) = parsed["width"].as_i64() {
-                p.width = v as i32;
-            }
-            if let Some(v) = parsed["height"].as_i64() {
-                p.height = v as i32;
-            }
-            if let Some(v) = parsed["num_city_states"].as_u64() {
-                p.num_city_states = v as usize;
-            }
-            if let Some(v) = parsed["spectate"].as_bool() {
-                p.spectate = v;
-            }
+            let p = new_game_params(&session.params, &parsed);
             *session = Session::new(p);
             respond_json(stream, &session.state());
         }
         _ => respond(stream, "404 Not Found", "application/json",
                      b"{\"error\":\"not found\"}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{new_game_params, Params};
+    use serde_json::json;
+
+    fn current() -> Params {
+        Params {
+            num_players: 2,
+            width: 20,
+            height: 14,
+            seed: 1,
+            max_turns: 500,
+            num_city_states: 1,
+            spectate: false,
+        }
+    }
+
+    #[test]
+    fn new_game_player_count_applies_the_whole_civ6_size_profile() {
+        let tiny = new_game_params(&current(), &json!({"num_players": 4}));
+        assert_eq!((tiny.width, tiny.height, tiny.num_city_states), (60, 38, 6));
+
+        let small = new_game_params(&tiny, &json!({"num_players": 6}));
+        assert_eq!((small.width, small.height, small.num_city_states), (74, 46, 9));
+    }
+
+    #[test]
+    fn explicit_advanced_overrides_win_over_the_profile() {
+        let p = new_game_params(&current(), &json!({
+            "num_players": 6,
+            "width": 80,
+            "height": 50,
+            "num_city_states": 2
+        }));
+        assert_eq!((p.width, p.height, p.num_city_states), (80, 50, 2));
     }
 }
 

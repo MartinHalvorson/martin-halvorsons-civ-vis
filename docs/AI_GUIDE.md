@@ -54,7 +54,10 @@ Multiplayer games score as pairwise Elo results by final placement
 - `POST /action` body `{"action": {"type": "end_turn"}}` — applies, runs the
   AI opponents, returns the new state (+`error` string on illegal actions)
 - `GET /rules` — the full ruleset (techs, units, costs, ...)
-- `POST /new` body `{"seed": 7, "num_players": 4}` — fresh game
+- `POST /new` body `{"seed": 7, "num_players": 4}` — fresh game; selecting a
+  player count also applies its full stock Civ VI map profile (4 = Tiny
+  60×38/6 city-states, 6 = Small 74×46/9 city-states). Explicit `width`,
+  `height`, or `num_city_states` fields override individual profile values.
 
 Actions are plain JSON dicts identical to what `legal_actions` returns —
 feed them straight into LLM tool-calling or an RL policy. One process per

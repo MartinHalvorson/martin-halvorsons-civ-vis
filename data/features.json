@@ -45,5 +45,35 @@
     },
     "move_cost": 2,
     "natural_wonder": true
+  },
+  "uluru": {
+    "yields": {
+      "culture": 2,
+      "faith": 2
+    },
+    "natural_wonder": true,
+    "impassable": true
+  },
+  "yosemite": {
+    "yields": {
+      "gold": 1,
+      "science": 1
+    },
+    "natural_wonder": true,
+    "impassable": true
+  },
+  "dead_sea": {
+    "yields": {
+      "culture": 2,
+      "faith": 2
+    },
+    "natural_wonder": true
+  },
+  "mount_everest": {
+    "yields": {
+      "faith": 1
+    },
+    "natural_wonder": true,
+    "impassable": true
   }
 }

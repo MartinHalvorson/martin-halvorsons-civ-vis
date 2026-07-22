@@ -1,4 +1,8 @@
 {
+  "repair_outer_defenses": {
+    "cost": 1,
+    "repeatable": true
+  },
   "launch_earth_satellite": {
     "cost": 900,
     "tech": "rocketry",

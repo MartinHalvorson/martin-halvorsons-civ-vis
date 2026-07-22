@@ -18,6 +18,9 @@ pub struct Tile {
     pub river: bool,
     #[serde(default)]
     pub road: bool,
+    /// Stock Civ VI continent region, zero-based. Water has no continent.
+    #[serde(default)]
+    pub continent: Option<usize>,
 }
 
 impl Tile {
@@ -33,6 +36,7 @@ impl Tile {
             owner_city: None,
             river: false,
             road: false,
+            continent: None,
         }
     }
 }

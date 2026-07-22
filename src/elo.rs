@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use crate::ai::{run_game, AdvancedAi, Ai, BasicAi, RandomAi};
 use crate::game::Game;
 use crate::rng::Rng;
+use crate::setup::MapSize;
 
 pub const BUILTIN_AIS: [&str; 5] = ["advanced", "basic", "random", "evolved", "neural"];
 
@@ -93,8 +94,11 @@ pub struct TourneyCfg {
 
 impl Default for TourneyCfg {
     fn default() -> Self {
-        TourneyCfg { games: 20, players_per_game: 4, width: 24, height: 16,
-                     max_turns: 150, num_city_states: 2, seed: 0, k: 24.0,
+        let size = MapSize::for_players(4);
+        TourneyCfg { games: 20, players_per_game: 4,
+                     width: size.width, height: size.height,
+                     max_turns: 150, num_city_states: size.default_city_states,
+                     seed: 0, k: 24.0,
                      verbose: true }
     }
 }
