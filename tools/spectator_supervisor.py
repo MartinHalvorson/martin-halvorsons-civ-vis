@@ -228,6 +228,19 @@ def should_nudge(state: dict[str, Any], stalled_for: float, timeout: float) -> b
     return not state.get("spectator_paused", False) and stalled_for >= max(0.1, timeout)
 
 
+def successor_started(
+    state: dict[str, Any] | None,
+    finished_instance: Any,
+    finished_seed: Any,
+) -> bool:
+    """Whether the result server has already rolled into another match."""
+    return state is not None and (
+        state.get("server_instance") != finished_instance
+        or state.get("seed") != finished_seed
+        or state.get("winner") is None
+    )
+
+
 def checkpoint_path(port: int) -> Path:
     return CHECKPOINT_DIR / f"spectator-{port}.json"
 
@@ -598,11 +611,7 @@ def main() -> int:
             # The page also has a result countdown. If it already created a
             # successor while compilation ran, never interrupt that live game.
             latest_state = read_state(args.port)
-            if latest_state is not None and (
-                latest_state.get("server_instance") != finished_instance
-                or latest_state.get("seed") != finished_seed
-                or latest_state.get("winner") is None
-            ):
+            if successor_started(latest_state, finished_instance, finished_seed):
                 log("the browser already began another game; leaving that live match uninterrupted")
                 state = latest_state
                 last_progress = progress_marker(state)
@@ -613,6 +622,17 @@ def main() -> int:
             remaining = args.cooldown - (time.monotonic() - finished_seen_at)
             if remaining > 0:
                 time.sleep(remaining)
+            # The server has its own viewer-independent 10-second restart.
+            # Recheck after sleeping so the supervisor does not kill that
+            # brand-new match in a race at the shared cooldown boundary.
+            latest_state = read_state(args.port)
+            if successor_started(latest_state, finished_instance, finished_seed):
+                log("the server began another game during cooldown; leaving it uninterrupted")
+                state = latest_state
+                last_progress = progress_marker(state)
+                progress_at = time.monotonic()
+                finished_key = None
+                continue
             stop_server(process, adopted_pid)
             process = None
             adopted_pid = None

@@ -116,6 +116,17 @@ class SourceSnapshotTests(unittest.TestCase):
 
 
 class RecoveryTests(unittest.TestCase):
+    def test_successor_detection_closes_the_cooldown_restart_race(self):
+        finished = {"server_instance": 7, "seed": 11, "winner": 2}
+        self.assertFalse(supervisor.successor_started(None, 7, 11))
+        self.assertFalse(supervisor.successor_started(finished, 7, 11))
+        self.assertTrue(
+            supervisor.successor_started({**finished, "winner": None}, 7, 11)
+        )
+        self.assertTrue(
+            supervisor.successor_started({**finished, "seed": 12}, 7, 11)
+        )
+
     def test_progress_marker_tracks_player_steps_within_a_turn(self):
         first = {"seed": 7, "turn": 12, "current": 1, "winner": None}
         stepped = {**first, "current": 2}
