@@ -1,6 +1,6 @@
 //! Zero-dependency local HTTP server for the human-vs-AI browser GUI.
 //! Endpoints: GET / (page), GET /state, GET /save, GET /rules,
-//! POST /action, POST /step, POST /spectator-status, POST /new.
+//! POST /action, POST /step, POST /view, POST /spectator-status, POST /new.
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use crate::ai::{AdvancedAi, Ai, BasicAi};
 use crate::game::{Action, Game, GameOptions};
 use crate::rules::Rules;
-use crate::obs::{observation, observation_spectator};
+use crate::obs::{observation, observation_player_view, observation_spectator};
 use crate::setup::{MapSize, CIV6_MAP_SIZES};
 
 const EMBEDDED_INDEX: &str = include_str!("../web/index.html");
@@ -40,6 +40,10 @@ pub struct Session {
     pub game: Game,
     ais: Vec<Box<dyn Ai + Send>>,
     spectator_paused: bool,
+    /// `None` is the omniscient spectator; `Some(pid)` is that major
+    /// civilization's fog-of-war perspective. Only meaningful in spectate
+    /// mode—the AI still controls every seat either way.
+    view_player: Option<usize>,
 }
 
 /// Server-side exhibition state: in spectate mode a background thread steps
@@ -97,6 +101,7 @@ impl Session {
             game,
             ais,
             spectator_paused: false,
+            view_player: None,
         }
     }
 
@@ -125,16 +130,34 @@ impl Session {
             game,
             ais,
             spectator_paused: false,
+            view_player: None,
         }
+    }
+
+    fn set_view_player(&mut self, player: Option<usize>) -> Result<(), String> {
+        if !self.params.spectate {
+            return Err("player views are only available in spectate mode".into());
+        }
+        if let Some(pid) = player {
+            let Some(candidate) = self.game.players.get(pid) else {
+                return Err(format!("unknown player {pid}"));
+            };
+            if candidate.is_minor || candidate.is_barbarian {
+                return Err(format!("player {pid} is not a major civilization"));
+            }
+        }
+        self.view_player = player;
+        Ok(())
     }
 
     pub fn state(&self) -> Value {
         if self.params.spectate {
             let g = &self.game;
-            // Observe from the current player's seat (fall back to the first
-            // living major when a minor/barbarian is up).
-            let current = &g.players[g.current];
-            let pid = if current.is_minor || current.is_barbarian || !current.alive {
+            // The omniscient view still needs an empire perspective for the
+            // side-panel summary. Follow the acting major, falling back when
+            // a city-state or barbarian is up.
+            let summary_pid = if g.players[g.current].is_minor || g.players[g.current].is_barbarian
+            {
                 g.players
                     .iter()
                     .find(|p| !p.is_minor && !p.is_barbarian && p.alive)
@@ -143,7 +166,10 @@ impl Session {
             } else {
                 g.current
             };
-            let mut o = observation_spectator(g, pid);
+            let mut o = match self.view_player {
+                Some(pid) => observation_player_view(g, pid),
+                None => observation_spectator(g, summary_pid),
+            };
             if let Some(players) = o["players"].as_array_mut() {
                 for player in players {
                     let Some(id) = player["id"].as_u64().map(|id| id as usize) else {
@@ -156,6 +182,7 @@ impl Session {
             }
             o["spectate"] = json!(true);
             o["spectator_paused"] = json!(self.spectator_paused);
+            o["view_player"] = json!(self.view_player);
             o["legal_actions"] = json!([]);
             // Lets a long-running spectator notice that its server was
             // rebuilt/restarted between games and reload the latest UI.
@@ -163,6 +190,8 @@ impl Session {
             return o;
         }
         let mut o = observation(&self.game, 0);
+        o["spectate"] = json!(false);
+        o["view_player"] = json!(0);
         o["legal_actions"] = serde_json::to_value(self.game.legal_actions(0)).unwrap();
         o["server_instance"] = json!(std::process::id());
         o
@@ -453,8 +482,33 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
         }
         ("POST", "/action") => {
             let mut session = sh.session.lock().unwrap();
+            let movement_path = serde_json::from_value::<Action>(parsed["action"].clone())
+                .ok()
+                .and_then(|action| match action {
+                    Action::MoveTo { unit, to } => {
+                        let start = session.game.units.get(&unit)?.pos;
+                        let mut path = session.game.path_to(unit, to)?;
+                        path.insert(0, start);
+                        Some((unit, path))
+                    }
+                    _ => None,
+                });
             let err = session.act(&parsed["action"]);
             let mut out = session.state();
+            if err.is_none() {
+                if let Some((unit, mut path)) = movement_path {
+                    if let Some(actual) = session.game.units.get(&unit).map(|unit| unit.pos) {
+                        if let Some(end) = path.iter().position(|position| *position == actual) {
+                            path.truncate(end + 1);
+                        } else if let Some(start) = path.first().copied() {
+                            path = vec![start, actual];
+                        }
+                    }
+                    if path.len() > 1 {
+                        out["movement_paths"] = json!({unit.to_string(): path});
+                    }
+                }
+            }
             out["error"] = match err {
                 Some(e) => Value::String(e),
                 None => Value::Null,
@@ -467,14 +521,37 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
             if session.params.spectate {
                 let (pid, actions) = session.step();
                 out = session.state();
-                out["stepped"] = json!(pid);
-                out["actions_taken"] = serde_json::to_value(actions).unwrap();
+                // An omniscient observer can narrate every AI decision. A
+                // civilization view only receives that civilization's own
+                // traces; otherwise hidden movement and combat would bypass
+                // the map fog through the event chronicle.
+                if session.view_player.map_or(true, |viewer| pid == viewer) {
+                    out["stepped"] = json!(pid);
+                    out["actions_taken"] = serde_json::to_value(actions).unwrap();
+                }
             } else {
                 out = session.state();
                 out["error"] = json!("not in spectate mode");
             }
             drop(session);
             decorate(&mut out, sh);
+            respond_json(stream, &out);
+        }
+        ("POST", "/view") => {
+            let mut session = sh.session.lock().unwrap();
+            let result = match parsed.get("player") {
+                Some(Value::Null) => session.set_view_player(None),
+                Some(value) => value
+                    .as_u64()
+                    .ok_or_else(|| "player must be a non-negative integer or null".to_string())
+                    .and_then(|pid| session.set_view_player(Some(pid as usize))),
+                None => Err("missing player".to_string()),
+            };
+            let mut out = session.state();
+            out["error"] = match result {
+                Ok(()) => Value::Null,
+                Err(error) => Value::String(error),
+            };
             respond_json(stream, &out);
         }
         ("POST", "/spectator-status") => {
@@ -593,6 +670,9 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains(".diplomacy-card.allied"));
         assert!(EMBEDDED_INDEX.contains("function cameraYBounds"));
         assert!(EMBEDDED_INDEX.contains("cam.y = clampCameraY(cam.y)"));
+        assert!(EMBEDDED_INDEX.contains("View as"));
+        assert!(EMBEDDED_INDEX.contains("id=\"viewplayer\""));
+        assert!(EMBEDDED_INDEX.contains("fetchJSON(\"/view\""));
     }
 
     #[test]
@@ -612,10 +692,68 @@ mod tests {
         let mut params = current();
         params.spectate = true;
         let mut session = Session::new(params);
-        assert_eq!(session.state()["spectator_paused"].as_bool(), Some(false));
-        assert!(session.state()["players"][0]["ai_strategy"].is_null());
+        let state = session.state();
+        assert_eq!(state["spectator_paused"].as_bool(), Some(false));
+        assert!(state["view_player"].is_null());
+        assert_eq!(
+            state["visible"].as_array().unwrap().len(),
+            state["map"]["tiles"].as_array().unwrap().len()
+        );
+        assert!(state["units"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|unit| unit.get("reachable").is_none()));
+        assert!(state["players"][0]["ai_strategy"].is_null());
         session.step();
         assert_eq!(session.state()["players"][0]["ai_strategy"], "expansion");
+    }
+
+    #[test]
+    fn spectator_can_view_any_major_through_that_players_fog() {
+        let mut params = current();
+        params.spectate = true;
+        let mut session = Session::new(params);
+        let omniscient = session.state();
+
+        session.set_view_player(Some(1)).unwrap();
+        let player_view = session.state();
+        assert_eq!(player_view["player"].as_u64(), Some(1));
+        assert_eq!(player_view["view_player"].as_u64(), Some(1));
+        assert!(
+            player_view["visible"].as_array().unwrap().len()
+                < omniscient["visible"].as_array().unwrap().len()
+        );
+        assert!(
+            player_view["map"]["tiles"].as_array().unwrap().len()
+                < omniscient["map"]["tiles"].as_array().unwrap().len()
+        );
+        assert!(player_view["units"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|unit| unit.get("reachable").is_none()));
+
+        session.set_view_player(None).unwrap();
+        assert!(session.state()["view_player"].is_null());
+    }
+
+    #[test]
+    fn spectator_view_rejects_non_major_and_unknown_players() {
+        let mut params = current();
+        params.spectate = true;
+        let mut session = Session::new(params);
+        let minor = session
+            .game
+            .players
+            .iter()
+            .find(|player| player.is_minor || player.is_barbarian)
+            .unwrap()
+            .id;
+
+        assert!(session.set_view_player(Some(minor)).is_err());
+        assert!(session.set_view_player(Some(usize::MAX)).is_err());
+        assert!(session.state()["view_player"].is_null());
     }
 
     #[test]

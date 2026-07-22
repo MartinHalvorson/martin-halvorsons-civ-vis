@@ -86,6 +86,9 @@ Enter ends turn; tech
 and civics tree maps, production/buy panels, city strikes, fog of war. Enable
 **Show yields per tile** in View & controls (or press **Y**); gold-outlined yield
 chips identify tiles currently worked by the automatic citizen governor.
+AI-only games also provide a **View as** selector: watch the full world as an
+omniscient spectator, or choose any major civilization to see only its explored
+territory and currently visible units through that player's fog of war.
 
 Quick Deals gathers every AI's acceptable Buy/Sell quote into a sortable,
 one-click screen. It shows both sides' modeled gain before acceptance, and the

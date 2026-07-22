@@ -7,13 +7,13 @@ use crate::game::{growth_threshold, Game};
 use crate::Pos;
 
 pub fn observation(g: &Game, pid: usize) -> Value {
-    obs_impl(g, pid, false)
+    obs_impl(g, pid, false, true)
 }
 
 /// Fog-free view of the whole world from `pid`'s empire perspective —
 /// feeds the spectator (watch-the-AIs) GUI mode.
 pub fn observation_spectator(g: &Game, pid: usize) -> Value {
-    obs_impl(g, pid, true)
+    obs_impl(g, pid, true, false)
 }
 
 /// Currently visible and ever-explored tile sets for `pid`, including
@@ -49,7 +49,14 @@ pub fn visibility(g: &Game, pid: usize) -> (BTreeSet<Pos>, BTreeSet<Pos>) {
     (vis, explored)
 }
 
-fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
+/// Read-only, fog-of-war view used when a spectator chooses a civilization's
+/// perspective. It intentionally omits expensive interactive affordances such
+/// as per-unit reachability because the AI remains in control of the seat.
+pub fn observation_player_view(g: &Game, pid: usize) -> Value {
+    obs_impl(g, pid, false, false)
+}
+
+fn obs_impl(g: &Game, pid: usize, omniscient: bool, interactive: bool) -> Value {
     let p = &g.players[pid];
     let mut viewers = vec![pid];
     if !omniscient {
@@ -104,11 +111,12 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
         })
         .map(|u| {
             let mut v = serde_json::to_value(u).unwrap();
-            // Reachable tiles require a full movement search. They drive the
-            // human player's click highlights, but spectator sessions are
-            // read-only and deliberately publish no legal actions. Omitting
-            // them there keeps observation latency independent of army size.
-            if u.owner == pid && !omniscient {
+            v["embarked"] = json!(g.is_embarked(u));
+            // Reachability is an interactive-player affordance. Computing it
+            // for every unit of the currently observed AI can dominate late-
+            // game spectator responses even though spectate mode has no legal
+            // movement actions.
+            if u.owner == pid && interactive {
                 v["reachable"] = json!(g
                     .reachable(u.id)
                     .iter()

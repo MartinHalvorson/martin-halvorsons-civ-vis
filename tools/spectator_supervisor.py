@@ -4,10 +4,11 @@
 The supervisor deliberately never replaces code during a healthy live match.
 It checkpoints active matches, revives a crashed or unresponsive server from
 the latest checkpoint, and nudges a spectator whose browser stopped stepping.
-Once a winner appears it builds the newest stable worktree while the result
-screen remains available, then replaces that finished server after the
-cooldown. A known-good runtime remains available while broken or changing
-source is repaired.
+Once a winner appears it retires that server immediately, leaving the rendered
+result screen visible while it builds the newest stable worktree. It launches
+the next game only after the fresh runtime is ready, so the browser's result
+countdown cannot race ahead on stale code. A known-good runtime remains
+available while broken or changing source is repaired.
 """
 
 from __future__ import annotations
@@ -398,6 +399,36 @@ def session_settings(state: dict[str, Any], defaults: dict[str, int]) -> dict[st
     }
 
 
+def result_standings(state: dict[str, Any]) -> str | None:
+    """Format a compact durable record before the result server is retired."""
+    players = [
+        player
+        for player in state.get("players") or []
+        if not player.get("is_minor", False) and not player.get("is_barbarian", False)
+    ]
+    if not players:
+        return None
+
+    winner = state.get("winner")
+    ranked = sorted(
+        players,
+        key=lambda player: (player.get("score") or 0, -(player.get("id") or 0)),
+        reverse=True,
+    )
+    entries = []
+    for player in ranked:
+        identity = player.get("civ") or player.get("leader") or f"player {player.get('id')}"
+        prefix = "winner " if player.get("id") == winner else ""
+        details = [
+            f"score {player.get('score', '?')}",
+            f"cities {player.get('cities', '?')}",
+            f"faith {player.get('faith', '?')}",
+            f"military {player.get('military', '?')}",
+        ]
+        entries.append(f"{prefix}{identity} ({', '.join(details)})")
+    return "; ".join(entries)
+
+
 def server_command(
     port: int,
     settings: dict[str, int],
@@ -692,6 +723,9 @@ def main() -> int:
                     f"game finished on turn {state.get('turn')} "
                     f"({state.get('victory_type') or 'unknown'} victory); checking for updates"
                 )
+                standings = result_standings(state)
+                if standings:
+                    log(f"standings: {standings}")
 
             if now < update_retry_at:
                 time.sleep(min(args.poll, update_retry_at - now))

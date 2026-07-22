@@ -12956,15 +12956,17 @@ impl Game {
             .collect()
     }
 
-    pub fn is_embarked(&self, u: &Unit) -> bool {
-        self.rules.units[u.kind.as_str()].domain.as_deref() != Some("sea")
-            && self
-                .map
-                .get(u.pos)
-                .map(|t| {
-                    self.rules.is_water(t) && t.wonder.as_deref() != Some("golden_gate_bridge")
-                })
-                .unwrap_or(false)
+    fn unit_is_embarked_at(&self, unit: &Unit, pos: Pos) -> bool {
+        let domain = self.rules.units[unit.kind.as_str()].domain.as_deref();
+        !matches!(domain, Some("sea" | "air"))
+            && unit.kind != "giant_death_robot"
+            && self.map.get(pos).is_some_and(|tile| {
+                self.rules.is_water(tile) && tile.wonder.as_deref() != Some("golden_gate_bridge")
+            })
+    }
+
+    pub fn is_embarked(&self, unit: &Unit) -> bool {
+        self.unit_is_embarked_at(unit, unit.pos)
     }
 
     /// Whether this unit type has learned how to embark onto Coast tiles.
@@ -13019,6 +13021,7 @@ impl Game {
         let water = self.rules.is_water(tile);
         if water
             && tile.terrain == "ocean"
+            && unit.kind != "giant_death_robot"
             && self.tree_effect(unit.owner, "ocean_navigation") <= 0.0
         {
             return false;
@@ -13048,6 +13051,7 @@ impl Game {
         } else {
             !water
                 || tile.wonder.as_deref() == Some("golden_gate_bridge")
+                || unit.kind == "giant_death_robot"
                 || self.has_embarkation(unit.owner, &unit.kind)
         }
     }
@@ -13060,7 +13064,7 @@ impl Game {
             return false;
         };
         let sea_unit = self.rules.units[unit.kind.as_str()].domain.as_deref() == Some("sea");
-        if sea_unit {
+        if sea_unit || unit.kind == "giant_death_robot" {
             self.unit_can_traverse(uid, target)
         } else {
             // Land units may disembark into a melee attack, but may never
@@ -13174,6 +13178,7 @@ impl Game {
             // Ancient era up to 55 from the Atomic era on.
             let era = crate::rules::ERA_NAMES[self.world_era.min(8)];
             return self.rules.eras[era].embarked_strength
+                + self.unit_formation_bonus(u)
                 + if defending {
                     self.governor_unit_defense_bonus(u)
                 } else {
@@ -15467,7 +15472,39 @@ impl Game {
         if self.promotion_effect(unit, "amphibious") > 0.0 && self.crosses_river(from, to) {
             cost = self.rules.move_cost(tile);
         }
+        let changes_embarkation =
+            self.unit_is_embarked_at(unit, from) != self.unit_is_embarked_at(unit, to);
+        if changes_embarkation
+            && self.promotion_effect(unit, "amphibious") <= 0.0
+            && !self.embarkation_facility_at(from)
+            && !self.embarkation_facility_at(to)
+        {
+            // Civ VI adds a two-point embark/disembark surcharge to the
+            // destination terrain cost. A full-movement unit can still take
+            // one otherwise-unaffordable step, as with other rough terrain.
+            cost += 2.0;
+        }
         cost
+    }
+
+    /// Harbors and coastal City Centers remove the embark/disembark
+    /// surcharge. A pillaged Harbor no longer provides that service.
+    fn embarkation_facility_at(&self, pos: Pos) -> bool {
+        if self.city_at(pos).is_some() {
+            return self.nbrs(pos).into_iter().any(|neighbor| {
+                self.map
+                    .get(neighbor)
+                    .is_some_and(|tile| self.rules.is_water(tile))
+            });
+        }
+        let Some(tile) = self.map.get(pos) else {
+            return false;
+        };
+        !tile.pillaged
+            && tile
+                .district
+                .as_deref()
+                .is_some_and(|district| self.district_is_family(district, "harbor"))
     }
 
     fn crosses_river(&self, from: Pos, to: Pos) -> bool {
@@ -15488,6 +15525,22 @@ impl Game {
             return false;
         };
         self.rules.is_water(a) != self.rules.is_water(b) && self.map.has_cliff_edge(from, to)
+    }
+
+    fn unit_can_cross_cliff(&self, uid: u32, from: Pos, to: Pos) -> bool {
+        if !self.crosses_cliff(from, to) {
+            return true;
+        }
+        let unit = &self.units[&uid];
+        let water_side = if self.rules.is_water(&self.map.tiles[&from]) {
+            from
+        } else {
+            to
+        };
+        self.map.tiles[&from].wonder.as_deref() == Some("golden_gate_bridge")
+            || self.map.tiles[&to].wonder.as_deref() == Some("golden_gate_bridge")
+            || self.promotion_effect(unit, "scale_cliffs") > 0.0
+            || self.embarkation_facility_at(water_side)
     }
 
     fn sight_height(&self, pos: Pos) -> i32 {
@@ -15549,25 +15602,29 @@ impl Game {
         self.has_line_of_sight(unit.pos, to, true)
     }
 
-    fn unit_base_max_moves(&self, uid: u32) -> f64 {
+    fn unit_base_max_moves_at(&self, uid: u32, pos: Pos) -> f64 {
         let u = &self.units[&uid];
         let spec = &self.rules.units[u.kind.as_str()];
-        let tile = &self.map.tiles[&u.pos];
-        let mut moves = if matches!(u.kind.as_str(), "war_cart" | "maryannu_chariot_archer")
+        let tile = &self.map.tiles[&pos];
+        let embarked = self.unit_is_embarked_at(u, pos);
+        let mut moves = if embarked {
+            2.0
+        } else if matches!(u.kind.as_str(), "war_cart" | "maryannu_chariot_archer")
             && !tile.hills
             && !matches!(tile.feature.as_deref(), Some("forest" | "jungle"))
         {
             4.0
         } else {
             spec.moves
-        } + self.promotion_effect(u, "movement")
-            + u.bonus_moves;
-        if spec.domain.as_deref() == Some("sea") {
+        };
+        moves += self.promotion_effect(u, "movement") + u.bonus_moves;
+        if spec.domain.as_deref() == Some("sea") || embarked {
             moves += self.tree_effect(u.owner, "naval_movement");
-        } else if self.is_embarked(u) {
+        }
+        if embarked {
             moves += self.tree_effect(u.owner, "embarked_movement");
         }
-        if spec.domain.as_deref() == Some("sea") {
+        if spec.domain.as_deref() == Some("sea") || embarked {
             moves += self.empire_wonder_effect(u.owner, "naval_movement");
         }
         if spec.class == "religious"
@@ -15608,21 +15665,27 @@ impl Game {
         moves
     }
 
-    fn unit_max_moves(&self, uid: u32) -> f64 {
-        let base = self.unit_base_max_moves(uid);
+    #[cfg(test)]
+    fn unit_base_max_moves(&self, uid: u32) -> f64 {
+        self.unit_base_max_moves_at(uid, self.units[&uid].pos)
+    }
+
+    fn unit_max_moves_at(&self, uid: u32, pos: Pos) -> f64 {
+        let base = self.unit_base_max_moves_at(uid, pos);
         let unit = &self.units[&uid];
         let Some(linked) = unit.linked_to.and_then(|id| self.units.get(&id)) else {
             return base;
         };
         let spec = &self.rules.units[unit.kind.as_str()];
-        if spec.class != "military" {
-            return base;
-        }
-        if self.promotion_effect(unit, "escort_mobility") > 0.0 {
+        if spec.class != "military" || self.promotion_effect(unit, "escort_mobility") > 0.0 {
             base
         } else {
-            base.min(self.unit_base_max_moves(linked.id))
+            base.min(self.unit_base_max_moves_at(linked.id, pos))
         }
+    }
+
+    fn unit_max_moves(&self, uid: u32) -> f64 {
+        self.unit_max_moves_at(uid, self.units[&uid].pos)
     }
 
     /// Strongest same-owner support aura on this unit's tile or an adjacent
@@ -15894,7 +15957,8 @@ impl Game {
                     continue;
                 }
                 let o_water = self.rules.units[o.kind.as_str()].domain.as_deref() == Some("sea");
-                if o_water != water || self.crosses_river(n, pos) {
+                if (o.kind != "giant_death_robot" && o_water != water) || self.crosses_river(n, pos)
+                {
                     continue;
                 }
                 return true;
@@ -15934,7 +15998,9 @@ impl Game {
                     continue;
                 }
                 let other_water = other_spec.domain.as_deref() == Some("sea");
-                if other_water == water && !self.crosses_river(n, pos) {
+                if (other.kind == "giant_death_robot" || other_water == water)
+                    && !self.crosses_river(n, pos)
+                {
                     return true;
                 }
             }
@@ -15962,13 +16028,7 @@ impl Game {
         {
             return false;
         }
-        // MP is paid before entering (Civ 6): need the full step cost, but a
-        // unit with untouched movement may always take one step.
-        let full = u.moves_left >= self.unit_max_moves(uid);
-        if !full
-            && self.map.tiles.contains_key(&pos)
-            && u.moves_left < self.unit_step_cost(uid, u.pos, pos)
-        {
+        if !self.can_pay_step(uid, u.pos, pos) {
             return false;
         }
         if !self.can_enter(uid, self.units[&uid].pos, pos) {
@@ -15976,9 +16036,21 @@ impl Game {
         }
         if self.is_linked_leader(uid) {
             let peer = self.units[&uid].linked_to.unwrap();
-            return self.can_enter(peer, self.units[&peer].pos, pos);
+            return self.can_pay_step(peer, self.units[&peer].pos, pos)
+                && self.can_enter(peer, self.units[&peer].pos, pos);
         }
         true
+    }
+
+    /// MP is paid before entering (Civ VI): a unit needs the full step cost,
+    /// except that one untouched unit may always take one step.
+    fn can_pay_step(&self, uid: u32, from: Pos, to: Pos) -> bool {
+        let Some(unit) = self.units.get(&uid) else {
+            return false;
+        };
+        self.map.tiles.contains_key(&to)
+            && (unit.moves_left >= self.unit_max_moves(uid)
+                || unit.moves_left >= self.unit_step_cost(uid, from, to))
     }
 
     fn can_enter(&self, uid: u32, from: Pos, pos: Pos) -> bool {
@@ -15997,13 +16069,7 @@ impl Game {
         }) {
             return false;
         }
-        let uses_golden_gate = self.map.tiles[&from].wonder.as_deref()
-            == Some("golden_gate_bridge")
-            || self.map.tiles[&pos].wonder.as_deref() == Some("golden_gate_bridge");
-        if self.crosses_cliff(from, pos)
-            && !uses_golden_gate
-            && self.promotion_effect(u, "scale_cliffs") <= 0.0
-        {
+        if !self.unit_can_cross_cliff(uid, from, pos) {
             return false;
         }
         let spec = &self.rules.units[u.kind.as_str()];
@@ -16058,7 +16124,14 @@ impl Game {
                     return false;
                 }
             } else if ospec.class == spec.class {
-                return false;
+                // Land and naval military units use separate stacking
+                // layers, including when the land unit is embarked.
+                let separate_military_layers = spec.class == "military"
+                    && (spec.domain.as_deref() == Some("sea"))
+                        != (ospec.domain.as_deref() == Some("sea"));
+                if !separate_military_layers {
+                    return false;
+                }
             }
         }
         if let Some(cid) = self.city_at(pos) {
@@ -16267,7 +16340,7 @@ impl Game {
                 if rem < cost && !fresh {
                     continue; // MP paid up front (Civ 6)
                 }
-                let mut new_rem = (rem - cost).max(0.0);
+                let mut new_rem = (rem - cost).max(0.0).min(self.unit_max_moves_at(uid, n));
                 if self.formation_enters_enemy_zoc(uid, n) {
                     new_rem = 0.0; // entering enemy ZOC ends movement
                 }
@@ -16280,7 +16353,7 @@ impl Game {
         best
     }
 
-    fn path_to(&self, uid: u32, to: Pos) -> Option<Vec<Pos>> {
+    pub(crate) fn path_to(&self, uid: u32, to: Pos) -> Option<Vec<Pos>> {
         let (start, moves) = {
             let u = self.units.get(&uid)?;
             (u.pos, u.moves_left)
@@ -16310,7 +16383,7 @@ impl Game {
                 if rem < cost && !fresh {
                     continue;
                 }
-                let mut new_rem = (rem - cost).max(0.0);
+                let mut new_rem = (rem - cost).max(0.0).min(self.unit_max_moves_at(uid, n));
                 if self.formation_enters_enemy_zoc(uid, n) {
                     new_rem = 0.0;
                 }
@@ -22030,12 +22103,15 @@ impl Game {
             } else {
                 self.unit_step_cost(peer, u.pos, to)
             };
+            let peer_max = self.unit_max_moves(peer);
             let passenger = self.units.get_mut(&peer).unwrap();
-            passenger.moves_left = (passenger.moves_left - peer_cost).max(0.0);
+            passenger.moves_left = (passenger.moves_left - peer_cost).max(0.0).min(peer_max);
             passenger.acted = true;
             passenger.moved = true;
         }
-        let remaining = (self.units[&uid].moves_left - cost).max(0.0);
+        let remaining = (self.units[&uid].moves_left - cost)
+            .max(0.0)
+            .min(self.unit_max_moves(uid));
         self.units.get_mut(&uid).unwrap().moves_left = remaining;
         if self.formation_enters_enemy_zoc(uid, to) {
             // A linked formation stops when either member is affected. Apply
@@ -22348,7 +22424,7 @@ impl Game {
         if !self.map.tiles.contains_key(&target) {
             return false;
         }
-        if self.crosses_cliff(u.pos, target) && self.promotion_effect(u, "scale_cliffs") <= 0.0 {
+        if !self.unit_can_cross_cliff(uid, u.pos, target) {
             return false;
         }
         u.moves_left >= self.unit_max_moves(uid)
@@ -22762,7 +22838,12 @@ impl Game {
         self.relocate(uid, pos);
         if let Some(peer) = linked {
             self.relocate(peer, pos);
+            let peer_max = self.unit_max_moves(peer);
+            self.units.get_mut(&peer).unwrap().moves_left =
+                self.units[&peer].moves_left.min(peer_max);
         }
+        let unit_max = self.unit_max_moves(uid);
+        self.units.get_mut(&uid).unwrap().moves_left = self.units[&uid].moves_left.min(unit_max);
         if self.formation_enters_enemy_zoc(uid, pos) {
             self.stop_unit_by_zoc(uid);
             if let Some(peer) = linked {
@@ -34426,10 +34507,22 @@ mod combat_scenarios {
 
         let builder = g.spawn_unit("builder", 0, land);
         assert!(!g.can_move(builder, coast));
+        assert!(g.path_to(builder, coast).is_none());
+        assert!(g
+            .apply(
+                0,
+                &Action::MoveTo {
+                    unit: builder,
+                    to: coast,
+                },
+            )
+            .is_err());
         g.players[0].techs.insert("sailing".to_string());
         assert!(g.can_move(builder, coast), "Sailing embarks Builders");
+        assert_eq!(g.path_to(builder, coast), Some(vec![coast]));
         g.relocate(builder, coast);
         assert!(!g.can_move(builder, ocean));
+        assert!(g.path_to(builder, ocean).is_none());
         g.players[0].techs.insert("cartography".to_string());
         assert!(g.can_move(builder, ocean), "Cartography opens Ocean");
         g.remove_unit(builder);
@@ -34472,6 +34565,177 @@ mod combat_scenarios {
         g.players[0].techs.insert("cartography".to_string());
         assert!(g.can_move(galley, ocean));
         assert_eq!(g.route_step(galley, ocean, 0), Some(ocean));
+    }
+
+    #[test]
+    fn embarked_units_use_transport_movement_and_pay_shore_transition_costs() {
+        let (mut g, land, ring) = controlled_game(3201);
+        let coast = ring[0];
+        let second_water = g
+            .nbrs(coast)
+            .into_iter()
+            .find(|position| *position != land)
+            .unwrap();
+        g.map.tiles.get_mut(&coast).unwrap().terrain = "coast".to_string();
+        g.map.tiles.get_mut(&second_water).unwrap().terrain = "coast".to_string();
+        g.players[0].techs.insert("shipbuilding".to_string());
+
+        let horse = g.spawn_unit("horseman", 0, land);
+        assert_eq!(g.unit_base_max_moves(horse), 4.0);
+        assert_eq!(g.unit_step_cost(horse, land, coast), 3.0);
+        g.apply(
+            0,
+            &Action::Move {
+                unit: horse,
+                to: coast,
+            },
+        )
+        .unwrap();
+        assert!(g.is_embarked(&g.units[&horse]));
+        let observed = crate::obs::observation(&g, 0);
+        assert_eq!(
+            observed["units"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|unit| unit["id"] == horse)
+                .unwrap()["embarked"],
+            true,
+            "the client must render the unit as a transport instead of a land sprite"
+        );
+        assert_eq!(g.unit_base_max_moves(horse), 2.0);
+        assert_eq!(g.units[&horse].moves_left, 1.0);
+        g.apply(
+            0,
+            &Action::Move {
+                unit: horse,
+                to: second_water,
+            },
+        )
+        .unwrap();
+        assert_eq!(g.units[&horse].moves_left, 0.0);
+
+        g.remove_unit(horse);
+        let warrior = g.spawn_unit("warrior", 0, coast);
+        for technology in ["mathematics", "square_rigging", "steam_power", "combustion"] {
+            g.players[0].techs.insert(technology.to_string());
+        }
+        assert_eq!(
+            g.unit_base_max_moves(warrior),
+            7.0,
+            "embarked speed is 2 plus the stock sea and embarked technology bonuses"
+        );
+        g.units.get_mut(&warrior).unwrap().moves_left = 7.0;
+        assert_eq!(g.unit_step_cost(warrior, coast, land), 3.0);
+        g.apply(
+            0,
+            &Action::Move {
+                unit: warrior,
+                to: land,
+            },
+        )
+        .unwrap();
+        assert!(!g.is_embarked(&g.units[&warrior]));
+        assert_eq!(
+            g.units[&warrior].moves_left, 2.0,
+            "disembarking cannot leave more MP than the land unit's maximum"
+        );
+    }
+
+    #[test]
+    fn harbors_and_coastal_city_centers_remove_the_shore_penalty_and_open_cliffs() {
+        let (mut g, land, ring) = controlled_game(3202);
+        let coast = ring[0];
+        g.map.tiles.get_mut(&coast).unwrap().terrain = "coast".to_string();
+        g.map.set_cliff_edge(land, coast, true);
+        g.players[0].techs.insert("shipbuilding".to_string());
+        let warrior = g.spawn_unit("warrior", 0, land);
+
+        assert!(
+            !g.can_move(warrior, coast),
+            "an ordinary cliff blocks embarkation"
+        );
+        g.map.tiles.get_mut(&coast).unwrap().district = Some("harbor".to_string());
+        assert_eq!(g.unit_step_cost(warrior, land, coast), 1.0);
+        assert!(
+            g.can_move(warrior, coast),
+            "a working Harbor opens its cliff edge"
+        );
+        g.map.tiles.get_mut(&coast).unwrap().pillaged = true;
+        assert_eq!(g.unit_step_cost(warrior, land, coast), 3.0);
+        assert!(
+            !g.can_move(warrior, coast),
+            "a pillaged Harbor loses both benefits"
+        );
+
+        g.map.set_cliff_edge(land, coast, false);
+        g.map.tiles.get_mut(&coast).unwrap().district = None;
+        g.map.tiles.get_mut(&coast).unwrap().pillaged = false;
+        let city = g.found_city_for(0, land, None);
+        assert_eq!(g.city_at(land), Some(city));
+        assert_eq!(
+            g.unit_step_cost(warrior, land, coast),
+            1.0,
+            "a coastal City Center also removes the transition surcharge"
+        );
+    }
+
+    #[test]
+    fn embarked_defense_stacking_and_gdr_water_rules_match_native_domains() {
+        let (mut g, land, ring) = controlled_game(3203);
+        let coast = ring[0];
+        let enemy_water = g
+            .nbrs(coast)
+            .into_iter()
+            .find(|position| *position != land)
+            .unwrap();
+        g.map.tiles.get_mut(&coast).unwrap().terrain = "coast".to_string();
+        g.map.tiles.get_mut(&enemy_water).unwrap().terrain = "coast".to_string();
+
+        let warrior = g.spawn_unit("warrior", 0, coast);
+        assert!(g.is_embarked(&g.units[&warrior]));
+        assert_eq!(g.unit_strength(&g.units[&warrior], true), 10.0);
+        g.players[0].techs.insert("horseback_riding".to_string());
+        assert_eq!(g.unit_strength(&g.units[&warrior], true), 15.0);
+        g.players[0].techs.insert("cartography".to_string());
+        assert_eq!(g.unit_strength(&g.units[&warrior], true), 30.0);
+        g.units.get_mut(&warrior).unwrap().formation = 1;
+        assert_eq!(g.unit_strength(&g.units[&warrior], true), 40.0);
+
+        let galley = g.spawn_unit("galley", 0, enemy_water);
+        assert!(g.can_move(galley, coast));
+        g.apply(
+            0,
+            &Action::Move {
+                unit: galley,
+                to: coast,
+            },
+        )
+        .unwrap();
+        assert!(g.can_link_units(0, galley, warrior));
+
+        g.remove_unit(galley);
+        g.remove_unit(warrior);
+        g.players[0].techs.clear();
+        let robot = g.spawn_unit("giant_death_robot", 0, land);
+        assert!(g.can_move(robot, coast));
+        g.apply(
+            0,
+            &Action::Move {
+                unit: robot,
+                to: coast,
+            },
+        )
+        .unwrap();
+        assert!(!g.is_embarked(&g.units[&robot]));
+        assert_eq!(g.unit_strength(&g.units[&robot], true), 130.0);
+        assert!(g.in_enemy_zoc(1, land));
+        assert!(
+            g.in_enemy_zoc(1, enemy_water),
+            "the GDR projects its ZOC into water as well as land"
+        );
+        g.spawn_unit("galley", 1, enemy_water);
+        assert!(g.unit_can_melee_target_domain(robot, enemy_water));
     }
 
     #[test]

@@ -3729,6 +3729,9 @@ impl AdvancedAi {
                 break;
             }
         }
+
+    }
+
     /// A faith-rich empire countering a military or religious victory threat
     /// should convert that otherwise stranded treasury into defenders once
     /// Theocracy (or another legal faith-purchase source) makes them available.
