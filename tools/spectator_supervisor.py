@@ -4,10 +4,11 @@
 The supervisor deliberately never replaces code during a healthy live match.
 It checkpoints active matches, revives a crashed or unresponsive server from
 the latest checkpoint, and nudges a spectator whose browser stopped stepping.
-Once a winner appears it builds the newest stable worktree while the result
-screen remains available, then replaces that finished server after the
-cooldown. A known-good runtime remains available while broken or changing
-source is repaired.
+Once a winner appears it retires that server immediately, leaving the rendered
+result screen visible while it builds the newest stable worktree. It launches
+the next game only after the fresh runtime is ready, so the browser's result
+countdown cannot race ahead on stale code. A known-good runtime remains
+available while broken or changing source is repaired.
 """
 
 from __future__ import annotations
@@ -295,6 +296,36 @@ def session_settings(state: dict[str, Any], defaults: dict[str, int]) -> dict[st
     }
 
 
+def result_standings(state: dict[str, Any]) -> str | None:
+    """Format a compact durable record before the result server is retired."""
+    players = [
+        player
+        for player in state.get("players") or []
+        if not player.get("is_minor", False) and not player.get("is_barbarian", False)
+    ]
+    if not players:
+        return None
+
+    winner = state.get("winner")
+    ranked = sorted(
+        players,
+        key=lambda player: (player.get("score") or 0, -(player.get("id") or 0)),
+        reverse=True,
+    )
+    entries = []
+    for player in ranked:
+        identity = player.get("civ") or player.get("leader") or f"player {player.get('id')}"
+        prefix = "winner " if player.get("id") == winner else ""
+        details = [
+            f"score {player.get('score', '?')}",
+            f"cities {player.get('cities', '?')}",
+            f"faith {player.get('faith', '?')}",
+            f"military {player.get('military', '?')}",
+        ]
+        entries.append(f"{prefix}{identity} ({', '.join(details)})")
+    return "; ".join(entries)
+
+
 def server_command(
     port: int,
     settings: dict[str, int],
@@ -476,9 +507,6 @@ def main() -> int:
     checkpoint_at = 0.0
     checkpointed_progress: tuple[Any, ...] | None = None
     resume_attempts: dict[tuple[Any, ...], int] = {}
-    finished_key: tuple[Any, ...] | None = None
-    finished_seen_at = 0.0
-    update_retry_at = 0.0
     busy_reported = False
     busy_check_at = 0.0
 
@@ -586,7 +614,6 @@ def main() -> int:
             busy_check_at = 0.0
             settings = session_settings(state, settings)
             if state.get("winner") is None:
-                finished_key = None
                 now = time.monotonic()
                 marker = progress_marker(state)
                 if marker != last_progress:
@@ -622,52 +649,26 @@ def main() -> int:
                 time.sleep(args.poll)
                 continue
 
-            finished_instance = state.get("server_instance")
-            finished_seed = state.get("seed")
-            current_finished_key = (finished_instance, finished_seed)
-            now = time.monotonic()
-            if current_finished_key != finished_key:
-                finished_key = current_finished_key
-                finished_seen_at = now
-                update_retry_at = 0.0
-                log(
-                    f"game finished on turn {state.get('turn')} "
-                    f"({state.get('victory_type') or 'unknown'} victory); checking for updates"
-                )
+            finished_seen_at = time.monotonic()
+            log(
+                f"game finished on turn {state.get('turn')} "
+                f"({state.get('victory_type') or 'unknown'} victory); claiming the boundary"
+            )
+            standings = result_standings(state)
+            if standings:
+                log(f"standings: {standings}")
 
-            if now < update_retry_at:
-                time.sleep(min(args.poll, update_retry_at - now))
-                continue
-
-            # Keep the completed game's result server available while builds
-            # retry. A broken worktree gets one attempt per retry interval so
-            # this loop can still checkpoint/recover a browser-started game.
-            if not prepare_latest_once():
-                update_retry_at = time.monotonic() + args.build_retry
-                time.sleep(args.poll)
-                continue
-
-            # The page also has a result countdown. If it already created a
-            # successor while compilation ran, never interrupt that live game.
-            latest_state = read_state(args.port)
-            if latest_state is not None and (
-                latest_state.get("server_instance") != finished_instance
-                or latest_state.get("seed") != finished_seed
-                or latest_state.get("winner") is None
-            ):
-                log("the browser already began another game; leaving that live match uninterrupted")
-                state = latest_state
-                last_progress = progress_marker(state)
-                progress_at = time.monotonic()
-                finished_key = None
-                continue
+            # Stop before compiling. The browser retains its rendered result,
+            # but its countdown can no longer create a successor on the old
+            # process while the source snapshot is being made ready.
+            stop_server(process, adopted_pid)
+            process = None
+            adopted_pid = None
+            prepare_latest(args.build_retry)
 
             remaining = args.cooldown - (time.monotonic() - finished_seen_at)
             if remaining > 0:
                 time.sleep(remaining)
-            stop_server(process, adopted_pid)
-            process = None
-            adopted_pid = None
             try:
                 save_path.unlink()
             except FileNotFoundError:

@@ -295,8 +295,8 @@
   .empty-state { padding: 10px 0 2px; color: var(--faint); font-size: 10px; text-align: center; }
   .spec-controls { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
   .spec-controls button { margin: 0; }
-  .speed-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; margin-top: 9px; }
-  .speed-row span { color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+  .speed-row, .view-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; margin-top: 9px; }
+  .speed-row span, .view-row span { color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
   .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; color: var(--muted); font-size: 10px; cursor: pointer; }
   .setting-row span { display: flex; align-items: center; gap: 7px; }
   .setting-row kbd { margin: 0; }
@@ -535,6 +535,11 @@
         <button class="primary" id="specpause">⏸ Pause</button>
         <button class="icon" id="specstep" title="Advance one civilization" aria-label="Step once">›</button>
       </div>
+      <div class="view-row"><span>View as</span>
+        <select id="viewplayer" aria-label="Observation perspective">
+          <option value="spectator">Spectator · full map</option>
+        </select>
+      </div>
       <div class="speed-row"><span>Watch pace</span>
         <select id="specspeed">
           <option value="100" selected>Lightning · 0.1s</option>
@@ -603,6 +608,7 @@ const ERA_NAMES = ["ancient", "classical", "medieval", "renaissance",
 let state = null, sel = null, selCity = null, RULES = null;
 let lensOn = false, tackMode = false, tacks = [], lastSeed = null, cycleIdx = -1;
 let SPEC = false, specPaused = false, specTimer = null, specBusy = false;
+let viewChanging = false;
 let worldEvents = [], lastLeader = null, lastSidePaint = 0;
 let TMAP = new Map();
 let tradeFilter = "all", tradeBusy = false;
@@ -640,10 +646,21 @@ function animateDiff(prev, next) {
       const [fx, fy] = worldXY(pu.pos), [tx, ty] = worldXY(nu.pos);
       const cur = anim.moves.get(nu.id);
       const sx = cur ? cur.x : fx, sy = cur ? cur.y : fy;
-      const steps = Math.min(4, hexDistUI(pu.pos, nu.pos));
-      anim.moves.set(nu.id, { sx, sy, tx, ty, x: sx, y: sy, steps,
-                              t0: now, dur: 90 + 90 * steps });
-      if (Math.abs(tx - sx) > 1) facing.set(nu.id, tx > sx ? 1 : -1);
+      const route = next.movement_paths && next.movement_paths[nu.id];
+      // A multi-hex state diff may contain an entire AI turn. Without the
+      // authoritative intermediate route, a straight tween can visibly fly
+      // across oceans or mountains even though every game step was legal.
+      const hasRoute = Array.isArray(route) && route.length > 1;
+      if (!hasRoute && hexDistUI(pu.pos, nu.pos) > 1) {
+        anim.moves.delete(nu.id);
+      } else {
+        let points = hasRoute ? route.map(worldXY) : [[sx, sy], [tx, ty]];
+        if (cur) points[0] = [sx, sy];
+        const steps = Math.max(1, points.length - 1);
+        anim.moves.set(nu.id, { sx, sy, tx, ty, x: sx, y: sy, points, steps,
+                                t0: now, dur: 90 + 90 * Math.min(4, steps) });
+        if (Math.abs(tx - sx) > 1) facing.set(nu.id, tx > sx ? 1 : -1);
+      }
     }
     if (nu.hp < pu.hp) {
       const [x, y] = worldXY(nu.pos);
@@ -657,7 +674,8 @@ function animateDiff(prev, next) {
     // sudden disappearance at low HP reads as a battlefield death
     if (pu.hp <= 55) {
       const [x, y] = worldXY(pu.pos);
-      anim.deaths.push({ x, y, owner: pu.owner, type: pu.type, t0: now });
+      anim.deaths.push({ x, y, owner: pu.owner, type: pu.type,
+                         embarked: pu.embarked, t0: now });
       anim.floats.push({ x, y: y - 16, txt: "☠", col: "#ffd0c0", t0: now });
     }
   }
@@ -807,6 +825,20 @@ async function fetchJSON(url, opts = {}, timeoutMs = 15000) {
 let firstLoad = true;
 let serverInstance = null;
 let bootBusy = false, bootTimer = null;
+function syncViewPlayer() {
+  const select = document.getElementById("viewplayer");
+  if (!select || !state) return;
+  const majors = state.players.filter(p => !p.is_minor && !p.is_barbarian);
+  const signature = `${state.seed}|${majors.map(p => `${p.id}:${p.civ}`).join("|")}`;
+  if (select.dataset.signature !== signature) {
+    select.dataset.signature = signature;
+    select.innerHTML = `<option value="spectator">Spectator · full map</option>` +
+      majors.map(p => `<option value="${p.id}">${p.civ} · player ${p.id + 1}</option>`).join("");
+  }
+  select.value = state.view_player === null || state.view_player === undefined
+    ? "spectator" : String(state.view_player);
+  select.disabled = viewChanging;
+}
 async function boot() {
   if (bootBusy) return;
   bootBusy = true;
@@ -854,7 +886,7 @@ function reportSpecStatus() {
 }
 setInterval(reportSpecStatus, 4000);
 async function specStep(force) {
-  if (!SPEC || (!force && specPaused) || specBusy) return;
+  if (!SPEC || viewChanging || (!force && specPaused) || specBusy) return;
   specBusy = true;
   let st = null;
   try {
@@ -918,7 +950,7 @@ function startRestartCountdown() {
 function scheduleSpec(st) {
   clearTimeout(specTimer);
   specLast = Date.now();
-  if (!SPEC || specPaused) return;
+  if (!SPEC || specPaused || viewChanging) return;
   if (st && st.winner !== null && st.winner !== undefined) {
     startRestartCountdown();
     return;
@@ -1025,13 +1057,20 @@ function render(st, recordChronicle = true) {
   }
   if (st.server_instance !== undefined) serverInstance = st.server_instance;
   const newWorld = !state || st.seed !== state.seed || st.turn < state.turn;
-  if (recordChronicle) chronicle(state, st);
-  animateDiff(state, st);
+  const viewChanged = !!state && !newWorld && st.view_player !== state.view_player;
+  if (recordChronicle && !viewChanged) chronicle(state, st);
+  if (!viewChanged) animateDiff(state, st);
+  else {
+    anim.moves.clear(); anim.floats.length = 0; anim.sparks.length = 0;
+    anim.deaths.length = 0; anim.strike = null; pendingStrike = null;
+    sel = null; selCity = null;
+  }
   state = st;
   SPEC = !!st.spectate;
   document.getElementById("humanfooter").style.display = SPEC ? "none" : "grid";
   document.getElementById("specbar").style.display = SPEC ? "block" : "none";
   if (SPEC) closeTrade();
+  syncViewPlayer();
   if (newWorld && st.seed !== undefined) { lastSeed = st.seed; loadTacks(); }
   if (newWorld) {
     const majors = st.players.filter(p => !p.is_minor && !p.is_barbarian).length;
@@ -1044,7 +1083,8 @@ function render(st, recordChronicle = true) {
   TMAP = new Map(st.map.tiles.map(t => [key(t.pos), t]));
   // Establish the view once per world, before its first paint. Subsequent
   // simulation states never alter the camera; only explicit user input does.
-  if (newWorld) setMainLandmassView();
+  if (newWorld || (viewChanged && st.view_player === null)) setMainLandmassView();
+  else if (viewChanged) setHomeView();
   const errEl = document.getElementById("err");
   if (st.error) { errEl.textContent = st.error; errEl.style.display = "block";
     setTimeout(() => errEl.style.display = "none", 2500); }
@@ -1332,7 +1372,19 @@ function drawUnitChar(u, x, y, now, moving) {
   cx.scale(fc, 1);
   cx.lineWidth = 1.4; cx.strokeStyle = dark;
   const k = u.type;
-  if (NAVAL.has(k)) {
+  if (u.embarked) {
+    // Embarked land units use a shared transport silhouette. Keeping their
+    // land character here makes cavalry and civilians look like they are
+    // walking or flying over the water even when the move itself is legal.
+    cx.fillStyle = "#6b4a2f";
+    cx.beginPath(); cx.moveTo(-11, 1); cx.quadraticCurveTo(0, 7, 11, 1);
+    cx.lineTo(8, -3); cx.lineTo(-8, -3); cx.closePath(); cx.fill(); cx.stroke();
+    cx.fillStyle = col;
+    cx.beginPath(); cx.moveTo(0, -2); cx.lineTo(0, -13); cx.lineTo(8, -6);
+    cx.closePath(); cx.fill(); cx.stroke();
+    cx.fillStyle = skin;
+    cx.beginPath(); cx.arc(-4, -5, 2.2, 0, 7); cx.fill(); cx.stroke();
+  } else if (NAVAL.has(k)) {
     if (k === "submarine" || k === "nuclear_submarine") {
       cx.fillStyle = "#364653";
       cx.beginPath(); cx.ellipse(0, 1, 12, 4.5, 0, 0, 7); cx.fill(); cx.stroke();
@@ -1853,7 +1905,7 @@ function draw() {
         cx.fillStyle = "#59aee1"; cx.fillRect(bx, statusY, tw * wallFraction, 3);
         statusY += 4;
       }
-      if (c.owner === 0 && c.queue && c.queue.length && c.queue_cost) {
+      if (c.owner === state.player && c.queue && c.queue.length && c.queue_cost) {
         cx.fillStyle = "#0d1117"; cx.fillRect(bx, statusY, tw, 3);
         cx.fillStyle = "#e09050";
         cx.fillRect(bx, statusY, tw * Math.min(1, c.production / c.queue_cost), 3);
@@ -1875,9 +1927,12 @@ function draw() {
     if (mv) {
       const e = Math.min(1, (now - mv.t0) / mv.dur);
       const ee = easeIO(e);
-      x = mv.sx + (mv.tx - mv.sx) * ee;
-      y = mv.sy + (mv.ty - mv.sy) * ee
-        - Math.abs(Math.sin(e * Math.PI * mv.steps)) * 2.4; // little hops
+      const legFloat = Math.min(mv.steps - 1e-9, ee * mv.steps);
+      const leg = Math.floor(legFloat), local = legFloat - leg;
+      const from = mv.points[leg], to = mv.points[leg + 1];
+      x = from[0] + (to[0] - from[0]) * local;
+      y = from[1] + (to[1] - from[1]) * local
+        - Math.abs(Math.sin(local * Math.PI)) * 2.4; // little hops
       mv.x = x; mv.y = y;
       moving = true;
       if (e >= 1) anim.moves.delete(u.id);
@@ -1917,7 +1972,8 @@ function draw() {
       else cx.arc(x, y, rr, 0, 7);
       cx.stroke();
       cx.fillStyle = "#10151d"; cx.font = "11px 'Segoe UI Symbol', sans-serif";
-      cx.fillText(UNIT_ICON[u.type] || u.type[0].toUpperCase(), x, y + 0.5);
+      cx.fillText(u.embarked ? "⛵" : (UNIT_ICON[u.type] || u.type[0].toUpperCase()),
+                  x, y + 0.5);
     }
     // chunky health bar — sized against zoom so it stays readable far out
     if (u.hp < 100) {
@@ -1962,7 +2018,8 @@ function draw() {
     cx.translate(d.x, d.y + e * 5);
     cx.rotate((d.owner % 2 ? 1 : -1) * e * 1.2);
     cx.translate(-d.x, -d.y);
-    drawUnitChar({ id: 0, type: d.type, owner: d.owner, hp: 0 }, d.x, d.y, now, false);
+    drawUnitChar({ id: 0, type: d.type, owner: d.owner, hp: 0,
+                   embarked: d.embarked }, d.x, d.y, now, false);
     cx.restore();
     cx.globalAlpha = 1;
   }
@@ -2008,9 +2065,11 @@ function drawMini() {
   const cs = Math.min(192 / (state.map.width + 1),
                       132 / (state.map.height + 1));
   const off = 4;
+  const visible = new Set(state.visible.map(key));
   for (const t of tiles) {
     const col = t.pos[0] + (t.pos[1] - (t.pos[1] & 1)) / 2, row = t.pos[1];
-    mx2.fillStyle = TERRAIN[t.terrain] || "#333";
+    const terrainColor = TERRAIN[t.terrain] || "#333";
+    mx2.fillStyle = visible.has(key(t.pos)) ? terrainColor : shade(terrainColor, 0.42);
     mx2.fillRect(off + col * cs + (row % 2) * cs / 2, off + row * cs, cs, cs);
   }
   for (const c of state.cities) {
@@ -2064,13 +2123,14 @@ function drawTopbar() {
     `<div class="hud-stat">✦ <strong>${Math.round(me.faith)}</strong><i>+${y.faith}</i></div>` +
     `<div class="hud-stat">⚜ <strong>${Math.round(me.diplomatic_favor || 0)}</strong><i>favor</i></div>`;
 
-  const identity = SPEC ? actor : state.players[0];
+  const playerView = SPEC && state.view_player !== null && state.view_player !== undefined;
+  const identity = playerView ? state.players[state.player] : SPEC ? actor : state.players[0];
   const mapLabel = `${state.map.size_name || "Custom"} ${state.map.width}×${state.map.height}`;
   document.getElementById("gameidentity").innerHTML =
     `<div class="identity-copy"><div class="civ-name">${identity.civ}</div>` +
     `<div class="identity-meta" title="${identity.leader || "Unknown leader"} · ${mapLabel}">` +
     `${identity.leader || "Unknown leader"}${identity.government ? ` · ${identity.government.replaceAll("_", " ")}` : ""} · ${mapLabel}</div></div>` +
-    `<span class="live-badge">${SPEC ? "Observing" : "Your empire"}</span>`;
+    `<span class="live-badge">${playerView ? "Player view" : SPEC ? "Observing" : "Your empire"}</span>`;
 }
 
 function compactStat(value) {
@@ -2553,7 +2613,7 @@ function settleValue(pos) {
 }
 function validSettle(t) {
   if (t.terrain === "ocean" || t.terrain === "coast" || t.terrain === "mountain") return false;
-  if (t.owner !== null && t.owner !== undefined && t.owner !== 0) return false;
+  if (t.owner !== null && t.owner !== undefined && t.owner !== state.player) return false;
   for (const c of state.cities) if (whexDist(t.pos, c.pos) < 4) return false;
   return true;
 }
@@ -2591,14 +2651,20 @@ function centerWorld(pos) {
 }
 function homeAnchor() {
   if (!state) return null;
-  const pid = SPEC ? state.current : 0;
+  const pid = state.player;
   return state.cities.find(c => c.owner === pid && c.is_capital) ||
          state.cities.find(c => c.owner === pid) ||
          state.units.find(u => u.owner === pid) || null;
 }
-function centerHome() {
+function setHomeView() {
   const own = homeAnchor();
-  if (own) centerWorld(own.pos);
+  if (!own) return;
+  cam.x = S * SQ3 * (own.pos[0] + own.pos[1] / 2);
+  cam.y = S * 1.5 * own.pos[1];
+}
+function centerHome() {
+  setHomeView();
+  draw(); drawMini();
 }
 function mainLandmassAnchor() {
   if (!state) return null;
@@ -2817,7 +2883,8 @@ cv.addEventListener("mousemove", ev => {
     if (key(u.pos) !== k) continue;
     lines.push("● " + state.players[u.owner].civ + " " + u.type +
       " — " + u.hp + "hp, " + u.moves_left + "mp" +
-      (u.level > 1 ? ", lvl " + u.level : "") + (u.fortified ? ", fortified" : ""));
+      (u.level > 1 ? ", lvl " + u.level : "") + (u.embarked ? ", embarked" : "") +
+      (u.fortified ? ", fortified" : ""));
   }
   tip.innerHTML = lines.join("<br>");
   tip.style.display = "block";
@@ -2903,6 +2970,28 @@ document.getElementById("specstep").onclick = () => {
 };
 document.getElementById("specspeed").onchange = () => {
   if (!specPaused) scheduleSpec(state);
+};
+document.getElementById("viewplayer").onchange = async ev => {
+  if (!SPEC || viewChanging) return;
+  const select = ev.currentTarget;
+  const player = select.value === "spectator" ? null : +select.value;
+  viewChanging = true;
+  select.disabled = true;
+  clearTimeout(specTimer);
+  try {
+    render(await fetchJSON("/view", { method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({player}) }), false);
+  } catch (e) {
+    const errEl = document.getElementById("err");
+    errEl.textContent = `Could not change view: ${e.message}`;
+    errEl.style.display = "block";
+    setTimeout(() => errEl.style.display = "none", 2500);
+  } finally {
+    viewChanging = false;
+    syncViewPlayer();
+    scheduleSpec(state);
+  }
 };
 document.getElementById("newgame").onclick = async () => {
   const np = +document.getElementById("np").value;

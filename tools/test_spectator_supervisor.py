@@ -47,6 +47,39 @@ class SessionSettingsTests(unittest.TestCase):
         }
         self.assertEqual(supervisor.session_settings({}, defaults), defaults)
 
+    def test_result_standings_preserves_winner_and_excludes_non_major_players(self):
+        state = {
+            "winner": 2,
+            "players": [
+                {
+                    "id": 0,
+                    "civ": "Rome",
+                    "score": 300,
+                    "cities": 5,
+                    "faith": 90,
+                    "military": 240,
+                },
+                {
+                    "id": 2,
+                    "civ": "Egypt",
+                    "score": 250,
+                    "cities": 4,
+                    "faith": 800,
+                    "military": 120,
+                },
+                {"id": 4, "civ": "Geneva", "score": 999, "is_minor": True},
+                {"id": 5, "civ": "Barbarians", "score": 999, "is_barbarian": True},
+            ],
+        }
+
+        standings = supervisor.result_standings(state)
+
+        self.assertEqual(
+            standings,
+            "Rome (score 300, cities 5, faith 90, military 240); "
+            "winner Egypt (score 250, cities 4, faith 800, military 120)",
+        )
+
 
 class SourceSnapshotTests(unittest.TestCase):
     def test_snapshot_tracks_runtime_inputs_only(self):
@@ -239,6 +272,83 @@ class RecoveryTests(unittest.TestCase):
             checkpoint,
         )
         self.assertGreaterEqual(stop.call_count, 2)
+
+    def test_finished_server_is_stopped_before_update_and_successor_launch(self):
+        args = SimpleNamespace(
+            port=8766,
+            players=4,
+            width=60,
+            height=38,
+            city_states=6,
+            turns=500,
+            cooldown=0.0,
+            poll=0.01,
+            build_retry=0.01,
+            unresponsive_timeout=20.0,
+            busy_timeout=600.0,
+            stall_timeout=30.0,
+            checkpoint_interval=5.0,
+            max_resume_attempts=2,
+            no_open=True,
+            adopt_pid=None,
+        )
+        active = {"seed": 9, "turn": 22, "current": 3, "winner": None}
+        finished = {
+            **active,
+            "turn": 70,
+            "winner": 1,
+            "victory_type": "science",
+            "players": [],
+        }
+        successor = {"seed": 10, "turn": 1, "current": 0, "winner": None}
+        first_process = SimpleNamespace(pid=321)
+        second_process = SimpleNamespace(pid=654)
+        events = []
+        starts = []
+
+        def start(*_args, **_kwargs):
+            process = first_process if not starts else second_process
+            starts.append(process)
+            events.append(("start", process.pid))
+            return process
+
+        def wait(_port, process):
+            events.append(("wait", process.pid))
+            return active if process is first_process else successor
+
+        def stop(process, _adopted_pid):
+            events.append(("stop", getattr(process, "pid", None)))
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "civvis"
+            runtime.touch()
+            checkpoint = root / "save.json"
+            with (
+                patch.object(supervisor, "parse_args", return_value=args),
+                patch.object(supervisor, "RUNTIME_BINARY", runtime),
+                patch.object(supervisor, "checkpoint_path", return_value=checkpoint),
+                patch.object(supervisor, "start_server", side_effect=start),
+                patch.object(supervisor, "wait_for_server", side_effect=wait),
+                patch.object(
+                    supervisor,
+                    "read_state",
+                    side_effect=[finished, KeyboardInterrupt],
+                ),
+                patch.object(supervisor, "stop_server", side_effect=stop),
+                patch.object(
+                    supervisor,
+                    "prepare_latest",
+                    side_effect=lambda _retry: events.append(("prepare", None)),
+                ),
+            ):
+                self.assertEqual(supervisor.main(), 0)
+
+        retired = events.index(("stop", 321))
+        prepared = events.index(("prepare", None))
+        launched = events.index(("start", 654))
+        self.assertLess(retired, prepared)
+        self.assertLess(prepared, launched)
 
 
 if __name__ == "__main__":
