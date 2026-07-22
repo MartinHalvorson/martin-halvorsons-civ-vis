@@ -13,6 +13,7 @@ pub mod obs;
 pub mod rng;
 pub mod rules;
 pub mod server;
+pub mod valuenet;
 pub mod world;
 
 pub type Pos = (i32, i32);
