@@ -53,7 +53,9 @@ Economic Alliances according to their victory plan, reject imminent victory
 rivals, and prefer partners whose technology, Tourism, military, religion, or
 city-state network complements the plan. Both AI tiers prioritize the first
 bilateral route that accelerates Alliance experience; Advanced Traders also
-price the exact route yield and Cultural Alliance Great Person benefit.
+price the exact route yield and Cultural Alliance Great Person benefit. Trader
+production is capped by reachable, empire-wide unreserved destinations, and an
+idle Trader relocates when another origin can use the remaining route capacity.
 Advanced envoy placement values each named suzerain bonus against the active
 victory plan, prices the next 1/3/6 threshold from the empire's actual active
 building tiers and production queues on a per-Envoy basis, avoids contesting a
