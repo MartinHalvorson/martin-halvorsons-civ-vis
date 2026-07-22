@@ -137,6 +137,11 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             "dvp": p.dvp,
             "age": p.age,
             "tourism": round1(p.tourism_lifetime),
+            "domestic_tourists": g.domestic_tourists(pid),
+            "foreign_tourists": g.foreign_tourists(pid),
+            "science_projects": p.science_projects,
+            "exoplanet_distance": round1(p.exoplanet_distance),
+            "exoplanet_speed": round1(g.exoplanet_speed(pid)),
             "pantheon": p.pantheon,
             "religion": p.religion,
             "religion_beliefs": p.religion_beliefs,
@@ -155,28 +160,55 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
                 "culture": round1(empire[4]), "faith": round1(empire[5]),
             },
         },
-        "players": g.players.iter().map(|o| json!({
-            "id": o.id, "civ": o.civ,
-            "leader": g.rules.civs.get(&o.civ).map(|c| c.leader.clone()),
-            "alive": o.alive,
-            "is_minor": o.is_minor, "is_barbarian": o.is_barbarian,
-            "cs_type": if o.is_minor && !o.is_barbarian {
-                Some(Game::cs_type(&o.civ))
-            } else {
-                None
-            },
-            "suzerain": if o.is_minor && !o.is_barbarian {
-                g.suzerain_of(o.id)
-            } else {
-                None
-            },
-            "my_envoys": g.envoys_at(pid, o.id),
-            "dvp": o.dvp,
-            "government": o.government,
-            "score": g.score(o.id),
-            "cities": g.player_city_ids(o.id).len(),
-            "at_war_with_me": g.is_at_war(pid, o.id),
-        })).collect::<Vec<_>>(),
+        "players": g.players.iter().map(|o| {
+            // Civ VI's diplomacy ribbon keeps every major's broad empire
+            // output visible.  These are aggregate public indicators rather
+            // than hidden city details, and make spectator comparisons useful.
+            let mut output = crate::rules::Yields::default();
+            for cid in g.player_city_ids(o.id) {
+                output.add(g.city_yields(cid));
+            }
+            let military = g.player_unit_ids(o.id).into_iter().map(|uid| {
+                let u = &g.units[&uid];
+                let spec = &g.rules.units[u.kind.as_str()];
+                if spec.class != "military" {
+                    return 0.0;
+                }
+                let strength = g.unit_strength(u, false)
+                    .max(g.unit_ranged_attack_strength(u));
+                strength * (u.hp.max(0) as f64 / 100.0)
+            }).sum::<f64>().round() as i64;
+            json!({
+                "id": o.id, "civ": o.civ,
+                "leader": g.rules.civs.get(&o.civ).map(|c| c.leader.clone()),
+                "alive": o.alive,
+                "is_minor": o.is_minor, "is_barbarian": o.is_barbarian,
+                "cs_type": if o.is_minor && !o.is_barbarian {
+                    Some(Game::cs_type(&o.civ))
+                } else {
+                    None
+                },
+                "suzerain": if o.is_minor && !o.is_barbarian {
+                    g.suzerain_of(o.id)
+                } else {
+                    None
+                },
+                "my_envoys": g.envoys_at(pid, o.id),
+                "dvp": o.dvp,
+                "domestic_tourists": g.domestic_tourists(o.id),
+                "foreign_tourists": g.foreign_tourists(o.id),
+                "science_projects": o.science_projects,
+                "exoplanet_distance": round1(o.exoplanet_distance),
+                "government": o.government,
+                "score": g.score(o.id),
+                "cities": g.player_city_ids(o.id).len(),
+                "gold": round1(o.gold),
+                "faith": round1(o.faith),
+                "yields": yields_json(&output),
+                "military": military,
+                "at_war_with_me": g.is_at_war(pid, o.id),
+            })
+        }).collect::<Vec<_>>(),
         "winner": g.winner,
         "victory_type": g.victory_type,
     })

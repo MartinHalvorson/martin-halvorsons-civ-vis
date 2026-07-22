@@ -196,6 +196,19 @@ pub struct BuildingSpec {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct ProjectSpec {
+    pub cost: f64,
+    #[serde(default)]
+    pub tech: Option<String>,
+    #[serde(default)]
+    pub district: Option<String>,
+    #[serde(default)]
+    pub requires: Vec<String>,
+    #[serde(default)]
+    pub repeatable: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BoostSpec {
     pub trigger: String,
     #[serde(default = "done_i")]
@@ -284,6 +297,7 @@ pub struct Rules {
     pub units: BTreeMap<String, UnitSpec>,
     pub districts: BTreeMap<String, DistrictSpec>,
     pub buildings: BTreeMap<String, BuildingSpec>,
+    pub projects: BTreeMap<String, ProjectSpec>,
     pub techs: BTreeMap<String, TechSpec>,
     pub civics: BTreeMap<String, TechSpec>,
     pub governments: BTreeMap<String, GovSpec>,
@@ -302,6 +316,7 @@ impl Rules {
             units: serde_json::from_str(include_str!("../data/units.json")).unwrap(),
             districts: serde_json::from_str(include_str!("../data/districts.json")).unwrap(),
             buildings: serde_json::from_str(include_str!("../data/buildings.json")).unwrap(),
+            projects: serde_json::from_str(include_str!("../data/projects.json")).unwrap(),
             techs: serde_json::from_str(include_str!("../data/techs.json")).unwrap(),
             civics: serde_json::from_str(include_str!("../data/civics.json")).unwrap(),
             governments: serde_json::from_str(include_str!("../data/governments.json")).unwrap(),

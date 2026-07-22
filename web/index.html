@@ -50,7 +50,7 @@
 
   /* Command deck */
   #side {
-    width: 360px; min-width: 360px; height: 100%; position: relative; z-index: 12;
+    width: 340px; min-width: 340px; height: 100%; position: relative; z-index: 12;
     display: flex; flex-direction: column; overflow: hidden;
     background:
       radial-gradient(circle at 80% -10%, #23483b80, transparent 34%),
@@ -60,37 +60,37 @@
   }
   body.sidebar-hidden #side { width: 0; min-width: 0; opacity: 0; pointer-events: none; }
   .side-head {
-    flex: 0 0 auto; padding: 22px 22px 16px; border-bottom: 1px solid var(--line-soft);
+    flex: 0 0 auto; padding: 16px 18px 13px; border-bottom: 1px solid var(--line-soft);
     background: linear-gradient(180deg, #172825e8, #101d1be8);
   }
-  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand { display: flex; align-items: center; gap: 10px; }
   .brand-mark {
-    width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%;
-    color: #172018; font: 700 21px/1 Georgia, serif;
+    width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%;
+    color: #172018; font: 700 18px/1 Georgia, serif;
     background: radial-gradient(circle at 35% 30%, #f8dfa1, #c49c4b 62%, #74541e);
     border: 1px solid #f1d48e; box-shadow: 0 0 0 3px #1a2924, 0 7px 18px #0008;
   }
   .brand-copy { min-width: 0; }
   h1 {
-    color: var(--gold-bright); font: 600 19px/1.05 Georgia, "Times New Roman", serif;
+    color: var(--gold-bright); font: 600 16px/1.05 Georgia, "Times New Roman", serif;
     letter-spacing: .12em; text-transform: uppercase;
   }
-  .tagline { color: var(--muted); font-size: 10px; letter-spacing: .16em; text-transform: uppercase; margin-top: 5px; }
-  #gameidentity { margin-top: 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  #gameidentity .civ-name { font: 600 16px/1.2 Georgia, serif; color: var(--text); }
+  .tagline { color: var(--muted); font-size: 9px; letter-spacing: .16em; text-transform: uppercase; margin-top: 4px; }
+  #gameidentity { margin-top: 11px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  #gameidentity .civ-name { font: 600 15px/1.2 Georgia, serif; color: var(--text); }
   .live-badge {
     display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 999px;
     color: #a9dcbc; background: #173126; border: 1px solid #2e5b45;
     font-size: 9px; font-weight: 800; letter-spacing: .13em; text-transform: uppercase;
   }
   .live-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #66d38b; box-shadow: 0 0 0 4px #66d38b1c; }
-  .side-scroll { flex: 1; min-height: 0; padding: 14px 14px 24px; overflow-y: auto; scrollbar-color: #385148 transparent; scrollbar-width: thin; }
+  .side-scroll { flex: 1; min-height: 0; padding: 11px 11px 20px; overflow-y: auto; scrollbar-color: #385148 transparent; scrollbar-width: thin; }
   .side-scroll::-webkit-scrollbar { width: 7px; }
   .side-scroll::-webkit-scrollbar-thumb { background: #385148; border-radius: 9px; }
   .side-footer { flex: 0 0 auto; padding: 12px 14px 14px; border-top: 1px solid var(--line); background: #0b1513f2; box-shadow: 0 -12px 30px #0005; }
 
   .sec {
-    position: relative; padding: 13px 14px; margin-bottom: 10px; border-radius: var(--radius);
+    position: relative; padding: 12px 13px; margin-bottom: 8px; border-radius: 12px;
     background: linear-gradient(145deg, #172723e8, #101b19e8);
     border: 1px solid var(--line); box-shadow: 0 8px 25px #0002;
   }
@@ -105,6 +105,17 @@
   .section-label .rule { height: 1px; flex: 1; background: linear-gradient(90deg, var(--line), transparent); }
   .split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .split .sec { min-width: 0; }
+  .utility-panel { margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; background: #0b1614a6; overflow: hidden; }
+  .utility-panel summary {
+    padding: 11px 13px; color: var(--muted); cursor: pointer; list-style: none;
+    font-size: 9px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase;
+  }
+  .utility-panel summary::-webkit-details-marker { display: none; }
+  .utility-panel summary::after { content: "+"; float: right; color: var(--gold); font-size: 13px; line-height: 1; }
+  .utility-panel[open] summary::after { content: "−"; }
+  .utility-panel[open] summary { border-bottom: 1px solid var(--line-soft); }
+  .utility-body { padding: 12px 13px 13px; }
+  .utility-group + .utility-group { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line-soft); }
 
   button {
     color: var(--text); background: linear-gradient(180deg, #263c36, #1b2e2a);
@@ -152,6 +163,49 @@
   .hud-stat { color: var(--text); border-left: 1px solid #ffffff0b; }
   .hud-stat i { color: var(--muted); font-size: 10px; font-style: normal; }
   .hud-watch { color: #b4d8c4; }
+  #playerhud {
+    position: absolute; z-index: 7; top: 72px; right: 16px; width: min(354px, calc(100% - 86px));
+    max-height: calc(100% - 270px); overflow-y: auto; pointer-events: auto;
+    scrollbar-width: none; filter: drop-shadow(0 12px 28px #0009);
+  }
+  #playerhud::-webkit-scrollbar { display: none; }
+  .ribbon-heading {
+    display: flex; align-items: center; justify-content: space-between; margin: 0 4px 5px;
+    color: #bdcbc5; font-size: 8px; font-weight: 850; letter-spacing: .16em; text-transform: uppercase;
+    text-shadow: 0 2px 5px #000;
+  }
+  .ribbon-heading span:last-child { color: var(--faint); letter-spacing: .08em; }
+  .diplomacy-ribbon { display: flex; flex-direction: column; gap: 4px; }
+  .diplomacy-card {
+    display: grid; grid-template-columns: 38px minmax(76px, 1fr) 174px; align-items: center; gap: 8px;
+    width: 100%; min-height: 54px; margin: 0; padding: 6px 7px 6px 6px; overflow: hidden; border-radius: 11px;
+    color: var(--text); background: linear-gradient(100deg, #0a1512f0, #13231fe8);
+    border: 1px solid #40574f; box-shadow: inset 0 1px #ffffff0b;
+    text-align: left; cursor: pointer; transition: transform .12s ease, border-color .12s ease, background .12s ease;
+  }
+  .diplomacy-card:hover { transform: translateX(-3px); border-color: #718b81; background: linear-gradient(100deg, #0e1b17f7, #1a302af2); }
+  .diplomacy-card.active { border-color: #e3c777; box-shadow: inset 3px 0 var(--gold), inset 0 1px #fff2, 0 0 18px #d7b66a17; }
+  .diplomacy-card.at-war { border-color: #a65450; box-shadow: inset 3px 0 var(--danger), inset 0 1px #fff1; }
+  .diplomacy-card.dead { opacity: .42; filter: grayscale(.75); }
+  .leader-medallion {
+    width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%;
+    color: #fff; background: radial-gradient(circle at 35% 28%, color-mix(in srgb, var(--civ) 72%, white), var(--civ) 58%, #07110f);
+    border: 2px solid var(--civ); box-shadow: 0 0 0 2px #07110f, 0 4px 12px #0008;
+    font: 700 15px/1 Georgia, serif; text-shadow: 0 1px 3px #000;
+  }
+  .diplomacy-identity { min-width: 0; }
+  .diplomacy-name { display: block; overflow: hidden; color: #f1f4ed; font-size: 10px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+  .diplomacy-leader { display: block; margin-top: 1px; overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+  .diplomacy-score { display: block; margin-top: 3px; color: var(--gold-bright); font: 600 9px Georgia, serif; }
+  .diplomacy-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; }
+  .ribbon-stat { min-width: 0; padding: 4px 1px 3px; text-align: center; border-left: 1px solid #ffffff0b; }
+  .ribbon-stat b { display: block; overflow: hidden; font-size: 10px; line-height: 1.15; text-overflow: ellipsis; }
+  .ribbon-stat span { display: block; margin-top: 2px; color: var(--faint); font-size: 8px; line-height: 1; }
+  .ribbon-stat.military b { color: #f2a09b; }
+  .ribbon-stat.science b { color: var(--blue); }
+  .ribbon-stat.culture b { color: var(--violet); }
+  .ribbon-stat.gold b { color: #e8c64c; }
+  .ribbon-stat.faith b { color: #eee7cf; }
   #zoomctl {
     position: absolute; z-index: 6; top: 76px; left: 16px; display: flex; flex-direction: column;
     gap: 5px; padding: 5px; border-radius: 13px; background: #0a1512cb; border: 1px solid #3c554c;
@@ -205,19 +259,6 @@
   .research-card.culture .research-icon { background: #c49be812; border-color: #c49be82c; }
   .research-title { font-weight: 750; text-transform: capitalize; }
   .research-turns { color: var(--gold-bright); font: 600 12px Georgia, serif; }
-  .player-card {
-    display: grid; grid-template-columns: 5px 1fr auto; gap: 10px; align-items: center;
-    margin: 5px 0; padding: 9px 10px 9px 7px; border-radius: 10px; background: #0c1715b8;
-    border: 1px solid #1e332e; cursor: pointer; transition: background .12s, border-color .12s, transform .12s;
-  }
-  .player-card:hover { transform: translateX(-2px); background: #13231f; border-color: #3c584f; }
-  .player-card.active { border-color: #d7b66a66; background: #d7b66a0b; box-shadow: 0 0 0 1px #d7b66a13 inset; }
-  .player-card.dead { opacity: .42; filter: grayscale(.7); }
-  .player-color { align-self: stretch; min-height: 28px; border-radius: 4px; }
-  .player-name { color: var(--text); font-weight: 750; }
-  .player-meta { color: var(--muted); font-size: 9px; margin-top: 2px; text-transform: capitalize; }
-  .player-score { text-align: right; color: var(--gold-bright); font: 600 16px Georgia, serif; }
-  .player-score small { display: block; color: var(--faint); font: 700 7px Inter, sans-serif; letter-spacing: .14em; text-transform: uppercase; }
   .city-hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
   .city-name { color: var(--gold-bright); font: 600 20px/1.1 Georgia, serif; }
   .city-pop { min-width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%; background: #d7b66a12; border: 1px solid #d7b66a47; color: var(--gold-bright); font: 600 16px Georgia, serif; }
@@ -267,7 +308,7 @@
   .tnode .req { color: var(--faint); font-size: 8px; margin-top: 3px; }
 
   @media (max-width: 980px) {
-    #side { width: 330px; min-width: 330px; }
+    #side { width: 320px; min-width: 320px; }
     #topbar { left: 14px; transform: none; max-width: calc(100% - 84px); overflow: hidden; }
     .hud-stat i { display: none; }
     #ubar { max-width: calc(100% - 70px); }
@@ -278,9 +319,22 @@
     #side { position: fixed; inset: 72px 8px 8px auto; width: min(390px, calc(100% - 16px)); min-width: 0; height: auto; border: 1px solid #40584f; border-radius: 16px; }
     body.sidebar-hidden #side { width: min(390px, calc(100% - 16px)); transform: translateX(calc(100% + 16px)); opacity: 0; }
     #topbar .hud-stat:nth-of-type(n+5) { display: none; }
+    #playerhud { top: 70px; right: 12px; max-height: calc(100% - 88px); }
     .minimap-frame { display: none; }
     #paneltoggle { right: 12px; }
     #ubar { min-width: 0; width: calc(100% - 28px); bottom: 18px; }
+  }
+  @media (max-width: 430px) {
+    #playerhud { left: 74px; right: 8px; width: auto; }
+    .diplomacy-card { grid-template-columns: 31px minmax(52px, .7fr) minmax(126px, 1fr); gap: 5px; min-height: 46px; padding: 5px; }
+    .leader-medallion { width: 29px; height: 29px; font-size: 12px; }
+    .diplomacy-leader { display: none; }
+    .diplomacy-name { font-size: 8px; }
+    .diplomacy-score { font-size: 8px; }
+    .diplomacy-stats { gap: 0; }
+    .ribbon-stat { padding-inline: 0; }
+    .ribbon-stat b { font-size: 8px; }
+    .ribbon-stat span { font-size: 7px; }
   }
 </style>
 </head>
@@ -288,6 +342,7 @@
 <div id="maparea">
   <canvas id="map"></canvas>
   <div id="topbar"></div>
+  <aside id="playerhud" aria-label="Civilization yield ribbon"></aside>
   <button id="paneltoggle" class="icon" title="Toggle command deck" aria-label="Toggle command deck">☰</button>
   <div id="zoomctl">
     <button id="zin" title="Zoom in" aria-label="Zoom in">＋</button>
@@ -316,50 +371,49 @@
       <div class="brand-mark">VI</div>
       <div class="brand-copy">
         <h1>Civilization VIS</h1>
-        <div class="tagline">A living strategy laboratory</div>
+        <div class="tagline">Strategy simulator</div>
       </div>
     </div>
     <div id="gameidentity"></div>
   </div>
   <div class="side-scroll">
-    <div class="section-label"><span>Progress</span><span class="rule"></span></div>
-    <div class="split">
-      <div class="sec"><h2>Research <button class="mini" onclick='openTree("techs")'>Tree</button></h2><div id="research"></div></div>
-      <div class="sec"><h2>Civics <button class="mini" onclick='openTree("civics")'>Tree</button></h2><div id="civics"></div></div>
-    </div>
+    <div class="section-label"><span>Active strategy</span><span class="rule"></span></div>
+    <div class="sec"><h2>Research <button class="mini" onclick='openTree("techs")'>Tree</button></h2><div id="research"></div></div>
+    <div class="sec"><h2>Civic development <button class="mini" onclick='openTree("civics")'>Tree</button></h2><div id="civics"></div></div>
     <div class="sec" id="govsec" style="display:none"><h2>Government</h2><div id="gov"></div></div>
     <div class="sec" id="citysec" style="display:none"><h2>City command</h2><div id="citypanel"></div></div>
 
-    <div class="section-label"><span id="worldlabel">World standings</span><span class="rule"></span></div>
-    <div class="sec"><div id="players"></div></div>
-
     <div id="eventsec">
-      <div class="section-label"><span>Chronicle</span><span class="rule"></span></div>
+      <div class="section-label"><span>Latest events</span><span class="rule"></span></div>
       <div class="sec"><div id="events" class="event-list"><div class="empty-state">The world is quiet—for now.</div></div></div>
     </div>
 
-    <div class="section-label"><span>View & controls</span><span class="rule"></span></div>
-    <div class="sec">
-      <h2>Map style</h2>
-      <select id="viewsel">
-        <option value="cinematic">Cinematic terrain</option>
-        <option value="strategic">Strategic map</option>
-      </select>
-      <label class="setting-row"><span><input type="checkbox" id="yieldchk"> Show yields per tile</span><kbd>Y</kbd></label>
-      <div class="shortcut-grid" style="margin-top:11px">
-        <span><kbd>1</kbd>Next unit</span><span><kbd>2</kbd>Settler lens</span>
-        <span><kbd>3</kbd>Map tacks</span><span><kbd>F</kbd>Focus mode</span>
-        <span><kbd>Alt</kbd>Rotate map</span><span><kbd>↵</kbd>End / pause</span>
+    <details class="utility-panel">
+      <summary>Simulation setup & display</summary>
+      <div class="utility-body">
+        <div class="utility-group">
+          <h2>Map style</h2>
+          <select id="viewsel">
+            <option value="cinematic">Cinematic terrain</option>
+            <option value="strategic">Strategic map</option>
+          </select>
+          <label class="setting-row"><span><input type="checkbox" id="yieldchk"> Show yields per tile</span><kbd>Y</kbd></label>
+        </div>
+        <div class="utility-group">
+          <h2>New simulation</h2>
+          <div id="newgame-options">
+            <label class="small">Major civilizations<select id="np" style="margin-top:4px"><option>2</option><option selected>4</option><option>6</option></select></label>
+            <button id="newgame">Create</button>
+          </div>
+          <label class="small" style="display:flex;gap:7px;align-items:center;margin-top:10px"><input type="checkbox" id="specchk"> AI-only observer game</label>
+        </div>
+        <div class="utility-group shortcut-grid">
+          <span><kbd>1</kbd>Next unit</span><span><kbd>2</kbd>Settler lens</span>
+          <span><kbd>3</kbd>Map tacks</span><span><kbd>F</kbd>Focus mode</span>
+          <span><kbd>Alt</kbd>Rotate map</span><span><kbd>↵</kbd>End / pause</span>
+        </div>
       </div>
-    </div>
-    <div class="sec">
-      <h2>New world</h2>
-      <div id="newgame-options">
-        <label class="small">Major civilizations<select id="np" style="margin-top:4px"><option>2</option><option selected>4</option><option>6</option></select></label>
-        <button id="newgame">Create</button>
-      </div>
-      <label class="small" style="display:flex;gap:7px;align-items:center;margin-top:10px"><input type="checkbox" id="specchk"> AI-only observer game</label>
-    </div>
+    </details>
   </div>
   <div class="side-footer">
     <button class="primary" id="endturn">End turn · Enter</button>
@@ -496,10 +550,16 @@ function animateDiff(prev, next) {
   for (const nc of next.cities || []) {
     const pc = prevC.get(nc.id);
     if (!pc) continue;
-    const drop = (pc.hp - nc.hp) + Math.max(0, (pc.wall_hp || 0) - (nc.wall_hp || 0));
-    if (drop > 0) {
+    const hpDrop = Math.max(0, pc.hp - nc.hp);
+    const wallDrop = Math.max(0, (pc.wall_hp || 0) - (nc.wall_hp || 0));
+    if (hpDrop > 0 || wallDrop > 0) {
       const [x, y] = worldXY(nc.pos);
-      anim.floats.push({ x, y: y - 20, txt: "-" + drop, col: "#ffb46a", t0: now });
+      if (hpDrop > 0) {
+        anim.floats.push({ x, y: y - 20, txt: `-${hpDrop} HP`, col: "#ff7468", t0: now });
+      }
+      if (wallDrop > 0) {
+        anim.floats.push({ x, y: y - 29, txt: `-${wallDrop} walls`, col: "#73b9e6", t0: now });
+      }
       anim.sparks.push({ x, y, t0: now });
     }
   }
@@ -625,7 +685,6 @@ async function boot() {
   render(await fetchJSON("/state"));
   if (firstLoad) {
     firstLoad = false;
-    if (SPEC) centerMainLandmass(); else centerHome();
     document.getElementById("specchk").checked = SPEC;
     if (SPEC) {
       document.getElementById("specspeed").value = "100";
@@ -794,6 +853,7 @@ function chronicle(prev, next) {
 }
 
 function render(st, recordChronicle = true) {
+  const newWorld = !state || st.seed !== state.seed || st.turn < state.turn;
   if (recordChronicle) chronicle(state, st);
   const sameWorld = state && state.seed === st.seed;
   queueDirectorCue(directorCue(state, st));
@@ -808,10 +868,13 @@ function render(st, recordChronicle = true) {
   }
   document.getElementById("endturn").style.display = SPEC ? "none" : "block";
   document.getElementById("specbar").style.display = SPEC ? "block" : "none";
-  if (st.seed !== undefined && st.seed !== lastSeed) { lastSeed = st.seed; loadTacks(); }
+  if (newWorld && st.seed !== undefined) { lastSeed = st.seed; loadTacks(); }
   if (SPEC) sel = null;
   if (sel) sel = st.units.find(u => u.id === sel.id && u.owner === 0) || null;
   TMAP = new Map(st.map.tiles.map(t => [key(t.pos), t]));
+  // Establish the view once per world, before its first paint. Subsequent
+  // simulation states never alter the camera; only explicit user input does.
+  if (newWorld) setMainLandmassView();
   const errEl = document.getElementById("err");
   if (st.error) { errEl.textContent = st.error; errEl.style.display = "block";
     setTimeout(() => errEl.style.display = "none", 2500); }
@@ -827,7 +890,7 @@ function render(st, recordChronicle = true) {
         (st.restart_in !== undefined ? "next game in " + st.restart_in + "s" : "") +
         "</span>" : "");
   } else w.style.display = "none";
-  draw(); drawSide(); drawMini(); drawTopbar(); drawUbar();
+  draw(); drawSide(); drawMini(); drawTopbar(); drawPlayerHud(); drawUbar();
 }
 
 // ---------------------------------------------------------------- renderer
@@ -1550,14 +1613,24 @@ function draw() {
       cx.textAlign = "left";
       cx.fillText(name, bx + 20, by + 8.5);
       cx.textAlign = "center";
+      let statusY = by + 17;
       if (c.hp < 200) {
-        cx.fillStyle = "#300"; cx.fillRect(bx, by + 17, tw, 3);
-        cx.fillStyle = "#f04040"; cx.fillRect(bx, by + 17, tw * c.hp / 200, 3);
+        const hpFraction = Math.max(0, Math.min(1, c.hp / 200));
+        cx.fillStyle = "#2b0908"; cx.fillRect(bx, statusY, tw, 3);
+        cx.fillStyle = hpFraction > .6 ? "#65bd66" : hpFraction > .3 ? "#e2b347" : "#f05a50";
+        cx.fillRect(bx, statusY, tw * hpFraction, 3);
+        statusY += 4;
+      }
+      if ((c.wall_max || 0) > 0) {
+        const wallFraction = Math.max(0, Math.min(1, (c.wall_hp || 0) / c.wall_max));
+        cx.fillStyle = "#071b2b"; cx.fillRect(bx, statusY, tw, 3);
+        cx.fillStyle = "#59aee1"; cx.fillRect(bx, statusY, tw * wallFraction, 3);
+        statusY += 4;
       }
       if (c.owner === 0 && c.queue && c.queue.length && c.queue_cost) {
-        cx.fillStyle = "#0d1117"; cx.fillRect(bx, by + 17, tw, 3);
+        cx.fillStyle = "#0d1117"; cx.fillRect(bx, statusY, tw, 3);
         cx.fillStyle = "#e09050";
-        cx.fillRect(bx, by + 17, tw * Math.min(1, c.production / c.queue_cost), 3);
+        cx.fillRect(bx, statusY, tw * Math.min(1, c.production / c.queue_cost), 3);
       }
     }
     if (selCity && selCity.id === c.id) {
@@ -1770,6 +1843,47 @@ function drawTopbar() {
     `<span class="live-badge">${SPEC ? "Observing" : "Your empire"}</span>`;
 }
 
+function compactStat(value) {
+  const n = Number(value) || 0;
+  const abs = Math.abs(n);
+  if (abs >= 10000) return `${Math.round(n / 1000)}k`;
+  if (abs >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+function drawPlayerHud() {
+  const hud = document.getElementById("playerhud");
+  const acting = SPEC ? state.current : 0;
+  const majors = state.players
+    .filter(p => !p.is_minor && !p.is_barbarian)
+    .sort((a, b) => b.score - a.score || a.id - b.id);
+  hud.innerHTML =
+    `<div class="ribbon-heading"><span>World leaders</span><span>live empire yields</span></div>` +
+    `<div class="diplomacy-ribbon">` + majors.map((p, index) => {
+      const y = p.yields || {};
+      const color = pcol(p.id);
+      const leader = p.leader || "Unknown leader";
+      const initial = (leader === "Unknown leader" ? p.civ : leader).trim().charAt(0).toUpperCase();
+      const stateClass = `${p.id === acting ? "active" : ""} ${p.at_war_with_me ? "at-war" : ""} ${p.alive ? "" : "dead"}`;
+      const relation = !p.alive ? "Defeated" : p.at_war_with_me ? "At war" : "Standing";
+      const stats = [
+        ["military", "⚔", p.military, `Military strength: ${compactStat(p.military)}`],
+        ["science", "🔬", y.science, `Science: ${compactStat(y.science)} per turn`],
+        ["culture", "🎭", y.culture, `Culture: ${compactStat(y.culture)} per turn`],
+        ["gold", "●", y.gold, `Gold: ${compactStat(y.gold)} per turn · ${compactStat(p.gold)} banked`],
+        ["faith", "✦", y.faith, `Faith: ${compactStat(y.faith)} per turn · ${compactStat(p.faith)} banked`],
+      ];
+      return `<button class="diplomacy-card ${stateClass}" style="--civ:${color}" onclick="focusPlayer(${p.id})" ` +
+        `title="Center on ${p.civ}" aria-label="${p.civ}, rank ${index + 1}, ${relation}">` +
+        `<span class="leader-medallion">${initial}</span>` +
+        `<span class="diplomacy-identity"><span class="diplomacy-name">${p.id === acting && SPEC ? "◉ " : ""}${p.civ}</span>` +
+        `<span class="diplomacy-leader">${leader}</span><span class="diplomacy-score">#${index + 1} · ${p.score} score</span></span>` +
+        `<span class="diplomacy-stats">` + stats.map(([kind, icon, value, label]) =>
+          `<span class="ribbon-stat ${kind}" title="${label}"><b>${compactStat(value)}</b><span>${icon}</span></span>`
+        ).join("") + `</span></button>`;
+    }).join("") + `</div>`;
+}
+
 function drawUbar() {
   const bar = document.getElementById("ubar");
   if (!sel || SPEC) { bar.style.display = "none"; return; }
@@ -1810,12 +1924,13 @@ function hook(id, fn) {
   if (el) el.onchange = () => { if (el.value) fn(el.value); };
 }
 function itemName(it) {
-  return (it.unit || it.building || (it.district + " @" + it.pos)).replaceAll("_", " ");
+  return (it.unit || it.building || it.project || (it.district + " @" + it.pos)).replaceAll("_", " ");
 }
 function itemCost(it) {
   if (!RULES) return "?";
   if (it.unit) return RULES.units[it.unit].cost;
   if (it.building) return RULES.buildings[it.building].cost;
+  if (it.project) return RULES.projects[it.project].cost;
   return RULES.districts[it.district].cost;
 }
 function techCost(t) { return RULES ? RULES.techs[t].cost : 100; }
@@ -1873,20 +1988,6 @@ function drawSide() {
       govs.map(a => `<button onclick='send({type:"government",government:"${a.government}"})'>` +
         titleCase(a.government) + "</button>").join("");
   } else gs.style.display = "none";
-  const acting = SPEC ? state.current : 0;
-  document.getElementById("worldlabel").textContent = SPEC ? "World standings" : "Known civilizations";
-  document.getElementById("players").innerHTML = state.players.filter(p => !p.is_barbarian)
-    .sort((a, b) => Number(a.is_minor) - Number(b.is_minor) || b.score - a.score)
-    .map(p => {
-      const role = p.is_minor ? `${titleCase(p.cs_type || "city state")} city-state` :
-        (p.leader || "Unknown leader");
-      const status = !p.alive ? "Defeated" : p.at_war_with_me ? `${role} · at war` : role;
-      return `<div class="player-card ${p.id === acting ? "active" : ""} ${p.alive ? "" : "dead"}" onclick="focusPlayer(${p.id})">` +
-        `<div class="player-color" style="background:${pcol(p.id)}"></div>` +
-        `<div><div class="player-name">${p.id === acting && SPEC ? "◉ " : ""}${p.civ}</div>` +
-        `<div class="player-meta">${status} · ${p.cities} cit${p.cities === 1 ? "y" : "ies"}</div></div>` +
-        `<div class="player-score">${p.score}<small>score</small></div></div>`;
-    }).join("");
   drawCityPanel();
   drawEvents();
 }
@@ -1903,8 +2004,8 @@ function drawCityPanel() {
   let h = `<div class="city-hero"><div><div class="city-name">${c.name}${c.is_capital ? " ♛" : ""}</div>` +
     `<div class="small" style="margin-top:4px">${owner.civ}${c.religion ? ` · ${titleCase(c.religion)}` : ""}</div></div>` +
     `<div class="city-pop" title="Population">${c.pop}</div></div>` +
-    `<div class="city-stats"><div class="metric"><b>${c.hp}</b><span>Health</span></div>` +
-    `<div class="metric"><b>${c.wall_hp || 0}</b><span>Walls</span></div>` +
+    `<div class="city-stats"><div class="metric"><b>${c.hp} / 200</b><span>Health</span></div>` +
+    `<div class="metric"><b>${c.wall_hp || 0} / ${c.wall_max || 0}</b><span>Walls</span></div>` +
     `<div class="metric"><b>${c.housing === undefined ? "—" : c.housing}</b><span>Housing</span></div></div>`;
   if (c.food === undefined) {
     h += `<div class="empty-state">Observer intelligence is limited to public city information.</div>`;
@@ -2039,30 +2140,24 @@ function centerWorld(pos) {
   cam.y = S * 1.5 * pos[1];
   draw(); drawMini();
 }
-function centerHome() {
-  if (!state) return;
+function homeAnchor() {
+  if (!state) return null;
   const pid = SPEC ? state.current : 0;
-  const own = state.cities.find(c => c.owner === pid && c.is_capital) ||
-              state.cities.find(c => c.owner === pid) ||
-              state.units.find(u => u.owner === pid);
+  return state.cities.find(c => c.owner === pid && c.is_capital) ||
+         state.cities.find(c => c.owner === pid) ||
+         state.units.find(u => u.owner === pid) || null;
+}
+function centerHome() {
+  const own = homeAnchor();
   if (own) centerWorld(own.pos);
 }
-function centerMainLandmass() {
-  if (!state) return;
-  const major = owner => {
-    const p = state.players[owner];
-    return p && !p.is_minor && !p.is_barbarian;
-  };
-  const activity = new Map();
-  for (const city of state.cities) if (major(city.owner))
-    activity.set(key(city.pos), (activity.get(key(city.pos)) || 0) + 8);
-  for (const unit of state.units) if (major(unit.owner))
-    activity.set(key(unit.pos), (activity.get(key(unit.pos)) || 0) + 1);
+function mainLandmassAnchor() {
+  if (!state) return null;
   const land = new Map(state.map.tiles
     .filter(t => t.terrain !== "coast" && t.terrain !== "ocean")
     .map(t => [key(t.pos), t]));
   const seen = new Set();
-  let main = [], mainActivity = -1;
+  let main = [];
   for (const tile of land.values()) {
     const start = key(tile.pos);
     if (seen.has(start)) continue;
@@ -2077,35 +2172,38 @@ function centerMainLandmass() {
         if (next && !seen.has(k)) { seen.add(k); stack.push(next); }
       }
     }
-    const action = component.reduce((sum, t) => sum + (activity.get(key(t.pos)) || 0), 0);
-    if (action > mainActivity || (action === mainActivity && component.length > main.length)) {
-      main = component; mainActivity = action;
-    }
+    if (component.length > main.length) main = component;
   }
-  if (!main.length) { centerHome(); return; }
+  if (!main.length) return homeAnchor();
 
   // Circular longitude keeps a continent crossing the map seam together.
   const width = state.map.width;
-  let sin = 0, cos = 0, row = 0, totalWeight = 0;
-  const hasAction = main.some(tile => activity.has(key(tile.pos)));
+  let sin = 0, cos = 0, row = 0;
   for (const tile of main) {
-    const weight = hasAction ? (activity.get(key(tile.pos)) || 0) : 1;
-    if (!weight) continue;
     const col = tile.pos[0] + (tile.pos[1] - (tile.pos[1] & 1)) / 2;
     const angle = 2 * Math.PI * (((col % width) + width) % width) / width;
-    sin += weight * Math.sin(angle); cos += weight * Math.cos(angle);
-    row += weight * tile.pos[1]; totalWeight += weight;
+    sin += Math.sin(angle); cos += Math.cos(angle);
+    row += tile.pos[1];
   }
   const centerCol = ((Math.atan2(sin, cos) / (2 * Math.PI) * width) + width) % width;
-  const centerRow = row / totalWeight;
-  const anchor = main.reduce((best, tile) => {
+  const centerRow = row / main.length;
+  return main.reduce((best, tile) => {
     const col = ((tile.pos[0] + (tile.pos[1] - (tile.pos[1] & 1)) / 2) % width + width) % width;
     const dx0 = Math.abs(col - centerCol), dx = Math.min(dx0, width - dx0);
     const score = dx * dx + (tile.pos[1] - centerRow) ** 2;
     return !best || score < best.score ? { tile, score } : best;
   }, null).tile;
+}
+function setMainLandmassView() {
+  const anchor = mainLandmassAnchor();
+  if (!anchor) return;
   cam.scale = 0.9;
-  centerWorld(anchor.pos);
+  cam.x = S * SQ3 * (anchor.pos[0] + anchor.pos[1] / 2);
+  cam.y = S * 1.5 * anchor.pos[1];
+}
+function centerMainLandmass() {
+  setMainLandmassView();
+  draw(); drawMini();
 }
 function centerOn(pos) { centerWorld(pos); }
 function updateDirectorButton() {
@@ -2391,6 +2489,7 @@ document.getElementById("newgame").onclick = async () => {
 }
 
 setRot(parseFloat(localStorage.getItem("civvis-rot") || "0"));
+if (window.matchMedia("(max-width: 720px)").matches) togglePanel(true);
 resize();
 boot();
 

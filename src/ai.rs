@@ -188,15 +188,30 @@ pub struct BasicAi {
     barb: bool,
     w: Weights,
     book_pos: usize, // opening-book progress (capital builds played so far)
+    /// Units that have withdrawn from combat stay in recovery until they are
+    /// healthy enough to rejoin it, instead of advancing again after one tick.
+    recovering_units: HashSet<u32>,
 }
 
 impl BasicAi {
     pub fn new() -> BasicAi {
-        BasicAi { minor: false, barb: false, w: Weights::default(), book_pos: 0 }
+        BasicAi {
+            minor: false,
+            barb: false,
+            w: Weights::default(),
+            book_pos: 0,
+            recovering_units: HashSet::new(),
+        }
     }
 
     pub fn with_weights(w: Weights) -> BasicAi {
-        BasicAi { minor: false, barb: false, w, book_pos: 0 }
+        BasicAi {
+            minor: false,
+            barb: false,
+            w,
+            book_pos: 0,
+            recovering_units: HashSet::new(),
+        }
     }
 
     pub fn fleet(g: &Game) -> Vec<BasicAi> {
@@ -731,6 +746,41 @@ impl BasicAi {
                 return Some(Item::Unit { unit });
             }
         }
+        if !self.minor && !self.barb {
+            let has_spaceport = g
+                .cities
+                .values()
+                .any(|c| c.owner == pid && c.districts.contains_key("spaceport"));
+            if !has_spaceport && g.players[pid].techs.contains("rocketry") {
+                if let Some(pos) = g.district_sites(cid, "spaceport").into_iter().next() {
+                    let item = Item::District {
+                        district: "spaceport".to_string(),
+                        pos,
+                    };
+                    if g.can_produce(pid, cid, &item) {
+                        return Some(item);
+                    }
+                }
+            }
+            let mut projects: Vec<Item> = g
+                .rules
+                .projects
+                .keys()
+                .map(|project| Item::Project {
+                    project: project.clone(),
+                })
+                .filter(|item| g.can_produce(pid, cid, item))
+                .collect();
+            projects.sort_by(|a, b| {
+                g.item_cost(a)
+                    .partial_cmp(&g.item_cost(b))
+                    .unwrap()
+                    .then_with(|| format!("{a:?}").cmp(&format!("{b:?}")))
+            });
+            if let Some(project) = projects.into_iter().next() {
+                return Some(project);
+            }
+        }
         if !self.minor && !self.barb
             && ((n_cities + settlers) as f64) < self.w.city_target && settlers == 0
             && (city_pop as f64) >= self.w.settler_min_pop
@@ -808,7 +858,9 @@ impl BasicAi {
             .map(|m| Item::Unit { unit: m })
     }
 
-    fn units(&self, g: &mut Game, pid: usize) {
+    fn units(&mut self, g: &mut Game, pid: usize) {
+        self.recovering_units
+            .retain(|uid| g.units.get(uid).is_some_and(|unit| unit.owner == pid));
         for uid in g.player_unit_ids(pid) {
             for _ in 0..8 {
                 if !g.units.contains_key(&uid) {
@@ -1218,7 +1270,56 @@ impl BasicAi {
         g.apply(pid, &Action::Move { unit: uid, to: next }).is_ok()
     }
 
-    fn military_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
+    fn healing_step(&mut self, g: &mut Game, pid: usize, uid: u32) -> Option<bool> {
+        const WITHDRAW_AT_HP: i32 = 45;
+        const RETURN_AT_HP: i32 = 80;
+
+        let hp = g.units[&uid].hp;
+        if hp >= RETURN_AT_HP {
+            self.recovering_units.remove(&uid);
+            return None;
+        }
+        if hp <= WITHDRAW_AT_HP {
+            self.recovering_units.insert(uid);
+        }
+        if !self.recovering_units.contains(&uid) {
+            return None;
+        }
+
+        // Once safely inside friendly borders, spending the turn stationary
+        // is faster than sacrificing another healing tick to chase a city.
+        if g.unit_heal_rate(uid) >= 15 {
+            return Some(self.fortify_or_stop(g, pid, uid));
+        }
+
+        let friendly_tiles: HashSet<Pos> = g
+            .map
+            .tiles
+            .iter()
+            .filter_map(|(pos, tile)| {
+                tile
+                    .owner_city
+                    .and_then(|cid| g.cities.get(&cid))
+                    .is_some_and(|city| city.owner == pid)
+                    .then_some(*pos)
+            })
+            .collect();
+        if let Some(next) = g
+            .route_step_to_any(uid, &friendly_tiles)
+            .filter(|pos| g.can_move(uid, *pos))
+        {
+            return Some(g.apply(pid, &Action::Move { unit: uid, to: next }).is_ok());
+        }
+
+        // If home is unreachable (for example, an isolated naval unit), wait
+        // and use the neutral/enemy rate instead of continuing a bad attack.
+        Some(self.fortify_or_stop(g, pid, uid))
+    }
+
+    fn military_step(&mut self, g: &mut Game, pid: usize, uid: u32) -> bool {
+        if let Some(acted) = self.healing_step(g, pid, uid) {
+            return acted;
+        }
         let upos = g.units[&uid].pos;
         let spec = g.rules.units[g.units[&uid].kind.as_str()].clone();
         let enemy_ids: Vec<usize> = g
@@ -1315,6 +1416,69 @@ mod tests {
         g.cities.get_mut(&enemy).unwrap().buildings.push("walls".to_string());
         g.apply(0, &Action::DeclareWar { player: 1 }).unwrap();
         (g, home, enemy)
+    }
+
+    #[test]
+    fn wounded_units_withdraw_and_finish_recovering_before_rejoining() {
+        let mut g = Game::new_full(2, 20, 14, 30, 30, 0, false);
+        let settler = g
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|uid| g.units[uid].kind == "settler")
+            .unwrap();
+        let warrior = g
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|uid| g.units[uid].kind == "warrior")
+            .unwrap();
+        g.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+
+        let neutral = g
+            .map
+            .tiles
+            .iter()
+            .filter(|(_, tile)| {
+                tile.owner_city.is_none()
+                    && g.rules.is_passable(tile)
+                    && !g.rules.is_water(tile)
+            })
+            .map(|(pos, _)| *pos)
+            .find(|pos| {
+                g.nbrs(*pos).into_iter().any(|neighbor| {
+                    let tile = &g.map.tiles[&neighbor];
+                    tile.owner_city.is_some()
+                        && g.rules.is_passable(tile)
+                        && !g.rules.is_water(tile)
+                })
+            })
+            .expect("map has neutral land adjacent to the capital's territory");
+        {
+            let unit = g.units.get_mut(&warrior).unwrap();
+            unit.pos = neutral;
+            unit.hp = 45;
+            unit.moves_left = 2.0;
+            unit.acted = false;
+            unit.fortified = false;
+        }
+        // Rebuild occupancy after placing the unit in this controlled setup.
+        let snapshot = serde_json::to_value(&g).unwrap();
+        let mut g: Game = serde_json::from_value(snapshot).unwrap();
+        let mut ai = BasicAi::new();
+
+        assert_eq!(ai.healing_step(&mut g, 0, warrior), Some(true));
+        assert!(g.unit_heal_rate(warrior) >= 15, "unit should seek friendly borders");
+        assert!(ai.recovering_units.contains(&warrior));
+
+        // Once safe, it waits instead of immediately marching back out.
+        assert_eq!(ai.healing_step(&mut g, 0, warrior), Some(false));
+        assert!(g.units[&warrior].fortified);
+        g.units.get_mut(&warrior).unwrap().hp = 79;
+        assert_eq!(ai.healing_step(&mut g, 0, warrior), Some(false));
+
+        // Recovery mode has hysteresis and releases the unit at 80 HP.
+        g.units.get_mut(&warrior).unwrap().hp = 80;
+        assert_eq!(ai.healing_step(&mut g, 0, warrior), None);
+        assert!(!ai.recovering_units.contains(&warrior));
     }
 
     #[test]

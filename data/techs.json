@@ -26,5 +26,10 @@
   "castles": {"cost": 390, "requires": ["construction"], "boost": {"trigger": "districts", "count": 3}},
   "banking": {"cost": 445, "requires": ["education", "apprenticeship"], "boost": {"trigger": "building:market", "count": 1}},
   "printing": {"cost": 540, "requires": ["machinery"], "boost": {"trigger": "building:university", "count": 1}},
-  "gunpowder": {"cost": 540, "requires": ["apprenticeship", "military_tactics", "stirrups"], "boost": {"trigger": "building:armory", "count": 1}}
+  "gunpowder": {"cost": 540, "requires": ["apprenticeship", "military_tactics", "stirrups"], "boost": {"trigger": "building:armory", "count": 1}},
+  "rocketry": {"cost": 1480, "requires": ["gunpowder"]},
+  "satellites": {"cost": 1850, "requires": ["rocketry"]},
+  "nanotechnology": {"cost": 2155, "requires": ["satellites"]},
+  "smart_materials": {"cost": 2300, "requires": ["nanotechnology"]},
+  "offworld_mission": {"cost": 2500, "requires": ["smart_materials"]}
 }

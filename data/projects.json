@@ -1,0 +1,39 @@
+{
+  "launch_earth_satellite": {
+    "cost": 900,
+    "tech": "rocketry",
+    "district": "spaceport"
+  },
+  "launch_moon_landing": {
+    "cost": 1500,
+    "tech": "satellites",
+    "district": "spaceport",
+    "requires": ["launch_earth_satellite"]
+  },
+  "launch_mars_colony": {
+    "cost": 1800,
+    "tech": "nanotechnology",
+    "district": "spaceport",
+    "requires": ["launch_moon_landing"]
+  },
+  "exoplanet_expedition": {
+    "cost": 2100,
+    "tech": "smart_materials",
+    "district": "spaceport",
+    "requires": ["launch_mars_colony"]
+  },
+  "lagrange_laser_station": {
+    "cost": 600,
+    "tech": "offworld_mission",
+    "district": "spaceport",
+    "requires": ["exoplanet_expedition"],
+    "repeatable": true
+  },
+  "terrestrial_laser_station": {
+    "cost": 600,
+    "tech": "offworld_mission",
+    "district": "spaceport",
+    "requires": ["exoplanet_expedition"],
+    "repeatable": true
+  }
+}

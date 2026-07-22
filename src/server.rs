@@ -293,6 +293,7 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
                 "resources": r.resources, "improvements": r.improvements,
                 "governments": r.governments, "units": r.units,
                 "buildings": r.buildings, "districts": r.districts,
+                "projects": r.projects,
                 "policies": r.policies, "beliefs": r.beliefs, "civs": r.civs,
             }));
         }

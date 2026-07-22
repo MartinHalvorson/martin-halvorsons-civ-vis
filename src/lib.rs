@@ -809,8 +809,8 @@ mod tests {
             g.apply(cur, &Action::EndTurn).unwrap();
         }
         assert_eq!(g.players[0].dvp, 2);
-        // 6 points = diplomatic victory at the next congress
-        g.players[0].dvp = 4;
+        // 20 points = diplomatic victory at the next congress
+        g.players[0].dvp = 18;
         g.turn = 59;
         g.apply(0, &Action::EndTurn).unwrap();
         while g.winner.is_none() && g.current != 0 {

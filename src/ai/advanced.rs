@@ -195,7 +195,10 @@ impl AdvancedAi {
             .filter(|t| g.rules.is_passable(t) && !g.rules.is_water(t))
             .count();
         let map_capacity = (2 + land / 55).clamp(3, 9);
-        let desired_cities = (3 + g.turn as usize / 38).min(map_capacity);
+        // Expansion must compound before it pays back. Add roughly one city
+        // per era instead of continuously raising the target and starving a
+        // young empire of districts, buildings, and population growth.
+        let desired_cities = (3 + g.turn as usize / 90).min(map_capacity).min(5);
         let mut expansion_origins: Vec<Pos> = cities.iter().map(|cid| g.cities[cid].pos).collect();
         if expansion_origins.is_empty() {
             expansion_origins.extend(
@@ -373,6 +376,24 @@ impl AdvancedAi {
                 + district.defense * 1.5
                 + district.amenity * 18.0;
         }
+        for project in g
+            .rules
+            .projects
+            .values()
+            .filter(|p| p.tech.as_deref() == Some(tech))
+        {
+            value += if strategy == GrandStrategy::Science {
+                if project.repeatable {
+                    120.0
+                } else {
+                    260.0
+                }
+            } else if project.repeatable {
+                25.0
+            } else {
+                65.0
+            };
+        }
         for improvement in g
             .rules
             .improvements
@@ -399,6 +420,11 @@ impl AdvancedAi {
                         .districts
                         .values()
                         .filter(|d| d.tech.as_deref() == Some(future))
+                        .count()
+                    + g.rules
+                        .projects
+                        .values()
+                        .filter(|p| p.tech.as_deref() == Some(future))
                         .count();
                 value += unlocks as f64 * 8.0;
             }
@@ -533,6 +559,30 @@ impl AdvancedAi {
             }
             let mut best: Option<(f64, String, Item)> = None;
             for item in g.producible_items(pid, cid) {
+                let force_goal = match plan.strategy {
+                    GrandStrategy::Conquest | GrandStrategy::Recovery => {
+                        2 * g.player_city_ids(pid).len()
+                    }
+                    _ => g.player_city_ids(pid).len(),
+                };
+                let strategic_candidate = match &item {
+                    Item::Unit { unit } if unit == "settler" => true,
+                    Item::Unit { unit } => {
+                        g.rules.units[unit].class == "military"
+                            && counts.military < force_goal
+                            && (plan.strategy == GrandStrategy::Conquest
+                                || plan.strategy == GrandStrategy::Recovery
+                                || plan.threatened_city.is_some())
+                    }
+                    Item::Building { building } => {
+                        building.contains("walls") && plan.threatened_city == Some(cid)
+                    }
+                    Item::Project { .. } => true,
+                    Item::District { .. } => false,
+                };
+                if !strategic_candidate {
+                    continue;
+                }
                 let score = self.production_value(g, pid, cid, &item, plan, &counts);
                 let key = format!("{item:?}");
                 let replace = best
@@ -787,6 +837,30 @@ impl AdvancedAi {
                         (GrandStrategy::Expansion, "commercial_hub") => 90.0,
                         _ => 0.0,
                     }
+            }
+            Item::Project { project } => {
+                let spec = &g.rules.projects[project];
+                if turns > remaining_turns * 0.8 {
+                    -10_000.0
+                } else {
+                    let space_race = matches!(
+                        project.as_str(),
+                        "launch_earth_satellite"
+                            | "launch_moon_landing"
+                            | "launch_mars_colony"
+                            | "exoplanet_expedition"
+                    );
+                    let completed = g.players[pid].science_projects.len() as f64;
+                    1_500.0
+                        + completed * 220.0
+                        + if space_race { 1_800.0 } else { 0.0 }
+                        + if plan.strategy == GrandStrategy::Science {
+                            650.0
+                        } else {
+                            0.0
+                        }
+                        + if spec.repeatable { 900.0 } else { 0.0 }
+                }
             }
         };
         if turns > remaining_turns + 1.0 {
@@ -1056,7 +1130,7 @@ impl AdvancedAi {
     }
 
     fn advanced_military_step(
-        &self,
+        &mut self,
         g: &mut Game,
         pid: usize,
         uid: u32,
@@ -1064,6 +1138,9 @@ impl AdvancedAi {
     ) -> bool {
         let unit = g.units[&uid].clone();
         let spec = g.rules.units[unit.kind.as_str()].clone();
+        if let Some(acted) = self.base.healing_step(g, pid, uid) {
+            return acted;
+        }
         let enemies: Vec<usize> = g
             .players
             .iter()
@@ -1072,19 +1149,6 @@ impl AdvancedAi {
             .collect();
         if enemies.is_empty() {
             return self.base.military_step(g, pid, uid);
-        }
-        if unit.hp <= 32 {
-            let refuge = g
-                .player_city_ids(pid)
-                .iter()
-                .min_by_key(|cid| (g.wdist(unit.pos, g.cities[cid].pos), **cid))
-                .map(|cid| g.cities[cid].pos);
-            if let Some(pos) = refuge {
-                if g.wdist(unit.pos, pos) > 1 && self.base.step_toward(g, pid, uid, pos) {
-                    return true;
-                }
-                return self.base.fortify_or_stop(g, pid, uid);
-            }
         }
 
         let ranged = spec.has_ranged_attack();

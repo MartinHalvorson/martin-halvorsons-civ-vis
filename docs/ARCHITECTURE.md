@@ -7,7 +7,7 @@ data (JSON rulesets)  ->  engine (Game)  ->  interfaces (CivEnv / CLI / AIs)
 ```
 
 - **Ruleset** (`rules.py` + `data/*.json`): all content — terrains, features,
-  resources, improvements, units, districts, buildings, techs, civics — is
+  resources, improvements, units, districts, buildings, projects, techs, civics — is
   data, not code. Pass a custom `data_dir` to `Ruleset` to mod the game
   (Unciv-style).
 - **Game** (`game.py`): the authoritative state machine. Holds the map,
@@ -46,9 +46,13 @@ Players act sequentially. On becoming current (`_begin_turn`): unit moves
 reset + healing; each city collects yields, grows/starves (Civ 6 food curve),
 advances production, expands borders; empire science/culture advance the
 current tech/civic (overflow banked when none selected); gold/faith accrue
-(unit maintenance beyond 3 free units). Victory checks: science (tech tree
-complete), domination (last alive, or owns all original capitals), score at
-`max_turns`.
+(unit maintenance beyond 3 free units). Victory checks follow the six Civ VI
+paths: science requires a Spaceport, the ordered Earth Satellite, Moon Landing,
+Mars Colony, and Exoplanet Expedition projects, then travel to 50 light-years;
+domination requires every foreign original capital; religious victory requires
+a strict city majority in every living major; culture compares visiting tourists
+against the largest rival domestic-tourist total; diplomacy requires 20 victory
+points; score is used only after `max_turns`.
 
 ## Combat
 

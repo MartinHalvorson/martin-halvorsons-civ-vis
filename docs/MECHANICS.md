@@ -15,7 +15,7 @@ Status: ✅ implemented · 🟡 simplified · ❌ not yet.
 | Housing & amenities | ✅ | water/building/policy sources plus +0.5 from owned Farms, Pastures, Plantations, Camps, and Fishing Boats within 3 tiles; luxuries global (🟡 vs 4-city rationing) |
 | Districts + adjacency (incl. river) | ✅ | 8 district types |
 | Wonders | 🟡 | 9 wonders, world-unique, effect engine (growth %, builder charges, unit levels); no tile placement |
-| Tech + civics trees, Eureka/Inspiration | ✅ | 28 real Civ VI techs / 14 civics, through renaissance; Ancient starts have no phantom Agriculture tech |
+| Tech + civics trees, Eureka/Inspiration | ✅ | 28 early-game Civ VI techs + 5 future-era space-race techs / 14 civics; Ancient starts have no phantom Agriculture tech |
 | Governments + policy cards | ✅ | wiki slot configs (chiefdom M1E1 … merchant republic M1E2D2W1); 20 cards thru guilds; typed slots + wildcard overflow; obsoletion (Agoge→Feudal Contract); slot/unslot actions; effects: yields, prod-toward-item %, housing, amenities, maintenance, builder charges, city def/ranged, vs-barb CS, recon XP |
 | Combat math (Civ 6 formula), XP/promotions | 🟡 | flat +5/level vs promotion trees |
 | Fortify, city ranged strikes, walls | ✅ | wall HP pool (50/level), melee 15% / ranged 50% / siege 100% vs walls, strike = best ranged unit, walls razed on capture |
@@ -31,7 +31,7 @@ Status: ✅ implemented · 🟡 simplified · ❌ not yet.
 | Zone of control | ✅ | melee exerts (same domain, not over river banks), cities/encampments exert all-adjacent, cavalry ignores, civilians drop all MP |
 | Movement: MP paid up front, min-1-tile, river +2 MP | ✅ | river surcharge on entering channel tile (tile-model 🟡) |
 | Support units; corps/armies | 🟡 | battering ram (full melee dmg vs ancient walls) + siege tower (melee bypasses walls thru medieval), support stacking class; corps/armies n/a — unlock at Nationalism, beyond current renaissance-era content |
-| Victory: domination, science, score, religious, culture, diplomatic | ✅ | culture = tourism vs domestic tourists (🟡); diplomatic = world congress every 30 turns from medieval era, most envoys+suzerainties gains 2 DVP, 6 wins (🟡 vs GS resolutions) |
+| Victory: domination, science, score, religious, culture, diplomatic | ✅ | science = Spaceport + Satellite → Moon → Mars → Exoplanet, then 50 light-years (repeatable laser projects add speed); domination = every foreign original capital; religious = strict majority in every living major; culture = visiting tourists exceed the best rival domestic total; diplomatic = 20 DVP (congress resolution model 🟡); score = highest score only at the turn limit |
 | Eras, era score, golden/dark ages | 🟡 | world era from leader's tech+civic count; era score from wonders/GPs/camps/captures/religion/pantheon; golden +10% / dark -5% yields on transition (R&F-style, simplified thresholds) |
 
 Next batch: policy cards + government slots, trade routes, great people,

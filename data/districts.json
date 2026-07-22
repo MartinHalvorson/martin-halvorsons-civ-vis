@@ -92,5 +92,10 @@
       "culture": 1
     },
     "amenity": 1
+  },
+  "spaceport": {
+    "cost": 1800,
+    "tech": "rocketry",
+    "yields": {}
   }
 }

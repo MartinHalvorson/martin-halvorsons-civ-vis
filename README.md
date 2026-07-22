@@ -16,12 +16,14 @@ Firaxis or 2K; no assets, art, text, or code from Civilization VI are used.
 - Hex map, random continents, climate bands, features, resources, fog of war
 - Cities: Civ 6 growth curve, border expansion, **housing & amenities**
 - **Districts with adjacency bonuses**, buildings, improvements, builder charges
-- Tech tree **and civics tree** (29 techs, 14 civics through the renaissance)
+- Tech tree **and civics tree** (28 early-game techs plus 5 space-race techs,
+  and 14 civics)
   with **Eureka/Inspiration boosts** (data-driven triggers)
 - Units with **XP, promotions, fortify**, per-unit sight; melee/ranged combat
   with Civ 6 damage math; city sieges, capture, **city ranged strikes**
 - **Barbarians** (camps, era-scaled raiders), **city-states**, **governments**
-- War/peace; victory by **domination, science, or score**
+- War/peace; all six Civ VI victory paths: **domination, science, culture,
+  religious, diplomatic, and score**
 - Deterministic per seed; full JSON save/serialization
 - Moddable ruleset: all content in `data/*.json` (Unciv-style)
 - **Browser GUI** for human vs AI; **Elo tournament harness** for rating AIs
@@ -79,7 +81,7 @@ See [docs/AI_GUIDE.md](docs/AI_GUIDE.md).
 ```
 src/        engine crate (game.rs = turn engine + action protocol,
             ai.rs, elo.rs, mapgen.rs, obs.rs, server.rs, ...)
-data/       moddable ruleset JSONs (terrain, units, districts, techs, ...)
+data/       moddable ruleset JSONs (terrain, units, districts, projects, techs, ...)
 web/        single-file browser GUI (vanilla JS, served by src/server.rs)
 docs/       architecture, AI guide, roadmap
 ```
