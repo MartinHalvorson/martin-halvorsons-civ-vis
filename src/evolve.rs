@@ -52,11 +52,18 @@ fn eval_game(w: &Weights, champ: &Weights, seat: usize, cfg: &EvoCfg, seed: u64,
     // mix game lengths so champions aren't tuned only for short score races
     let turns = if long { cfg.max_turns * 2 } else { cfg.max_turns };
     let mut g = Game::new(cfg.players, cfg.width, cfg.height, seed, turns, 2);
+    // table: candidate + champions + ONE frozen-default seat. The anchor
+    // keeps selection tied to absolute strength — pure champion-vs-champion
+    // tables drift into intransitive cycles (beat the champ, not the game).
+    let mut anchor_left = true;
     let mut ais: Vec<BasicAi> = g.players.iter().map(|p| {
         if p.is_minor || p.is_barbarian {
             BasicAi::new()
         } else if p.id == seat {
             BasicAi::with_weights(w.clone())
+        } else if anchor_left {
+            anchor_left = false;
+            BasicAi::new()
         } else {
             BasicAi::with_weights(champ.clone())
         }
