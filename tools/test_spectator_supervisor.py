@@ -133,6 +133,17 @@ class RecoveryTests(unittest.TestCase):
             supervisor.successor_started({**finished, "seed": 12}, 7, 11)
         )
 
+    def test_successor_grace_observes_the_server_owned_restart(self):
+        finished = {"server_instance": 7, "seed": 11, "winner": 2}
+        successor = {"server_instance": 7, "seed": 12, "winner": None}
+        with patch.object(
+            supervisor, "read_state", side_effect=[finished, successor]
+        ):
+            self.assertEqual(
+                supervisor.wait_for_successor(8766, 7, 11, timeout=0.2),
+                successor,
+            )
+
     def test_progress_marker_tracks_player_steps_within_a_turn(self):
         first = {"seed": 7, "turn": 12, "current": 1, "winner": None}
         stepped = {**first, "current": 2}

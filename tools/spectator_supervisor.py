@@ -267,6 +267,24 @@ def successor_started(
     )
 
 
+def wait_for_successor(
+    port: int,
+    finished_instance: Any,
+    finished_seed: Any,
+    timeout: float = 1.0,
+) -> dict[str, Any] | None:
+    """Give the server-owned cooldown restart a brief scheduling grace."""
+    deadline = time.monotonic() + max(0.0, timeout)
+    latest = read_state(port)
+    while not successor_started(latest, finished_instance, finished_seed):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(0.05, remaining))
+        latest = read_state(port)
+    return latest
+
+
 def checkpoint_path(port: int) -> Path:
     return CHECKPOINT_DIR / f"spectator-{port}.json"
 
@@ -675,6 +693,13 @@ def main() -> int:
             # Recheck after sleeping so the supervisor does not kill that
             # brand-new match in a race at the shared cooldown boundary.
             latest_state = read_state(args.port)
+            if (
+                not replacement_pending
+                and not successor_started(latest_state, finished_instance, finished_seed)
+            ):
+                latest_state = wait_for_successor(
+                    args.port, finished_instance, finished_seed
+                )
             if (
                 successor_started(latest_state, finished_instance, finished_seed)
                 and not replacement_pending
