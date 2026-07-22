@@ -32534,6 +32534,17 @@ mod district_mechanics {
         routed.process_diplomacy(0);
         assert_eq!(routed.players[0].alliances[&1].points, 240.0);
         assert_eq!(routed.players[0].alliances[&1].level, 3);
+
+        routed.turn = routed.players[0].alliances[&1].ends;
+        routed.players[0].civics.insert("civil_service".to_string());
+        routed.players[1].civics.insert("civil_service".to_string());
+        routed
+            .do_propose_deal(0, 1, 0.0, 0.0, false, true, false, Some("economic"))
+            .unwrap();
+        let renewal = routed.pending_deals.last().unwrap().id;
+        routed.do_accept_deal(1, renewal).unwrap();
+        assert_eq!(routed.players[0].alliances[&1].points, 240.0);
+        assert_eq!(routed.players[0].alliances[&1].level, 3);
     }
 
     #[test]
@@ -32594,6 +32605,17 @@ mod district_mechanics {
             .unwrap()
             .iter()
             .any(|unit| unit["id"] == serde_json::json!(allied_unit)));
+        let submarine = game.spawn_unit("submarine", 2, allied_position);
+        game.spawn_unit("destroyer", 1, allied_position);
+        let observed = crate::obs::observation(&game, 0);
+        assert!(
+            observed["units"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|unit| unit["id"] == serde_json::json!(submarine)),
+            "the alliance must share units detected by the ally, not only ordinary map sight"
+        );
     }
 
     #[test]
@@ -32632,6 +32654,35 @@ mod district_mechanics {
         assert_eq!(
             cultural.players[0].gpp["scientist"] - cultural_baseline.players[0].gpp["scientist"],
             1.0
+        );
+
+        let mut cultural_level_three = emergency_game_with_capitals(2, 88_108, 300);
+        let copied_culture = cultural_level_three
+            .player_city_ids(1)
+            .into_iter()
+            .map(|city| cultural_level_three.city_yields(city).culture)
+            .sum::<f64>()
+            * 0.10;
+        let copied_tourism = cultural_level_three.tourism_per_turn(1) * 0.20;
+        install_alliance(&mut cultural_level_three, 0, 1, "cultural", 3, 240.0);
+        let mut level_three_baseline = cultural_level_three.clone();
+        level_three_baseline.players[0].alliances.clear();
+        level_three_baseline.players[1].alliances.clear();
+        cultural_level_three.begin_turn(0);
+        level_three_baseline.begin_turn(0);
+        assert!(
+            (cultural_level_three.players[0].civic_overflow
+                - level_three_baseline.players[0].civic_overflow
+                - copied_culture)
+                .abs()
+                < 1e-9
+        );
+        assert!(
+            (cultural_level_three.players[0].tourism_lifetime
+                - level_three_baseline.players[0].tourism_lifetime
+                - copied_tourism)
+                .abs()
+                < 1e-9
         );
 
         let mut religion = emergency_game_with_capitals(3, 88_106, 300);

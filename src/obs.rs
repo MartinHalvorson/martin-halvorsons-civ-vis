@@ -18,22 +18,24 @@ pub fn observation_spectator(g: &Game, pid: usize) -> Value {
 
 fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
     let p = &g.players[pid];
-    let mut vis: BTreeSet<Pos> = BTreeSet::new();
-    if omniscient {
-        vis.extend(g.map.tiles.keys().cloned());
-    } else {
-        let mut viewers = vec![pid];
+    let mut viewers = vec![pid];
+    if !omniscient {
         viewers.extend(p.alliances.iter().filter_map(|(partner, alliance)| {
             (alliance.ends > g.turn && alliance.kind == "military" && alliance.level >= 2)
                 .then_some(*partner)
         }));
-        for viewer in viewers {
-            for uid in g.player_unit_ids(viewer) {
+    }
+    let mut vis: BTreeSet<Pos> = BTreeSet::new();
+    if omniscient {
+        vis.extend(g.map.tiles.keys().cloned());
+    } else {
+        for viewer in &viewers {
+            for uid in g.player_unit_ids(*viewer) {
                 let u = &g.units[&uid];
                 let sight = g.unit_sight(uid);
                 vis.extend(g.wdisk(u.pos, sight));
             }
-            for cid in g.player_city_ids(viewer) {
+            for cid in g.player_city_ids(*viewer) {
                 let c = &g.cities[&cid];
                 vis.extend(g.wdisk(c.pos, 2));
                 vis.extend(c.owned_tiles.iter().cloned());
@@ -84,7 +86,11 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
         .units
         .values()
         .filter(|u| {
-            (u.owner == pid || vis.contains(&u.pos)) && (omniscient || g.unit_visible_to(u.id, pid))
+            (u.owner == pid || vis.contains(&u.pos))
+                && (omniscient
+                    || viewers
+                        .iter()
+                        .any(|viewer| g.unit_visible_to(u.id, *viewer)))
         })
         .map(|u| {
             let mut v = serde_json::to_value(u).unwrap();
