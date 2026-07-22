@@ -9505,6 +9505,60 @@ mod tests {
     }
 
     #[test]
+    fn religious_denial_warns_early_but_never_ignores_match_point() {
+        let mut game = Game::new_full(4, 30, 18, 7_216, 300, 0, false);
+        for pid in 0..4 {
+            game.current = pid;
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        game.current = 0;
+        game.players[1].religion = Some("Rival Faith".to_string());
+        for owner in [1, 2] {
+            let city = game.player_city_ids(owner)[0];
+            game.cities
+                .get_mut(&city)
+                .unwrap()
+                .pressure
+                .insert("Rival Faith".to_string(), 1_000.0);
+        }
+
+        let ai = AdvancedAi::new();
+        assert_eq!(ai.rival_victory_pressure(&game, 1).progress, 50);
+        assert_eq!(
+            ai.victory_denial(&game, 0),
+            Some((1, GrandStrategy::Conquest)),
+            "two remaining holdouts leave time to build and route a defense"
+        );
+
+        game.players[0].dvp = 13;
+        assert_eq!(ai.victory_focus(&game, 0).progress, 65);
+        assert_eq!(
+            ai.victory_denial(&game, 0),
+            None,
+            "an early warning need not derail a meaningfully closer race"
+        );
+
+        let last_converted = game.player_city_ids(3)[0];
+        game.cities
+            .get_mut(&last_converted)
+            .unwrap()
+            .pressure
+            .insert("Rival Faith".to_string(), 1_000.0);
+        assert_eq!(ai.rival_victory_pressure(&game, 1).progress, 75);
+        assert_eq!(
+            ai.victory_denial(&game, 0),
+            Some((1, GrandStrategy::Conquest)),
+            "a one-conversion match point must interrupt even a close own race"
+        );
+    }
+
+    #[test]
     fn victory_focus_tracks_religious_diplomatic_and_culture_races() {
         let ai = AdvancedAi::new();
 
@@ -11327,6 +11381,55 @@ mod tests {
             GrandStrategy::Science,
         );
         assert!(game.cities[&city].buildings.contains(&"wat".to_string()));
+        assert!(game.players[0].faith < 1_000.0);
+    }
+
+    #[test]
+    fn religious_spending_uses_own_faith_inquisitors_without_funding_a_rival() {
+        let mut game = Game::new(2, 24, 16, 7_104, 200, 0);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = game.player_city_ids(0)[0];
+        install_ai_test_district(&mut game, city, "holy_site");
+        game.cities.get_mut(&city).unwrap().buildings =
+            vec!["shrine".to_string(), "temple".to_string()];
+        game.players[0].civics.insert("theology".to_string());
+        game.players[0].religion = Some("Our Faith".to_string());
+        game.players[0]
+            .counters
+            .insert("inquisition".to_string(), 1);
+        game.players[0].faith = 1_000.0;
+        game.cities.get_mut(&city).unwrap().pressure.extend([
+            ("Our Faith".to_string(), 1_000.0),
+            ("Rival Faith".to_string(), 600.0),
+        ]);
+
+        let ai = AdvancedAi::new();
+        let mut converted = game.clone();
+        converted
+            .cities
+            .get_mut(&city)
+            .unwrap()
+            .pressure
+            .insert("Rival Faith".to_string(), 2_000.0);
+        let converted_units = converted.player_unit_ids(0).len();
+        ai.religious_spending(&mut converted, 0);
+        assert_eq!(converted.player_unit_ids(0).len(), converted_units);
+        assert_eq!(converted.players[0].faith, 1_000.0);
+
+        let before_units = game.player_unit_ids(0).len();
+        ai.religious_spending(&mut game, 0);
+        assert_eq!(game.player_unit_ids(0).len(), before_units + 1);
+        let inquisitor = game
+            .units
+            .values()
+            .find(|unit| unit.owner == 0 && unit.kind == "inquisitor")
+            .unwrap();
+        assert_eq!(inquisitor.religion.as_deref(), Some("Our Faith"));
         assert!(game.players[0].faith < 1_000.0);
     }
 

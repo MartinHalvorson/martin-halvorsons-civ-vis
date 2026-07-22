@@ -532,7 +532,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--height", type=int, default=38)
     parser.add_argument("--city-states", type=int, default=6)
     parser.add_argument("--turns", type=int, default=500)
-    parser.add_argument("--cooldown", type=float, default=10.0)
+    parser.add_argument(
+        "--cooldown",
+        type=float,
+        default=15.0,
+        help="keep the rendered result visible and outlive its 10-second browser countdown",
+    )
     parser.add_argument("--poll", type=float, default=0.5)
     parser.add_argument("--build-retry", type=float, default=15.0)
     parser.add_argument(

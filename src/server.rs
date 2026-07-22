@@ -150,6 +150,28 @@ impl Session {
         Ok(())
     }
 
+    /// Start a requested world, rejecting a delayed result-countdown request
+    /// after the supervisor has already replaced the finished server.
+    fn start_new_game(&mut self, request: &Value) -> Result<(), String> {
+        if let Some(finished) = request.get("replace_finished") {
+            let expected_seed = finished["seed"]
+                .as_u64()
+                .ok_or_else(|| "replace_finished.seed must be an integer".to_string())?;
+            let expected_instance = finished["server_instance"]
+                .as_u64()
+                .ok_or_else(|| "replace_finished.server_instance must be an integer".to_string())?;
+            if self.game.winner.is_none()
+                || self.game.seed != expected_seed
+                || expected_instance != std::process::id() as u64
+            {
+                return Err("finished game is no longer the active session".into());
+            }
+        }
+        let params = new_game_params(&self.params, request);
+        *self = Session::new(params);
+        Ok(())
+    }
+
     pub fn state(&self) -> Value {
         if self.params.spectate {
             let g = &self.game;
@@ -567,9 +589,12 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
         }
         ("POST", "/new") => {
             let mut session = sh.session.lock().unwrap();
-            let p = new_game_params(&session.params, &parsed);
-            *session = Session::new(p);
+            let result = session.start_new_game(&parsed);
             let mut o = session.state();
+            o["error"] = match result {
+                Ok(()) => Value::Null,
+                Err(error) => Value::String(error),
+            };
             drop(session);
             decorate(&mut o, sh);
             respond_json(stream, &o);
@@ -754,6 +779,41 @@ mod tests {
         assert!(session.set_view_player(Some(minor)).is_err());
         assert!(session.set_view_player(Some(usize::MAX)).is_err());
         assert!(session.state()["view_player"].is_null());
+    }
+
+    #[test]
+    fn result_countdown_cannot_replace_an_active_successor() {
+        let mut params = current();
+        params.spectate = true;
+        let mut session = Session::new(params);
+        let original_seed = session.game.seed;
+        let guarded = json!({
+            "seed": 2,
+            "spectate": true,
+            "replace_finished": {
+                "seed": original_seed,
+                "server_instance": std::process::id()
+            }
+        });
+
+        assert!(session.start_new_game(&guarded).is_err());
+        assert_eq!(session.game.seed, original_seed);
+
+        session.game.winner = Some(0);
+        assert!(session.start_new_game(&guarded).is_ok());
+        assert_eq!(session.game.seed, 2);
+
+        session.game.winner = Some(0);
+        let stale = json!({
+            "seed": 3,
+            "spectate": true,
+            "replace_finished": {
+                "seed": 2,
+                "server_instance": u64::from(std::process::id()) + 1
+            }
+        });
+        assert!(session.start_new_game(&stale).is_err());
+        assert_eq!(session.game.seed, 2);
     }
 
     #[test]
