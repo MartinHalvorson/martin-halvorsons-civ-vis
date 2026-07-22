@@ -86,6 +86,7 @@
     "outer_defense": 200,
     "effects": {
       "tourism_after_conservation": 3,
+      "siege_support_immunity": 1,
       "golden_age_faith_tourism_pct": 100
     }
   },
@@ -529,7 +530,8 @@
     "maintenance": 2,
     "citizen_slots": 1,
     "great_person_points": { "writer": 1, "artist": 2 },
-    "great_work_slots": { "art": 3 }
+    "great_work_slots": { "art": 3 },
+    "effects": { "rock_concert_tourism": 500 }
   },
   "archaeological_museum": {
     "cost": 290,
@@ -541,7 +543,8 @@
     "maintenance": 2,
     "citizen_slots": 1,
     "great_person_points": { "writer": 1, "artist": 2 },
-    "great_work_slots": { "artifact": 3 }
+    "great_work_slots": { "artifact": 3 },
+    "effects": { "rock_concert_tourism": 500 }
   },
   "broadcast_center": {
     "cost": 440,
@@ -643,7 +646,7 @@
       "citizen_production": 1,
       "coal_per_power": 0.25,
       "power_generated": 4,
-      "co2_per_resource": 820
+      "co2_per_power": 820
     }
   },
   "oil_power_plant": {
@@ -658,7 +661,7 @@
     "great_person_points": { "engineer": 1 },
     "regional_range": 6,
     "regional_group": "power_plant",
-    "effects": { "citizen_production": 1, "oil_per_power": 0.25, "power_generated": 4, "co2_per_resource": 490 }
+    "effects": { "citizen_production": 1, "oil_per_power": 0.25, "power_generated": 4, "co2_per_power": 490 }
   },
   "nuclear_power_plant": {
     "cost": 480,
@@ -676,7 +679,7 @@
       "citizen_production": 1,
       "uranium_per_power": 0.0625,
       "power_generated": 16,
-      "co2_per_resource": 48,
+      "co2_per_power": 48,
       "reactor_accident_risk": 1
     }
   },
@@ -697,7 +700,7 @@
     "amenity": 1,
     "maintenance": 2,
     "regional_range": 6,
-    "effects": { "rainforest_marsh_science": 1 }
+    "effects": { "rainforest_marsh_science": 1, "rock_concert_tourism": 500 }
   },
   "stadium": {
     "cost": 480,
@@ -738,7 +741,7 @@
     "amenity": 2,
     "maintenance": 2,
     "regional_range": 6,
-    "effects": { "geothermal_fissure_amenity": 2, "geothermal_fissure_tourism": 3 }
+    "effects": { "geothermal_fissure_amenity": 2, "geothermal_fissure_tourism": 3, "rock_concert_tourism": 500 }
   },
   "ferris_wheel": {
     "cost": 290,
@@ -757,7 +760,7 @@
     "amenity": 1,
     "maintenance": 2,
     "regional_range": 9,
-    "effects": { "coast_lake_feature_science": 1 }
+    "effects": { "coast_lake_feature_science": 1, "rock_concert_tourism": 500 }
   },
   "aquatics_center": {
     "cost": 480,

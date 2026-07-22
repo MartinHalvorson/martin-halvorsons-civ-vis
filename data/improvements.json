@@ -92,16 +92,16 @@
   },
   "seaside_resort": {
     "tech": "radio",
-    "yields": {"gold": 1, "culture": 2},
+    "yields": {},
     "terrain": ["grassland", "plains", "desert"],
     "requires_flat": true,
-    "effects": {"tourism": 4}
+    "effects": {"appeal_gold": 1, "appeal_tourism": 1}
   },
   "ski_resort": {
     "civic": "professional_sports",
-    "yields": {"gold": 1, "culture": 1},
+    "yields": {},
     "terrain": ["mountain"],
-    "effects": {"tourism": 4, "amenity": 1}
+    "effects": {"tourism": 4, "amenity": 1, "unworkable": 1}
   },
   "seastead": {
     "tech": "seasteads",
@@ -177,8 +177,13 @@
   "national_park": {
     "civic": "conservation",
     "builder_buildable": false,
-    "yields": {"culture": 2},
-    "effects": {"tourism": 8, "amenity": 2}
+    "yields": {},
+    "effects": {
+      "appeal_tourism": 1,
+      "host_city_amenity": 2,
+      "nearby_city_amenity": 1,
+      "nearby_city_count": 4
+    }
   },
   "archaeological_dig": {
     "civic": "natural_history",
