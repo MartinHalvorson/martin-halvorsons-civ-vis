@@ -148,6 +148,9 @@ pub struct UnitSpec {
     pub class: String,
     pub cost: f64,
     pub moves: f64,
+    /// False for units which only enter play through a special effect.
+    #[serde(default = "default_true")]
+    pub buildable: bool,
     #[serde(default)]
     pub strength: f64,
     #[serde(default)]
@@ -164,6 +167,12 @@ pub struct UnitSpec {
     pub tech: Option<String>,
     #[serde(default)]
     pub requires_resource: Option<String>,
+    /// Strategic material paid once when construction or purchase starts.
+    #[serde(default)]
+    pub resource_cost: f64,
+    /// Strategic fuel consumed at the beginning of every owner turn.
+    #[serde(default)]
+    pub resource_maintenance: f64,
     #[serde(default)]
     pub domain: Option<String>,
     #[serde(default)]
@@ -219,6 +228,9 @@ pub struct DistrictSpec {
     pub civic: Option<String>,
     #[serde(default)]
     pub yields: Yields,
+    /// Yield of one citizen assigned as a specialist in this district.
+    #[serde(default)]
+    pub citizen_yields: Yields,
     #[serde(default)]
     pub adjacency: BTreeMap<String, Yields>,
     /// Great Person points produced by the completed district itself.
@@ -894,7 +906,7 @@ mod tests {
         let rules = Rules::embedded();
         assert_eq!(rules.techs.len(), 77);
         assert_eq!(rules.civics.len(), 61);
-        assert_eq!(rules.units.len(), 80);
+        assert_eq!(rules.units.len(), 81);
         assert_eq!(rules.buildings.len(), 85);
         assert_eq!(rules.districts.len(), 35);
         assert_eq!(rules.wonders.len(), 53);
@@ -937,6 +949,23 @@ mod tests {
                 assert!(
                     rules.resources.contains_key(resource),
                     "{id} needs {resource}"
+                );
+                assert!(
+                    spec.resource_cost > 0.0,
+                    "{id} must define its Gathering Storm {resource} cost"
+                );
+                assert!(
+                    spec.resource_maintenance >= 0.0,
+                    "{id} has negative {resource} maintenance"
+                );
+            } else {
+                assert_eq!(
+                    spec.resource_cost, 0.0,
+                    "{id} has a cost without a resource"
+                );
+                assert_eq!(
+                    spec.resource_maintenance, 0.0,
+                    "{id} has maintenance without a resource"
                 );
             }
             if let Some(building) = &spec.requires_building {

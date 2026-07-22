@@ -43,13 +43,17 @@ content (29 techs, 14 civics), and `civvis play` — a zero-dep local web GUI
 for human-vs-AI over the JSON action protocol. Rust core still at v0.3 rules;
 batch-port these systems next.
 
-## Later rules depth
+## v0.6 rules-completion pass (shipped)
 
-- Pillaging/coastal raids, terrain cliffs, and aircraft transport/combat
-  (including their promotion modifiers)
-- Religious beliefs and Apostle promotions beyond the current combat roster
-- Remaining diplomacy inventory (city/Great Work trades, demands, promises,
-  emergencies, and richer leader agendas)
+The previously deferred tactical and world systems are active: pillaging and
+repairs, coastal raids, cliffs, aircraft basing/combat/interception/anti-air,
+named Great People and patronage, complete belief categories and Apostle
+promotions, named Governors and promotion trees, barbarian scout alerts,
+multi-tile Natural Wonders, Golden/Dark/Heroic Ages and Dedications, bilateral
+Quick Deals, grievances, formal wars, friendships, leveled Alliances,
+Diplomatic Favor, World Congress voting, and keep/raze/liberate conquest
+decisions. Future roadmap work is content expansion or client/tooling work,
+not activation of dormant engine systems.
 
 ## v0.3 — systems breadth
 

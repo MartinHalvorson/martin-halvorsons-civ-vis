@@ -366,6 +366,20 @@
   .footer-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
   #tradebtn { min-width: 112px; margin: 0; }
 
+  #capture-choice {
+    position: absolute; z-index: 24; left: 50%; top: 50%; width: min(520px, calc(100% - 36px));
+    display: none; transform: translate(-50%, -50%); padding: 22px;
+    color: var(--text); border: 1px solid #9f8050; border-radius: 18px;
+    background: radial-gradient(circle at 25% 0, #3a3024f8, #091310fc 62%);
+    box-shadow: 0 32px 120px #000f, inset 0 1px #ffffff17; backdrop-filter: blur(22px);
+  }
+  #capture-choice.open { display: block; animation: rise .18s ease-out; }
+  .capture-kicker { color: var(--gold); font-size: 9px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+  .capture-title { margin-top: 7px; color: var(--gold-bright); font: 600 26px/1.1 Georgia, serif; }
+  .capture-copy { margin: 9px 0 17px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+  .capture-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 8px; }
+  .capture-actions button { margin: 0; min-height: 43px; }
+
   @media (max-width: 980px) {
     #side { width: 320px; min-width: 320px; }
     #topbar { left: 14px; transform: none; max-width: calc(100% - 84px); overflow: hidden; }
@@ -441,6 +455,7 @@
     </div>
     <div id="tradelist"></div>
   </section>
+  <section id="capture-choice" role="dialog" aria-modal="true" aria-labelledby="capturetitle"></section>
   <div id="tip"></div>
 </div>
 <div id="side">
@@ -1048,7 +1063,36 @@ function render(st, recordChronicle = true) {
         (st.restart_in !== undefined ? "next game in " + st.restart_in + "s" : "") +
         "</span>" : "");
   } else w.style.display = "none";
-  draw(); drawSide(newWorld); drawMini(); drawTopbar(); drawPlayerHud(); drawUbar(); drawQuickDeals();
+  draw(); drawSide(newWorld); drawMini(); drawTopbar(); drawPlayerHud(); drawUbar(); drawQuickDeals(); drawCaptureChoice();
+}
+
+function drawCaptureChoice() {
+  const panel = document.getElementById("capture-choice");
+  const actions = state && !SPEC ? state.legal_actions.filter(action =>
+    ["keep_city", "raze_city", "liberate_city"].includes(action.type)) : [];
+  const endTurn = document.getElementById("endturn");
+  if (!actions.length) {
+    panel.classList.remove("open");
+    panel.innerHTML = "";
+    if (endTurn) endTurn.disabled = false;
+    return;
+  }
+  if (endTurn) endTurn.disabled = true;
+  closeTrade();
+  const city = state.cities.find(candidate => candidate.id === actions[0].city) || {name:"Captured city", pop:"?"};
+  const founder = state.players[city.original_owner];
+  const founderName = founder ? founder.civ : "its founder";
+  const button = action => {
+    const label = action.type === "keep_city" ? "🏛 Keep city" :
+      action.type === "raze_city" ? "🔥 Raze city" : `🕊 Liberate to ${founderName}`;
+    const cls = action.type === "raze_city" ? "danger" : action.type === "keep_city" ? "primary" : "";
+    return `<button class="${cls}" onclick='send(${JSON.stringify(action)})'>${label}</button>`;
+  };
+  panel.innerHTML = `<div class="capture-kicker">City conquered · decision required</div>
+    <div class="capture-title" id="capturetitle">The fate of ${city.name}</div>
+    <div class="capture-copy">Population ${city.pop}. Keep this strategic foothold, destroy it at severe diplomatic cost, or restore it to ${founderName} for Diplomatic Favor. Capitals can never be razed.</div>
+    <div class="capture-actions">${actions.map(button).join("")}</div>`;
+  panel.classList.add("open");
 }
 
 // ---------------------------------------------------------------- renderer
@@ -2121,8 +2165,11 @@ function dealTerms(items, kind) {
   if (+items.gold > 0) terms.push(`<span class="term ${kind}">🪙 ${compactStat(items.gold)} Gold</span>`);
   if (+items.gold_per_turn > 0) terms.push(`<span class="term ${kind}">🪙 ${compactStat(items.gold_per_turn)} / turn ×30</span>`);
   if (+items.diplomatic_favor > 0) terms.push(`<span class="term ${kind}">⚜ ${compactStat(items.diplomatic_favor)} Favor</span>`);
-  for (const [resource, amount] of Object.entries(items.resources || {}))
-    terms.push(`<span class="term ${kind}">${tradeItemIcon(resource)} ${amount} ${titleCase(resource)} ×30</span>`);
+  for (const [resource, amount] of Object.entries(items.resources || {})) {
+    const resourceClass = (state?.me?.resources || []).find(entry => entry.id === resource)?.class;
+    const duration = resourceClass === "strategic" ? "" : " ×30";
+    terms.push(`<span class="term ${kind}">${tradeItemIcon(resource)} ${amount} ${titleCase(resource)}${duration}</span>`);
+  }
   if (items.open_borders) terms.push(`<span class="term ${kind}">🗺 Open Borders ×30</span>`);
   return terms;
 }
@@ -2419,8 +2466,11 @@ function drawCityPanel() {
   h += `<div class="row"><span class="small">Growth</span><span class="small">${c.amenity_surplus >= 0 ? "+" : ""}${c.amenity_surplus} amenities</span></div>` +
     prog(c.food, c.growth_need, "#76c893");
   if (c.citizens) {
+    const specialists = c.citizens.specialists || [];
+    const assigned = c.citizens.worked_tiles.length + specialists.length;
+    const jobs = specialists.length ? ` · ${specialists.map(titleCase).join(", ")}` : "";
     h += `<div class="row" style="margin-top:8px"><span class="small">Citizen focus</span>` +
-      `<b title="${c.citizens.worked_tiles.length} population-worked tiles">${titleCase(c.citizens.focus)} · ${c.citizens.worked_tiles.length}/${c.pop}</b></div>`;
+      `<b title="${c.citizens.worked_tiles.length} worked tiles · ${specialists.length} specialists${jobs}">${titleCase(c.citizens.focus)} · ${assigned}/${c.pop}</b></div>`;
   }
   if (c.queue && c.queue.length) {
     h += `<div class="row" style="margin-top:8px"><span class="small">Producing</span><b>${titleCase(itemName(c.queue[0]))}</b></div>` +

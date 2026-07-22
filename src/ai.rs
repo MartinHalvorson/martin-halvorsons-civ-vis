@@ -917,12 +917,14 @@ impl Ai for BasicAi {
     fn take_turn(&mut self, g: &mut Game, pid: usize) {
         self.minor = g.players[pid].is_minor;
         self.barb = g.players[pid].is_barbarian;
+        self.resolve_city_dispositions(g, pid, false, false);
         if !self.barb {
             self.research(g, pid);
             self.diplomacy(g, pid);
             self.cities(g, pid);
         }
         self.units(g, pid);
+        self.resolve_city_dispositions(g, pid, false, false);
         if g.winner.is_none() && g.current == pid {
             let _ = g.apply(pid, &Action::EndTurn);
         }
@@ -930,6 +932,67 @@ impl Ai for BasicAi {
 }
 
 impl BasicAi {
+    /// Resolve mandatory conquest choices with explicit strategic tradeoffs.
+    /// Capitals and developed bridgeheads are retained; diplomacy-oriented
+    /// plans restore city-states, friends, and eliminated founders; only an
+    /// aggressive plan razes a remote city whose long-run value is negligible.
+    pub(crate) fn resolve_city_dispositions(
+        &mut self,
+        g: &mut Game,
+        pid: usize,
+        prefer_diplomacy: bool,
+        prefer_conquest: bool,
+    ) {
+        loop {
+            let legal = g.legal_actions(pid);
+            let Some(cid) = legal.iter().find_map(|action| match action {
+                Action::KeepCity { city }
+                | Action::RazeCity { city }
+                | Action::LiberateCity { city } => Some(*city),
+                _ => None,
+            }) else {
+                break;
+            };
+            let city = g.cities[&cid].clone();
+            let founder = city.original_owner;
+            let can_liberate = legal
+                .iter()
+                .any(|action| matches!(action, Action::LiberateCity { city } if *city == cid));
+            let diplomatic_liberation = can_liberate
+                && (prefer_diplomacy
+                    || g.players[founder].is_minor
+                    || !g.players[founder].alive
+                    || g.are_friends(pid, founder)
+                    || g.alliance_with(pid, founder).is_some());
+
+            let nearest_core = g
+                .cities
+                .values()
+                .filter(|other| other.owner == pid && other.id != cid)
+                .map(|other| g.wdist(city.pos, other.pos))
+                .min()
+                .unwrap_or(i32::MAX);
+            let durable_value = city.is_capital
+                || city.pop >= 4
+                || !city.districts.is_empty()
+                || !city.wonders.is_empty()
+                || nearest_core <= 8;
+            let can_raze = legal
+                .iter()
+                .any(|action| matches!(action, Action::RazeCity { city } if *city == cid));
+            let action = if diplomatic_liberation {
+                Action::LiberateCity { city: cid }
+            } else if can_raze && prefer_conquest && !durable_value {
+                Action::RazeCity { city: cid }
+            } else {
+                Action::KeepCity { city: cid }
+            };
+            if g.apply(pid, &action).is_err() {
+                break;
+            }
+        }
+    }
+
     fn research(&self, g: &mut Game, pid: usize) {
         if g.players[pid].research.is_none() {
             let avail = g.available_techs(pid);
@@ -1354,7 +1417,10 @@ impl BasicAi {
                 }
             }
         }
-        // walls fire at raiders in range
+        // Walls fire at raiders in range. Encampment strikes are collected
+        // once after the city loop: rebuilding the complete action list for
+        // every city also enumerates production, deals, Congress votes, and
+        // every unit move, which becomes quadratic in a developed empire.
         for cid in &city_ids {
             if g.city_can_strike(&g.cities[cid]) {
                 let cpos = g.cities[cid].pos;
@@ -1375,10 +1441,28 @@ impl BasicAi {
                     }
                 }
             }
-            if let Some(action) = g.legal_actions(pid).into_iter().find(
-                |action| matches!(action, Action::EncampmentStrike { city, .. } if city == cid),
-            ) {
-                let _ = g.apply(pid, &action);
+        }
+        let has_ready_encampment = city_ids.iter().any(|cid| {
+            let city = &g.cities[cid];
+            city.encampment_hp > 0
+                && city.encampment_wall_hp > 0
+                && !city.encampment_pillaged
+                && !city.encampment_struck
+        });
+        if has_ready_encampment {
+            let strikes: Vec<Action> = g
+                .legal_actions(pid)
+                .into_iter()
+                .filter(|action| matches!(action, Action::EncampmentStrike { .. }))
+                .collect();
+            let mut used = HashSet::new();
+            for action in strikes {
+                let Action::EncampmentStrike { city, .. } = &action else {
+                    unreachable!()
+                };
+                if used.insert(*city) {
+                    let _ = g.apply(pid, &action);
+                }
             }
         }
         for cid in &city_ids {
@@ -2181,27 +2265,49 @@ impl BasicAi {
             );
         }
 
-        let reserve = (g.player_city_ids(pid).len() + 3).max(5);
-        loop {
-            let military = g
-                .player_unit_ids(pid)
-                .into_iter()
-                .filter(|uid| g.rules.units[g.units[uid].kind.as_str()].class == "military")
-                .count();
-            if military <= reserve {
-                break;
-            }
-            let action = g
-                .legal_actions(pid)
-                .into_iter()
-                .find(|action| matches!(action, Action::CombineUnits { .. }));
-            let Some(action) = action else { break };
-            if g.apply(pid, &action).is_err() {
-                break;
+        if g.players[pid].civics.contains("nationalism") {
+            let reserve = (g.player_city_ids(pid).len() + 3).max(5);
+            loop {
+                let military = g
+                    .player_unit_ids(pid)
+                    .into_iter()
+                    .filter(|uid| g.rules.units[g.units[uid].kind.as_str()].class == "military")
+                    .count();
+                if military <= reserve {
+                    break;
+                }
+                let action = g
+                    .legal_actions(pid)
+                    .into_iter()
+                    .find(|action| matches!(action, Action::CombineUnits { .. }));
+                let Some(action) = action else { break };
+                if g.apply(pid, &action).is_err() {
+                    break;
+                }
             }
         }
 
-        loop {
+        let has_link_candidate = |game: &Game| {
+            let units = game.player_unit_ids(pid);
+            units.iter().enumerate().any(|(index, unit)| {
+                units[index + 1..].iter().any(|with| {
+                    let a = &game.units[unit];
+                    let b = &game.units[with];
+                    if a.pos != b.pos || a.linked_to.is_some() || b.linked_to.is_some() {
+                        return false;
+                    }
+                    let a_spec = &game.rules.units[a.kind.as_str()];
+                    let b_spec = &game.rules.units[b.kind.as_str()];
+                    let support = (a_spec.class == "support" && b_spec.class == "military")
+                        || (b_spec.class == "support" && a_spec.class == "military");
+                    let naval_settler = (a_spec.domain.as_deref() == Some("sea")
+                        && b.kind == "settler")
+                        || (b_spec.domain.as_deref() == Some("sea") && a.kind == "settler");
+                    support || naval_settler
+                })
+            })
+        };
+        while has_link_candidate(g) {
             let action = g
                 .legal_actions(pid)
                 .into_iter()
@@ -2596,14 +2702,20 @@ impl BasicAi {
     }
 
     fn builder_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
-        if let Some(action) = g
-            .legal_actions(pid)
-            .into_iter()
-            .find(|action| matches!(action, Action::RepairImprovement { unit } if *unit == uid))
-        {
-            return g.apply(pid, &action).is_ok();
-        }
         let upos = g.units[&uid].pos;
+        let repairable = g.map.get(upos).is_some_and(|tile| {
+            tile.pillaged
+                && tile.improvement.is_some()
+                && tile
+                    .owner_city
+                    .and_then(|city| g.cities.get(&city))
+                    .is_some_and(|city| city.owner == pid)
+        });
+        if repairable {
+            return g
+                .apply(pid, &Action::RepairImprovement { unit: uid })
+                .is_ok();
+        }
         let imps = g.valid_improvements(pid, upos);
         if !imps.is_empty() {
             return g
@@ -4186,5 +4298,28 @@ mod tests {
 
         assert!(BasicAi::new().siege_support_step(&mut g, 0, ram));
         assert_eq!(g.units[&ram].pos, g.units[&warrior].pos);
+    }
+
+    #[test]
+    fn headless_ai_resolves_mandatory_capture_choices() {
+        let mut g = Game::new_full(2, 20, 14, 34, 30, 0, false);
+        let settler = g
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|id| g.units[id].kind == "settler")
+            .unwrap();
+        g.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = g.player_city_ids(0)[0];
+        g.cities.get_mut(&city).unwrap().captured_from = Some(1);
+        assert!(matches!(
+            g.legal_actions(0).as_slice(),
+            [Action::KeepCity { city: pending }] if *pending == city
+        ));
+
+        let mut ai = BasicAi::new();
+        ai.resolve_city_dispositions(&mut g, 0, false, false);
+
+        assert_eq!(g.cities[&city].captured_from, None);
+        assert_eq!(g.players[1].grievances.get(&0), Some(&50.0));
     }
 }

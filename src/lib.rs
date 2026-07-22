@@ -791,6 +791,40 @@ mod tests {
             city["citizens"]["worked_tiles"].as_array().unwrap().len(),
             2
         );
+
+        // Building slots turn specialty-district yields into real citizen
+        // jobs. The governor compares them directly with tiles and exposes
+        // the assignment in observations.
+        g.map.tiles.get_mut(&ring[1]).unwrap().hills = false;
+        g.map.tiles.get_mut(&ring[2]).unwrap().resource = None;
+        g.map.tiles.get_mut(&ring[3]).unwrap().district = Some("campus".to_string());
+        g.cities
+            .get_mut(&cid)
+            .unwrap()
+            .districts
+            .insert("campus".to_string(), ring[3]);
+        g.cities
+            .get_mut(&cid)
+            .unwrap()
+            .buildings
+            .push("library".to_string());
+        g.players[0].civ = "China".to_string();
+        g.cities.get_mut(&cid).unwrap().queue.clear();
+        let specialist_plan = g.city_citizen_plan(cid);
+        assert_eq!(specialist_plan.specialists, vec!["campus"]);
+        assert_eq!(specialist_plan.worked_tiles, vec![ring[0]]);
+
+        let observed = crate::obs::observation(&g, 0);
+        let city = observed["cities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|city| city["id"] == serde_json::json!(cid))
+            .unwrap();
+        assert_eq!(
+            city["citizens"]["specialists"],
+            serde_json::json!(["campus"])
+        );
     }
 
     /// Add a fresh unit of `kind` at `pos` for player 0 via save-edit.
@@ -898,6 +932,11 @@ mod tests {
             g.is_at_war(minor, 1),
             "a city-state follows its Suzerain into war"
         );
+        g.current = 1;
+        let peace = g.legal_actions(1);
+        assert!(peace.contains(&Action::MakePeace { player: 0 }));
+        assert!(!peace.contains(&Action::MakePeace { player: minor }));
+        g.current = 0;
         g.at_war.remove(&(0, 1));
         assert!(
             !g.is_at_war(minor, 1),

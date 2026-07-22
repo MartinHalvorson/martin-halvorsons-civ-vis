@@ -640,6 +640,7 @@
     "regional_group": "power_plant",
     "effects": {
       "production_equal_industrial_adjacency": 1,
+      "citizen_production": 1,
       "coal_per_power": 0.25,
       "power_generated": 4,
       "co2_per_resource": 820
@@ -870,7 +871,11 @@
     "requires_any": ["ancestral_hall", "audience_chamber", "warlords_throne"],
     "excludes": ["intelligence_agency", "grand_masters_chapel", "queens_bibliotheque"],
     "maintenance": 2,
-    "effects": { "levy_discount_pct": 50, "levied_unit_combat_strength": 4 }
+    "effects": {
+      "diplomatic_favor": 3,
+      "levy_discount_pct": 50,
+      "levied_unit_combat_strength": 4
+    }
   },
   "intelligence_agency": {
     "cost": 290,
@@ -878,7 +883,7 @@
     "requires_any": ["ancestral_hall", "audience_chamber", "warlords_throne"],
     "excludes": ["foreign_ministry", "grand_masters_chapel", "queens_bibliotheque"],
     "maintenance": 2,
-    "effects": { "spy_capacity": 1, "spy_mission_time_pct": -25 }
+    "effects": { "spy_capacity": 1, "offensive_spy_level": 1 }
   },
   "grand_masters_chapel": {
     "cost": 290,

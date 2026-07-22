@@ -92,10 +92,10 @@ saves round-trip the complete state including RNG.
 
 ## Fidelity notes
 
-The combat curve, ZOC, staged embarkation/Ocean access, naval domains and
-roster, XP/promotions, fortification, siege support, linked formations,
-Corps/Armies, theological combat, and independent
-Encampment defenses use the same deterministic action/state model as ordinary
-unit combat. Promotion nodes are rules data in `data/promotions.json`; only
-effects whose underlying systems are absent (currently cliffs, pillaging/
-coastal raids, and aircraft transport/combat) remain dormant. See ROADMAP.md.
+The combat curve, ZOC, staged embarkation/Ocean access, naval and air domains,
+XP/promotions, fortification, pillaging and repairs, coastal raids, cliffs,
+aircraft basing/interception/anti-air defense, siege support, linked formations,
+Corps/Armies, theological combat, and independent Encampment defenses all use
+the same deterministic action/state model as ordinary unit combat. Promotion
+nodes are rules data in `data/promotions.json`, and every represented effect
+family has an active engine path.
