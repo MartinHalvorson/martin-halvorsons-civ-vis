@@ -43,6 +43,15 @@ fn recruit_current_merchant(game: &mut Game) -> String {
     expected
 }
 
+fn recruit_current_military_person(game: &mut Game, kind: &str) -> String {
+    let expected = game.current_great_person(kind).unwrap().0.to_string();
+    let cost = game.gp_cost(0, kind);
+    game.players[0].gpp.insert(kind.to_string(), cost);
+    game.claim_great_person(0, kind, None).unwrap();
+    assert_eq!(game.players[0].great_people.last(), Some(&expected));
+    expected
+}
+
 #[test]
 fn named_scientists_grant_exact_buildings_science_and_era_boosts() {
     let (mut game, city, _) = scientist_game(95_001);
@@ -306,4 +315,145 @@ fn named_merchants_annex_tiles_and_apply_exact_trade_and_oil_effects() {
         game.city_yields(merchant_city)
     );
     assert_eq!(restored.strategic_resource_rate(0, "oil"), 3.0);
+}
+
+#[test]
+fn named_generals_promote_or_form_exactly_one_land_unit() {
+    let mut game = Game::new_full(1, 24, 16, 95_005, 300, 0, false);
+    let position = game.player_unit_ids(0).into_iter().next().unwrap();
+    let position = game.units[&position].pos;
+    let target = game.spawn_unit("swordsman", 0, position);
+    let untouched = game.spawn_unit("warrior", 0, position);
+
+    assert_eq!(
+        recruit_current_military_person(&mut game, "general"),
+        "hannibal_barca"
+    );
+    assert!(game.promotion_pending(target));
+    assert_eq!(game.units[&untouched].xp, 0);
+
+    assert_eq!(
+        recruit_current_military_person(&mut game, "general"),
+        "el_cid"
+    );
+    assert_eq!(game.units[&target].formation, 1);
+    assert_eq!(game.units[&untouched].formation, 0);
+
+    assert_eq!(
+        recruit_current_military_person(&mut game, "general"),
+        "napoleon_bonaparte"
+    );
+    assert_eq!(game.units[&target].formation, 2);
+    assert_eq!(game.units[&untouched].formation, 0);
+}
+
+#[test]
+fn named_admirals_apply_city_trade_building_loyalty_and_flanking_effects() {
+    let mut game = Game::new_full(2, 28, 18, 95_006, 300, 0, false);
+    let mut cities = Vec::new();
+    for pid in 0..2 {
+        let settler = game
+            .player_unit_ids(pid)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        cities.push(game.found_city_for(pid, game.units[&settler].pos, None));
+    }
+    let admiral_city = cities[0];
+    let foreign_city = cities[1];
+    install_test_district(&mut game, admiral_city, "harbor");
+    game.players[0].civics.extend([
+        "foreign_trade".to_string(),
+        "military_tradition".to_string(),
+    ]);
+
+    assert_eq!(
+        recruit_current_military_person(&mut game, "admiral"),
+        "themistocles"
+    );
+    assert_eq!(
+        game.cities[&admiral_city].great_person_loyalty_per_turn,
+        2.0
+    );
+    game.cities.get_mut(&admiral_city).unwrap().loyalty = 50.0;
+    let mut loyalty_baseline: Game =
+        serde_json::from_str(&serde_json::to_string(&game).unwrap()).unwrap();
+    loyalty_baseline
+        .cities
+        .get_mut(&admiral_city)
+        .unwrap()
+        .great_person_loyalty_per_turn = 0.0;
+    game.process_loyalty(0);
+    loyalty_baseline.process_loyalty(0);
+    assert_eq!(
+        game.cities[&admiral_city].loyalty - loyalty_baseline.cities[&admiral_city].loyalty,
+        2.0
+    );
+    game.cities.get_mut(&admiral_city).unwrap().loyalty = 100.0;
+
+    game.routes.push(TradeRoute {
+        origin: foreign_city,
+        dest: admiral_city,
+        owner: 1,
+        ends: game.turn + 30,
+    });
+    let origin_gold = game.city_yields(foreign_city).gold;
+    let destination_gold = game.city_yields(admiral_city).gold;
+    let capacity = game.trade_capacity(0);
+    let traders = game
+        .units
+        .values()
+        .filter(|unit| unit.owner == 0 && unit.kind == "trader")
+        .count();
+    assert_eq!(
+        recruit_current_military_person(&mut game, "admiral"),
+        "zheng_he"
+    );
+    assert_eq!(game.trade_capacity(0) - capacity, 1);
+    assert_eq!(
+        game.units
+            .values()
+            .filter(|unit| unit.owner == 0 && unit.kind == "trader")
+            .count()
+            - traders,
+        1
+    );
+    assert_eq!(game.city_yields(foreign_city).gold - origin_gold, 2.0);
+    assert_eq!(game.city_yields(admiral_city).gold - destination_gold, 2.0);
+
+    let target = game
+        .map
+        .tiles
+        .keys()
+        .copied()
+        .find(|position| game.nbrs(*position).len() == 6)
+        .unwrap();
+    let ring = game.nbrs(target);
+    for position in std::iter::once(target).chain(ring.iter().copied()) {
+        let tile = game.map.tiles.get_mut(&position).unwrap();
+        tile.terrain = "coast".to_string();
+        tile.feature = None;
+    }
+    let attacker = game.spawn_unit("galley", 0, ring[0]);
+    game.spawn_unit("galley", 0, ring[1]);
+    game.spawn_unit("galley", 1, target);
+    assert_eq!(game.flanking_bonus(attacker, target), 2.0);
+    assert_eq!(
+        recruit_current_military_person(&mut game, "admiral"),
+        "horatio_nelson"
+    );
+    assert!(game.cities[&admiral_city]
+        .buildings
+        .contains(&"lighthouse".to_string()));
+    assert!(game.cities[&admiral_city]
+        .buildings
+        .contains(&"shipyard".to_string()));
+    assert_eq!(game.flanking_bonus(attacker, target), 3.0);
+
+    let restored: Game = serde_json::from_str(&serde_json::to_string(&game).unwrap()).unwrap();
+    assert_eq!(restored.flanking_bonus(attacker, target), 3.0);
+    assert_eq!(
+        restored.cities[&admiral_city].great_person_loyalty_per_turn,
+        2.0
+    );
 }

@@ -6468,8 +6468,51 @@ impl AdvancedAi {
 
         let patrol = legal
             .iter()
-            .find(|action| matches!(action, Action::AirPatrol { unit } if *unit == uid))
-            .cloned();
+            .filter_map(|action| match action {
+                Action::AirPatrol {
+                    unit: action_unit,
+                    to,
+                } if *action_unit == uid => {
+                    let city_cover = g
+                        .cities
+                        .values()
+                        .filter(|city| city.owner == pid && g.wdist(*to, city.pos) <= 1)
+                        .map(|city| {
+                            70.0 + city.pop as f64 * 4.0
+                                + if Some(city.id) == plan.threatened_city {
+                                    90.0
+                                } else {
+                                    0.0
+                                }
+                        })
+                        .sum::<f64>();
+                    let force_cover = g
+                        .units
+                        .values()
+                        .filter(|other| {
+                            other.owner == pid
+                                && other.id != uid
+                                && g.wdist(*to, other.pos) <= 1
+                                && g.rules.units[other.kind.as_str()].class == "military"
+                        })
+                        .map(|other| g.rules.units[other.kind.as_str()].cost * 0.035)
+                        .sum::<f64>();
+                    let objective_distance = objective.map_or(0, |pos| g.wdist(*to, pos));
+                    let existing = (unit.air_patrol_pos == Some(*to)) as i32 as f64 * 8.0;
+                    Some((
+                        city_cover + force_cover + existing - objective_distance as f64 * 2.0,
+                        *to,
+                        action.clone(),
+                    ))
+                }
+                _ => None,
+            })
+            .max_by(|left, right| {
+                left.0
+                    .total_cmp(&right.0)
+                    .then_with(|| right.1.cmp(&left.1))
+            })
+            .map(|(_, _, action)| action);
         let hostile_air_threat = g
             .units
             .values()
@@ -6488,9 +6531,12 @@ impl AdvancedAi {
             })
             .fold(0.0_f64, f64::max);
         let defended_city = plan.threatened_city.is_some_and(|city| {
-            g.cities
-                .get(&city)
-                .is_some_and(|city| g.wdist(unit.pos, city.pos) <= g.unit_attack_range(uid))
+            g.cities.get(&city).is_some_and(|city| {
+                legal.iter().any(|action| {
+                    matches!(action, Action::AirPatrol { unit, to }
+                        if *unit == uid && g.wdist(*to, city.pos) <= 1)
+                })
+            })
         });
         let patrol_value = hostile_air_threat
             + if defended_city { 55.0 } else { 0.0 }
