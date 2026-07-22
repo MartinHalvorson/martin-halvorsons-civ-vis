@@ -6673,10 +6673,8 @@ impl AdvancedAi {
         }
         if let Some((score, _, action)) = best {
             let required_margin = if unit.hp < 55 { 12.0 } else { 0.0 };
-            if score > required_margin {
-                if g.apply(pid, &action).is_ok() {
-                    return true;
-                }
+            if score > required_margin && g.apply(pid, &action).is_ok() {
+                return true;
             }
         }
 
