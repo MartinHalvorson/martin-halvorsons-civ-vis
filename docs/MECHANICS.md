@@ -17,7 +17,7 @@ Run it after any data change, and see
 > **In progress** (claimed by parallel sessions — check before starting a batch):
 > - session U: Unciv-inspired platform layer — `data/difficulties.json` + `data/speeds.json` and their handicaps, `civvis validate` ruleset validator, notification/event log in `obs` + GUI, `docs/UNCIV_LESSONS.md`
 > - session G: continuous-exhibition bug hunt — rules defects observed in full 8-player games, one game at a time. Owns the Pressure/majority core in `src/game.rs` (`city_religion`, `process_pressure`, atheist Pressure); session F owns the religious AI and purchase rules above it
-> - session FID: fidelity expansion — extend `tools/civ6_fidelity.py` to the remaining shipped tables (terrains, features, resources, improvements, policies, beliefs, promotions, projects, wonders, global parameters, game speeds, eras, goody huts, boosts, district adjacency) and correct `data/*.json` + engine constants to the shipped GS values. Owns `tools/civ6_fidelity.py`, `tools/fidelity_waivers.json`, `docs/FIDELITY.md`
+> - session FID: fidelity expansion — remaining shipped tables: `GlobalParameters` vs engine constants, `Boosts` (Eureka/Inspiration triggers), `GoodyHuts`, `Eras`, `GreatPersonIndividuals`. Terrains/features/resources/improvements/wonders/policies/governments/beliefs/promotions/projects shipped 2026-07-22 at zero divergence. Owns `tools/civ6_fidelity.py`, `tools/fidelity_waivers.json`, `docs/FIDELITY.md`
 
 | System | Status | Notes |
 |---|---|---|
