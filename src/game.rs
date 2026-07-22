@@ -247,6 +247,9 @@ mod great_person_runtime_tests;
 mod religious_purchase_tests;
 
 #[cfg(test)]
+mod score_tests;
+
+#[cfg(test)]
 mod gold_building_purchase_tests {
     use super::*;
 
@@ -14262,16 +14265,66 @@ impl Game {
             .collect()
     }
 
+    /// Gathering Storm scoring, per the Civilopedia Score/Time rules:
+    /// 3/civic, 5/city, 2/district (4 if unique), 1/building, 1/Citizen,
+    /// 5/Great Person, 10 for founding a religion + 2 per foreign city
+    /// following it, 2/technology, 15/wonder, plus Era Score. Units and
+    /// population multipliers are deliberately absent — they score nothing
+    /// in the shipped game.
     pub fn score(&self, pid: usize) -> i64 {
+        self.score_parts(pid).iter().sum()
+    }
+
+    /// Score by category, in Civ 6 tiebreaker order: civics, cities,
+    /// districts (with buildings, which have no tiebreaker slot of their
+    /// own), Population, Great People, religion, technologies, wonders, then
+    /// Era Score (which the shipped tiebreaker list omits).
+    pub fn score_parts(&self, pid: usize) -> [i64; 9] {
         let p = &self.players[pid];
         let cities: Vec<&City> = self.cities.values().filter(|c| c.owner == pid).collect();
-        10 * cities.len() as i64
-            + 3 * cities.iter().map(|c| c.pop as i64).sum::<i64>()
-            + 3 * cities.iter().map(|c| c.districts.len() as i64).sum::<i64>()
-            + cities.iter().map(|c| c.buildings.len() as i64).sum::<i64>()
-            + 2 * p.techs.len() as i64
-            + 2 * p.civics.len() as i64
-            + self.units.values().filter(|u| u.owner == pid).count() as i64
+        let districts = cities
+            .iter()
+            .flat_map(|c| c.districts.keys())
+            .map(|d| {
+                if self.rules.districts[d.as_str()].unique_to.is_some() {
+                    4
+                } else {
+                    2
+                }
+            })
+            .sum::<i64>();
+        let buildings = cities.iter().map(|c| c.buildings.len() as i64).sum::<i64>();
+        let religion = match p.religion.as_deref() {
+            Some(faith) => {
+                let followers = self
+                    .cities
+                    .values()
+                    .filter(|c| c.owner != pid && self.city_religion(c) == Some(faith))
+                    .count() as i64;
+                10 + 2 * followers
+            }
+            None => 0,
+        };
+        let wonders = cities.iter().map(|c| c.wonders.len() as i64).sum::<i64>();
+        [
+            3 * p.civics.len() as i64,
+            5 * cities.len() as i64,
+            districts + buildings,
+            cities.iter().map(|c| c.pop as i64).sum::<i64>(),
+            5 * p.great_people.len() as i64,
+            religion,
+            2 * p.techs.len() as i64,
+            15 * wonders,
+            p.era_score,
+        ]
+    }
+
+    /// Civ 6 score ranking: total first, then the shipped tiebreaker chain
+    /// (civics, cities, districts, Population, Great People, religion,
+    /// technologies, wonders). Higher is better on every key.
+    pub fn score_rank_key(&self, pid: usize) -> (i64, [i64; 9]) {
+        let parts = self.score_parts(pid);
+        (parts.iter().sum(), parts)
     }
 
     pub fn military_power(&self, pid: usize) -> f64 {
@@ -29098,12 +29151,15 @@ impl Game {
             // A score victory is only a turn-limit tiebreak, never an
             // immediate win for crossing an arbitrary score threshold.
             if self.turn > self.max_turns && self.winner.is_none() {
-                let mut best: Option<(i64, i64)> = None; // (score, -pid)
+                // Ties resolve through the shipped chain (civics, cities,
+                // districts, Population, Great People, religion,
+                // technologies, wonders) before falling back to seat order.
+                let mut best: Option<((i64, [i64; 9]), i64)> = None;
                 let mut best_pid = 0;
                 for pl in &self.players {
                     if pl.alive && !pl.is_minor {
-                        let key = (self.score(pl.id), -(pl.id as i64));
-                        if best.is_none() || key > best.unwrap() {
+                        let key = (self.score_rank_key(pl.id), -(pl.id as i64));
+                        if best.is_none() || key > best.clone().unwrap() {
                             best = Some(key);
                             best_pid = pl.id;
                         }
@@ -29111,8 +29167,8 @@ impl Game {
                 }
                 if best.is_none() {
                     for pl in &self.players {
-                        let key = (self.score(pl.id), -(pl.id as i64));
-                        if best.is_none() || key > best.unwrap() {
+                        let key = (self.score_rank_key(pl.id), -(pl.id as i64));
+                        if best.is_none() || key > best.clone().unwrap() {
                             best = Some(key);
                             best_pid = pl.id;
                         }
@@ -34850,7 +34906,9 @@ mod victory_conditions {
     fn score_only_decides_the_game_after_the_turn_limit() {
         let mut g = game_with_capitals(2, 406, 3);
         let capital = g.player_city_ids(0)[0];
-        g.cities.get_mut(&capital).unwrap().pop = 200;
+        // Citizens score 1 point each under the Gathering Storm rules, so an
+        // overwhelming score needs a correspondingly enormous city.
+        g.cities.get_mut(&capital).unwrap().pop = 600;
         assert!(g.score(0) > 500);
         g.current = 1;
         g.turn = 2;
