@@ -27,9 +27,9 @@
   "zheng_he": {"name":"Zheng He","kind":"admiral","era":2,"cost":180,"effects":{"gold":200,"trade_capacity":1}},
   "horatio_nelson": {"name":"Horatio Nelson","kind":"admiral","era":4,"cost":480,"effects":{"naval_promotion":2}},
 
-  "imhotep": {"name":"Imhotep","kind":"engineer","era":1,"cost":60,"effects":{"city_production":175}},
-  "leonardo_da_vinci": {"name":"Leonardo da Vinci","kind":"engineer","era":3,"cost":240,"effects":{"city_production":250,"tech_boosts":1}},
-  "gustave_eiffel": {"name":"Gustave Eiffel","kind":"engineer","era":5,"cost":720,"effects":{"city_production":480}},
+  "imhotep": {"name":"Imhotep","kind":"engineer","era":1,"cost":60,"charges":2,"effects":{"wonder_production":175,"ancient_classical_wonder_multiplier":2}},
+  "leonardo_da_vinci": {"name":"Leonardo da Vinci","kind":"engineer","era":3,"cost":240,"effects":{"modern_tech_boosts":1,"workshops_culture":3}},
+  "gustave_eiffel": {"name":"Gustave Eiffel","kind":"engineer","era":5,"cost":720,"charges":2,"effects":{"wonder_production":480}},
 
   "marcus_licinius_crassus": {"name":"Marcus Licinius Crassus","kind":"merchant","era":1,"cost":60,"effects":{"gold":200,"envoys":1}},
   "marco_polo": {"name":"Marco Polo","kind":"merchant","era":2,"cost":180,"effects":{"gold":200,"trade_capacity":1}},

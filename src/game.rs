@@ -10520,8 +10520,19 @@ impl Game {
             if t == "merchant" && self.has_foundable_corporation(pid) {
                 continue;
             }
+            if self.current_great_person(&t).is_some_and(|(_, person)| {
+                person.effects.contains_key("wonder_production") && !self.has_queued_wonder(pid)
+            }) {
+                continue;
+            }
             let _ = self.claim_great_person(pid, &t, None);
         }
+    }
+
+    fn has_queued_wonder(&self, pid: usize) -> bool {
+        self.cities.values().any(|city| {
+            city.owner == pid && matches!(city.queue.first(), Some(Item::Wonder { .. }))
+        })
     }
 
     fn retire_merchant_for_corporation(&mut self, pid: usize) -> Result<(), String> {
@@ -10621,6 +10632,9 @@ impl Game {
             .current_great_person(kind)
             .map(|(id, spec)| (id.to_string(), spec.clone()))
             .ok_or_else(|| "no Great Person of that type is currently available".to_string())?;
+        if spec.effects.contains_key("wonder_production") && !self.has_queued_wonder(pid) {
+            return Err("this Great Engineer requires a Wonder under construction".into());
+        }
         let points = self.players[pid].gpp.get(kind).copied().unwrap_or(0.0);
         let missing = (spec.cost - points).max(0.0);
         match patronage {
@@ -10653,11 +10667,12 @@ impl Game {
             .or_insert(0) += 1;
         self.add_era_score(pid, 2);
         bump(&mut self.players[pid], "great_people");
-        let activations = 1 + if kind == "engineer" {
-            self.empire_wonder_effect(pid, "great_engineer_charges") as usize
-        } else {
-            0
-        };
+        let activations = spec.charges
+            + if kind == "engineer" {
+                self.empire_wonder_effect(pid, "great_engineer_charges") as usize
+            } else {
+                0
+            };
         for _ in 0..activations {
             self.named_great_person_effect(pid, &spec);
         }
@@ -10700,6 +10715,9 @@ impl Game {
         if let Some(amount) = spec.effects.get("modern_atomic_tech_boosts") {
             self.grant_random_tech_boosts_in_eras(pid, *amount as usize, 5, 6);
         }
+        if let Some(amount) = spec.effects.get("modern_tech_boosts") {
+            self.grant_random_tech_boosts_in_eras(pid, *amount as usize, 5, 5);
+        }
         if let Some(amount) = spec.effects.get("city_production") {
             if let Some(cid) = self
                 .player_city_ids(pid)
@@ -10713,6 +10731,7 @@ impl Game {
             ("libraries_science", "great_person:library_science"),
             ("universities_science", "great_person:university_science"),
             ("research_labs_science", "great_person:research_lab_science"),
+            ("workshops_culture", "great_person:workshop_culture"),
         ] {
             if let Some(amount) = spec.effects.get(effect) {
                 *self.players[pid]
@@ -10755,6 +10774,42 @@ impl Game {
                     city.buildings.push(building.clone());
                     city.building_eras.insert(building, self.world_era);
                 }
+            }
+        }
+        if let Some(amount) = spec.effects.get("wonder_production") {
+            let target = self
+                .player_city_ids(pid)
+                .into_iter()
+                .filter(|city| matches!(self.cities[city].queue.first(), Some(Item::Wonder { .. })))
+                .max_by_key(|city| (self.cities[city].pop, Reverse(*city)));
+            if let Some(city) = target {
+                let wonder = match self.cities[&city].queue.first() {
+                    Some(Item::Wonder { wonder, .. }) => wonder.clone(),
+                    _ => unreachable!(),
+                };
+                let wonder_spec = &self.rules.wonders[wonder.as_str()];
+                let wonder_era = wonder_spec
+                    .tech
+                    .as_deref()
+                    .and_then(|technology| self.rules.techs.get(technology))
+                    .map(|technology| technology.era)
+                    .or_else(|| {
+                        wonder_spec
+                            .civic
+                            .as_deref()
+                            .and_then(|civic| self.rules.civics.get(civic))
+                            .map(|civic| civic.era)
+                    })
+                    .unwrap_or(0);
+                let multiplier = if wonder_era <= 1 {
+                    spec.effects
+                        .get("ancient_classical_wonder_multiplier")
+                        .copied()
+                        .unwrap_or(1.0)
+                } else {
+                    1.0
+                };
+                self.cities.get_mut(&city).unwrap().production += amount * multiplier;
             }
         }
         for (effect, counter) in [
@@ -16868,6 +16923,13 @@ impl Game {
                         .unwrap_or(0) as f64;
                 }
             }
+            if self.building_is_family(b, "workshop") {
+                yields.culture += self.players[city.owner]
+                    .counters
+                    .get("great_person:workshop_culture")
+                    .copied()
+                    .unwrap_or(0) as f64;
+            }
             match building.district.as_deref() {
                 Some("campus") => {
                     yields.science *=
@@ -19409,25 +19471,24 @@ impl Game {
                     });
                 }
                 if spec.class == "military" && !embarked {
-                    if spec.has_ranged_attack() {
-                        if u.attacks_left > 0
-                            && (!spec.siege
-                                || !u.moved
-                                || self.promotion_effect(&u, "attack_after_move") > 0.0)
-                        {
-                            let range = self.unit_attack_range(uid);
-                            for pos in self.wdisk(u.pos, range) {
-                                if pos == u.pos || !self.map.tiles.contains_key(&pos) {
-                                    continue;
-                                }
-                                if self.enemy_combat_target_at(pid, pos)
-                                    && self.unit_has_line_of_sight(uid, pos)
-                                {
-                                    acts.push(Action::Ranged {
-                                        unit: uid,
-                                        target: pos,
-                                    });
-                                }
+                    if spec.has_ranged_attack()
+                        && u.attacks_left > 0
+                        && (!spec.siege
+                            || !u.moved
+                            || self.promotion_effect(&u, "attack_after_move") > 0.0)
+                    {
+                        let range = self.unit_attack_range(uid);
+                        for pos in self.wdisk(u.pos, range) {
+                            if pos == u.pos || !self.map.tiles.contains_key(&pos) {
+                                continue;
+                            }
+                            if self.enemy_combat_target_at(pid, pos)
+                                && self.unit_has_line_of_sight(uid, pos)
+                            {
+                                acts.push(Action::Ranged {
+                                    unit: uid,
+                                    target: pos,
+                                });
                             }
                         }
                     }
