@@ -4,7 +4,7 @@ Tracked against the [Civilization Wiki](https://civilization.fandom.com/wiki/Civ
 Status: ✅ implemented · 🟡 simplified · ❌ not yet.
 
 > **In progress** (claimed by parallel sessions — check before starting a batch):
-> - (none currently claimed by session B; GUI wiring for religion/GP/trade panels is open)
+> - Session B: eras/era score/golden ages + culture victory (tourism). NOT touching web/index.html.
 
 | System | Status | Notes |
 |---|---|---|
