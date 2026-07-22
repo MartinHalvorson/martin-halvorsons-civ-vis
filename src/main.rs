@@ -42,7 +42,7 @@ fn auto_dimension(args: &[String], key: &str, players: i64, width: bool) -> i32 
 
 /// Difficulty and speed are chosen the same way everywhere: by name, against
 /// the shipped ruleset, with the stock levels as defaults.
-fn game_options(args: &[String], players: i64, seed: u64, turns_default: i64) -> GameOptions {
+fn game_options(args: &[String], players: i64, seed: u64) -> GameOptions {
     let rules = Rules::embedded();
     let difficulty = arg_text(args, "--difficulty", &default_difficulty());
     if !rules.difficulties.contains_key(&difficulty) {
@@ -57,12 +57,13 @@ fn game_options(args: &[String], players: i64, seed: u64, turns_default: i64) ->
         eprintln!("unknown game speed {speed:?}; choose one of {:?}", speeds(&rules));
         std::process::exit(2);
     };
-    // An explicit --turns wins; otherwise the speed brings its own budget,
-    // and the stock speed keeps each command's historical default.
+    // An explicit --turns wins; otherwise every speed brings its own stock
+    // budget (Standard is 500 turns / 2050 AD). Short historical defaults
+    // ended games at the turn limit before the science, culture, and
+    // diplomatic lanes could finish, which handed the win to whoever was
+    // ahead on score at an arbitrary cutoff.
     let turns = if args.iter().any(|a| a == "--turns") {
-        arg(args, "--turns", turns_default)
-    } else if speed == default_speed() {
-        turns_default
+        arg(args, "--turns", speed_spec.turns as i64)
     } else {
         speed_spec.turns as i64
     };
@@ -150,7 +151,6 @@ fn main() {
                 &args,
                 players,
                 arg(&args, "--seed", 0) as u64,
-                250,
             ));
             let mut ais = AdvancedAi::fleet(&g);
             run_game(&mut g, &mut ais);
@@ -165,7 +165,7 @@ fn main() {
             for seed in start..start + games {
                 let t0 = Instant::now();
                 let result = std::panic::catch_unwind(|| {
-                    let mut g = Game::new_with(game_options(&args, players, seed as u64, 120));
+                    let mut g = Game::new_with(game_options(&args, players, seed as u64));
                     let mut ais = AdvancedAi::fleet(&g);
                     run_game(&mut g, &mut ais);
                     g
@@ -306,7 +306,7 @@ fn main() {
                         .subsec_nanos() as u64
                 }
             };
-            let play_options = game_options(&args, players, seed, 500);
+            let play_options = game_options(&args, players, seed);
             civvis::server::serve_with_game(
                 arg(&args, "--port", 8765) as u16,
                 !args.iter().any(|a| a == "--no-open"),
