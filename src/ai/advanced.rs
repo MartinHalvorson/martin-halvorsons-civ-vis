@@ -154,6 +154,7 @@ struct EmpireCounts {
     aircraft: usize,
     siege: usize,
     support: usize,
+    military_engineers: usize,
     missionaries: usize,
 }
 
@@ -170,6 +171,10 @@ impl EmpireCounts {
             "builder" => self.builders += 1,
             "trader" => self.traders += 1,
             "missionary" => self.missionaries += 1,
+            "military_engineer" => {
+                self.support += 1;
+                self.military_engineers += 1;
+            }
             "scout" => {
                 self.scouts += 1;
                 self.military += 1;
@@ -2875,6 +2880,28 @@ impl AdvancedAi {
                     -10_000.0
                 }
             }
+            Item::Unit { unit } if unit == "military_engineer" => {
+                let engineering_districts = g
+                    .cities
+                    .values()
+                    .filter(|candidate| candidate.owner == pid)
+                    .filter(|candidate| {
+                        matches!(
+                            candidate.queue.first(),
+                            Some(Item::District { district, .. })
+                                if matches!(
+                                    g.district_family(district),
+                                    "aqueduct" | "canal" | "dam"
+                                )
+                        )
+                    })
+                    .count();
+                if engineering_districts > counts.military_engineers {
+                    390.0 + engineering_districts as f64 * 70.0
+                } else {
+                    -10_000.0
+                }
+            }
             Item::Formation { unit, formation } => {
                 let spec = &g.rules.units[unit];
                 let naval = spec.domain.as_deref() == Some("sea");
@@ -4985,6 +5012,7 @@ impl AdvancedAi {
             .into_iter()
             .filter(|uid| {
                 g.rules.units[g.units[uid].kind.as_str()].class == "support"
+                    && g.units[uid].kind != "military_engineer"
                     && g.units[uid].linked_to.is_none()
             })
             .collect();
@@ -5115,6 +5143,7 @@ impl AdvancedAi {
                 let acted = match kind.as_str() {
                     "settler" => self.advanced_settler_step(g, pid, uid),
                     "builder" => self.advanced_builder_step(g, pid, uid, plan.strategy),
+                    "military_engineer" => self.base.military_engineer_step(g, pid, uid),
                     "naturalist" => self.base.naturalist_step(g, pid, uid),
                     "archaeologist" => self.base.archaeologist_step(g, pid, uid),
                     "trader" => self.advanced_trader_step(g, pid, uid, plan.strategy),

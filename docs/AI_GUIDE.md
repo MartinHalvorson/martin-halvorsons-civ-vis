@@ -58,7 +58,9 @@ their actual adjacency, specialist and Great Person yields, housing, amenities,
 Loyalty, air capacity, defenses, appeal, and one-time effects. Housing value is
 derived from the post-build city state, including Aqueduct water access and the
 appeal bands for Neighborhoods and Preserves; non-specialty districts are not
-subject to an invented AI population cap.
+subject to an invented AI population cap. When an Aqueduct, Dam, or Canal is
+under construction, a Military Engineer routes to its foundation and spends
+charges there instead of being absorbed into an army's support screen.
 
 ## Victory targeting and full-game validation
 

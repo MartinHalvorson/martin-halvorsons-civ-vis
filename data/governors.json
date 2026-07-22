@@ -70,10 +70,10 @@
     "effects":{"loyalty":8,"garrison_strength":5},
     "promotions":{
       "garrison_commander":{"tier":1,"effects":{"nearby_city_loyalty":4,"city_unit_defense":5}},
-      "defense_logistics":{"tier":1,"effects":{"city_siege_immunity":1,"strategic_stockpile":1}},
-      "embrasure":{"tier":2,"requires":["garrison_commander"],"effects":{"city_extra_strike":1,"military_free_promotion":1}},
-      "air_defense_initiative":{"tier":2,"requires":["defense_logistics"],"effects":{"air_defense":25}},
-      "arms_race_proponent":{"tier":3,"requires":["embrasure","air_defense_initiative"],"effects":{"military_production_pct":30}}
+      "defense_logistics":{"tier":1,"effects":{"city_siege_immunity":1,"strategic_resource_accumulation":1}},
+      "embrasure":{"tier":2,"requires":["garrison_commander","defense_logistics"],"effects":{"city_extra_strike":1,"military_free_promotion":1}},
+      "air_defense_initiative":{"tier":3,"requires":["embrasure"],"effects":{"air_defense":25}},
+      "arms_race_proponent":{"tier":3,"requires":["embrasure"],"effects":{"nuclear_armament_production_pct":30}}
     }
   }
 }
