@@ -207,8 +207,9 @@ impl EmpireCounts {
     }
 
     fn add_item(&mut self, g: &Game, item: &Item) {
-        if let Item::Unit { unit } = item {
-            self.add_unit(g, unit);
+        match item {
+            Item::Unit { unit } | Item::Formation { unit, .. } => self.add_unit(g, unit),
+            _ => {}
         }
     }
 }
@@ -771,6 +772,32 @@ impl AdvancedAi {
             })
     }
 
+    fn advanced_secret_society(&self, g: &mut Game, pid: usize, strategy: GrandStrategy) {
+        if g.players[pid].secret_society.is_some()
+            || !g.players[pid].civics.contains("code_of_laws")
+        {
+            return;
+        }
+        let long_term = self
+            .victory_target
+            .map(VictoryTarget::strategy)
+            .unwrap_or(strategy);
+        let society = match long_term {
+            GrandStrategy::Science => "hermetic_order",
+            GrandStrategy::Culture | GrandStrategy::Religion => "voidsingers",
+            GrandStrategy::Diplomacy
+            | GrandStrategy::Conquest
+            | GrandStrategy::Expansion
+            | GrandStrategy::Recovery => "owls_of_minerva",
+        };
+        let _ = g.apply(
+            pid,
+            &Action::ChooseSecretSociety {
+                society: society.to_string(),
+            },
+        );
+    }
+
     /// Replace generic early cards with the late-game cards that directly
     /// advance an explicitly selected victory. Typed cards preferentially
     /// replace cards of their own type so wildcard capacity remains useful.
@@ -1141,6 +1168,14 @@ impl AdvancedAi {
             .iter()
             .filter(|o| !g.players[**o].is_minor && g.is_at_war(pid, **o))
             .count();
+        if major_wars > 0
+            && matches!(
+                plan.strategy,
+                GrandStrategy::Conquest | GrandStrategy::Recovery
+            )
+        {
+            self.base.levy_city_state_military(g, pid, true);
+        }
         let Some(target) = plan.target_player else {
             return;
         };
@@ -1345,6 +1380,34 @@ impl AdvancedAi {
                 {
                     return;
                 }
+            }
+        }
+    }
+
+    fn culture_spending(&self, g: &mut Game, pid: usize) {
+        let active_bands = g
+            .units
+            .values()
+            .filter(|unit| unit.owner == pid && unit.kind == "rock_band")
+            .count();
+        if active_bands >= 2
+            || !g.players[pid].civics.contains("cold_war")
+            || g.players[pid].faith + f64::EPSILON < g.rules.units["rock_band"].cost
+        {
+            return;
+        }
+        for city in g.player_city_ids(pid) {
+            if g.apply(
+                pid,
+                &Action::Buy {
+                    city,
+                    unit: "rock_band".to_string(),
+                    currency: "faith".to_string(),
+                },
+            )
+            .is_ok()
+            {
+                return;
             }
         }
     }
@@ -1574,6 +1637,36 @@ impl AdvancedAi {
                 } else {
                     -10_000.0
                 }
+            }
+            Item::Formation { unit, formation } => {
+                let spec = &g.rules.units[unit];
+                let naval = spec.domain.as_deref() == Some("sea");
+                let desired = if naval {
+                    BasicAi::desired_navy(g, pid)
+                } else {
+                    desired_military
+                };
+                let current = if naval {
+                    counts.naval
+                } else {
+                    counts
+                        .military
+                        .saturating_sub(counts.naval + counts.aircraft)
+                };
+                let effective_power = spec.strength.max(spec.ranged_attack_strength())
+                    + if *formation >= 2 { 17.0 } else { 10.0 };
+                effective_power
+                    * if current < desired || threatened {
+                        4.25
+                    } else {
+                        0.75
+                    }
+                    + if threatened { 240.0 } else { 0.0 }
+                    + if plan.strategy == GrandStrategy::Conquest {
+                        160.0
+                    } else {
+                        0.0
+                    }
             }
             Item::Unit { unit } => {
                 let spec = &g.rules.units[unit];
@@ -2127,15 +2220,40 @@ impl AdvancedAi {
         uid: u32,
         strategy: GrandStrategy,
     ) -> bool {
-        if let Some(action) = g
-            .legal_actions(pid)
-            .into_iter()
-            .find(|action| matches!(action, Action::RepairImprovement { unit } if *unit == uid))
-        {
-            self.builder_targets.remove(&uid);
-            return g.apply(pid, &action).is_ok();
-        }
         let current = g.units[&uid].pos;
+        let project = g
+            .player_city_ids(pid)
+            .into_iter()
+            .filter_map(|city| {
+                g.project_contribution_target(pid, city)
+                    .map(|position| (g.wdist(current, position), position, city))
+            })
+            .min();
+        if let Some((_, position, city)) = project {
+            self.builder_targets.remove(&uid);
+            if current == position && g.can_contribute_project(pid, uid, city) {
+                return g
+                    .apply(pid, &Action::ContributeProject { unit: uid, city })
+                    .is_ok();
+            }
+            if self.base.step_toward(g, pid, uid, position) {
+                return true;
+            }
+        }
+        let repairable = g.map.get(current).is_some_and(|tile| {
+            tile.pillaged
+                && tile.improvement.is_some()
+                && tile
+                    .owner_city
+                    .and_then(|city| g.cities.get(&city))
+                    .is_some_and(|city| city.owner == pid)
+        });
+        if repairable {
+            self.builder_targets.remove(&uid);
+            return g
+                .apply(pid, &Action::RepairImprovement { unit: uid })
+                .is_ok();
+        }
         let here = self.worthwhile_improvements(g, pid, current, strategy);
         if let Some(improvement) = here.first() {
             self.builder_targets.remove(&uid);
@@ -2845,6 +2963,99 @@ impl AdvancedAi {
         self.base.fortify_or_stop(g, pid, uid)
     }
 
+    /// Bounded quiescence-style reply search for a proposed attack. The
+    /// ordinary exchange evaluator accounts for the target's counter-damage;
+    /// this extension makes the move on a cloned position, refreshes only the
+    /// enemy's forcing combat actions, and prices its single best reply to the
+    /// attacking unit. It therefore catches poisoned captures without turning
+    /// every unit decision into an unbounded turn search.
+    fn forcing_reply_penalty(&self, g: &Game, pid: usize, uid: u32, action: &Action) -> f64 {
+        let mut after = g.clone();
+        if after.apply(pid, action).is_err() {
+            return 1_000.0;
+        }
+        let Some(victim) = after.units.get(&uid).cloned() else {
+            return 135.0;
+        };
+        let victim_hp = victim.hp;
+        let victim_pos = victim.pos;
+        let enemies: Vec<usize> = after
+            .players
+            .iter()
+            .filter(|player| player.id != pid && player.alive && after.is_at_war(pid, player.id))
+            .map(|player| player.id)
+            .collect();
+        let mut worst_reply = 0.0_f64;
+
+        for enemy in enemies {
+            let mut reply_position = after.clone();
+            reply_position.current = enemy;
+            for unit in reply_position
+                .units
+                .values_mut()
+                .filter(|unit| unit.owner == enemy)
+            {
+                // Only attacks are searched, so a generous movement budget
+                // merely restores next-turn attack availability; it cannot
+                // manufacture a move-and-attack line in this one-ply search.
+                unit.moves_left = 100.0;
+                unit.attacks_left = 1;
+                unit.acted = false;
+                unit.zoc_stopped = false;
+            }
+            for city in reply_position
+                .cities
+                .values_mut()
+                .filter(|city| city.owner == enemy)
+            {
+                city.struck = false;
+                city.encampment_struck = false;
+            }
+
+            let replies: Vec<Action> = reply_position
+                .legal_actions(enemy)
+                .into_iter()
+                .filter(|reply| match reply {
+                    Action::Attack { target, .. }
+                    | Action::Ranged { target, .. }
+                    | Action::AirStrike { target, .. }
+                    | Action::CityStrike { target, .. }
+                    | Action::EncampmentStrike { target, .. } => *target == victim_pos,
+                    _ => false,
+                })
+                .collect();
+            for reply in replies {
+                let reply_unit = match &reply {
+                    Action::Attack { unit, .. }
+                    | Action::Ranged { unit, .. }
+                    | Action::AirStrike { unit, .. } => Some(*unit),
+                    _ => None,
+                };
+                let reply_hp =
+                    reply_unit.and_then(|unit| reply_position.units.get(&unit).map(|unit| unit.hp));
+                let mut branch = reply_position.clone();
+                if branch.apply(enemy, &reply).is_err() {
+                    continue;
+                }
+                let loss = branch
+                    .units
+                    .get(&uid)
+                    .map(|unit| (victim_hp - unit.hp).max(0) as f64)
+                    .unwrap_or(victim_hp as f64 + 35.0);
+                let counter_loss = match (reply_unit, reply_hp) {
+                    (Some(unit), Some(hp)) => branch
+                        .units
+                        .get(&unit)
+                        .map(|unit| (hp - unit.hp).max(0) as f64)
+                        .unwrap_or(hp as f64 + 20.0),
+                    _ => 0.0,
+                };
+                worst_reply = worst_reply.max((loss - 0.35 * counter_loss).max(0.0));
+            }
+        }
+        worst_reply
+    }
+
     fn advanced_military_step(
         &mut self,
         g: &mut Game,
@@ -2962,6 +3173,18 @@ impl AdvancedAi {
                 score -=
                     self.base.w.local_superiority * (1.0 - orders.local_strength_ratio).max(0.0);
             }
+            let action = if ranged {
+                Action::Ranged {
+                    unit: uid,
+                    target: pos,
+                }
+            } else {
+                Action::Attack {
+                    unit: uid,
+                    target: pos,
+                }
+            };
+            score -= self.base.w.trade_caution * self.forcing_reply_penalty(g, pid, uid, &action);
             if best
                 .map(|(old, bp)| score > old || (score == old && pos < bp))
                 .unwrap_or(true)
@@ -3282,6 +3505,7 @@ impl AdvancedAi {
                 "builder" => 1,
                 "trader" => 2,
                 "missionary" => 3,
+                "rock_band" => 3,
                 _ if spec.has_ranged_attack() && !spec.siege => 4,
                 _ if spec.siege => 5,
                 _ => 6,
@@ -3303,6 +3527,7 @@ impl AdvancedAi {
                         self.advanced_missionary_step(g, pid, uid)
                     }
                     "missionary" => self.base.missionary_step(g, pid, uid),
+                    "rock_band" => self.base.rock_band_step(g, pid, uid),
                     _ if self.victory_planning && class == "religious" => {
                         self.advanced_religious_step(g, pid, uid)
                     }
@@ -3575,6 +3800,7 @@ impl Ai for AdvancedAi {
         self.advanced_research(g, pid, &plan);
         if self.victory_planning {
             self.advanced_envoys(g, pid, plan.strategy);
+            self.advanced_secret_society(g, pid, plan.strategy);
         }
         // Keep the mature ancillary systems: governments, policies, beliefs,
         // governors, religions, and envoys. Research is already selected.
@@ -3596,6 +3822,9 @@ impl Ai for AdvancedAi {
             }
             if self.victory_planning && plan.strategy == GrandStrategy::Science {
                 self.science_production(g, pid);
+            }
+            if self.victory_planning && plan.strategy == GrandStrategy::Culture {
+                self.culture_spending(g, pid);
             }
             if plan.strategy == GrandStrategy::Recovery || self.victory_target.is_some() {
                 self.advanced_production(g, pid, &plan);
@@ -3970,6 +4199,26 @@ mod tests {
             .contains("integrated_space_cell"));
         assert!(science.players[0].policies.contains("urban_planning"));
         assert!(!science.players[0].policies.contains("discipline"));
+    }
+
+    #[test]
+    fn explicit_targets_choose_synergistic_secret_societies() {
+        for (index, (target, expected)) in [
+            (VictoryTarget::Science, "hermetic_order"),
+            (VictoryTarget::Culture, "voidsingers"),
+            (VictoryTarget::Religion, "voidsingers"),
+            (VictoryTarget::Diplomacy, "owls_of_minerva"),
+            (VictoryTarget::Domination, "owls_of_minerva"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut game = Game::new(2, 24, 16, 110 + index as u64, 80, 0);
+            game.players[0].civics.insert("code_of_laws".to_string());
+            let ai = AdvancedAi::targeting(target);
+            ai.advanced_secret_society(&mut game, 0, target.strategy());
+            assert_eq!(game.players[0].secret_society.as_deref(), Some(expected));
+        }
     }
 
     #[test]
@@ -4350,6 +4599,105 @@ mod tests {
             .force_groups()
             .iter()
             .any(|group| group.units.contains(&vanguard)));
+    }
+
+    #[test]
+    fn forcing_reply_search_avoids_a_poisoned_capture() {
+        let mut g = Game::new_full(2, 24, 16, 8_117, 80, 0, false);
+        g.at_war.insert((0, 1));
+        g.current = 0;
+        let (anchor, risky, safe, reply_square) = g
+            .map
+            .tiles
+            .iter()
+            .filter(|(position, tile)| {
+                g.rules.is_passable(tile)
+                    && !g.rules.is_water(tile)
+                    && g.units_at(**position).is_empty()
+                    && g.city_at(**position).is_none()
+                    && g.cities
+                        .values()
+                        .all(|city| g.wdist(**position, city.pos) > 5)
+                    && g.units
+                        .values()
+                        .filter(|unit| unit.owner == 1)
+                        .all(|unit| g.wdist(**position, unit.pos) > 5)
+            })
+            .find_map(|(anchor, _)| {
+                let targets: Vec<Pos> = g
+                    .nbrs(*anchor)
+                    .into_iter()
+                    .filter(|position| {
+                        g.map.get(*position).is_some_and(|tile| {
+                            g.rules.is_passable(tile) && !g.rules.is_water(tile)
+                        }) && g.units_at(*position).is_empty()
+                            && g.city_at(*position).is_none()
+                    })
+                    .collect();
+                for risky in &targets {
+                    for safe in &targets {
+                        if risky == safe || g.wdist(*risky, *safe) < 2 {
+                            continue;
+                        }
+                        if let Some(reply) = g.wdisk(*risky, 2).into_iter().find(|reply| {
+                            g.wdist(*risky, *reply) == 2
+                                && g.wdist(*safe, *reply) > 2
+                                && *reply != *anchor
+                                && g.map.get(*reply).is_some_and(|tile| {
+                                    g.rules.is_passable(tile) && !g.rules.is_water(tile)
+                                })
+                                && g.units_at(*reply).is_empty()
+                                && g.city_at(*reply).is_none()
+                        }) {
+                            return Some((*anchor, *risky, *safe, reply));
+                        }
+                    }
+                }
+                None
+            })
+            .expect("test map has an isolated poisoned-capture geometry");
+
+        for position in g.wdisk(risky, 2) {
+            let tile = g.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.hills = false;
+        }
+        let attacker = g.spawn_test_unit("swordsman", 0, anchor);
+        let risky_defender = g.spawn_test_unit("warrior", 1, risky);
+        let safe_defender = g.spawn_test_unit("warrior", 1, safe);
+        g.units.get_mut(&risky_defender).unwrap().hp = 1;
+        g.units.get_mut(&safe_defender).unwrap().hp = 1;
+        g.spawn_test_unit("archer", 1, reply_square);
+
+        let risky_action = Action::Attack {
+            unit: attacker,
+            target: risky,
+        };
+        let safe_action = Action::Attack {
+            unit: attacker,
+            target: safe,
+        };
+        let mut ai = AdvancedAi::legacy();
+        let risky_reply = ai.forcing_reply_penalty(&g, 0, attacker, &risky_action);
+        let safe_reply = ai.forcing_reply_penalty(&g, 0, attacker, &safe_action);
+        assert!(
+            risky_reply > safe_reply + 5.0,
+            "the ranged recapture must make the exposed kill materially worse"
+        );
+
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Conquest,
+            target_player: Some(1),
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 4,
+            assessed_turn: g.turn,
+        };
+        assert!(ai.advanced_military_step(&mut g, 0, attacker, &plan));
+        assert!(!g.units.contains_key(&safe_defender));
+        assert!(g.units.contains_key(&risky_defender));
+        assert_eq!(g.units[&attacker].pos, safe);
     }
 
     #[test]

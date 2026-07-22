@@ -614,6 +614,485 @@ mod specialist_tests {
             );
         }
     }
+
+    #[test]
+    fn royal_society_spends_all_builder_charges_and_can_finish_a_project() {
+        let (mut game, city, position) = specialist_game();
+        install_district(&mut game, city, position, "spaceport");
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("royal_society".to_string());
+        let project = Item::Project {
+            project: "launch_earth_satellite".to_string(),
+        };
+        game.cities.get_mut(&city).unwrap().queue = vec![project.clone()];
+        let builder = game.spawn_unit("builder", 0, position);
+        game.units.get_mut(&builder).unwrap().charges = 3;
+
+        assert_eq!(game.project_contribution_target(0, city), Some(position));
+        assert!(game.legal_actions(0).contains(&Action::ContributeProject {
+            unit: builder,
+            city
+        }));
+        game.do_contribute_project(0, builder, city).unwrap();
+        assert!(!game.units.contains_key(&builder));
+        assert_eq!(game.cities[&city].production, 54.0);
+        assert_eq!(game.cities[&city].queue, vec![project.clone()]);
+
+        let second = game.spawn_unit("builder", 0, position);
+        assert!(!game.can_contribute_project(0, second, city));
+        game.turn += 1;
+        game.cities.get_mut(&city).unwrap().production = 890.0;
+        game.units.get_mut(&second).unwrap().charges = 1;
+        game.do_contribute_project(0, second, city).unwrap();
+        assert!(!game.units.contains_key(&second));
+        assert!(game.cities[&city].queue.is_empty());
+        assert_eq!(game.cities[&city].production, 8.0);
+        assert!(game.players[0]
+            .science_projects
+            .contains("launch_earth_satellite"));
+    }
+}
+
+#[cfg(test)]
+mod power_tests {
+    use super::*;
+
+    fn power_game() -> (Game, u32) {
+        let mut game = Game::new_full(1, 30, 20, 880_144, 120, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.found_city_for(0, game.units[&settler].pos, None);
+        game.players[0].techs = game.rules.techs.keys().cloned().collect();
+        let city = game.player_city_ids(0)[0];
+        for position in game.cities[&city].owned_tiles.clone() {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.resource = None;
+            tile.improvement = None;
+            tile.pillaged = false;
+        }
+        (game, city)
+    }
+
+    fn install_power_plant(game: &mut Game, city: u32, plant: &str) {
+        let position = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != game.cities[&city].pos)
+            .unwrap();
+        let tile = game.map.tiles.get_mut(&position).unwrap();
+        tile.district = Some("industrial_zone".to_string());
+        tile.pillaged = false;
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert("industrial_zone".to_string(), position);
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push(plant.to_string());
+    }
+
+    #[test]
+    fn coal_is_burned_in_whole_units_and_powered_yields_stop_when_stock_runs_out() {
+        let (mut game, city) = power_game();
+        install_power_plant(&mut game, city, "coal_power_plant");
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("research_lab".to_string());
+        game.players[0]
+            .strategic_resources
+            .insert("coal".to_string(), 2.0);
+        let starting_score = game.players[0].era_score;
+
+        game.process_power(0);
+        assert_eq!(game.city_power_demand(&game.cities[&city]), 3.0);
+        assert_eq!(game.city_power_supply(&game.cities[&city]), 4.0);
+        assert!(game.city_is_powered(&game.cities[&city]));
+        assert_eq!(game.strategic_stockpile(0, "coal"), 1.0);
+        assert_eq!(game.players[0].power_fuel_consumed["coal"], 1.0);
+        assert_eq!(game.players[0].co2_emissions, 820.0);
+        assert_eq!(game.players[0].era_score, starting_score + 3);
+        let powered_science = game.city_yields(city).science;
+
+        game.process_power(0);
+        assert_eq!(game.strategic_stockpile(0, "coal"), 0.0);
+        assert_eq!(game.players[0].co2_emissions, 1_640.0);
+        game.process_power(0);
+        assert_eq!(game.city_power_supply(&game.cities[&city]), 0.0);
+        assert!(!game.city_is_powered(&game.cities[&city]));
+        let unpowered_science = game.city_yields(city).science;
+        let powered_bonus = 5.0 * game.amenity_yield_mult(&game.cities[&city]);
+        assert!((powered_science - unpowered_science - powered_bonus).abs() < 1e-9);
+    }
+
+    #[test]
+    fn renewable_power_prevents_fuel_burn() {
+        let (mut game, city) = power_game();
+        install_power_plant(&mut game, city, "coal_power_plant");
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("research_lab".to_string());
+        let renewable_tiles: Vec<Pos> = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .filter(|position| {
+                *position != game.cities[&city].pos && game.map.tiles[position].district.is_none()
+            })
+            .take(2)
+            .collect();
+        assert_eq!(renewable_tiles.len(), 2);
+        for position in renewable_tiles {
+            game.map.tiles.get_mut(&position).unwrap().improvement = Some("solar_farm".to_string());
+        }
+        game.players[0]
+            .strategic_resources
+            .insert("coal".to_string(), 1.0);
+
+        game.process_power(0);
+        assert_eq!(game.city_power_supply(&game.cities[&city]), 4.0);
+        assert!(game.city_is_powered(&game.cities[&city]));
+        assert_eq!(game.strategic_stockpile(0, "coal"), 1.0);
+        assert!(game.players[0].power_fuel_consumed.is_empty());
+        assert_eq!(game.players[0].co2_emissions, 0.0);
+    }
+
+    #[test]
+    fn fuel_priority_is_efficiency_then_stockpile_then_technology() {
+        let (mut game, target) = power_game();
+        let target_pos = game.cities[&target].pos;
+        let mut source_positions: Vec<Pos> = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .filter(|position| {
+                let distance = game.wdist(target_pos, *position);
+                (3..=5).contains(&distance)
+            })
+            .collect();
+        source_positions.sort();
+        let oil_city = game.found_city_for(0, source_positions[0], Some("Oil Grid".to_string()));
+        let coal_city = game.found_city_for(0, source_positions[1], Some("Coal Grid".to_string()));
+        for city in game.player_city_ids(0) {
+            for position in game.cities[&city].owned_tiles.clone() {
+                let tile = game.map.tiles.get_mut(&position).unwrap();
+                tile.resource = None;
+                tile.improvement = None;
+            }
+        }
+        install_power_plant(&mut game, target, "nuclear_power_plant");
+        install_power_plant(&mut game, oil_city, "oil_power_plant");
+        install_power_plant(&mut game, coal_city, "coal_power_plant");
+        game.cities.get_mut(&target).unwrap().buildings.extend([
+            "research_lab".to_string(),
+            "stock_exchange".to_string(),
+            "broadcast_center".to_string(),
+            "airport".to_string(),
+        ]);
+        assert_eq!(game.city_power_demand(&game.cities[&target]), 10.0);
+
+        for (resource, amount) in [("uranium", 1.0), ("oil", 10.0), ("coal", 20.0)] {
+            game.players[0]
+                .strategic_resources
+                .insert(resource.to_string(), amount);
+        }
+        game.process_power(0);
+        assert_eq!(game.city_power_supply(&game.cities[&target]), 16.0);
+        assert_eq!(game.players[0].power_fuel_consumed["uranium"], 1.0);
+        assert_eq!(game.strategic_stockpile(0, "oil"), 10.0);
+        assert_eq!(game.strategic_stockpile(0, "coal"), 20.0);
+
+        game.players[0]
+            .strategic_resources
+            .insert("uranium".to_string(), 0.0);
+        game.process_power(0);
+        assert_eq!(game.players[0].power_fuel_consumed["coal"], 3.0);
+        assert_eq!(game.strategic_stockpile(0, "oil"), 10.0);
+
+        game.players[0]
+            .strategic_resources
+            .insert("coal".to_string(), 10.0);
+        game.players[0]
+            .strategic_resources
+            .insert("oil".to_string(), 10.0);
+        game.process_power(0);
+        assert_eq!(game.players[0].power_fuel_consumed["oil"], 3.0);
+        assert_eq!(game.strategic_stockpile(0, "coal"), 10.0);
+    }
+}
+
+#[cfg(test)]
+mod district_building_wonder_runtime_tests {
+    use super::*;
+
+    fn one_city(seed: u64) -> (Game, u32, Pos) {
+        let mut game = Game::new_full(1, 24, 16, seed, 120, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        let city = game.found_city_for(0, game.units[&settler].pos, None);
+        let district = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != game.cities[&city].pos)
+            .unwrap();
+        (game, city, district)
+    }
+
+    fn install_district(game: &mut Game, city: u32, position: Pos, district: &str) {
+        let tile = game.map.tiles.get_mut(&position).unwrap();
+        tile.district = Some(district.to_string());
+        tile.pillaged = false;
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert(district.to_string(), position);
+    }
+
+    #[test]
+    fn military_infrastructure_builds_discounted_formations_with_real_strength() {
+        let (mut game, city, position) = one_city(774_401);
+        install_district(&mut game, city, position, "ikanda");
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("military_academy".to_string());
+        game.players[0].civics.insert("nationalism".to_string());
+        game.players[0].civics.insert("mobilization".to_string());
+
+        let corps = Item::Formation {
+            unit: "warrior".to_string(),
+            formation: 1,
+        };
+        let army = Item::Formation {
+            unit: "warrior".to_string(),
+            formation: 2,
+        };
+        assert!(game.can_produce(0, city, &corps));
+        assert!(game.can_produce(0, city, &army));
+        assert_eq!(game.item_cost(&corps), 60.0);
+        assert_eq!(game.item_cost(&army), 90.0);
+        // +25% from the Academy and an effective +33⅓% for Ikanda's 25%
+        // cost reduction.
+        assert!((game.item_prod_mult(0, city, Some(&corps)) - 1.5833333333333333).abs() < 1e-9);
+
+        let before: BTreeSet<u32> = game.player_unit_ids(0).into_iter().collect();
+        assert!(game.complete_item(0, city, &army));
+        let trained = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| !before.contains(unit))
+            .unwrap();
+        assert_eq!(game.units[&trained].formation, 2);
+        assert_eq!(game.unit_formation_bonus(&game.units[&trained]), 17.0);
+    }
+
+    #[test]
+    fn direct_formations_commit_double_or_triple_strategic_resources() {
+        let (mut game, city, position) = one_city(774_405);
+        game.players[0].civ = "Egypt".to_string();
+        install_district(&mut game, city, position, "encampment");
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("military_academy".to_string());
+        game.players[0].techs.insert("iron_working".to_string());
+        game.players[0].civics.insert("nationalism".to_string());
+        game.players[0].civics.insert("mobilization".to_string());
+
+        let corps = Item::Formation {
+            unit: "swordsman".to_string(),
+            formation: 1,
+        };
+        game.players[0]
+            .strategic_resources
+            .insert("iron".to_string(), 39.0);
+        assert!(!game.can_produce(0, city, &corps));
+        game.players[0]
+            .strategic_resources
+            .insert("iron".to_string(), 40.0);
+        game.do_produce(0, city, &corps).unwrap();
+        assert_eq!(game.strategic_stockpile(0, "iron"), 0.0);
+        assert!(game.unit_resource_is_committed(city, &corps));
+
+        let warrior = Item::Unit {
+            unit: "warrior".to_string(),
+        };
+        game.do_produce(0, city, &warrior).unwrap();
+        assert!(game.can_produce(0, city, &corps));
+        game.do_produce(0, city, &corps).unwrap();
+        assert_eq!(game.strategic_stockpile(0, "iron"), 0.0);
+        assert!(game.complete_item(0, city, &corps));
+        assert!(!game.unit_resource_is_committed(city, &corps));
+
+        let army = Item::Formation {
+            unit: "swordsman".to_string(),
+            formation: 2,
+        };
+        game.players[0]
+            .strategic_resources
+            .insert("iron".to_string(), 59.0);
+        assert!(!game.can_produce(0, city, &army));
+        game.players[0]
+            .strategic_resources
+            .insert("iron".to_string(), 60.0);
+        game.do_produce(0, city, &army).unwrap();
+        assert_eq!(game.strategic_stockpile(0, "iron"), 0.0);
+        assert!(game.unit_resource_is_committed(city, &army));
+    }
+
+    #[test]
+    fn royal_society_consumes_all_builder_charges_once_per_city_turn() {
+        let (mut game, city, position) = one_city(774_402);
+        install_district(&mut game, city, position, "spaceport");
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("royal_society".to_string());
+        let project = Item::Project {
+            project: "launch_earth_satellite".to_string(),
+        };
+        game.cities.get_mut(&city).unwrap().queue = vec![project.clone()];
+        let builder = game.spawn_unit("builder", 0, position);
+        let charges = game.units[&builder].charges;
+        assert!(game.can_contribute_project(0, builder, city));
+        game.do_contribute_project(0, builder, city).unwrap();
+        assert!(!game.units.contains_key(&builder));
+        assert_eq!(
+            game.cities[&city].production,
+            game.item_cost(&project) * 0.02 * charges as f64
+        );
+
+        let second = game.spawn_unit("builder", 0, position);
+        assert!(!game.can_contribute_project(0, second, city));
+        game.turn += 1;
+        assert!(game.can_contribute_project(0, second, city));
+    }
+
+    #[test]
+    fn stonehenge_is_a_holy_site_for_founding_and_alhambra_is_a_fort() {
+        let (mut game, city, position) = one_city(774_403);
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .wonders
+            .insert("stonehenge".to_string(), position);
+        game.map.tiles.get_mut(&position).unwrap().wonder = Some("stonehenge".to_string());
+        game.players[0].prophet_pending = true;
+        let follower = game.rules.beliefs.follower.keys().next().unwrap().clone();
+        let founder = game.rules.beliefs.founder.keys().next().unwrap().clone();
+        game.do_found_religion(0, &follower, &founder).unwrap();
+        assert_eq!(game.players[0].holy_city, Some(city));
+
+        let tile = game.map.tiles.get_mut(&position).unwrap();
+        tile.wonder = Some("alhambra".to_string());
+        tile.hills = false;
+        tile.feature = None;
+        assert_eq!(game.tile_defense_bonus(position), 4.0);
+    }
+
+    #[test]
+    fn foreign_ministry_halves_levies_and_buffs_city_state_units() {
+        let (mut game, city, _) = one_city(774_404);
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("foreign_ministry".to_string());
+        let minor = game.players.len();
+        game.players.push(Player::new(minor, "Geneva", true));
+        game.players[0].envoys.push((minor, 3));
+        let position = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|position| game.city_at(*position).is_none())
+            .unwrap();
+        let warrior = game.spawn_unit("warrior", minor, position);
+        game.players[0].gold = 100.0;
+
+        assert_eq!(game.levy_cost(0, minor), Some(20.0));
+        assert_eq!(game.unit_unembarked_strength(&game.units[&warrior]), 24.0);
+        game.do_levy_military(0, minor).unwrap();
+        assert_eq!(game.units[&warrior].owner, 0);
+        assert_eq!(game.units[&warrior].levied_from, Some(minor));
+        assert_eq!(game.players[0].gold, 80.0);
+        assert_eq!(game.unit_unembarked_strength(&game.units[&warrior]), 24.0);
+
+        game.turn += STANDARD_DEAL_TURNS;
+        game.process_levies(0);
+        assert_eq!(game.units[&warrior].owner, minor);
+        assert_eq!(game.units[&warrior].levied_from, None);
+    }
+
+    #[test]
+    fn secret_society_choice_unlocks_its_replacement_building_and_round_trips() {
+        let (mut game, city, position) = one_city(774_405);
+        game.players[0].civics.insert("code_of_laws".to_string());
+        game.players[0].techs.insert("education".to_string());
+        install_district(&mut game, city, position, "campus");
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("library".to_string());
+
+        let choices: Vec<Action> = game
+            .legal_actions(0)
+            .into_iter()
+            .filter(|action| matches!(action, Action::ChooseSecretSociety { .. }))
+            .collect();
+        assert_eq!(choices.len(), 3);
+        game.apply(
+            0,
+            &Action::ChooseSecretSociety {
+                society: "hermetic_order".to_string(),
+            },
+        )
+        .unwrap();
+
+        let alchemical_society = Item::Building {
+            building: "alchemical_society".to_string(),
+        };
+        let university = Item::Building {
+            building: "university".to_string(),
+        };
+        assert!(game.can_produce(0, city, &alchemical_society));
+        assert!(!game.can_produce(0, city, &university));
+        assert!(!game
+            .legal_actions(0)
+            .iter()
+            .any(|action| matches!(action, Action::ChooseSecretSociety { .. })));
+
+        let restored: Game = serde_json::from_str(&serde_json::to_string(&game).unwrap()).unwrap();
+        assert_eq!(
+            restored.players[0].secret_society.as_deref(),
+            Some("hermetic_order")
+        );
+        assert!(restored.can_produce(0, city, &alchemical_society));
+    }
 }
 
 pub fn growth_threshold(pop: i32) -> f64 {
@@ -755,6 +1234,12 @@ pub struct Unit {
     /// city's military infrastructure.
     #[serde(default)]
     pub xp_bonus_pct: f64,
+    /// Original city-state owner and expiry for a military levy. These fields
+    /// are save-compatible and remain empty for ordinary units.
+    #[serde(default)]
+    pub levied_from: Option<usize>,
+    #[serde(default)]
+    pub levied_until: u32,
 }
 
 /// The four location classes used for passive unit healing.
@@ -780,6 +1265,11 @@ impl HealingLocation {
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 #[serde(untagged)]
 pub enum Item {
+    Formation {
+        unit: String,
+        /// 1 = Corps/Fleet, 2 = Army/Armada.
+        formation: u8,
+    },
     Unit {
         unit: String,
     },
@@ -935,6 +1425,11 @@ pub struct City {
     pub border_culture: f64,
     pub hp: i32,
     pub buildings: Vec<String>,
+    /// World era in which each building was completed. Era-scaling effects
+    /// such as the Dar-e Mehr use this while old saves safely default to no
+    /// retroactive age bonus.
+    #[serde(default)]
+    pub building_eras: BTreeMap<String, usize>,
     #[serde(default)]
     pub pillaged_buildings: BTreeSet<String>,
     #[serde(default)]
@@ -1130,6 +1625,17 @@ pub struct Player {
     /// combat-strength shortage penalty.
     #[serde(default)]
     pub strategic_resource_shortages: BTreeMap<String, i32>,
+    /// Power actually allocated to each owned city at the start of this
+    /// player's current turn, after renewable generation and fuel burning.
+    #[serde(default)]
+    pub city_power: BTreeMap<u32, f64>,
+    /// Fuel consumed by power plants on the current turn, for observation and
+    /// deterministic save/replay diagnostics.
+    #[serde(default)]
+    pub power_fuel_consumed: BTreeMap<String, f64>,
+    /// Cumulative CO2 emitted by this civilization's power generation.
+    #[serde(default)]
+    pub co2_emissions: f64,
     pub explored: BTreeSet<Pos>,
     pub alive: bool,
     pub is_minor: bool,
@@ -1158,6 +1664,10 @@ pub struct Player {
     pub holy_city: Option<u32>,
     #[serde(default)]
     pub religion_beliefs: Vec<String>,
+    /// Optional Secret Societies game-mode membership. The three society
+    /// replacement buildings in this ruleset are gated by this choice.
+    #[serde(default)]
+    pub secret_society: Option<String>,
     #[serde(default)]
     pub prophet_pending: bool,
     #[serde(default)]
@@ -1233,6 +1743,9 @@ impl Player {
             faith: 0.0,
             strategic_resources: BTreeMap::new(),
             strategic_resource_shortages: BTreeMap::new(),
+            city_power: BTreeMap::new(),
+            power_fuel_consumed: BTreeMap::new(),
+            co2_emissions: 0.0,
             explored: BTreeSet::new(),
             alive: true,
             is_minor,
@@ -1248,6 +1761,7 @@ impl Player {
             religion: None,
             holy_city: None,
             religion_beliefs: Vec::new(),
+            secret_society: None,
             prophet_pending: false,
             era_score: 0,
             era_score_baseline: 0,
@@ -1306,6 +1820,13 @@ pub enum Action {
     Improve {
         unit: u32,
         improvement: String,
+    },
+    ContributeProject {
+        unit: u32,
+        city: u32,
+    },
+    PerformConcert {
+        unit: u32,
     },
     Pillage {
         unit: u32,
@@ -1431,6 +1952,9 @@ pub enum Action {
     SendEnvoy {
         player: usize,
     },
+    LevyMilitary {
+        player: usize,
+    },
     RecruitGreatPerson {
         kind: String,
     },
@@ -1441,6 +1965,9 @@ pub enum Action {
     },
     ChoosePantheon {
         belief: String,
+    },
+    ChooseSecretSociety {
+        society: String,
     },
     AssignGovernor {
         city: u32,
@@ -2340,6 +2867,51 @@ impl Game {
             })) as i64
     }
 
+    /// Defensive level penalty applied to an enemy operation at a specific
+    /// city tile. Diplomatic Quarter protection is positional; Consulate and
+    /// Chancery protection also reaches every owned city with an Encampment.
+    pub fn spy_defense_level(&self, cid: u32, target: Pos) -> i64 {
+        let Some(city) = self.cities.get(&cid) else {
+            return 0;
+        };
+        let mut levels = 0.0;
+        if let Some(quarter) = self.city_district_family_position(city, "diplomatic_quarter") {
+            if !self.map.tiles[&quarter].pillaged
+                && (target == quarter || self.nbrs(quarter).contains(&target))
+            {
+                levels += self.rules.districts["diplomatic_quarter"]
+                    .effects
+                    .get("spy_defense_levels")
+                    .copied()
+                    .unwrap_or(0.0);
+            }
+        }
+        let protected_by_consulate = self
+            .cities
+            .values()
+            .filter(|source| source.owner == city.owner)
+            .filter(|source| {
+                source.id == city.id || self.city_has_active_district_family(city, "encampment")
+            })
+            .map(|source| self.city_building_effect(source, "enemy_spy_level_reduction"))
+            .sum::<f64>();
+        levels += protected_by_consulate;
+        levels as i64
+    }
+
+    /// Science granted when this civilization captures or kills an enemy
+    /// Spy, parameterized by the defeated Spy's level for the espionage
+    /// resolver and external agents.
+    pub fn spy_capture_science(&self, pid: usize, spy_level: i64) -> f64 {
+        self.empire_building_sum(pid, |building| {
+            building
+                .effects
+                .get("spy_capture_or_kill_science_per_level")
+                .copied()
+                .unwrap_or(0.0)
+        }) * spy_level.max(0) as f64
+    }
+
     /// Leader/civ ability check (data in civs.json, effects keyed by name).
     pub fn has_ability(&self, pid: usize, ability: &str) -> bool {
         self.rules
@@ -2667,6 +3239,22 @@ impl Game {
         }
         self.players[pid].pantheon = Some(belief.to_string());
         self.add_era_score(pid, 1);
+        Ok(())
+    }
+
+    fn do_choose_secret_society(&mut self, pid: usize, society: &str) -> Result<(), String> {
+        if self.players[pid].is_minor
+            || self.players[pid].is_barbarian
+            || self.players[pid].secret_society.is_some()
+            || !self.players[pid].civics.contains("code_of_laws")
+            || !matches!(
+                society,
+                "hermetic_order" | "owls_of_minerva" | "voidsingers"
+            )
+        {
+            return Err("secret society cannot be chosen".into());
+        }
+        self.players[pid].secret_society = Some(society.to_string());
         Ok(())
     }
 
@@ -3720,6 +4308,115 @@ impl Game {
         Ok(())
     }
 
+    /// Gold required to control all currently available military units of a
+    /// city-state for the standard 30-turn levy. Civ VI prices a levy at the
+    /// units' combined Production costs; Foreign Ministry halves that price.
+    pub fn levy_cost(&self, pid: usize, minor: usize) -> Option<f64> {
+        if !self
+            .players
+            .get(minor)
+            .is_some_and(|player| player.is_minor && !player.is_barbarian && player.alive)
+            || self.suzerain_of(minor) != Some(pid)
+            || self.is_at_war(pid, minor)
+        {
+            return None;
+        }
+        let units: Vec<&Unit> = self
+            .units
+            .values()
+            .filter(|unit| unit.owner == minor && unit.levied_from.is_none())
+            .filter(|unit| self.rules.units[unit.kind.as_str()].class == "military")
+            .collect();
+        if units.is_empty() {
+            return None;
+        }
+        let base = units
+            .iter()
+            .map(|unit| self.rules.units[unit.kind.as_str()].cost)
+            .sum::<f64>();
+        let discount = self.empire_building_sum(pid, |building| {
+            building
+                .effects
+                .get("levy_discount_pct")
+                .copied()
+                .unwrap_or(0.0)
+        });
+        Some(base * (1.0 - discount / 100.0).max(0.0))
+    }
+
+    fn do_levy_military(&mut self, pid: usize, minor: usize) -> Result<(), String> {
+        let cost = self
+            .levy_cost(pid, minor)
+            .ok_or_else(|| "city-state military cannot be levied".to_string())?;
+        if self.players[pid].gold + f64::EPSILON < cost {
+            return Err("not enough gold to levy this military".into());
+        }
+        let units: Vec<u32> = self
+            .units
+            .values()
+            .filter(|unit| unit.owner == minor && unit.levied_from.is_none())
+            .filter(|unit| self.rules.units[unit.kind.as_str()].class == "military")
+            .map(|unit| unit.id)
+            .collect();
+        self.players[pid].gold -= cost;
+        for unit_id in units {
+            let unit = self.units.get_mut(&unit_id).unwrap();
+            unit.owner = pid;
+            unit.levied_from = Some(minor);
+            unit.levied_until = self.turn + STANDARD_DEAL_TURNS;
+            unit.moves_left = 0.0;
+            unit.acted = true;
+        }
+        Ok(())
+    }
+
+    fn process_levies(&mut self, pid: usize) {
+        let expired: Vec<(u32, usize)> = self
+            .units
+            .values()
+            .filter(|unit| unit.owner == pid)
+            .filter_map(|unit| unit.levied_from.map(|minor| (unit, minor)))
+            .filter(|(unit, minor)| {
+                self.turn >= unit.levied_until
+                    || self.suzerain_of(*minor) != Some(pid)
+                    || self.is_at_war(pid, *minor)
+            })
+            .map(|(unit, minor)| (unit.id, minor))
+            .collect();
+        for (unit_id, minor) in expired {
+            let (class, current_pos) = {
+                let unit = self.units.get_mut(&unit_id).unwrap();
+                unit.owner = minor;
+                unit.levied_from = None;
+                unit.levied_until = 0;
+                unit.moves_left = 0.0;
+                unit.acted = true;
+                (self.rules.units[unit.kind.as_str()].class.clone(), unit.pos)
+            };
+            let occupied = self.units_at(current_pos).into_iter().any(|other| {
+                other != unit_id
+                    && self.units[&other].owner == minor
+                    && self.rules.units[self.units[&other].kind.as_str()].class == class
+            });
+            if occupied {
+                let origin = self
+                    .player_city_ids(minor)
+                    .first()
+                    .map(|city| self.cities[city].pos)
+                    .unwrap_or(current_pos);
+                if let Some(position) = self.wdisk(origin, 4).into_iter().find(|position| {
+                    self.unit_can_traverse(unit_id, *position)
+                        && !self.units_at(*position).into_iter().any(|other| {
+                            self.units[&other].owner == minor
+                                && self.rules.units[self.units[&other].kind.as_str()].class == class
+                        })
+                }) {
+                    self.relocate(unit_id, position);
+                }
+            }
+        }
+    }
+
     /// Envoy yield bonuses for one of `pid`'s cities (Civ 6 vanilla: +2 of
     /// the type yield in the capital at 1 envoy, +2 in each matching district
     /// at 3 and again at 6). Suzerainty grants the city-state's separate
@@ -3942,7 +4639,7 @@ impl Game {
     fn item_prod_mult(&self, pid: usize, cid: u32, item: Option<&Item>) -> f64 {
         let mut bonus: f64 = 0.0;
         match item {
-            Some(Item::Unit { unit }) => {
+            Some(Item::Unit { unit }) | Some(Item::Formation { unit, .. }) => {
                 let spec = &self.rules.units[unit.as_str()];
                 if spec.class == "military" && self.dedication_active(pid, "to_arms") {
                     bonus += 0.15;
@@ -4003,6 +4700,18 @@ impl Game {
                     if self.has_pantheon_belief(pid, "god_of_the_forge") {
                         bonus += 0.25;
                     }
+                }
+                if matches!(item, Some(Item::Formation { .. })) {
+                    let effect = if spec.domain.as_deref() == Some("sea") {
+                        "fleet_armada_production_pct"
+                    } else {
+                        "corps_army_production_pct"
+                    };
+                    bonus += self.city_building_effect(&self.cities[&cid], effect) / 100.0;
+                    let discount = self
+                        .city_district_effect(&self.cities[&cid], "corps_army_discount_pct")
+                        .clamp(0.0, 99.0);
+                    bonus += discount / (100.0 - discount);
                 }
             }
             Some(Item::Building { building }) => {
@@ -4261,6 +4970,24 @@ impl Game {
         }
         if self.has_ability(u.owner, "gifts_for_the_tlatoani") {
             s += self.empire_luxuries(u.owner) as f64; // Montezuma
+        }
+        let city_state_patron = if u.levied_from.is_some() {
+            // While levied, `owner` is the Suzerain and `levied_from` is the
+            // city-state that must regain the unit when the contract ends.
+            Some(u.owner)
+        } else if self.players[u.owner].is_minor {
+            self.suzerain_of(u.owner)
+        } else {
+            None
+        };
+        if let Some(patron) = city_state_patron {
+            s += self.empire_building_sum(patron, |building| {
+                building
+                    .effects
+                    .get("levied_unit_combat_strength")
+                    .copied()
+                    .unwrap_or(0.0)
+            });
         }
         let spec = &self.rules.units[u.kind.as_str()];
         if spec.resource_maintenance > 0.0 {
@@ -4526,7 +5253,7 @@ impl Game {
             .sum()
     }
 
-    pub fn city_power_supply(&self, city: &City) -> f64 {
+    fn city_renewable_power(&self, city: &City) -> f64 {
         let mut renewable = city
             .buildings
             .iter()
@@ -4556,44 +5283,131 @@ impl Game {
             renewable += self.policy_effect(city.owner, "spaceport_power");
         }
         renewable *= 1.0 + self.empire_wonder_effect(city.owner, "renewable_power_pct") / 100.0;
+        renewable
+    }
 
-        let fueled = self.cities.values().any(|source| {
-            if source.owner != city.owner {
-                return false;
-            }
-            let Some(industrial_zone) =
-                self.city_district_family_position(source, "industrial_zone")
-            else {
-                return false;
-            };
-            if self.wdist(industrial_zone, city.pos) > 6 {
-                return false;
-            }
-            [
-                ("nuclear_power_plant", "uranium"),
-                ("oil_power_plant", "oil"),
-                ("coal_power_plant", "coal"),
-            ]
-            .into_iter()
-            .any(|(plant, resource)| {
-                source.buildings.iter().any(|building| building == plant)
-                    && !source
-                        .pillaged_buildings
-                        .iter()
-                        .any(|building| building == plant)
-                    && self.has_resource(city.owner, resource)
-            })
-        });
-        if fueled {
-            renewable.max(self.city_power_demand(city))
-        } else {
-            renewable
-        }
+    pub fn city_power_supply(&self, city: &City) -> f64 {
+        self.players[city.owner]
+            .city_power
+            .get(&city.id)
+            .copied()
+            .unwrap_or_else(|| self.city_renewable_power(city))
     }
 
     pub fn city_is_powered(&self, city: &City) -> bool {
         let demand = self.city_power_demand(city);
         demand <= 0.0 || self.city_power_supply(city) + 1e-9 >= demand
+    }
+
+    /// Allocate renewable Power first, then burn the most efficient reachable
+    /// fuel. Equal-efficiency fuels follow the Civilopedia tie breakers:
+    /// largest stockpile, highest income, then most advanced resource.
+    fn process_power(&mut self, pid: usize) {
+        self.players[pid].city_power.clear();
+        self.players[pid].power_fuel_consumed.clear();
+        if self.players[pid].is_barbarian {
+            return;
+        }
+
+        let city_ids = self.player_city_ids(pid);
+        let fuel_specs = [
+            ("uranium", "nuclear_power_plant", 16.0, 48.0, 3_i32),
+            ("oil", "oil_power_plant", 4.0, 490.0, 2_i32),
+            ("coal", "coal_power_plant", 4.0, 820.0, 1_i32),
+        ];
+        let mut emitted = 0.0;
+        let mut total_consumed = 0.0;
+
+        for city_id in city_ids {
+            let city = &self.cities[&city_id];
+            let demand = self.city_power_demand(city);
+            let mut supply = self.city_renewable_power(city);
+            let mut remaining = (demand - supply).max(0.0);
+            let mut candidates: Vec<(&str, f64, f64, i32)> = fuel_specs
+                .iter()
+                .filter(|(_, plant, _, _, _)| {
+                    self.cities.values().any(|source| {
+                        if source.owner != pid
+                            || !source.buildings.iter().any(|building| building == plant)
+                            || source.pillaged_buildings.contains(*plant)
+                        {
+                            return false;
+                        }
+                        self.city_district_family_position(source, "industrial_zone")
+                            .is_some_and(|position| {
+                                !self.map.tiles[&position].pillaged
+                                    && self.wdist(position, city.pos) <= 6
+                            })
+                    })
+                })
+                .map(|(resource, _, power, co2, advanced)| (*resource, *power, *co2, *advanced))
+                .collect();
+            candidates.sort_by(|a, b| {
+                b.1.partial_cmp(&a.1)
+                    .unwrap()
+                    .then_with(|| {
+                        self.strategic_stockpile(pid, b.0)
+                            .partial_cmp(&self.strategic_stockpile(pid, a.0))
+                            .unwrap()
+                    })
+                    .then_with(|| {
+                        self.strategic_resource_rate(pid, b.0)
+                            .partial_cmp(&self.strategic_resource_rate(pid, a.0))
+                            .unwrap()
+                    })
+                    .then_with(|| b.3.cmp(&a.3))
+            });
+
+            for (resource, power_per_unit, co2_per_unit, _) in candidates {
+                if remaining <= f64::EPSILON {
+                    break;
+                }
+                let stock = self.strategic_stockpile(pid, resource);
+                let available = stock.floor();
+                if available <= 0.0 {
+                    continue;
+                }
+                let consumed = (remaining / power_per_unit).ceil().min(available);
+                if consumed <= 0.0 {
+                    continue;
+                }
+                self.players[pid]
+                    .strategic_resources
+                    .insert(resource.to_string(), stock - consumed);
+                *self.players[pid]
+                    .power_fuel_consumed
+                    .entry(resource.to_string())
+                    .or_insert(0.0) += consumed;
+                total_consumed += consumed;
+                emitted += consumed * co2_per_unit;
+                let generated = consumed * power_per_unit;
+                supply += generated;
+                remaining = (remaining - generated).max(0.0);
+            }
+            self.players[pid].city_power.insert(city_id, supply);
+        }
+
+        self.players[pid].co2_emissions += emitted;
+        let first_for_civ = self.players[pid]
+            .counters
+            .get("first_resource_power")
+            .copied()
+            .unwrap_or(0)
+            == 0;
+        if total_consumed > 0.0 && first_for_civ {
+            let first_in_world = !self.players.iter().any(|player| {
+                player
+                    .counters
+                    .get("first_resource_power")
+                    .copied()
+                    .unwrap_or(0)
+                    > 0
+            });
+            self.players[pid]
+                .counters
+                .insert("first_resource_power".to_string(), 1);
+            self.add_era_score(pid, if first_in_world { 3 } else { 2 });
+        }
     }
 
     fn add_powered_building_yields(spec: &crate::rules::BuildingSpec, yields: &mut Yields) {
@@ -5076,6 +5890,22 @@ impl Game {
         } else {
             0.0
         };
+        let building = self
+            .cities
+            .values()
+            .filter(|city| city.owner == pid)
+            .filter(|city| {
+                city.owned_tiles.iter().any(|position| {
+                    let tile = &self.map.tiles[position];
+                    tile.resource.as_deref() == Some(res)
+                        && !tile.pillaged
+                        && (*position == city.pos
+                            || tile.improvement.as_deref()
+                                == Some(self.rules.resources[res].improvement.as_str()))
+                })
+            })
+            .map(|city| self.city_building_effect(city, "strategic_resource_accumulation"))
+            .sum::<f64>();
         // Gathering Storm sources do not all accumulate at one unit per turn:
         // Horses/Iron/Niter/Aluminum produce 2, while Coal/Oil/Uranium produce 3.
         // The three resource policies add one to each improved source.
@@ -5084,7 +5914,7 @@ impl Game {
             "coal" | "oil" | "uranium" => 3.0,
             _ => 0.0,
         };
-        improved * (base + extra) + spaceport + wonder
+        improved * (base + extra) + spaceport + wonder + building
     }
 
     pub fn strategic_stockpile_capacity(&self, pid: usize) -> f64 {
@@ -5163,6 +5993,7 @@ impl Game {
                     .insert(resource, unpaid.min(20));
             }
         }
+        self.process_power(pid);
     }
 
     /// Connected native copies before temporary deal imports and exports.
@@ -5222,10 +6053,6 @@ impl Game {
             _ => (self.connected_resource_count(pid, res) + self.resource_trade_balance(pid, res))
                 .max(0),
         }
-    }
-
-    fn has_resource(&self, pid: usize, res: &str) -> bool {
-        self.resource_access_count(pid, res) > 0
     }
 
     // -------------------------------------------------------- unit helpers
@@ -5305,6 +6132,8 @@ impl Game {
             air_patrol: false,
             bonus_moves: 0.0,
             xp_bonus_pct: 0.0,
+            levied_from: None,
+            levied_until: 0,
         };
         if kind == "apostle" {
             // Apostles choose one promotion immediately after purchase.
@@ -5914,7 +6743,10 @@ impl Game {
         }
         let archaeologist_ignores_borders = u.kind == "archaeologist"
             && self.empire_wonder_effect(u.owner, "archaeologist_open_borders") > 0.0;
-        if spec.class != "religious" && !archaeologist_ignores_borders {
+        // Rock Bands use their own Music Censorship gate above; ordinary Open
+        // Borders are deliberately not required to enter a concert market.
+        let ignores_borders = archaeologist_ignores_borders || u.kind == "rock_band";
+        if spec.class != "religious" && !ignores_borders {
             let territory_owner = self.map.tiles[&pos]
                 .owner_city
                 .and_then(|city| self.cities.get(&city))
@@ -6966,7 +7798,7 @@ impl Game {
                     weights.food += 0.55;
                     weights.production += 1.15;
                 }
-                Item::Unit { unit } => {
+                Item::Unit { unit } | Item::Formation { unit, .. } => {
                     focus = if self.rules.units[unit.as_str()].class == "military" {
                         "military".to_string()
                     } else {
@@ -7628,6 +8460,13 @@ impl Game {
             } else {
                 building.yields
             };
+            let built_era = city.building_eras.get(b).copied().unwrap_or(self.world_era);
+            yields.faith += building
+                .effects
+                .get("faith_per_era_since_built")
+                .copied()
+                .unwrap_or(0.0)
+                * self.world_era.saturating_sub(built_era) as f64;
             if city.loyalty >= 100.0 - f64::EPSILON {
                 yields.culture += building
                     .effects
@@ -8630,6 +9469,9 @@ impl Game {
 
     pub fn item_cost(&self, item: &Item) -> f64 {
         match item {
+            Item::Formation { unit, formation } => {
+                self.rules.units[unit.as_str()].cost * if *formation >= 2 { 2.25 } else { 1.5 }
+            }
             Item::Unit { unit } => self.rules.units[unit.as_str()].cost,
             Item::Building { building } => self.rules.buildings[building.as_str()].cost,
             Item::District { district, .. } => self.rules.districts[district.as_str()].cost,
@@ -8701,6 +9543,7 @@ impl Game {
 
     fn item_progress_key(item: &Item) -> String {
         match item {
+            Item::Formation { unit, formation } => format!("formation:{unit}:{formation}"),
             Item::Unit { unit } => format!("unit:{unit}"),
             Item::Building { building } => format!("building:{building}"),
             Item::District { district, pos } => {
@@ -8715,30 +9558,39 @@ impl Game {
     }
 
     fn unit_resource_is_committed(&self, cid: u32, item: &Item) -> bool {
-        let Item::Unit { unit } = item else {
-            return false;
+        let (unit, multiplier) = match item {
+            Item::Unit { unit } => (unit, 1.0),
+            Item::Formation {
+                unit, formation, ..
+            } => (unit, if *formation >= 2 { 3.0 } else { 2.0 }),
+            _ => return false,
         };
         let Some(spec) = self.rules.units.get(unit) else {
             return false;
         };
-        spec.resource_cost > 0.0
+        let cost = spec.resource_cost * multiplier;
+        cost > 0.0
             && self.cities[&cid]
                 .strategic_resource_commitments
                 .get(&Self::item_progress_key(item))
-                .is_some_and(|amount| *amount >= spec.resource_cost)
+                .is_some_and(|amount| *amount >= cost)
     }
 
     /// Commit a unit's one-time strategic material at construction start.
     /// Pausing and later resuming the same unit retains that commitment.
     fn commit_unit_resource(&mut self, pid: usize, cid: u32, item: &Item) -> bool {
-        let Item::Unit { unit } = item else {
-            return true;
+        let (unit, multiplier) = match item {
+            Item::Unit { unit } => (unit, 1.0),
+            Item::Formation {
+                unit, formation, ..
+            } => (unit, if *formation >= 2 { 3.0 } else { 2.0 }),
+            _ => return true,
         };
         let spec = &self.rules.units[unit.as_str()];
         let Some(resource) = spec.requires_resource.clone() else {
             return true;
         };
-        let cost = spec.resource_cost;
+        let cost = spec.resource_cost * multiplier;
         if cost <= 0.0 || self.unit_resource_is_committed(cid, item) {
             return true;
         }
@@ -8760,11 +9612,52 @@ impl Game {
     pub fn can_produce(&self, pid: usize, cid: u32, item: &Item) -> bool {
         let city = &self.cities[&cid];
         match item {
+            Item::Formation { unit, formation } => {
+                let Some(spec) = self.rules.units.get(unit) else {
+                    return false;
+                };
+                if !matches!(formation, 1 | 2)
+                    || spec.class != "military"
+                    || spec.domain.as_deref() == Some("air")
+                    || (*formation == 1 && self.tree_effect(pid, "corps_fleets") <= 0.0)
+                    || (*formation == 2 && self.tree_effect(pid, "armies_armadas") <= 0.0)
+                {
+                    return false;
+                }
+                let infrastructure = if spec.domain.as_deref() == Some("sea") {
+                    "seaport"
+                } else {
+                    "military_academy"
+                };
+                if !self.city_has_building_family(city, infrastructure) {
+                    return false;
+                }
+                let committed = self.unit_resource_is_committed(cid, item);
+                if !self.can_produce(pid, cid, &Item::Unit { unit: unit.clone() })
+                    && !(committed && spec.buildable && self.unlocked(pid, &spec.tech, &spec.civic))
+                {
+                    return false;
+                }
+                if let Some(resource) = spec.requires_resource.as_deref() {
+                    let resource_cost =
+                        spec.resource_cost * if *formation == 2 { 3.0 } else { 2.0 };
+                    if resource_cost > 0.0
+                        && !committed
+                        && self.strategic_stockpile(pid, resource) + f64::EPSILON < resource_cost
+                    {
+                        return false;
+                    }
+                }
+                true
+            }
             Item::Unit { unit } => {
                 let spec = match self.rules.units.get(unit) {
                     Some(s) => s,
                     None => return false,
                 };
+                if unit == "rock_band" {
+                    return false; // Faith purchase only (Civ VI)
+                }
                 if !spec.buildable || !self.unlocked(pid, &spec.tech, &spec.civic) {
                     return false;
                 }
@@ -8824,9 +9717,24 @@ impl Game {
                     Some(s) => s,
                     None => return false,
                 };
+                let society_for = |candidate: &crate::rules::BuildingSpec| {
+                    [
+                        ("requires_hermetic_order", "hermetic_order"),
+                        ("requires_owls_of_minerva", "owls_of_minerva"),
+                        ("requires_voidsingers", "voidsingers"),
+                    ]
+                    .into_iter()
+                    .find_map(|(effect, society)| {
+                        (candidate.effects.get(effect).copied().unwrap_or(0.0) > 0.0)
+                            .then_some(society)
+                    })
+                };
+                let society_building = society_for(spec).is_some_and(|society| {
+                    self.players[pid].secret_society.as_deref() == Some(society)
+                });
                 if city.buildings.contains(building)
                     || !self.unlocked(pid, &spec.tech, &spec.civic)
-                    || !spec.buildable
+                    || (!spec.buildable && !society_building)
                     || spec.purchase_only
                 {
                     return false;
@@ -8837,8 +9745,11 @@ impl Game {
                     .is_some_and(|civ| self.players[pid].civ != *civ)
                     || self.rules.buildings.values().any(|candidate| {
                         candidate.replaces.as_deref() == Some(building.as_str())
-                            && candidate.unique_to.as_deref()
+                            && (candidate.unique_to.as_deref()
                                 == Some(self.players[pid].civ.as_str())
+                                || society_for(candidate).is_some_and(|society| {
+                                    self.players[pid].secret_society.as_deref() == Some(society)
+                                }))
                     })
                     || !spec
                         .requires
@@ -8855,6 +9766,17 @@ impl Game {
                         .any(|excluded| self.city_has_building_family(city, excluded))
                 {
                     return false;
+                }
+                for (effect, society) in [
+                    ("requires_hermetic_order", "hermetic_order"),
+                    ("requires_owls_of_minerva", "owls_of_minerva"),
+                    ("requires_voidsingers", "voidsingers"),
+                ] {
+                    if spec.effects.get(effect).copied().unwrap_or(0.0) > 0.0
+                        && self.players[pid].secret_society.as_deref() != Some(society)
+                    {
+                        return false;
+                    }
                 }
                 if spec.outer_defense > 0
                     && (!spec
@@ -9035,6 +9957,15 @@ impl Game {
             let it = Item::Unit { unit: name.clone() };
             if self.can_produce(pid, cid, &it) {
                 items.push(it);
+            }
+            for formation in 1..=2 {
+                let formation_item = Item::Formation {
+                    unit: name.clone(),
+                    formation,
+                };
+                if self.can_produce(pid, cid, &formation_item) {
+                    items.push(formation_item);
+                }
             }
         }
         for name in self.rules.buildings.keys() {
@@ -9262,6 +10193,16 @@ impl Game {
                         });
                     }
                 }
+            }
+            if u.kind == "builder" && u.charges > 0 && u.moves_left > 0.0 {
+                for city in self.player_city_ids(pid) {
+                    if self.can_contribute_project(pid, uid, city) {
+                        acts.push(Action::ContributeProject { unit: uid, city });
+                    }
+                }
+            }
+            if self.rock_concert_tourism(pid, uid).is_some() {
+                acts.push(Action::PerformConcert { unit: uid });
             }
             if u.kind == "builder"
                 && u.moves_left > 0.0
@@ -9491,6 +10432,31 @@ impl Game {
                     });
                 }
             }
+            let rock_band = &self.rules.units["rock_band"];
+            if self.unlocked(pid, &rock_band.tech, &rock_band.civic)
+                && p.faith + f64::EPSILON >= self.rock_band_purchase_cost(pid)
+            {
+                acts.push(Action::Buy {
+                    city: cid,
+                    unit: "rock_band".to_string(),
+                    currency: "faith".to_string(),
+                });
+            }
+        }
+        for city_state in self.players.iter().filter(|player| {
+            player.is_minor
+                && !player.is_barbarian
+                && player.alive
+                && self.suzerain_of(player.id) == Some(pid)
+        }) {
+            if self
+                .levy_cost(pid, city_state.id)
+                .is_some_and(|cost| p.gold >= cost)
+            {
+                acts.push(Action::LevyMilitary {
+                    player: city_state.id,
+                });
+            }
         }
         if p.research.is_none() {
             for t in self.available_techs(pid) {
@@ -9650,6 +10616,13 @@ impl Game {
                             currency: "faith".to_string(),
                         });
                     }
+                }
+            }
+            if p.secret_society.is_none() && p.civics.contains("code_of_laws") {
+                for society in ["hermetic_order", "owls_of_minerva", "voidsingers"] {
+                    acts.push(Action::ChooseSecretSociety {
+                        society: society.to_string(),
+                    });
                 }
             }
             if p.pantheon.is_none() && p.faith >= 25.0 {
@@ -9971,6 +10944,8 @@ impl Game {
             | Action::Ranged { unit, .. }
             | Action::FoundCity { unit }
             | Action::Improve { unit, .. }
+            | Action::ContributeProject { unit, .. }
+            | Action::PerformConcert { unit }
             | Action::Pillage { unit }
             | Action::RepairImprovement { unit }
             | Action::CoastalRaid { unit, .. }
@@ -10005,6 +10980,10 @@ impl Game {
             Action::Ranged { unit, target } => self.do_ranged(pid, *unit, *target),
             Action::FoundCity { unit } => self.do_found_city(pid, *unit),
             Action::Improve { unit, improvement } => self.do_improve(pid, *unit, improvement),
+            Action::ContributeProject { unit, city } => {
+                self.do_contribute_project(pid, *unit, *city)
+            }
+            Action::PerformConcert { unit } => self.do_perform_concert(pid, *unit),
             Action::Pillage { unit } => self.do_pillage(pid, *unit),
             Action::RepairImprovement { unit } => self.do_repair_improvement(pid, *unit),
             Action::CoastalRaid { unit, target } => self.do_coastal_raid(pid, *unit, *target),
@@ -10072,11 +11051,13 @@ impl Game {
             Action::UnslotPolicy { policy } => self.do_unslot_policy(pid, policy),
             Action::TradeRoute { unit, city } => self.do_trade_route(pid, *unit, *city),
             Action::SendEnvoy { player } => self.do_send_envoy(pid, *player),
+            Action::LevyMilitary { player } => self.do_levy_military(pid, *player),
             Action::RecruitGreatPerson { kind } => self.do_recruit_great_person(pid, kind),
             Action::PatronizeGreatPerson { kind, currency } => {
                 self.do_patronize_great_person(pid, kind, currency)
             }
             Action::ChoosePantheon { belief } => self.do_choose_pantheon(pid, belief),
+            Action::ChooseSecretSociety { society } => self.do_choose_secret_society(pid, society),
             Action::AssignGovernor { city } => self.do_assign_governor(pid, *city),
             Action::AppointGovernor { governor, city } => {
                 self.do_appoint_governor(pid, governor, *city)
@@ -10608,21 +11589,7 @@ impl Game {
         let attack = effective_strength(attack_base, attacker.hp);
         let dealt = damage(attack, defense, &mut self.rng);
         let received = damage(defense, attack, &mut self.rng);
-        let walls = self.cities[&cid]
-            .buildings
-            .iter()
-            .filter(|building| self.rules.buildings[building.as_str()].outer_defense > 0)
-            .count();
-        let support = |kind: &str| {
-            self.nbrs(target).into_iter().any(|position| {
-                self.units_at(position)
-                    .into_iter()
-                    .any(|id| self.units[&id].owner == pid && self.units[&id].kind == kind)
-            })
-        };
-        let eligible = matches!(spec.promotion_class.as_str(), "melee" | "anti_cavalry");
-        let ram = eligible && support("battering_ram") && walls <= 1;
-        let tower = eligible && support("siege_tower") && walls <= 2;
+        let (ram, tower) = self.siege_support_effects(pid, cid, target, &spec.promotion_class);
         self.encampment_take_damage(cid, dealt, if ram { 1.0 } else { 0.15 }, tower);
         self.units.get_mut(&uid).unwrap().hp -= received;
         self.consume_melee_attack(uid, target);
@@ -10640,6 +11607,36 @@ impl Game {
             self.award_xp(uid, 3.0);
         }
         Ok(())
+    }
+
+    /// Active Battering Ram and Siege Tower effects against a City Center or
+    /// Encampment. Their wall-era limits also apply to replacement buildings,
+    /// and both support units are ineffective against Steel's Urban Defenses.
+    fn siege_support_effects(
+        &self,
+        attacker: usize,
+        cid: u32,
+        target: Pos,
+        promotion_class: &str,
+    ) -> (bool, bool) {
+        let city = &self.cities[&cid];
+        if !matches!(promotion_class, "melee" | "anti_cavalry")
+            || self.tree_effect(city.owner, "urban_defenses") > 0.0
+        {
+            return (false, false);
+        }
+        let adjacent_support = |kind: &str| {
+            self.nbrs(target).into_iter().any(|position| {
+                self.units_at(position)
+                    .into_iter()
+                    .any(|id| self.units[&id].owner == attacker && self.units[&id].kind == kind)
+            })
+        };
+        let ram = adjacent_support("battering_ram")
+            && !self.city_has_building_family(city, "medieval_walls");
+        let tower = adjacent_support("siege_tower")
+            && !self.city_has_building_family(city, "renaissance_walls");
+        (ram, tower)
     }
 
     fn do_encampment_ranged(
@@ -10860,25 +11857,10 @@ impl Game {
                     };
                 let dmg_out = damage(att, cs, &mut self.rng);
                 let dmg_in = damage(cs, att, &mut self.rng);
-                let walls = self.cities[&cid]
-                    .buildings
-                    .iter()
-                    .filter(|building| self.rules.buildings[building.as_str()].outer_defense > 0)
-                    .count();
-                let support = |kind: &str| {
-                    self.nbrs(target).into_iter().any(|p| {
-                        self.units_at(p).into_iter().any(|id| {
-                            let o = &self.units[&id];
-                            o.owner == pid && o.kind == kind
-                        })
-                    })
-                };
                 // battering ram: full melee damage vs ancient walls;
                 // siege tower: only melee/anti-cavalry pour through the walls
-                let support_eligible =
-                    matches!(spec.promotion_class.as_str(), "melee" | "anti_cavalry");
-                let ram = support_eligible && support("battering_ram") && walls <= 1;
-                let tower = support_eligible && support("siege_tower") && walls <= 2;
+                let (ram, tower) =
+                    self.siege_support_effects(pid, cid, target, &spec.promotion_class);
                 let mult = if ram { 1.0 } else { 0.15 };
                 self.city_take_damage(cid, dmg_out, mult, tower);
                 self.units.get_mut(&uid).unwrap().hp -= dmg_in;
@@ -11184,6 +12166,7 @@ impl Game {
             border_culture: 0.0,
             hp: 200,
             buildings: Vec::new(),
+            building_eras: BTreeMap::new(),
             pillaged_buildings: BTreeSet::new(),
             districts: Districts::default(),
             wonders: BTreeMap::new(),
@@ -11231,6 +12214,8 @@ impl Game {
         }
         if self.has_ability(pid, "trajans_column") && !is_minor {
             city.buildings.push("monument".to_string()); // Trajan's Column
+            city.building_eras
+                .insert("monument".to_string(), self.world_era);
         }
         self.city_by_pos.insert(pos, cid);
         self.cities.insert(cid, city);
@@ -11388,6 +12373,159 @@ impl Game {
         mu.acted = true;
         bump(&mut self.players[pid], "improvements");
         if self.units[&uid].charges <= 0 {
+            self.remove_unit(uid);
+        }
+        Ok(())
+    }
+
+    /// District tile on which a Builder may spend Royal Society charges for
+    /// this city's current project. Keeping the target query separate lets AI
+    /// players route Builders there without enumerating the global action set.
+    pub(crate) fn project_contribution_target(&self, pid: usize, cid: u32) -> Option<Pos> {
+        let Some(city) = self.cities.get(&cid) else {
+            return None;
+        };
+        if city.owner != pid
+            || self.empire_building_sum(pid, |building| {
+                building
+                    .effects
+                    .get("builder_charge_space_project_pct")
+                    .copied()
+                    .unwrap_or(0.0)
+            }) <= 0.0
+            || self.players[pid]
+                .counters
+                .get(&format!("royal_society_city:{cid}"))
+                .is_some_and(|last_turn| *last_turn == self.turn as i64)
+        {
+            return None;
+        }
+        let Some(Item::Project { project }) = city.queue.first() else {
+            return None;
+        };
+        if project.starts_with("repair_") {
+            return None;
+        }
+        let Some(district) = self.rules.projects[project.as_str()].district.as_deref() else {
+            return None;
+        };
+        self.city_district_family_position(city, district)
+            .filter(|position| self.district_is_active(city, district, *position))
+    }
+
+    pub(crate) fn can_contribute_project(&self, pid: usize, uid: u32, cid: u32) -> bool {
+        let Some(unit) = self.units.get(&uid) else {
+            return false;
+        };
+        unit.owner == pid
+            && unit.kind == "builder"
+            && unit.charges > 0
+            && unit.moves_left > 0.0
+            && self.project_contribution_target(pid, cid) == Some(unit.pos)
+    }
+
+    /// Royal Society consumes every remaining Builder charge to advance the
+    /// district project beneath it. Each charge contributes the data-defined
+    /// percentage of that project's base cost, and each city may receive the
+    /// contribution only once per turn.
+    fn do_contribute_project(&mut self, pid: usize, uid: u32, cid: u32) -> Result<(), String> {
+        if !self.can_contribute_project(pid, uid, cid) {
+            return Err("builder cannot contribute to that project".into());
+        }
+        let charges = self.units[&uid].charges as f64;
+        let item = self.cities[&cid].queue[0].clone();
+        let percent = self.empire_building_sum(pid, |building| {
+            building
+                .effects
+                .get("builder_charge_space_project_pct")
+                .copied()
+                .unwrap_or(0.0)
+        });
+        let cost = self.item_cost_for(pid, &item);
+        self.cities.get_mut(&cid).unwrap().production += cost * percent * charges / 100.0;
+        self.players[pid]
+            .counters
+            .insert(format!("royal_society_city:{cid}"), self.turn as i64);
+        self.remove_unit(uid);
+
+        if self.cities[&cid].production + f64::EPSILON >= cost
+            && self.complete_item(pid, cid, &item)
+        {
+            let city = self.cities.get_mut(&cid).unwrap();
+            city.production = (city.production - cost).max(0.0);
+            if city.queue.first() == Some(&item) {
+                city.queue.remove(0);
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn rock_concert_venue(&self, pid: usize, position: Pos) -> Option<f64> {
+        if self.players[pid]
+            .counters
+            .get(&format!("rock_concert:{},{}", position.0, position.1))
+            .copied()
+            .unwrap_or(0)
+            > 0
+        {
+            return None;
+        }
+        let tile = self.map.get(position)?;
+        let city = tile
+            .owner_city
+            .and_then(|city_id| self.cities.get(&city_id))?;
+        if city.owner == pid || self.players[city.owner].is_minor || self.is_at_war(pid, city.owner)
+        {
+            return None;
+        }
+        if tile.wonder.is_some() {
+            return Some(1_000.0);
+        }
+        let district = tile.district.as_deref()?;
+        city.buildings
+            .iter()
+            .filter(|building| !city.pillaged_buildings.contains(*building))
+            .filter(|building| {
+                self.rules.buildings[building.as_str()]
+                    .district
+                    .as_deref()
+                    .is_some_and(|family| self.district_is_family(district, family))
+            })
+            .filter_map(|building| {
+                self.rules.buildings[building.as_str()]
+                    .effects
+                    .get("rock_concert_tourism")
+                    .copied()
+            })
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+    }
+
+    pub(crate) fn rock_concert_tourism(&self, pid: usize, uid: u32) -> Option<f64> {
+        let unit = self.units.get(&uid)?;
+        if unit.owner != pid
+            || unit.kind != "rock_band"
+            || unit.charges <= 0
+            || unit.moves_left <= 0.0
+        {
+            return None;
+        }
+        self.rock_concert_venue(pid, unit.pos)
+    }
+
+    fn do_perform_concert(&mut self, pid: usize, uid: u32) -> Result<(), String> {
+        let tourism = self
+            .rock_concert_tourism(pid, uid)
+            .ok_or_else(|| "rock band has no valid concert venue here".to_string())?;
+        let position = self.units[&uid].pos;
+        self.players[pid].tourism_lifetime += tourism;
+        self.players[pid]
+            .counters
+            .insert(format!("rock_concert:{},{}", position.0, position.1), 1);
+        let unit = self.units.get_mut(&uid).unwrap();
+        unit.charges -= 1;
+        unit.moves_left = 0.0;
+        unit.acted = true;
+        if unit.charges <= 0 {
             self.remove_unit(uid);
         }
         Ok(())
@@ -11866,6 +13004,16 @@ impl Game {
         Ok(())
     }
 
+    fn rock_band_purchase_cost(&self, pid: usize) -> f64 {
+        self.rules.units["rock_band"].cost
+            + 100.0
+                * self.players[pid]
+                    .counters
+                    .get("purchased:rock_band")
+                    .copied()
+                    .unwrap_or(0) as f64
+    }
+
     fn do_buy(&mut self, pid: usize, cid: u32, unit: &str, currency: &str) -> Result<(), String> {
         match self.cities.get(&cid) {
             Some(c) if c.owner == pid => {}
@@ -11880,7 +13028,13 @@ impl Game {
         if !matches!(currency, "gold" | "faith") {
             return Err("unknown purchase currency".into());
         }
-        if religious {
+        let rock_band = unit == "rock_band";
+        if rock_band {
+            let spec = &self.rules.units[unit];
+            if currency != "faith" || !self.unlocked(pid, &spec.tech, &spec.civic) {
+                return Err("rock bands are unlocked and purchased with faith".into());
+            }
+        } else if religious {
             // Religious units adopt the majority religion of their purchase city.
             if currency != "faith" {
                 return Err("religious units are bought with faith".into());
@@ -11941,7 +13095,13 @@ impl Game {
         if unit == "settler" && self.cities[&cid].pop < 2 {
             return Err("city too small for settler".into());
         }
-        let mult = if currency == "gold" { 4.0 } else { 2.0 };
+        let mult = if rock_band {
+            1.0
+        } else if currency == "gold" {
+            4.0
+        } else {
+            2.0
+        };
         let item = Item::Unit {
             unit: unit.to_string(),
         };
@@ -11965,8 +13125,12 @@ impl Game {
                 purchase_discount += 15.0;
             }
         }
-        let cost =
-            self.item_cost_for(pid, &item) * mult * (1.0 - purchase_discount / 100.0).max(0.0);
+        let base_cost = if rock_band {
+            self.rock_band_purchase_cost(pid)
+        } else {
+            self.item_cost_for(pid, &item)
+        };
+        let cost = base_cost * mult * (1.0 - purchase_discount / 100.0).max(0.0);
         let bank = if currency == "gold" {
             self.players[pid].gold
         } else {
@@ -12017,6 +13181,9 @@ impl Game {
         }
         if unit == "settler" || unit == "builder" {
             bump(&mut self.players[pid], &format!("trained:{unit}"));
+        }
+        if rock_band {
+            bump(&mut self.players[pid], "purchased:rock_band");
         }
         Ok(())
     }
@@ -13833,9 +15000,15 @@ impl Game {
             else {
                 continue;
             };
-            // Ordinary voters do not earn victory points merely for backing
-            // the winning choice. Points belong to the target that wins a
-            // modeled scored competition or the World Leader resolution.
+            // Gathering Storm awards one Diplomatic Victory Point to every
+            // civilization whose selected option/target wins. This agenda
+            // point is separate from the reward granted to the target of a
+            // scored competition or the World Leader resolution.
+            for (voter, (choice, _)) in &resolution.ballots {
+                if choice == &winner && self.victory_eligible(*voter) {
+                    self.players[*voter].dvp += 1;
+                }
+            }
             if let Ok(target) = winner.parse::<usize>() {
                 if self.victory_eligible(target) {
                     match resolution.id.as_str() {
@@ -14500,6 +15673,7 @@ impl Game {
     // ------------------------------------------------------- turn engine
 
     fn begin_turn(&mut self, pid: usize) {
+        self.process_levies(pid);
         self.advance_exoplanet(pid);
         if self.winner.is_some() {
             return;
@@ -15197,11 +16371,9 @@ impl Game {
                         .then(a.cmp(b))
                 });
                 if let Some(building) = candidates.first() {
-                    self.cities
-                        .get_mut(&city_id)
-                        .unwrap()
-                        .buildings
-                        .push(building.clone());
+                    let city = self.cities.get_mut(&city_id).unwrap();
+                    city.buildings.push(building.clone());
+                    city.building_eras.insert(building.clone(), self.world_era);
                 }
             }
         }
@@ -15212,6 +16384,37 @@ impl Game {
 
     fn complete_item(&mut self, pid: usize, cid: u32, item: &Item) -> bool {
         match item {
+            Item::Formation { unit, formation } => {
+                if !self.commit_unit_resource(pid, cid, item) {
+                    return false;
+                }
+                let pos = self.cities[&cid].pos;
+                let Some(placed) = self.place_new_unit(unit, pid, pos) else {
+                    return false;
+                };
+                self.units.get_mut(&placed).unwrap().formation = *formation;
+                self.cities
+                    .get_mut(&cid)
+                    .unwrap()
+                    .strategic_resource_commitments
+                    .remove(&Self::item_progress_key(item));
+                self.apply_training_district_effects(cid, placed);
+                let science_pct =
+                    self.city_building_effect(&self.cities[&cid], "science_per_unit_cost_pct");
+                self.players[pid].research_overflow += self.item_cost(item) * science_pct / 100.0;
+                if self.rules.units[unit.as_str()].domain.as_deref() == Some("sea")
+                    && self.empire_wonder_effect(pid, "duplicate_naval_units") > 0.0
+                {
+                    if let Some(second) = self.place_new_unit(unit, pid, pos) {
+                        self.units.get_mut(&second).unwrap().formation = *formation;
+                        self.apply_training_district_effects(cid, second);
+                    }
+                }
+                if *formation == 1 {
+                    bump(&mut self.players[pid], "corps");
+                }
+                true
+            }
             Item::Unit { unit } => {
                 if !self.commit_unit_resource(pid, cid, item) {
                     return false;
@@ -15264,11 +16467,9 @@ impl Game {
                     city.queue.clear();
                     return false;
                 }
-                self.cities
-                    .get_mut(&cid)
-                    .unwrap()
-                    .buildings
-                    .push(building.clone());
+                let city = self.cities.get_mut(&cid).unwrap();
+                city.buildings.push(building.clone());
+                city.building_eras.insert(building.clone(), self.world_era);
                 if spec
                     .district
                     .as_deref()
@@ -15417,11 +16618,9 @@ impl Game {
                 if repair == "district" {
                     self.map.tiles.get_mut(pos).unwrap().pillaged = false;
                 } else {
-                    self.cities
-                        .get_mut(&cid)
-                        .unwrap()
-                        .pillaged_buildings
-                        .remove(repair);
+                    let city = self.cities.get_mut(&cid).unwrap();
+                    city.pillaged_buildings.remove(repair);
+                    city.building_eras.insert(repair.clone(), self.world_era);
                 }
                 true
             }
@@ -16956,6 +18155,66 @@ mod combat_scenarios {
     }
 
     #[test]
+    fn siege_support_obeys_wall_eras_replacements_and_urban_defenses() {
+        let (mut g, city_pos, ring) = controlled_game(31431);
+        let cid = g.found_city_for(1, city_pos, None);
+        g.spawn_unit("battering_ram", 0, ring[0]);
+        g.spawn_unit("siege_tower", 0, ring[1]);
+
+        g.cities.get_mut(&cid).unwrap().buildings = vec!["walls".to_string()];
+        assert_eq!(
+            g.siege_support_effects(0, cid, city_pos, "melee"),
+            (true, true),
+            "both support units work against Ancient Walls"
+        );
+        g.cities
+            .get_mut(&cid)
+            .unwrap()
+            .buildings
+            .push("medieval_walls".to_string());
+        assert_eq!(
+            g.siege_support_effects(0, cid, city_pos, "anti_cavalry"),
+            (false, true),
+            "Medieval Walls stop Rams but not Towers"
+        );
+        g.cities
+            .get_mut(&cid)
+            .unwrap()
+            .buildings
+            .push("renaissance_walls".to_string());
+        assert_eq!(
+            g.siege_support_effects(0, cid, city_pos, "melee"),
+            (false, false),
+            "Renaissance Walls stop both support units"
+        );
+
+        g.cities.get_mut(&cid).unwrap().buildings = vec![
+            "walls".to_string(),
+            "medieval_walls".to_string(),
+            "tsikhe".to_string(),
+        ];
+        assert_eq!(
+            g.siege_support_effects(0, cid, city_pos, "melee"),
+            (false, false),
+            "replacement Renaissance Walls inherit Siege Tower immunity"
+        );
+
+        g.cities.get_mut(&cid).unwrap().buildings.clear();
+        g.players[1].techs.insert("steel".to_string());
+        assert_eq!(
+            g.siege_support_effects(0, cid, city_pos, "melee"),
+            (false, false),
+            "Steel's Urban Defenses make both support units ineffective"
+        );
+        g.players[1].techs.remove("steel");
+        assert_eq!(
+            g.siege_support_effects(0, cid, city_pos, "ranged"),
+            (false, false),
+            "siege support applies only to melee and anti-cavalry units"
+        );
+    }
+
+    #[test]
     fn eagle_warrior_conversion_uses_base_strength_probability() {
         let (mut g, target, ring) = controlled_game(3144);
         let eagle = g.spawn_unit("eagle_warrior", 0, ring[0]);
@@ -18202,7 +19461,7 @@ mod victory_conditions {
     #[test]
     fn diplomacy_requires_twenty_victory_points() {
         let mut g = Game::new_full(2, 26, 16, 405, 300, 1, false);
-        g.players[0].dvp = 18;
+        g.players[0].dvp = 17;
         g.world_era = 5;
         g.turn = 30;
         g.process_congress();
@@ -18225,7 +19484,7 @@ mod victory_conditions {
         g.do_congress_vote(1, "world_fair", "1", 1).unwrap();
         g.turn = 35;
         g.process_congress();
-        assert_eq!(g.players[0].dvp, 1);
+        assert_eq!(g.players[0].dvp, 2);
         assert_eq!(g.players[1].dvp, 0);
 
         g.turn = 60;
@@ -18234,7 +19493,7 @@ mod victory_conditions {
         g.do_congress_vote(1, "world_fair", "1", 1).unwrap();
         g.turn = 65;
         g.process_congress();
-        assert_eq!(g.players[0].dvp, 2);
+        assert_eq!(g.players[0].dvp, 4);
         assert_eq!(g.players[1].dvp, 0);
     }
 

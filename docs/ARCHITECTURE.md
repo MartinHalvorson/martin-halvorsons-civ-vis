@@ -63,7 +63,10 @@ uses the strongest unit built (or a stronger garrison), walls, districts,
 terrain, and capital/policy modifiers. Cities have 200 HP and can only be
 captured by melee. Ordinary ranged attacks floor city HP at 1; Bombard attacks
 may deplete it to 0 but cannot capture it. Melee capture converts the city (pop
--1, walls razed), destroys the garrison, and captures eligible civilians.
+-1, walls razed), destroys the garrison, captures eligible civilians, and
+forces a keep/raze/liberate disposition before another action. Capitals cannot
+be razed; liberation restores the founder, while occupation and city-state
+elimination feed the Grievance and Diplomatic Favor systems.
 
 ### Combat AI hierarchy
 
@@ -75,6 +78,17 @@ posture, and shared focus target. Unit execution consumes that order with
 role-aware formation scoring rather than independently chasing the nearest
 enemy. The order graph is refreshed between unit actions, allowing the force
 to retarget and change posture as casualties and positions change.
+
+Candidate attacks first use a static exchange estimate, then enter a bounded
+quiescence-style extension: `AdvancedAi` makes the attack on a cloned position
+and evaluates the opponent's best single forcing reply against that attacker.
+Only melee, ranged, air, City Center, and Encampment counterattacks are expanded,
+which catches poisoned captures without searching quiet empire actions.
+
+Forced strategic decisions use a make-and-evaluate pass over cloned positions.
+For a captured city, `AdvancedAi` evaluates every legal keep, raze, and liberate
+result with victory-specific economy, military, loyalty, capital, Favor, and
+Grievance terms, then plays the highest-valued outcome deterministically.
 
 The parameters controlling clustering, muster thresholds, cohesion, screening,
 engagement depth, focus fire, caution, and recovery are part of the serialized
