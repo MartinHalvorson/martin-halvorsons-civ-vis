@@ -35,7 +35,7 @@ Next for the Rust core:
 
 ## v0.4 (shipped) — rules depth + browser GUI
 
-Housing/amenities, eurekas & inspirations, unit XP/promotions/fortify, city
+Housing/amenities, eurekas & inspirations, unit XP/levels/fortify, city
 ranged strikes, barbarian camps & raiders, governments, medieval/renaissance
 content (29 techs, 14 civics), and `civvis play` — a zero-dep local web GUI
 for human-vs-AI over the JSON action protocol. Rust core still at v0.3 rules;
@@ -43,10 +43,9 @@ batch-port these systems next.
 
 ## Later rules depth
 
-- Rivers + fresh water; zone of control
-- Embarkation; ocean crossing gated by tech
-- Policy cards slotted into governments
-- Wall HP as a separate pool; siege support units
+- Class-specific promotion trees and promotion effects
+- Independent Encampment health, defenses, and ranged strikes
+- Corps, armies, and linked unit formations
 
 ## v0.3 — systems breadth
 

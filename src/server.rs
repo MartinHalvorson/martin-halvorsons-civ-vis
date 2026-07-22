@@ -5,7 +5,7 @@ use std::net::{TcpListener, TcpStream};
 
 use serde_json::{json, Value};
 
-use crate::ai::{Ai, BasicAi};
+use crate::ai::{AdvancedAi, Ai, BasicAi};
 use crate::game::{Action, Game};
 use crate::obs::{observation, observation_spectator};
 use crate::setup::{MapSize, CIV6_MAP_SIZES};
@@ -38,20 +38,14 @@ impl Session {
         let game = Game::new_full(params.num_players, params.width, params.height,
                                   params.seed, params.max_turns,
                                   params.num_city_states, true);
-        // majors use the strongest available AI: value-net NeuralAi when a
-        // trained net exists, else evolved champion weights, else defaults
-        let champ = crate::evolve::load_champion("evolved");
-        let net = crate::valuenet::ValueNet::load("evolved");
+        // Paired and multiplayer evaluation make the hierarchical agent the
+        // strongest built-in default. Minors/barbarians retain the cheaper
+        // baseline because they do not need empire-level planning.
         let ais: Vec<Box<dyn Ai>> = game.players.iter().map(|p| -> Box<dyn Ai> {
             if p.is_minor || p.is_barbarian {
                 return Box::new(BasicAi::new());
             }
-            match (&champ, &net) {
-                (Some(w), Some(n)) =>
-                    Box::new(crate::neural::NeuralAi::new(w.clone(), n.clone())),
-                (Some(w), None) => Box::new(BasicAi::with_weights(w.clone())),
-                _ => Box::new(BasicAi::new()),
-            }
+            Box::new(AdvancedAi::new())
         }).collect();
         Session { params, game, ais }
     }

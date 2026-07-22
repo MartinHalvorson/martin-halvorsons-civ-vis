@@ -2,6 +2,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+fn default_true() -> bool {
+    true
+}
+
 use crate::world::Tile;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -166,6 +170,9 @@ pub struct DistrictSpec {
     pub defense: f64,
     #[serde(default)]
     pub amenity: f64,
+    /// Specialty districts consume the 1/4/7/... population capacity.
+    #[serde(default = "default_true")]
+    pub specialty: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

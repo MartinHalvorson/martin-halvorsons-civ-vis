@@ -1,7 +1,7 @@
 //! CLI: simulate / soak / benchmark (mirrors the Python CLI outputs).
 use std::time::Instant;
 
-use civvis::ai::{run_game, BasicAi};
+use civvis::ai::{run_game, AdvancedAi};
 use civvis::game::Game;
 use civvis::setup::MapSize;
 
@@ -78,7 +78,7 @@ fn main() {
                 arg(&args, "--turns", 250) as u32,
                 auto_cs(&args, players),
             );
-            let mut ais = BasicAi::fleet(&g);
+            let mut ais = AdvancedAi::fleet(&g);
             run_game(&mut g, &mut ais);
             println!("[{:.3}s]", g0.elapsed().as_secs_f64());
             standings(&g);
@@ -99,7 +99,7 @@ fn main() {
                         arg(&args, "--turns", 120) as u32,
                         auto_cs(&args, players),
                     );
-                    let mut ais = BasicAi::fleet(&g);
+                    let mut ais = AdvancedAi::fleet(&g);
                     run_game(&mut g, &mut ais);
                     g
                 });
@@ -150,7 +150,7 @@ fn main() {
             let mut total_turns: u64 = 0;
             for seed in 0..games {
                 let mut g = Game::new(2, 20, 14, seed as u64, turns, 0);
-                let mut ais = BasicAi::fleet(&g);
+                let mut ais = AdvancedAi::fleet(&g);
                 run_game(&mut g, &mut ais);
                 total_turns += g.turn as u64;
             }
@@ -168,7 +168,7 @@ fn main() {
                 .position(|a| a == "--ais")
                 .and_then(|i| args.get(i + 1))
                 .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
-                .unwrap_or_else(|| vec!["basic".to_string(), "random".to_string()]);
+                .unwrap_or_else(|| vec!["advanced".to_string(), "basic".to_string()]);
             for n in &names {
                 if !civvis::elo::BUILTIN_AIS.contains(&n.as_str()) {
                     eprintln!("unknown AI {n:?}; builtin: {:?} (custom bots: \

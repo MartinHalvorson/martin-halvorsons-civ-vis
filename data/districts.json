@@ -96,6 +96,7 @@
   "spaceport": {
     "cost": 1800,
     "tech": "rocketry",
+    "specialty": false,
     "yields": {}
   }
 }

@@ -546,11 +546,10 @@ impl AdvancedAi {
                     || (plan.strategy == GrandStrategy::Recovery
                         && plan.target_player != Some(*other))
                     || (fatigued && g.player_city_ids(*other).len() > 1))
+                && g.apply(pid, &Action::MakePeace { player: *other }).is_ok()
             {
-                if g.apply(pid, &Action::MakePeace { player: *other }).is_ok() {
-                    self.peace_until = g.turn.saturating_add(30);
-                    self.major_war_since = None;
-                }
+                self.peace_until = g.turn.saturating_add(30);
+                self.major_war_since = None;
             }
         }
         let major_wars = rivals
