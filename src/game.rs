@@ -319,6 +319,10 @@ pub struct Game {
     pub world_era: usize,
     occ: BTreeMap<Pos, Vec<u32>>,
     city_by_pos: BTreeMap<Pos, u32>,
+    /// Every successfully applied action, in order — the game is exactly
+    /// f(seed+params, log), so this is the replay/desync-detection record.
+    /// Runtime-only (not in saves yet).
+    pub log: Vec<(usize, Action)>,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
@@ -377,6 +381,7 @@ impl From<GameSer> for Game {
             world_era: s.world_era,
             occ: BTreeMap::new(),
             city_by_pos: BTreeMap::new(),
+            log: Vec::new(),
         };
         for u in g.units.values() {
             g.occ.entry(u.pos).or_default().push(u.id);
@@ -453,6 +458,7 @@ impl Game {
             world_era: 0,
             occ: BTreeMap::new(),
             city_by_pos: BTreeMap::new(),
+            log: Vec::new(),
         };
         for i in 0..num_players {
             g.players.push(Player::new(i, CIV_NAMES[i % CIV_NAMES.len()], false));
@@ -2528,7 +2534,7 @@ impl Game {
         if self.current != pid {
             return Err("not your turn".into());
         }
-        match action {
+        let r = match action {
             Action::Move { unit, to } => self.do_move(pid, *unit, *to),
             Action::MoveTo { unit, to } => self.do_move_to(pid, *unit, *to),
             Action::Attack { unit, target } => self.do_attack(pid, *unit, *target),
@@ -2557,7 +2563,11 @@ impl Game {
                 self.do_end_turn();
                 Ok(())
             }
+        };
+        if r.is_ok() {
+            self.log.push((pid, action.clone()));
         }
+        r
     }
 
     fn own_unit(&self, pid: usize, uid: u32) -> Result<Unit, String> {

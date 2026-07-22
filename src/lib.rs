@@ -19,7 +19,7 @@ pub type Pos = (i32, i32);
 
 #[cfg(test)]
 mod tests {
-    use crate::ai::{run_game, BasicAi};
+    use crate::ai::{run_game, Ai, BasicAi};
     use crate::game::{Action, Game};
     use crate::hex;
 
@@ -30,6 +30,47 @@ mod tests {
         assert_eq!(hex::disk((4, -1), 2).len(), 19);
         for n in hex::neighbors((2, 5)) {
             assert_eq!(hex::distance((2, 5), n), 1);
+        }
+    }
+
+    /// The game is exactly f(seed+params, action_log): re-applying the log of
+    /// a finished game to a fresh engine reproduces it bit-for-bit. This is
+    /// the desync detector — it fails if any failed apply consumes RNG or any
+    /// rules path is nondeterministic.
+    #[test]
+    fn replay_from_action_log() {
+        let mut g = Game::new(3, 24, 16, 9, 80, 2);
+        let mut ais = BasicAi::fleet(&g);
+        run_game(&mut g, &mut ais);
+        assert!(!g.log.is_empty());
+        let mut r = Game::new(3, 24, 16, 9, 80, 2);
+        for (i, (pid, a)) in g.log.iter().enumerate() {
+            r.apply(*pid, a).unwrap_or_else(|e| {
+                panic!("logged action {i} failed on replay: {e} ({a:?})")
+            });
+        }
+        assert_eq!(serde_json::to_value(&g).unwrap(),
+                   serde_json::to_value(&r).unwrap());
+    }
+
+    /// legal_actions must be exactly consistent with apply: everything it
+    /// generates applies cleanly (spot-checked over the early game).
+    #[test]
+    fn legal_actions_all_apply() {
+        let mut g = Game::new(2, 20, 14, 13, 40, 1);
+        let mut ais = BasicAi::fleet(&g);
+        while g.winner.is_none() && g.turn < 12 {
+            let pid = g.current;
+            for a in g.legal_actions(pid) {
+                let snap = serde_json::to_value(&g).unwrap();
+                let mut c: Game = serde_json::from_value(snap).unwrap();
+                assert!(c.apply(pid, &a).is_ok(),
+                        "legal action failed to apply: {a:?} (turn {})", g.turn);
+            }
+            ais[pid].take_turn(&mut g, pid);
+            if g.winner.is_none() && g.current == pid {
+                let _ = g.apply(pid, &Action::EndTurn);
+            }
         }
     }
 
