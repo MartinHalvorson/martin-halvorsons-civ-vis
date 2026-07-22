@@ -1733,10 +1733,11 @@ impl BasicAi {
                     let spec = &g.rules.units[kind.as_str()];
                     if spec.class == "military" {
                         military += 1;
+                        if spec.is_melee_capable() {
+                            melee += 1;
+                        }
                         if spec.has_ranged_attack() {
                             ranged += 1;
-                        } else {
-                            melee += 1;
                         }
                     }
                 }
@@ -1758,10 +1759,11 @@ impl BasicAi {
                         let spec = &g.rules.units[unit.as_str()];
                         if spec.class == "military" {
                             military += 1;
+                            if spec.is_melee_capable() {
+                                melee += 1;
+                            }
                             if spec.has_ranged_attack() {
                                 ranged += 1;
-                            } else {
-                                melee += 1;
                             }
                         }
                     }
@@ -1863,10 +1865,11 @@ impl BasicAi {
                                 let spec = &g.rules.units[unit.as_str()];
                                 if spec.class == "military" {
                                     military += 1;
+                                    if spec.is_melee_capable() {
+                                        melee += 1;
+                                    }
                                     if spec.has_ranged_attack() {
                                         ranged += 1;
-                                    } else {
-                                        melee += 1;
                                     }
                                 }
                             }
@@ -1912,10 +1915,11 @@ impl BasicAi {
                             let spec = &g.rules.units[unit.as_str()];
                             if spec.class == "military" {
                                 military += 1;
+                                if spec.is_melee_capable() {
+                                    melee += 1;
+                                }
                                 if spec.has_ranged_attack() {
                                     ranged += 1;
-                                } else {
-                                    melee += 1;
                                 }
                             }
                         }
