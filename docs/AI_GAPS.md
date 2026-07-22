@@ -9,10 +9,13 @@
 > essentially closed**, **4 is largely closed** (multi-unit joint planning
 > remains), **9 has recorded baselines now** (`docs/EVAL.md`), and **3 has
 > its first half shipped** (`obs_tensor.rs`: 25 fog-honest feature planes +
-> global vector; action-space enumeration/masking still open). The live
-> frontier, in order: **8 (GPU self-play loop) → 1 (learned policy), with 2
-> (macro search) as the improvement operator, then 5 (belief state)**. The
-> original ranking below is kept for context.
+> global vector; action-space enumeration/masking still open). **2+6 have a
+> first search rung** (`strategic.rs`: StrategicAi picks its victory lane by
+> rolling each lane forward and judging the position — builtin `strategic`;
+> paired numbers in EVAL.md). The live frontier, in order: **8 (GPU
+> self-play loop) → 1 (learned policy), deepening 2's macro search as the
+> improvement operator, then 5 (belief state)**. The original ranking below
+> is kept for context.
 
 State as of 2026-07-22: the engine is complete enough to matter (all six
 victory types, zero ❌ rows in MECHANICS.md, ~27k turns/sec), and the AI

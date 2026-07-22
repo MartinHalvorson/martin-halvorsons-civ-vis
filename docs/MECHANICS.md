@@ -12,7 +12,7 @@ units, technologies, civics, buildings and districts. Run it after any data
 change, and see [FIDELITY.md](FIDELITY.md) for what the audit covers next.
 
 > **In progress** (claimed by parallel sessions — check before starting a batch):
-> - session F: religious-victory balance batch — faith-purchased religious units adopt city majority religion (Civilopedia rule), cross-strategy religious defense in AdvancedAi, re-baseline soak/ai_eval
+> - (none currently claimed)
 > - session U: Unciv-inspired platform layer — `data/difficulties.json` + `data/speeds.json` and their handicaps, `civvis validate` ruleset validator, notification/event log in `obs` + GUI, `docs/UNCIV_LESSONS.md`
 > - session G: continuous-exhibition bug hunt — rules defects observed in full 8-player games, one game at a time. Owns the Pressure/majority core in `src/game.rs` (`city_religion`, `process_pressure`, atheist Pressure); session F owns the religious AI and purchase rules above it
 > - session FID: fidelity expansion — extend `tools/civ6_fidelity.py` to the remaining shipped tables (terrains, features, resources, improvements, policies, beliefs, promotions, projects, wonders, global parameters, game speeds, eras, goody huts, boosts, district adjacency) and correct `data/*.json` + engine constants to the shipped GS values. Owns `tools/civ6_fidelity.py`, `tools/fidelity_waivers.json`, `docs/FIDELITY.md`

@@ -67,3 +67,39 @@ much as victory play.
 religious 27/50 across both seats — the same religious dominance the soak
 shows at 4 players, now confirmed head-to-head (basic banks 452 faith it
 never converts, advanced converts at less than a third of that).
+
+## 2026-07-22 — religious balance batch (session F, after 311119a)
+
+Rules fix (stock Civilopedia rule): faith-purchased religious units now
+adopt their own city's majority religion, so non-founders can field
+adopted-faith Missionaries; Missionaries spread the unit's faith and
+reconvert home first. AdvancedAi: every strategy now runs a home religious
+defense, triggered while conversion is in progress (any rival faith at 60%
+of the city's strongest pressure), not after the majority already flipped.
+
+**Soak, same seeds 100-111** (12 × 4p × 350t):
+
+| Variant | religious | score-cap | other |
+|---|---|---|---|
+| before batch | 8 | 4 | 0 |
+| majority-flip trigger only | 11 | 1 | 0 |
+| 60%-pressure trigger (shipped) | **3** | 9 | 0 |
+
+The majority-flip variant proved the timing thesis: by the time a rival
+faith holds a city, the pressure race is lost and defense spending is
+wasted. Triggering at 60% pressure turns religion from a near-free lane
+(11/12) into a contested one (3/12); games now run long and 9/12 hit the
+turn cap on score, consistent with the earlier finding that 350 turns is
+short for the science/culture lanes at four players. 427/427 tests.
+
+**Mirrored 2p is intentionally less affected** (advanced beat basic 39/50
+with religious 27/50 both before and after): with only two faiths on the
+map, a converted non-founder rarely has a third adopted faith to buy —
+matching real Civ 6, where a duel against a committed religious player is
+genuinely hard to defend without your own religion.
+
+**StrategicAi first probe** (`ai_eval strategic advanced --pairs 8 --seed
+5000`, mirrored 2p, avg 177t): strategic wins 9/16 (56%), all nine on
+score, with markedly stronger empires (score 230 vs advanced's usual ~195,
+military 257 vs ~103, tech 18.8 vs 15.3). Small sample — treat as "at
+least parity"; a 25-pair run should decide promotion to exhibition seats.
