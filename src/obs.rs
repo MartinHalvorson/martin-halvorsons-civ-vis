@@ -71,15 +71,20 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             "wall_hp": c.wall_hp, "wall_max": g.city_max_wall_hp(c),
             "religion": g.city_religion(c),
         });
-        if c.owner == pid {
+        // Spectator frames rotate the observed seat every step; attach the
+        // detailed fields for every city there so they don't blink in and
+        // out between frames (the GUI draws bars straight from them).
+        if c.owner == pid || omniscient {
             let citizens = g.city_citizen_plan(c.id);
             let ys = g.city_yields(c.id);
-            empire[0] += ys.food;
-            empire[1] += ys.production;
-            empire[2] += ys.gold;
-            empire[3] += ys.science;
-            empire[4] += ys.culture;
-            empire[5] += ys.faith;
+            if c.owner == pid {
+                empire[0] += ys.food;
+                empire[1] += ys.production;
+                empire[2] += ys.gold;
+                empire[3] += ys.science;
+                empire[4] += ys.culture;
+                empire[5] += ys.faith;
+            }
             let ext = json!({
                 "food": round1(c.food), "production": round1(c.production),
                 "queue": c.queue, "buildings": c.buildings,

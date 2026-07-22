@@ -941,6 +941,32 @@ mod tests {
     }
 
     #[test]
+    fn spectator_city_detail_is_seat_stable() {
+        let mut g = Game::new(2, 18, 12, 4, 25, 1);
+        let mut ais = BasicAi::fleet(&g);
+        run_game(&mut g, &mut ais);
+        // spectator frames rotate the observed seat every step; city detail
+        // (queue, production) must be present from every seat or the GUI's
+        // bars blink as the seat changes
+        for pid in 0..2 {
+            let o = crate::obs::observation_spectator(&g, pid);
+            let cities = o["cities"].as_array().unwrap();
+            assert!(!cities.is_empty());
+            for c in cities {
+                assert!(c.get("queue").is_some(),
+                        "city {} lacks detail from seat {pid}", c["name"]);
+            }
+            // the fog-of-war view keeps detail private to the observer
+            let o = crate::obs::observation(&g, pid);
+            for c in o["cities"].as_array().unwrap() {
+                if c["owner"].as_u64() != Some(pid as u64) {
+                    assert!(c.get("queue").is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
     fn action_protocol_json() {
         let a: Action = serde_json::from_str(
             r#"{"type": "move", "unit": 3, "to": [1, -2]}"#).unwrap();

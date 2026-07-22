@@ -2,10 +2,14 @@
 
 ## Martin Halvorson's Civilization VIS (6.5)
 
+![Spectate mode: an AI-vs-AI exhibition match — a renaissance-era siege of Corinth](docs/exhibition.gif)
+
+*Spectate mode: eight AI civilizations fight a live exhibition match in the
+browser GUI — here, a renaissance-era war around Corinth.*
+
 An open-source, **headless-first** 4X strategy engine inspired by the mechanics
-of Civilization VI — aiming to be to Civ 6 what [Unciv](https://github.com/yairm210/Unciv)
-is to Civ 5, designed **AI-first**: every game runs without a UI at tens of
-thousands of turns per second, behind a JSON action protocol, so advanced AI
+of Civilization VI — aiming to be for Civ 6 what [Unciv](https://github.com/yairm210/Unciv)
+is for Civ 5. Designed **AI-simulator-first**: every game runs without a UI at thousands of turns per second, behind a JSON action protocol, so advanced AI
 strategies (RL, MCTS, LLM agents) can be developed against it.
 
 **Pure Rust, zero runtime dependencies** (serde only). Not affiliated with

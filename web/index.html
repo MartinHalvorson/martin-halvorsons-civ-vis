@@ -1643,7 +1643,9 @@ function draw() {
         cx.fillStyle = "#59aee1"; cx.fillRect(bx, statusY, tw * wallFraction, 3);
         statusY += 4;
       }
-      if (c.owner === 0 && c.queue && c.queue.length && c.queue_cost) {
+      // keyed off data presence, not seat 0 — spectate frames rotate the
+      // observed seat, and an owner gate makes the bar blink with it
+      if (c.queue && c.queue.length && c.queue_cost) {
         cx.fillStyle = "#0d1117"; cx.fillRect(bx, statusY, tw, 3);
         cx.fillStyle = "#e09050";
         cx.fillRect(bx, statusY, tw * Math.min(1, c.production / c.queue_cost), 3);
