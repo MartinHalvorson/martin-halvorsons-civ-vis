@@ -249,11 +249,18 @@ mod tests {
             "moves_left": 2.0, "charges": 3,
         }));
         let mut g: Game = serde_json::from_value(saved).unwrap();
+        let housing_before = g.city_housing(&g.cities[&cid]);
         g.apply(0, &Action::Improve {
             unit: builder,
             improvement: "farm".to_string(),
         }).unwrap();
         assert_eq!(g.map.tiles[&farm_pos].improvement.as_deref(), Some("farm"));
+        assert_eq!(g.city_housing(&g.cities[&cid]), housing_before + 0.5);
+        assert_eq!(g.rules.improvements["pasture"].housing, 0.5);
+        assert_eq!(g.rules.improvements["plantation"].housing, 0.5);
+        assert_eq!(g.rules.improvements["camp"].housing, 0.5);
+        assert_eq!(g.rules.improvements["fishing_boats"].housing, 0.5);
+        assert_eq!(g.rules.improvements["mine"].housing, 0.0);
     }
 
     /// Move a unit by id via save-edit (occ indexes rebuild on load).

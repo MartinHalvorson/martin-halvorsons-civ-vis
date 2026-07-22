@@ -85,6 +85,8 @@ pub struct ImprovementSpec {
     #[serde(default)]
     pub yields: Yields,
     #[serde(default)]
+    pub housing: f64,
+    #[serde(default)]
     pub terrain: Vec<String>,
     #[serde(default)]
     pub removes_feature: bool,

@@ -12,7 +12,7 @@ Status: ✅ implemented · 🟡 simplified · ❌ not yet.
 | Leaders & civ uniques | ✅ | all 8 civs: Trajan, Cleopatra, Pericles, Qin Shi Huang, Gilgamesh, Montezuma, Amanitore, Tomyris — signature ability each + 8 unique units (legion, hoplite, eagle warrior, war cart, pítati archer, maryannu chariot archer, saka horse archer, crouching tiger) replacing/blocking their base units |
 | Rivers & fresh water housing (5/3/2) | ✅ | wiki values; oasis counts as fresh |
 | City growth curve, border expansion | ✅ | |
-| Housing & amenities | ✅ | luxuries global (🟡 vs 4-city rationing) |
+| Housing & amenities | ✅ | water/building/policy sources plus +0.5 from owned Farms, Pastures, Plantations, Camps, and Fishing Boats within 3 tiles; luxuries global (🟡 vs 4-city rationing) |
 | Districts + adjacency (incl. river) | ✅ | 8 district types |
 | Wonders | 🟡 | 9 wonders, world-unique, effect engine (growth %, builder charges, unit levels); no tile placement |
 | Tech + civics trees, Eureka/Inspiration | ✅ | 28 real Civ VI techs / 14 civics, through renaissance; Ancient starts have no phantom Agriculture tech |

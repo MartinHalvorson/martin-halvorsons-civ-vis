@@ -38,6 +38,8 @@ struct EmpireCounts {
     melee: usize,
     ranged: usize,
     siege: usize,
+    support: usize,
+    missionaries: usize,
 }
 
 impl EmpireCounts {
@@ -46,6 +48,7 @@ impl EmpireCounts {
             "settler" => self.settlers += 1,
             "builder" => self.builders += 1,
             "trader" => self.traders += 1,
+            "missionary" => self.missionaries += 1,
             "scout" => {
                 self.scouts += 1;
                 self.military += 1;
@@ -63,6 +66,8 @@ impl EmpireCounts {
                     if spec.siege {
                         self.siege += 1;
                     }
+                } else if spec.class == "support" {
+                    self.support += 1;
                 }
             }
         }
@@ -212,7 +217,7 @@ impl AdvancedAi {
         {
             GrandStrategy::Recovery
         } else if at_war
-            || (g.turn >= 55 && cities.len() >= 2 && my_power > weakest_rival * 1.55 + 15.0)
+            || (g.turn >= 55 && cities.len() >= 2 && my_power > weakest_rival * 1.80 + 20.0)
             || (military_civ
                 && g.turn >= 35
                 && cities.len() >= 2
@@ -576,7 +581,7 @@ impl AdvancedAi {
         {
             return;
         }
-        let desired_builders = (3 * cities.len()).div_ceil(4).max(1);
+        let desired_builders = cities.len().div_ceil(2).max(1);
         if counts.builders < desired_builders {
             let _ = self.base.buy_gold_unit(g, pid, &cities, "builder", reserve);
         }
@@ -598,9 +603,9 @@ impl AdvancedAi {
         let threatened = plan.threatened_city == Some(cid)
             || (city.last_attacked > 0 && g.turn.saturating_sub(city.last_attacked) <= 4);
         let desired_military = match plan.strategy {
-            GrandStrategy::Conquest => 2 * city_count + 2,
-            GrandStrategy::Recovery => 2 * city_count + 1,
-            _ => city_count + 1,
+            GrandStrategy::Conquest => 2 * city_count,
+            GrandStrategy::Recovery => 2 * city_count,
+            _ => city_count,
         };
         let raw = match item {
             Item::Unit { unit } if unit == "settler" => {
@@ -617,7 +622,7 @@ impl AdvancedAi {
                 }
             }
             Item::Unit { unit } if unit == "builder" => {
-                let desired = (3 * city_count).div_ceil(4).max(1);
+                let desired = city_count.div_ceil(2).max(1);
                 if counts.builders < desired {
                     260.0 + 35.0 * (desired - counts.builders) as f64
                 } else {
@@ -632,10 +637,10 @@ impl AdvancedAi {
                 }
             }
             Item::Unit { unit } if unit == "missionary" => {
-                if g.players[pid].religion.is_some() {
+                if g.players[pid].religion.is_some() && counts.missionaries < 2 {
                     150.0
                 } else {
-                    20.0
+                    -10_000.0
                 }
             }
             Item::Unit { unit } => {
@@ -645,6 +650,29 @@ impl AdvancedAi {
                         return -2_000.0;
                     }
                     let power = spec.strength.max(spec.ranged_attack_strength());
+                    let best_role_power = g
+                        .rules
+                        .units
+                        .iter()
+                        .filter(|(name, candidate)| {
+                            candidate.class == "military"
+                                && candidate.domain.as_deref() != Some("sea")
+                                && candidate.has_ranged_attack() == spec.has_ranged_attack()
+                                && g.can_produce(
+                                    pid,
+                                    cid,
+                                    &Item::Unit {
+                                        unit: (*name).clone(),
+                                    },
+                                )
+                        })
+                        .map(|(_, candidate)| {
+                            candidate.strength.max(candidate.ranged_attack_strength())
+                        })
+                        .fold(0.0_f64, f64::max);
+                    if unit != "scout" && power + 5.0 < best_role_power {
+                        return -2_000.0;
+                    }
                     let force_gap = desired_military.saturating_sub(counts.military) as f64;
                     let role_gap = if force_gap <= 0.0 {
                         0.0
@@ -669,8 +697,13 @@ impl AdvancedAi {
                         } else {
                             0.0
                         }
-                } else if spec.class == "support" && plan.strategy == GrandStrategy::Conquest {
+                } else if spec.class == "support"
+                    && plan.strategy == GrandStrategy::Conquest
+                    && counts.support == 0
+                {
                     180.0
+                } else if spec.class == "support" {
+                    -10_000.0
                 } else {
                     20.0
                 }

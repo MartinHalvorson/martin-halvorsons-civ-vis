@@ -1496,6 +1496,12 @@ impl Game {
             self.map.get(*n).map(|t| self.rules.is_water(t)).unwrap_or(false)
         });
         let mut h = if fresh { 5.0 } else if coastal { 3.0 } else { 2.0 };
+        for pos in city.owned_tiles.iter().filter(|p| self.wdist(city.pos, **p) <= 3) {
+            if let Some(improvement) = self.map.tiles[pos].improvement.as_deref() {
+                h += self.rules.improvements.get(improvement)
+                    .map(|spec| spec.housing).unwrap_or(0.0);
+            }
+        }
         for b in &city.buildings {
             h += self.rules.buildings[b.as_str()].housing;
         }
@@ -1832,7 +1838,10 @@ impl Game {
 
     fn exerts_zoc(&self, u: &Unit) -> bool {
         let spec = &self.rules.units[u.kind.as_str()];
-        spec.zone_of_control && !self.is_embarked(u)
+        // Embarkation does not remove a land unit's ZOC. Its native domain
+        // still limits projection to land tiles, which is handled by the
+        // caller when comparing the target tile's domain.
+        spec.zone_of_control
     }
 
     /// Is `pos` inside a military enemy zone of control for player `pid`?
@@ -3000,6 +3009,7 @@ impl Game {
                         for pos in self.nbrs(u.pos) {
                             if self.map.tiles.contains_key(&pos)
                                 && self.enemy_target_at(pid, pos)
+                                && self.can_pay_melee_entry(uid, pos)
                             {
                                 acts.push(Action::Attack { unit: uid, target: pos });
                             }
@@ -3314,7 +3324,10 @@ impl Game {
         let other = &self.rules.units[opponent.kind.as_str()];
         let mut bonus = 0.0;
         if spec.promotion_class == "anti_cavalry"
-            && matches!(other.promotion_class.as_str(), "light_cavalry" | "heavy_cavalry")
+            && (matches!(
+                other.promotion_class.as_str(),
+                "light_cavalry" | "heavy_cavalry"
+            ) || (other.cavalry && other.promotion_class == "ranged"))
             && opponent.kind != "war_cart"
         {
             bonus += 10.0;
@@ -3345,10 +3358,22 @@ impl Game {
             .filter(|id| *id != uid)
             .filter(|id| {
                 let u = &self.units[id];
-                u.owner == owner && self.exerts_zoc(u)
+                u.owner == owner
+                    && self.rules.units[u.kind.as_str()].class == "military"
+                    && !self.crosses_river(u.pos, target)
             })
             .count();
         2.0 * additional as f64
+    }
+
+    /// Melee attacks pay the movement cost of entering the defender's tile.
+    /// As with ordinary movement, a unit that has all of its Movement may
+    /// always perform one attack even when the terrain costs more than its
+    /// maximum Movement.
+    fn can_pay_melee_entry(&self, uid: u32, target: Pos) -> bool {
+        let u = &self.units[&uid];
+        u.moves_left >= self.unit_max_moves(uid)
+            || u.moves_left >= self.step_cost(u.pos, target)
     }
 
     fn support_bonus(&self, defender: &Unit) -> f64 {
@@ -3378,6 +3403,9 @@ impl Game {
         }
         if self.wdist(u.pos, target) != 1 {
             return Err("target not adjacent".into());
+        }
+        if !self.can_pay_melee_entry(uid, target) {
+            return Err("not enough movement to attack".into());
         }
         if amphibious && self.map.get(target)
             .map(|t| self.rules.is_water(t)).unwrap_or(true)
@@ -3625,7 +3653,8 @@ impl Game {
                 + self.matchup_bonus(uid, &defender)
                 + self.vs_bonus(pid, downer);
             let defender_spec = &self.rules.units[defender.kind.as_str()];
-            if spec.bombard_strength > 0.0
+            if (spec.bombard_strength > 0.0
+                && defender_spec.domain.as_deref() != Some("sea"))
                 || (spec.ranged_strength > 0.0
                     && defender_spec.domain.as_deref() == Some("sea"))
             {
@@ -3650,7 +3679,12 @@ impl Game {
             let defender = self.units[&did].clone();
             let mut att_base = self.unit_ranged_attack_strength(&self.units[&uid])
                 + self.vs_bonus(pid, defender.owner);
-            if spec.bombard_strength > 0.0 {
+            if spec.bombard_strength > 0.0
+                && self.rules.units[defender.kind.as_str()]
+                    .domain
+                    .as_deref()
+                    != Some("sea")
+            {
                 att_base -= 17.0;
             }
             let att = effective_strength(att_base, self.units[&uid].hp);
