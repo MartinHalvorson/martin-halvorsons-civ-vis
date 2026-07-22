@@ -6,6 +6,17 @@
     "requires_flat": true,
     "removes_feature": true
   },
+  "fishery": {
+    "yields": {"food": 1},
+    "terrain": ["coast", "lake"],
+    "water": true,
+    "effects": {"adjacent_sea_resource_food": 1, "liang_production": 1}
+  },
+  "city_park": {
+    "yields": {"culture": 1},
+    "requires_flat": true,
+    "effects": {"adjacent_appeal": 2, "adjacent_water_amenity": 1, "liang_total_culture": 3}
+  },
   "mine": {
     "tech": "mining",
     "yields": {"production": 1},

@@ -111,6 +111,9 @@ free capture is discounted when the destination permits an immediate ranged,
 melee, city, Encampment, or air counterattack. Forced strategic choices such as city
 keep/raze/liberate decisions use deterministic make-and-evaluate outcome
 search with victory-specific economy, military, Favor, and Grievance terms.
+Campaign selection can choose an exposed city-state as well as a major rival,
+while pricing invested Envoys, suzerainty, city-state bonuses, defender power,
+and lower-Grievance casus belli before opening hostilities.
 Six explicit victory pipelines align research, civics, policies, production,
 spending, diplomacy, expansion, religion, and unit orders; the default planner
 can switch strategy when a rival approaches a victory. `advanced_v1` remains

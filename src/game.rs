@@ -777,6 +777,256 @@ mod belief_runtime_tests {
 }
 
 #[cfg(test)]
+mod governor_runtime_tests {
+    use super::*;
+
+    fn appoint_established(
+        game: &mut Game,
+        pid: usize,
+        governor: &str,
+        city: u32,
+        promotions: &[&str],
+    ) {
+        game.turn = 10;
+        game.players[pid].governor_roster.insert(
+            governor.to_string(),
+            GovernorState {
+                city: Some(city),
+                assigned_turn: 0,
+                promotions: promotions
+                    .iter()
+                    .map(|promotion| promotion.to_string())
+                    .collect(),
+            },
+        );
+        game.sync_governor_cities(pid);
+        assert!(game.governor_established(pid, governor));
+    }
+
+    fn found_capital(game: &mut Game, pid: usize) -> u32 {
+        let settler = game
+            .player_unit_ids(pid)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        let city = game.found_city_for(pid, game.units[&settler].pos, None);
+        game.remove_unit(settler);
+        city
+    }
+
+    fn set_district(game: &mut Game, city: u32, position: Pos, district: &str) {
+        let tile = game.map.tiles.get_mut(&position).unwrap();
+        tile.district = Some(district.to_string());
+        tile.improvement = None;
+        tile.pillaged = false;
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert(district.to_string(), position);
+    }
+
+    #[test]
+    fn amani_executes_messenger_resources_puppeteer_and_emissary() {
+        let mut game = Game::new_full(2, 26, 16, 91_780, 200, 1, false);
+        found_capital(&mut game, 0);
+        found_capital(&mut game, 1);
+        let minor = game
+            .players
+            .iter()
+            .find(|player| player.is_minor && !player.is_barbarian)
+            .unwrap()
+            .id;
+        let city_state = game.player_city_ids(minor)[0];
+        appoint_established(
+            &mut game,
+            0,
+            "amani",
+            city_state,
+            &["affluence", "foreign_investor", "emissary"],
+        );
+
+        assert_eq!(game.raw_envoys_at(0, minor), 0);
+        assert_eq!(game.envoys_at(0, minor), 2);
+        assert_eq!(game.suzerain_of(minor), None);
+
+        game.players[0].techs = game.rules.techs.keys().cloned().collect();
+        let resource_tiles: Vec<Pos> = game.cities[&city_state]
+            .owned_tiles
+            .iter()
+            .copied()
+            .filter(|position| *position != game.cities[&city_state].pos)
+            .take(2)
+            .collect();
+        assert_eq!(resource_tiles.len(), 2);
+        for (position, resource, improvement) in [
+            (resource_tiles[0], "silk", "plantation"),
+            (resource_tiles[1], "iron", "mine"),
+        ] {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.resource = Some(resource.to_string());
+            tile.improvement = Some(improvement.to_string());
+            tile.pillaged = false;
+        }
+        assert_eq!(game.resource_access_count(0, "silk"), 1);
+        assert_eq!(game.strategic_resource_rate(0, "iron"), 2.0);
+
+        game.players[0].envoys.push((minor, 1));
+        game.players[0]
+            .governor_roster
+            .get_mut("amani")
+            .unwrap()
+            .promotions
+            .insert("puppeteer".to_string());
+        assert_eq!(game.envoys_at(0, minor), 6);
+        assert_eq!(game.suzerain_of(minor), Some(0));
+        assert_eq!(game.strategic_resource_rate(0, "iron"), 4.0);
+
+        let amani_position = game.cities[&city_state].pos;
+        let target_position = game
+            .wdisk(amani_position, 2)
+            .into_iter()
+            .find(|position| {
+                game.map.tiles.contains_key(position)
+                    && game.map.tiles[position].owner_city.is_none()
+                    && game.rules.is_passable(&game.map.tiles[position])
+                    && !game.rules.is_water(&game.map.tiles[position])
+            })
+            .unwrap();
+        let target = game.found_city_for(1, target_position, Some("Emissary Target".to_string()));
+        game.cities.get_mut(&target).unwrap().loyalty = 50.0;
+        let encoded = serde_json::to_string(&game).unwrap();
+        let mut with_emissary: Game = serde_json::from_str(&encoded).unwrap();
+        let mut without_emissary: Game = serde_json::from_str(&encoded).unwrap();
+        without_emissary.players[0]
+            .governor_roster
+            .get_mut("amani")
+            .unwrap()
+            .promotions
+            .remove("emissary");
+        with_emissary.process_loyalty(1);
+        without_emissary.process_loyalty(1);
+        assert_eq!(
+            with_emissary.cities[&target].loyalty - without_emissary.cities[&target].loyalty,
+            -2.0
+        );
+    }
+
+    #[test]
+    fn liang_executes_district_fisheries_parks_and_water_works() {
+        let mut game = Game::new_full(1, 24, 16, 91_781, 200, 0, false);
+        let city = found_capital(&mut game, 0);
+        appoint_established(
+            &mut game,
+            0,
+            "liang",
+            city,
+            &["zoning_commissioner", "aquaculture", "parks_and_recreation"],
+        );
+        let district = Item::District {
+            district: "campus".to_string(),
+            pos: game.cities[&city].owned_tiles[1],
+        };
+        assert_eq!(game.item_prod_mult(0, city, Some(&district)), 1.2);
+
+        let center = game.cities[&city].pos;
+        let mut owned: Vec<Pos> = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .filter(|position| *position != center)
+            .collect();
+        owned.sort();
+        assert!(owned.len() >= 6);
+        let water = owned[0];
+        let park = owned
+            .iter()
+            .copied()
+            .find(|position| *position != water && game.nbrs(*position).contains(&water))
+            .unwrap();
+        {
+            let tile = game.map.tiles.get_mut(&water).unwrap();
+            tile.terrain = "coast".to_string();
+            tile.feature = None;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.hills = false;
+        }
+        let sea_resource = game
+            .nbrs(water)
+            .into_iter()
+            .find(|position| *position != park && game.map.tiles.contains_key(position))
+            .unwrap();
+        {
+            let tile = game.map.tiles.get_mut(&sea_resource).unwrap();
+            tile.terrain = "coast".to_string();
+            tile.feature = None;
+            tile.resource = Some("fish".to_string());
+        }
+        assert!(game
+            .valid_improvements(0, water)
+            .contains(&"fishery".to_string()));
+        let bare_water = game.player_tile_yields(0, water, &game.map.tiles[&water]);
+        game.map.tiles.get_mut(&water).unwrap().improvement = Some("fishery".to_string());
+        let fishery = game.player_tile_yields(0, water, &game.map.tiles[&water]);
+        assert_eq!(fishery.food - bare_water.food, 2.0);
+        assert_eq!(fishery.production - bare_water.production, 1.0);
+
+        {
+            let tile = game.map.tiles.get_mut(&park).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.hills = false;
+        }
+        assert!(game
+            .valid_improvements(0, park)
+            .contains(&"city_park".to_string()));
+        let bare_park = game.player_tile_yields(0, park, &game.map.tiles[&park]);
+        let center_appeal = game.tile_appeal(center);
+        let amenities = game.city_local_amenities(&game.cities[&city]);
+        game.map.tiles.get_mut(&park).unwrap().improvement = Some("city_park".to_string());
+        let developed_park = game.player_tile_yields(0, park, &game.map.tiles[&park]);
+        assert_eq!(developed_park.culture - bare_park.culture, 3.0);
+        assert_eq!(game.tile_appeal(center) - center_appeal, 2);
+        assert_eq!(
+            game.city_local_amenities(&game.cities[&city]) - amenities,
+            1
+        );
+
+        let district_positions: Vec<Pos> = owned
+            .into_iter()
+            .filter(|position| *position != water && *position != park)
+            .take(4)
+            .collect();
+        assert_eq!(district_positions.len(), 4);
+        for (position, district) in
+            district_positions
+                .into_iter()
+                .zip(["neighborhood", "aqueduct", "canal", "dam"])
+        {
+            set_district(&mut game, city, position, district);
+        }
+        let housing_before = game.city_housing(&game.cities[&city]);
+        let amenities_before = game.city_local_amenities(&game.cities[&city]);
+        game.players[0]
+            .governor_roster
+            .get_mut("liang")
+            .unwrap()
+            .promotions
+            .insert("water_works".to_string());
+        assert_eq!(game.city_housing(&game.cities[&city]) - housing_before, 4.0);
+        assert_eq!(
+            game.city_local_amenities(&game.cities[&city]) - amenities_before,
+            2
+        );
+    }
+}
+
+#[cfg(test)]
 mod trade_deal_tests {
     use super::*;
     use crate::ai::BasicAi;
@@ -6906,13 +7156,31 @@ impl Game {
         }
     }
 
-    pub fn envoys_at(&self, pid: usize, minor: usize) -> i64 {
+    fn raw_envoys_at(&self, pid: usize, minor: usize) -> i64 {
         self.players[pid]
             .envoys
             .iter()
             .find(|(m, _)| *m == minor)
             .map(|(_, n)| *n)
             .unwrap_or(0)
+    }
+
+    /// Effective city-state representation includes an established Amani.
+    /// Messenger contributes two Envoys and Puppeteer doubles the complete
+    /// effective delegation, while the stored envoy balance remains unchanged.
+    pub fn envoys_at(&self, pid: usize, minor: usize) -> i64 {
+        let raw = self.raw_envoys_at(pid, minor);
+        let Some(city) = self.established_governor_city(pid, "amani") else {
+            return raw;
+        };
+        if self.cities.get(&city).map(|city| city.owner) != Some(minor) {
+            return raw;
+        }
+        let messenger = self.governor_effect(pid, city, "city_state_envoys");
+        let multiplier = self
+            .governor_effect(pid, city, "city_state_envoys_multiplier")
+            .max(1.0);
+        ((raw as f64 + messenger) * multiplier).round() as i64
     }
 
     /// Suzerain: at least 3 envoys and strictly more than every other major.
@@ -6952,7 +7220,9 @@ impl Game {
         if !ok || self.is_at_war(pid, minor) {
             return Err("invalid city-state".into());
         }
-        let existing = self.envoys_at(pid, minor);
+        // Diplomatic League reacts to the first envoy actually sent; Amani's
+        // virtual Envoys do not consume that one-time trigger.
+        let existing = self.raw_envoys_at(pid, minor);
         let first_bonus = if existing == 0 {
             self.policy_effect(pid, "first_envoy_bonus") as i64
         } else {
@@ -7430,6 +7700,9 @@ impl Game {
                 if self.congress_effect_active("urban_development_treaty", "A", district) {
                     bonus += 1.0;
                 }
+                if self.congress_effect_active("global_energy_treaty", "A", building) {
+                    return 0.0;
+                }
                 if spec.outer_defense > 0 {
                     bonus += self.policy_effect(pid, "wall_production_pct") / 100.0;
                 }
@@ -7440,6 +7713,7 @@ impl Game {
                 }
             }
             Some(Item::District { district, .. }) => {
+                bonus += self.governor_effect(pid, cid, "district_production_pct") / 100.0;
                 if matches!(self.district_family(district), "encampment" | "harbor") {
                     bonus += self.policy_effect(pid, "military_port_production_pct") / 100.0;
                 }
@@ -7452,6 +7726,11 @@ impl Game {
             }
             Some(Item::Project { project }) => {
                 bonus += self.gov_effects(pid).project_production_pct / 100.0;
+                if self.congress_effect_active("public_works_program", "A", project) {
+                    bonus += 1.0;
+                } else if self.congress_effect_active("public_works_program", "B", project) {
+                    bonus -= 0.5;
+                }
                 if self.rules.projects[project].district.as_deref() == Some("spaceport")
                     && (self.city_has_building_family(&self.cities[&cid], "military_academy")
                         || self.city_has_building_family(&self.cities[&cid], "seaport"))
@@ -7499,7 +7778,36 @@ impl Game {
         slots.economic += self.empire_wonder_effect(pid, "economic_policy_slots") as i64;
         slots.diplomatic += self.empire_wonder_effect(pid, "diplomatic_policy_slots") as i64;
         slots.wildcard += self.empire_wonder_effect(pid, "wildcard_policy_slots") as i64;
+        if let Some(government) = self.players[pid].government.as_deref() {
+            if self.congress_effect_active("world_ideology", "A", government) {
+                slots.wildcard += 1;
+            } else if self.congress_effect_active("world_ideology", "B", government) {
+                slots.wildcard = slots.wildcard.saturating_sub(1);
+            }
+        }
         slots
+    }
+
+    fn trim_policies_to_slots(&mut self, pid: usize) {
+        let mut cards = self.players[pid].policies.clone();
+        while !self.policies_fit(pid, &cards) {
+            let removable = cards
+                .iter()
+                .rev()
+                .find(|card| {
+                    self.rules
+                        .policies
+                        .get(*card)
+                        .is_none_or(|policy| policy.slot == "wildcard")
+                })
+                .cloned()
+                .or_else(|| cards.iter().next_back().cloned());
+            let Some(removable) = removable else {
+                break;
+            };
+            cards.remove(&removable);
+        }
+        self.players[pid].policies = cards;
     }
 
     /// Can this set of cards be seated in the player's slots? Typed cards
@@ -7913,6 +8221,9 @@ impl Game {
         for (district, position) in &city.districts {
             if self.district_is_active(city, district, *position) {
                 h += self.district_housing(district, *position);
+                if matches!(self.district_family(district), "neighborhood" | "aqueduct") {
+                    h += self.governor_effect(city.owner, city.id, "neighborhood_aqueduct_housing");
+                }
             }
         }
         for wonder in city.wonders.keys() {
@@ -8719,6 +9030,9 @@ impl Game {
         for (district, position) in &city.districts {
             if self.district_is_active(city, district, *position) {
                 supply += self.district_amenity(district, *position);
+                if matches!(self.district_family(district), "canal" | "dam") {
+                    supply += self.governor_effect(city.owner, city.id, "canal_dam_amenity");
+                }
             }
         }
         for b in &city.buildings {
@@ -8814,6 +9128,20 @@ impl Game {
                     .get("amenity")
                     .copied()
                     .unwrap_or(0.0);
+                if improvement == "city_park"
+                    && (self.map.tiles[position].has_river()
+                        || self.nbrs(*position).iter().any(|neighbor| {
+                            self.map
+                                .get(*neighbor)
+                                .is_some_and(|tile| self.rules.is_water(tile))
+                        }))
+                {
+                    supply += self.rules.improvements[improvement]
+                        .effects
+                        .get("adjacent_water_amenity")
+                        .copied()
+                        .unwrap_or(0.0);
+                }
             }
         }
         let active_specialty_districts = city
@@ -9157,7 +9485,36 @@ impl Game {
             "coal" | "oil" | "uranium" => 3.0,
             _ => 0.0,
         };
-        improved * (base + extra) + spaceport + wonder + building
+        let amani = self
+            .amani_city_state_for_effect(pid, "city_state_resource_access")
+            .map(|(_, minor)| {
+                let expected = self.rules.resources[res].improvement.as_str();
+                let sources = self
+                    .cities
+                    .values()
+                    .filter(|city| city.owner == minor)
+                    .flat_map(|city| {
+                        city.owned_tiles
+                            .iter()
+                            .map(move |position| (city, position))
+                    })
+                    .filter(|(city, position)| {
+                        let tile = &self.map.tiles[position];
+                        tile.resource.as_deref() == Some(res)
+                            && !tile.pillaged
+                            && (**position == city.pos
+                                || tile.improvement.as_deref() == Some(expected))
+                    })
+                    .count() as f64;
+                let suzerain_multiplier = if self.suzerain_of(minor) == Some(pid) {
+                    2.0
+                } else {
+                    1.0
+                };
+                sources * base * suzerain_multiplier
+            })
+            .unwrap_or(0.0);
+        improved * (base + extra) + spaceport + wonder + building + amani
     }
 
     pub fn strategic_stockpile_capacity(&self, pid: usize) -> f64 {
@@ -9257,12 +9614,16 @@ impl Game {
 
     /// Connected native copies before temporary deal imports and exports.
     pub fn connected_resource_count(&self, pid: usize, res: &str) -> i32 {
-        let Some(spec) = self.rules.resources.get(res) else {
-            return 0;
-        };
         if !self.resource_visible_to(pid, res) {
             return 0;
         }
+        self.connected_resource_count_unchecked(pid, res)
+    }
+
+    fn connected_resource_count_unchecked(&self, pid: usize, res: &str) -> i32 {
+        let Some(spec) = self.rules.resources.get(res) else {
+            return 0;
+        };
         self.cities
             .values()
             .filter(|city| city.owner == pid)
@@ -9290,13 +9651,16 @@ impl Game {
     /// deliberately excludes diplomatic imports and synthetic luxury grants.
     pub fn controlled_resource_count(&self, pid: usize, res: &str) -> i32 {
         let own = self.connected_resource_count(pid, res);
+        if !self.resource_visible_to(pid, res) {
+            return own;
+        }
         own + self
             .players
             .iter()
             .filter(|player| {
                 player.is_minor && !player.is_barbarian && self.suzerain_of(player.id) == Some(pid)
             })
-            .map(|minor| self.connected_resource_count(minor.id, res))
+            .map(|minor| self.connected_resource_count_unchecked(minor.id, res))
             .sum::<i32>()
     }
 
@@ -9478,8 +9842,19 @@ impl Game {
             .map(|spec| spec.class.as_str())
         {
             Some("strategic") => self.strategic_stockpile(pid, res).floor().max(0.0) as i32,
-            _ => (self.connected_resource_count(pid, res) + self.resource_trade_balance(pid, res))
-                .max(0),
+            _ => {
+                let ordinary = self.controlled_resource_count(pid, res)
+                    + self.resource_trade_balance(pid, res);
+                let amani = self
+                    .amani_city_state_for_effect(pid, "luxury_resources")
+                    .filter(|(_, minor)| {
+                        self.resource_visible_to(pid, res)
+                            && self.connected_resource_count_unchecked(*minor, res) > 0
+                    })
+                    .map(|_| 1)
+                    .unwrap_or(0);
+                ordinary.max(amani).max(0)
+            }
         }
     }
 
@@ -10907,6 +11282,15 @@ impl Game {
             ) {
                 appeal -= 1;
             }
+            if !adjacent.pillaged {
+                appeal += adjacent
+                    .improvement
+                    .as_deref()
+                    .and_then(|improvement| self.rules.improvements.get(improvement))
+                    .and_then(|improvement| improvement.effects.get("adjacent_appeal"))
+                    .copied()
+                    .unwrap_or(0.0) as i32;
+            }
         }
         if let Some(owner) = owner {
             appeal += self.empire_wonder_effect(owner, "empire_appeal") as i32;
@@ -11891,6 +12275,41 @@ impl Game {
                 })
             });
 
+        if !tile.pillaged {
+            match tile.improvement.as_deref() {
+                Some("fishery") => {
+                    let effects = &self.rules.improvements["fishery"].effects;
+                    let sea_resources = self
+                        .nbrs(pos)
+                        .iter()
+                        .filter(|neighbor| {
+                            let neighbor = &self.map.tiles[neighbor];
+                            self.rules.is_water(neighbor) && neighbor.resource.is_some()
+                        })
+                        .count() as f64;
+                    yields.food += sea_resources
+                        * effects
+                            .get("adjacent_sea_resource_food")
+                            .copied()
+                            .unwrap_or(0.0);
+                    if self.governor_effect(pid, city.id, "fishery") > 0.0 {
+                        yields.production +=
+                            effects.get("liang_production").copied().unwrap_or(0.0);
+                    }
+                }
+                Some("city_park") if self.governor_effect(pid, city.id, "city_park") > 0.0 => {
+                    let spec = &self.rules.improvements["city_park"];
+                    let total = spec
+                        .effects
+                        .get("liang_total_culture")
+                        .copied()
+                        .unwrap_or(spec.yields.culture);
+                    yields.culture += (total - spec.yields.culture).max(0.0);
+                }
+                _ => {}
+            }
+        }
+
         if tile.improvement.as_deref() == Some("farm")
             && tile
                 .resource
@@ -12779,6 +13198,11 @@ impl Game {
                 }
                 continue;
             }
+            if matches!(name.as_str(), "fishery" | "city_park")
+                && self.governor_effect(pid, oc, name) <= 0.0
+            {
+                continue;
+            }
             if matches!(name.as_str(), "archaeological_dig" | "shipwreck_excavation")
                 && !self.can_house_additional_great_work(pid, "artifact")
             {
@@ -13339,6 +13763,16 @@ impl Game {
     pub fn item_cost_for_city(&self, pid: usize, cid: u32, item: &Item) -> f64 {
         if let Item::Building { building } = item {
             let spec = &self.rules.buildings[building.as_str()];
+            let district = spec
+                .district
+                .as_deref()
+                .map(|district| self.district_family(district))
+                .unwrap_or("city_center");
+            if self.congress_effect_active("urban_development_treaty", "B", district)
+                || self.congress_effect_active("global_energy_treaty", "A", building)
+            {
+                return f64::INFINITY;
+            }
             let per_lowland = spec
                 .effects
                 .get("cost_per_coastal_lowland")
@@ -13361,6 +13795,11 @@ impl Game {
             if self.congress_effect_active("mercenary_companies", "A", "production") {
                 cost *= 2.0;
             } else if self.congress_effect_active("mercenary_companies", "B", "production") {
+                cost *= 0.5;
+            }
+        }
+        if let Item::Building { building } = item {
+            if self.congress_effect_active("global_energy_treaty", "B", building) {
                 cost *= 0.5;
             }
         }
@@ -13559,6 +13998,9 @@ impl Game {
                     .map(|district| self.district_family(district))
                     .unwrap_or("city_center");
                 if self.congress_effect_active("urban_development_treaty", "B", congress_district) {
+                    return false;
+                }
+                if self.congress_effect_active("global_energy_treaty", "A", building) {
                     return false;
                 }
                 let society_for = |candidate: &crate::rules::BuildingSpec| {
@@ -16245,13 +16687,22 @@ impl Game {
         }
         let mut operations = Vec::new();
         match tile.feature.as_deref() {
-            Some("forest") if self.tree_effect(pid, "chop_woods") > 0.0 => {
+            Some("forest")
+                if self.tree_effect(pid, "chop_woods") > 0.0
+                    && !self.congress_effect_active("deforestation_treaty", "A", "forest") =>
+            {
                 operations.push("chop_woods".to_string())
             }
-            Some("jungle") if self.tree_effect(pid, "chop_rainforest") > 0.0 => {
+            Some("jungle")
+                if self.tree_effect(pid, "chop_rainforest") > 0.0
+                    && !self.congress_effect_active("deforestation_treaty", "A", "jungle") =>
+            {
                 operations.push("chop_rainforest".to_string())
             }
-            Some("marsh") if self.tree_effect(pid, "clear_marsh") > 0.0 => {
+            Some("marsh")
+                if self.tree_effect(pid, "clear_marsh") > 0.0
+                    && !self.congress_effect_active("deforestation_treaty", "A", "marsh") =>
+            {
                 operations.push("clear_marsh".to_string())
             }
             _ => {}
@@ -16299,6 +16750,7 @@ impl Game {
         }
         let cid = self.map.tiles[&unit.pos].owner_city.unwrap();
         let amount = 25.0 * (self.world_era as f64 + 1.0);
+        let removed_feature = self.map.tiles[&unit.pos].feature.clone();
         match operation {
             "chop_woods" | "chop_rainforest" => {
                 self.map.tiles.get_mut(&unit.pos).unwrap().feature = None;
@@ -16327,6 +16779,12 @@ impl Game {
                 }
             }
             _ => return Err("unknown builder operation".into()),
+        }
+        if removed_feature.as_deref().is_some_and(|feature| {
+            self.congress_effect_active("deforestation_treaty", "B", feature)
+        }) && matches!(operation, "chop_woods" | "chop_rainforest" | "clear_marsh")
+        {
+            self.players[pid].gold += amount;
         }
         let builder = self.units.get_mut(&uid).unwrap();
         builder.charges -= 1;
@@ -17456,6 +17914,9 @@ impl Game {
             .unwrap_or("city_center");
         if self.congress_effect_active("urban_development_treaty", "B", congress_district) {
             return Err("World Congress prohibits buildings in that district".into());
+        }
+        if self.congress_effect_active("global_energy_treaty", "A", building) {
+            return Err("World Congress prohibits that power plant".into());
         }
         if currency != "faith" || city.buildings.iter().any(|owned| owned == building) {
             return Err("building cannot be purchased that way".into());
@@ -19123,6 +19584,26 @@ impl Game {
         state.city.is_some() && self.turn >= state.assigned_turn + spec.establish_turns
     }
 
+    fn established_governor_city(&self, pid: usize, governor: &str) -> Option<u32> {
+        self.governor_established(pid, governor)
+            .then(|| {
+                self.players[pid]
+                    .governor_roster
+                    .get(governor)
+                    .and_then(|state| state.city)
+            })
+            .flatten()
+    }
+
+    fn amani_city_state_for_effect(&self, pid: usize, effect: &str) -> Option<(u32, usize)> {
+        let city_id = self.established_governor_city(pid, "amani")?;
+        let city = self.cities.get(&city_id)?;
+        (self.players[city.owner].is_minor
+            && !self.players[city.owner].is_barbarian
+            && self.governor_effect(pid, city_id, effect) > 0.0)
+            .then_some((city_id, city.owner))
+    }
+
     fn governor_effect(&self, pid: usize, cid: u32, effect: &str) -> f64 {
         self.players[pid]
             .governor_roster
@@ -19352,6 +19833,17 @@ impl Game {
                     };
                 }
             }
+            // Amani's Emissary pressure applies to every city in range that
+            // is not owned by her civilization, including from a city-state
+            // assignment.
+            delta += (0..self.players.len())
+                .filter(|diplomat| *diplomat != pid)
+                .filter_map(|diplomat| {
+                    let source = self.established_governor_city(diplomat, "amani")?;
+                    (self.wdist(self.cities.get(&source)?.pos, cpos) <= 9)
+                        .then(|| self.governor_effect(diplomat, source, "foreign_city_loyalty"))
+                })
+                .sum::<f64>();
             delta += self.cities[&cid]
                 .districts
                 .iter()
@@ -19527,6 +20019,11 @@ impl Game {
                 ]
                 .map(str::to_string),
             ));
+            push(Self::congress_resolution(
+                "border_control_treaty",
+                "Border Control Treaty",
+                player_targets(),
+            ));
         }
         if self.world_era <= 6 {
             push(Self::congress_resolution(
@@ -19557,6 +20054,52 @@ impl Game {
                 "heritage_organization",
                 "Heritage Organization",
                 ["writing", "art", "artifact", "music", "relic"].map(str::to_string),
+            ));
+            push(Self::congress_resolution(
+                "world_ideology",
+                "World Ideology",
+                self.players
+                    .iter()
+                    .filter(|player| self.victory_eligible(player.id))
+                    .filter_map(|player| player.government.clone())
+                    .collect::<BTreeSet<_>>(),
+            ));
+            push(Self::congress_resolution(
+                "global_energy_treaty",
+                "Global Energy Treaty",
+                ["coal_power_plant", "oil_power_plant", "nuclear_power_plant"].map(str::to_string),
+            ));
+        }
+        if self.world_era >= 6 {
+            push(Self::congress_resolution(
+                "arms_control",
+                "Arms Control",
+                player_targets(),
+            ));
+        }
+        if (6..=7).contains(&self.world_era) {
+            push(Self::congress_resolution(
+                "public_works_program",
+                "Public Works Program",
+                self.rules
+                    .projects
+                    .keys()
+                    .filter(|project| !project.starts_with("repair_"))
+                    .cloned(),
+            ));
+            push(Self::congress_resolution(
+                "deforestation_treaty",
+                "Deforestation Treaty",
+                ["forest", "jungle", "marsh"]
+                    .into_iter()
+                    .filter(|feature| {
+                        self.map.tiles.values().any(|tile| {
+                            tile.feature.as_deref() == Some(*feature)
+                                && tile.district.is_none()
+                                && tile.wonder.is_none()
+                        })
+                    })
+                    .map(str::to_string),
             ));
         }
         candidates
@@ -19705,6 +20248,36 @@ impl Game {
                 continue;
             }
 
+            if resolution.id == "arms_control" {
+                if let Ok(target) = winning_target.parse::<usize>() {
+                    let keys = [
+                        "project_effect:nuclear_devices",
+                        "project_effect:thermonuclear_devices",
+                    ];
+                    if winning_outcome == "A" && self.victory_eligible(target) {
+                        let target_counts = keys.map(|key| {
+                            self.players[target].counters.get(key).copied().unwrap_or(0)
+                        });
+                        let majors: Vec<usize> = self
+                            .players
+                            .iter()
+                            .filter(|player| self.victory_eligible(player.id))
+                            .map(|player| player.id)
+                            .collect();
+                        for player in majors {
+                            for (key, count) in keys.into_iter().zip(target_counts) {
+                                self.players[player].counters.insert(key.to_string(), count);
+                            }
+                        }
+                    } else if winning_outcome == "B" && self.victory_eligible(target) {
+                        for key in keys {
+                            self.players[target].counters.insert(key.to_string(), 0);
+                        }
+                    }
+                }
+                continue;
+            }
+
             if resolution.id == "trade_policy" && winning_outcome == "B" {
                 if let Ok(target) = winning_target.parse::<usize>() {
                     self.routes.retain(|route| {
@@ -19719,12 +20292,25 @@ impl Game {
                     });
                 }
             }
+            let world_ideology_target =
+                (resolution.id == "world_ideology").then(|| winning_target.clone());
             self.active_congress_effects.push(CongressEffect {
                 resolution: resolution.id,
                 outcome: winning_outcome,
                 target: winning_target,
                 expires: session.convened + 30,
             });
+            if let Some(government) = world_ideology_target {
+                let affected: Vec<usize> = self
+                    .players
+                    .iter()
+                    .filter(|player| player.government.as_deref() == Some(&government))
+                    .map(|player| player.id)
+                    .collect();
+                for player in affected {
+                    self.trim_policies_to_slots(player);
+                }
+            }
         }
         if let Some(winner) = self
             .players
@@ -21097,7 +21683,7 @@ impl Game {
                 }
             }
         }
-        {
+        if !self.congress_effect_active("border_control_treaty", "B", &pid.to_string()) {
             let owned = self.cities[&cid].owned_tiles.len() as i32;
             let border_mult = 1.0 + self.pantheon_effect(pid, "border_growth_pct") / 100.0;
             let city = self.cities.get_mut(&cid).unwrap();
@@ -21586,6 +22172,9 @@ impl Game {
                     }
                 }
                 if spec.effects.get("culture_bomb").copied().unwrap_or(0.0) > 0.0 {
+                    self.culture_bomb(cid, *pos);
+                }
+                if self.congress_effect_active("border_control_treaty", "A", &pid.to_string()) {
                     self.culture_bomb(cid, *pos);
                 }
                 if spec

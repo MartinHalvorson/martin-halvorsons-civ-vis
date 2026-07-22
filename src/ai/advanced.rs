@@ -774,9 +774,23 @@ impl AdvancedAi {
         // city objective that the force-group planner can actually consume.
         let target_player = if wartime_rivals.is_empty() {
             denial.map(|(rival, _)| rival).or_else(|| {
-                major_rivals.iter().copied().min_by(|a, b| {
-                    self.rival_value(g, pid, *a)
-                        .partial_cmp(&self.rival_value(g, pid, *b))
+                let mut candidates = major_rivals.clone();
+                if strategy == GrandStrategy::Conquest {
+                    candidates.extend(
+                        g.players
+                            .iter()
+                            .filter(|player| {
+                                player.alive
+                                    && player.is_minor
+                                    && !player.is_barbarian
+                                    && g.suzerain_of(player.id) != Some(pid)
+                            })
+                            .map(|player| player.id),
+                    );
+                }
+                candidates.into_iter().min_by(|a, b| {
+                    self.campaign_target_value(g, pid, *a)
+                        .partial_cmp(&self.campaign_target_value(g, pid, *b))
                         .unwrap()
                         .then(a.cmp(b))
                 })
@@ -836,6 +850,43 @@ impl AdvancedAi {
         distance * 7.0 + g.military_power(other) * 1.5
             - g.score(other) as f64 * 0.35
             - victory_pressure * 2.4
+    }
+
+    /// Campaign value extends the major-rival heuristic to city-states.
+    /// Conquering a city-state is strategically possible, but it burns every
+    /// invested Envoy and permanently removes a potential Suzerain bonus, so
+    /// a nearby minor should displace a major target only when it is a clearly
+    /// cheaper objective. A city-state that can be secured immediately with
+    /// free Envoys is treated as an ally to win, not territory to destroy.
+    fn campaign_target_value(&self, g: &Game, pid: usize, other: usize) -> f64 {
+        let mut value = self.rival_value(g, pid, other);
+        if !g.players[other].is_minor {
+            return value;
+        }
+
+        let mine = g.envoys_at(pid, other);
+        value += 90.0 + mine as f64 * 45.0;
+        let rival_envoys = g
+            .players
+            .iter()
+            .filter(|player| !player.is_minor && !player.is_barbarian && player.id != pid)
+            .map(|player| g.envoys_at(player.id, other))
+            .max()
+            .unwrap_or(0);
+        let needed = (3_i64.max(rival_envoys + 1) - mine).max(1);
+        if g.players[pid].envoys_free >= needed {
+            value += 180.0;
+        }
+        if let Some(suzerain) = g.suzerain_of(other).filter(|suzerain| *suzerain != pid) {
+            value += 40.0 + g.military_power(suzerain) * 0.25;
+        }
+        value += match Game::cs_type(&g.players[other].civ) {
+            "militaristic" => 55.0,
+            "industrial" => 35.0,
+            "scientific" | "cultural" | "religious" => 25.0,
+            _ => 15.0,
+        };
+        value
     }
 
     fn yield_value(&self, yields: Yields, strategy: GrandStrategy) -> f64 {
@@ -1375,7 +1426,8 @@ impl AdvancedAi {
                 && g.turn.saturating_sub(self.last_campaign_progress) >= 12
         });
         let denied_partner = plan.target_player == Some(partner)
-            && (g.is_at_war(pid, partner)
+            && (plan.strategy == GrandStrategy::Conquest
+                || g.is_at_war(pid, partner)
                 || self.rival_victory_pressure(g, partner).progress >= 78);
 
         let mut value = deal.give_gold - deal.request_gold;
@@ -1662,6 +1714,59 @@ impl AdvancedAi {
         })
     }
 
+    /// Prefer an available low-Grievance casus belli. If none is ready, a
+    /// major rival is denounced and the campaign waits for Formal War rather
+    /// than opening with a Surprise War. The sole exception is a rival already
+    /// on the brink of victory, where five setup turns can lose the game.
+    /// City-states cannot be denounced and therefore remain direct targets.
+    fn preferred_war_opening(&self, g: &Game, pid: usize, target: usize) -> Option<Action> {
+        let legal = g.legal_actions(pid);
+        let casus_belli = legal
+            .iter()
+            .filter_map(|action| match action {
+                Action::DeclareWarWithCasusBelli {
+                    player,
+                    casus_belli,
+                } if *player == target => {
+                    let grievance_cost = if casus_belli == "formal_war" { 100 } else { 50 };
+                    Some((grievance_cost, casus_belli, action))
+                }
+                _ => None,
+            })
+            .min_by_key(|(cost, name, _)| (*cost, *name))
+            .map(|(_, _, action)| action.clone());
+        if casus_belli.is_some() {
+            return casus_belli;
+        }
+
+        let surprise = legal.iter().find_map(|action| match action {
+            Action::DeclareWar { player } if *player == target => Some(action.clone()),
+            _ => None,
+        });
+        if g.players[target].is_minor {
+            return surprise;
+        }
+
+        let urgent = self.rival_victory_pressure(g, target).progress >= 90;
+        let denounced = g.players[pid]
+            .denounced_until
+            .get(&target)
+            .is_some_and(|until| *until > g.turn);
+        if !urgent && !denounced {
+            return legal.iter().find_map(|action| match action {
+                Action::Denounce { player } if *player == target => Some(action.clone()),
+                _ => None,
+            });
+        }
+        if urgent {
+            surprise
+        } else {
+            // The denouncement is active but its five-turn preparation period
+            // has not elapsed, so preserve the army and wait for Formal War.
+            None
+        }
+    }
+
     fn advanced_diplomacy(&mut self, g: &mut Game, pid: usize, plan: &StrategicPlan) {
         while let Some(dedication) = g.available_dedications(pid).into_iter().next() {
             if g.apply(pid, &Action::ChooseDedication { dedication })
@@ -1725,7 +1830,9 @@ impl AdvancedAi {
             }
         }
         let denied_partner = plan.target_player.filter(|target| {
-            g.is_at_war(pid, *target) || self.rival_victory_pressure(g, *target).progress >= 78
+            plan.strategy == GrandStrategy::Conquest
+                || g.is_at_war(pid, *target)
+                || self.rival_victory_pressure(g, *target).progress >= 78
         });
         self.base.bilateral_trade_excluding(g, pid, denied_partner);
         let my_power = g.military_power(pid);
@@ -1792,7 +1899,9 @@ impl AdvancedAi {
             my_power > target_power * 1.32 + 12.0
         };
         if close_enough && ready {
-            let _ = g.apply(pid, &Action::DeclareWar { player: target });
+            if let Some(action) = self.preferred_war_opening(g, pid, target) {
+                let _ = g.apply(pid, &action);
+            }
         }
     }
 
@@ -5112,6 +5221,13 @@ mod tests {
         assert!(ai.incoming_deal_value(&game, 0, &deal(0.0, 100.0, true, false), &plan) < 0.0);
         assert!(ai.incoming_deal_value(&game, 0, &deal(10.0, 0.0, true, false), &plan) > 0.0);
 
+        plan.strategy = GrandStrategy::Conquest;
+        assert!(
+            ai.incoming_deal_value(&game, 0, &deal(10.0, 0.0, true, false), &plan) < 0.0,
+            "a campaign target must not be protected by a new friendship"
+        );
+        plan.strategy = GrandStrategy::Expansion;
+
         game.players[1].science_projects.extend([
             "launch_earth_satellite".to_string(),
             "launch_moon_landing".to_string(),
@@ -5134,6 +5250,82 @@ mod tests {
         assert_eq!(plan.strategy, GrandStrategy::Expansion);
         assert!(plan.desired_cities >= 3);
         assert!(plan.target_player.is_some());
+    }
+
+    #[test]
+    fn conquest_can_target_an_exposed_city_state_but_preserves_its_suzerain() {
+        let mut game = Game::new_full(2, 30, 18, 711, 300, 1, false);
+        for pid in 0..2 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.current = pid;
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        game.current = 0;
+        game.turn = 200;
+        let minor = game
+            .players
+            .iter()
+            .find(|player| player.is_minor && !player.is_barbarian)
+            .unwrap()
+            .id;
+        let rival_capital = game.cities[&game.player_city_ids(1)[0]].pos;
+        for _ in 0..6 {
+            game.spawn_test_unit("giant_death_robot", 1, rival_capital);
+        }
+
+        let ai = AdvancedAi::targeting(VictoryTarget::Domination);
+        let exposed = ai.assess(&game, 0);
+        assert_eq!(exposed.strategy, GrandStrategy::Conquest);
+        assert_eq!(exposed.target_player, Some(minor));
+
+        game.players[0].envoys = vec![(minor, 3)];
+        assert_eq!(game.suzerain_of(minor), Some(0));
+        let allied = ai.assess(&game, 0);
+        assert_eq!(allied.target_player, Some(1));
+    }
+
+    #[test]
+    fn war_opening_waits_for_formal_war_but_interrupts_for_imminent_victory() {
+        let mut game = Game::new_full(2, 24, 16, 712, 300, 0, false);
+        game.current = 0;
+        game.turn = 60;
+        let ai = AdvancedAi::new();
+
+        assert_eq!(
+            ai.preferred_war_opening(&game, 0, 1),
+            Some(Action::Denounce { player: 1 })
+        );
+        game.apply(0, &Action::Denounce { player: 1 }).unwrap();
+        game.turn = 64;
+        assert_eq!(ai.preferred_war_opening(&game, 0, 1), None);
+        game.turn = 65;
+        assert_eq!(
+            ai.preferred_war_opening(&game, 0, 1),
+            Some(Action::DeclareWarWithCasusBelli {
+                player: 1,
+                casus_belli: "formal_war".to_string(),
+            })
+        );
+
+        let mut emergency = Game::new_full(2, 24, 16, 713, 300, 0, false);
+        emergency.current = 0;
+        emergency.turn = 60;
+        emergency.players[1].science_projects.extend([
+            "launch_earth_satellite".to_string(),
+            "launch_moon_landing".to_string(),
+            "launch_mars_colony".to_string(),
+            "exoplanet_expedition".to_string(),
+        ]);
+        emergency.players[1].exoplanet_distance = 49.0;
+        assert_eq!(
+            ai.preferred_war_opening(&emergency, 0, 1),
+            Some(Action::DeclareWar { player: 1 })
+        );
     }
 
     #[test]
