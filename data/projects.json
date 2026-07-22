@@ -41,6 +41,12 @@
     "ongoing_yields": {"culture": 15},
     "completion_gpp": {"writer": 5, "artist": 5, "musician": 5}
   },
+  "bread_and_circuses": {
+    "cost": 25, "district": "entertainment_complex",
+    "alternate_districts": ["water_park"], "repeatable": true,
+    "cost_progression_max_pct": 1500,
+    "effects": {"citizen_loyalty_pressure": 0.5, "completion_loyalty": 20}
+  },
   "repair_outer_defenses": {
     "cost": 1,
     "repeatable": true

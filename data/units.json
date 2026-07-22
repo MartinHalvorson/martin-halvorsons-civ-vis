@@ -11,6 +11,14 @@
     "moves": 2,
     "charges": 3
   },
+  "spy": {
+    "class": "espionage",
+    "cost": 225,
+    "maintenance": 4,
+    "moves": 0,
+    "civic": "diplomatic_service",
+    "promotion_class": "espionage"
+  },
   "scout": {
     "class": "military",
     "cost": 30,

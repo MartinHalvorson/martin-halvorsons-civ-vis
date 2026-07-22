@@ -84,6 +84,12 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             v
         })
         .collect();
+    let spies: Vec<Value> = g
+        .spies
+        .values()
+        .filter(|spy| omniscient || spy.owner == pid || spy.captured_by == Some(pid))
+        .map(|spy| serde_json::to_value(spy).unwrap())
+        .collect();
     let mut empire = [0.0f64; 6]; // food, prod, gold, sci, cul, faith
     let mut cities: Vec<Value> = Vec::new();
     for c in g.cities.values() {
@@ -179,6 +185,7 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
         "camps": g.barb_camps.keys().filter(|cp| explored.contains(cp))
             .map(|cp| json!([cp.0, cp.1])).collect::<Vec<_>>(),
         "units": units,
+        "spies": spies,
         "cities": cities,
         "me": {
             "gold": round1(p.gold), "faith": round1(p.faith),
