@@ -1715,6 +1715,234 @@ impl AdvancedAi {
                             -120.0
                         }
                     }
+                    "arms_control" => match target_player {
+                        Some(target) => {
+                            let inventory = |player: usize| {
+                                [
+                                    "project_effect:nuclear_devices",
+                                    "project_effect:thermonuclear_devices",
+                                ]
+                                .into_iter()
+                                .map(|key| {
+                                    g.players[player]
+                                        .counters
+                                        .get(key)
+                                        .copied()
+                                        .unwrap_or(0)
+                                        .max(0)
+                                })
+                                .sum::<i64>() as f64
+                            };
+                            let mine = inventory(pid);
+                            let theirs = inventory(target);
+                            let major_inventories: Vec<f64> = g
+                                .players
+                                .iter()
+                                .filter(|player| {
+                                    player.alive && !player.is_minor && !player.is_barbarian
+                                })
+                                .map(|player| inventory(player.id))
+                                .collect();
+                            let world_total = major_inventories.iter().sum::<f64>();
+                            let equalized_total =
+                                theirs * major_inventories.len().max(1) as f64;
+                            let disarmament = world_total - equalized_total;
+                            match outcome {
+                                // Outcome A copies the target's stockpile to every
+                                // major. Peaceful strategies therefore nominate the
+                                // smallest arsenal, not the nuclear leader.
+                                "A" if strategy != GrandStrategy::Conquest => {
+                                    180.0 + 55.0 * disarmament
+                                        - 75.0 * (-disarmament).max(0.0)
+                                }
+                                "A" => 20.0 + 35.0 * (theirs - mine)
+                                    - 45.0 * (equalized_total - world_total).max(0.0),
+                                "B" if target != pid => {
+                                    let aggression = if matches!(
+                                        strategy,
+                                        GrandStrategy::Conquest | GrandStrategy::Recovery
+                                    ) {
+                                        100.0
+                                    } else {
+                                        55.0
+                                    };
+                                    90.0 + aggression * theirs
+                                }
+                                "B" => -500.0,
+                                _ => 0.0,
+                            }
+                        }
+                        None => 0.0,
+                    },
+                    "world_ideology" => {
+                        let mine = g.players[pid].government.as_deref() == Some(target);
+                        let rival_users = g
+                            .players
+                            .iter()
+                            .filter(|player| {
+                                player.id != pid
+                                    && player.alive
+                                    && !player.is_minor
+                                    && !player.is_barbarian
+                                    && player.government.as_deref() == Some(target)
+                            })
+                            .count() as f64;
+                        match outcome {
+                            "A" if mine => 320.0,
+                            "A" => 30.0,
+                            "B" if mine => -260.0,
+                            "B" => 90.0 + 70.0 * rival_users,
+                            _ => 0.0,
+                        }
+                    }
+                    "border_control_treaty" => match (outcome, target_player) {
+                        ("A", Some(target)) if target == pid => 300.0,
+                        ("B", Some(target)) if target == pid => -240.0,
+                        ("B", Some(target)) => {
+                            let territory = g
+                                .player_city_ids(target)
+                                .into_iter()
+                                .map(|city| g.cities[&city].owned_tiles.len())
+                                .sum::<usize>() as f64;
+                            80.0 + territory
+                        }
+                        _ => 20.0,
+                    },
+                    "public_works_program" => {
+                        let queued = |owner: usize| {
+                            g.cities
+                                .values()
+                                .filter(|city| city.owner == owner)
+                                .filter(|city| {
+                                    city.queue.iter().any(|item| {
+                                        matches!(item, Item::Project { project } if project == target)
+                                    })
+                                })
+                                .count() as f64
+                        };
+                        let own_queued = queued(pid);
+                        let rival_queued = g
+                            .players
+                            .iter()
+                            .filter(|player| {
+                                player.id != pid
+                                    && player.alive
+                                    && !player.is_minor
+                                    && !player.is_barbarian
+                            })
+                            .map(|player| queued(player.id))
+                            .sum::<f64>();
+                        let aligned = match strategy {
+                            GrandStrategy::Science => {
+                                target.contains("launch_")
+                                    || target.contains("laser_station")
+                                    || target == "exoplanet_expedition"
+                            }
+                            GrandStrategy::Conquest | GrandStrategy::Recovery => {
+                                target.contains("nuclear")
+                                    || matches!(target, "manhattan_project" | "operation_ivy")
+                            }
+                            GrandStrategy::Diplomacy => target == "carbon_recapture",
+                            _ => false,
+                        };
+                        match (outcome, aligned) {
+                            ("A", true) => 300.0 + 160.0 * own_queued,
+                            ("A", false) => 65.0 + 180.0 * own_queued,
+                            ("B", true) => {
+                                -220.0 + 140.0 * rival_queued - 180.0 * own_queued
+                            }
+                            ("B", false) => {
+                                25.0 + 140.0 * rival_queued - 180.0 * own_queued
+                            }
+                            _ => 0.0,
+                        }
+                    }
+                    "global_energy_treaty" => {
+                        let queued = |owner: usize| {
+                            g.cities
+                                .values()
+                                .filter(|city| city.owner == owner)
+                                .filter(|city| {
+                                    city.queue.iter().any(|item| {
+                                        matches!(item, Item::Building { building } if building == target)
+                                    })
+                                })
+                                .count() as f64
+                        };
+                        let own_queued = queued(pid);
+                        let rival_queued = g
+                            .players
+                            .iter()
+                            .filter(|player| {
+                                player.id != pid
+                                    && player.alive
+                                    && !player.is_minor
+                                    && !player.is_barbarian
+                            })
+                            .map(|player| queued(player.id))
+                            .sum::<f64>();
+                        let preferred = match strategy {
+                            GrandStrategy::Science | GrandStrategy::Diplomacy => {
+                                "nuclear_power_plant"
+                            }
+                            GrandStrategy::Conquest | GrandStrategy::Recovery => "coal_power_plant",
+                            _ => "oil_power_plant",
+                        };
+                        match (outcome, target) {
+                            ("A", candidate) if candidate == preferred => {
+                                270.0 + 160.0 * own_queued
+                            }
+                            ("A", _) => 90.0 + 160.0 * own_queued,
+                            ("B", "coal_power_plant") if strategy == GrandStrategy::Diplomacy => {
+                                180.0 + 120.0 * rival_queued - 180.0 * own_queued
+                            }
+                            ("B", candidate) if candidate == preferred => {
+                                -180.0 + 120.0 * rival_queued - 180.0 * own_queued
+                            }
+                            ("B", _) => 35.0 + 120.0 * rival_queued - 180.0 * own_queued,
+                            _ => 0.0,
+                        }
+                    }
+                    "deforestation_treaty" => {
+                        let owned_copies = |owner: usize| {
+                            g.cities
+                                .values()
+                                .filter(|city| city.owner == owner)
+                                .flat_map(|city| city.owned_tiles.iter())
+                                .filter(|position| {
+                                    g.map.tiles[*position].feature.as_deref() == Some(target)
+                                })
+                                .count() as f64
+                        };
+                        let own_copies = owned_copies(pid);
+                        let rival_copies = g
+                            .players
+                            .iter()
+                            .filter(|player| {
+                                player.id != pid
+                                    && player.alive
+                                    && !player.is_minor
+                                    && !player.is_barbarian
+                            })
+                            .map(|player| owned_copies(player.id))
+                            .sum::<f64>();
+                        match outcome {
+                            "A" => {
+                                65.0
+                                    + 35.0 * own_copies
+                                    + if strategy == GrandStrategy::Expansion {
+                                        90.0
+                                    } else {
+                                        0.0
+                                    }
+                            }
+                            "B" if strategy == GrandStrategy::Culture && target == "forest" => {
+                                165.0 + 5.0 * (own_copies + rival_copies)
+                            }
+                            "B" => 20.0 + 5.0 * rival_copies - 20.0 * own_copies,
+                            _ => 0.0,
+                        }
+                    }
                     _ => 0.0,
                 };
                 base + observed(choice) * 35.0
@@ -5242,6 +5470,86 @@ mod tests {
                 GrandStrategy::Science,
             ),
             Some("A:campus".to_string())
+        );
+
+        game.players[1]
+            .counters
+            .insert("project_effect:nuclear_devices".to_string(), 3);
+        assert_eq!(
+            ai.congress_choice(
+                &game,
+                0,
+                &outcome_resolution("arms_control", &["0", "1", "2"]),
+                GrandStrategy::Conquest,
+            ),
+            Some("B:1".to_string())
+        );
+        game.players[0]
+            .counters
+            .insert("project_effect:nuclear_devices".to_string(), 1);
+        assert_eq!(
+            ai.congress_choice(
+                &game,
+                0,
+                &outcome_resolution("arms_control", &["0", "1", "2"]),
+                GrandStrategy::Diplomacy,
+            ),
+            Some("A:2".to_string())
+        );
+
+        game.players[0].government = Some("autocracy".to_string());
+        game.players[1].government = Some("democracy".to_string());
+        game.players[2].government = Some("democracy".to_string());
+        assert_eq!(
+            ai.congress_choice(
+                &game,
+                0,
+                &outcome_resolution("world_ideology", &["autocracy", "democracy"]),
+                GrandStrategy::Science,
+            ),
+            Some("A:autocracy".to_string())
+        );
+        assert_eq!(
+            ai.congress_choice(
+                &game,
+                0,
+                &outcome_resolution("border_control_treaty", &["0", "1", "2"]),
+                GrandStrategy::Expansion,
+            ),
+            Some("A:0".to_string())
+        );
+        assert_eq!(
+            ai.congress_choice(
+                &game,
+                0,
+                &outcome_resolution(
+                    "public_works_program",
+                    &["launch_earth_satellite", "manhattan_project"],
+                ),
+                GrandStrategy::Science,
+            ),
+            Some("A:launch_earth_satellite".to_string())
+        );
+        assert_eq!(
+            ai.congress_choice(
+                &game,
+                0,
+                &outcome_resolution(
+                    "global_energy_treaty",
+                    &["coal_power_plant", "oil_power_plant", "nuclear_power_plant"],
+                ),
+                GrandStrategy::Science,
+            ),
+            Some("A:nuclear_power_plant".to_string())
+        );
+        assert_eq!(
+            ai.congress_choice(
+                &game,
+                0,
+                &outcome_resolution("deforestation_treaty", &["forest"]),
+                GrandStrategy::Expansion,
+            ),
+            Some("A:forest".to_string())
         );
     }
 

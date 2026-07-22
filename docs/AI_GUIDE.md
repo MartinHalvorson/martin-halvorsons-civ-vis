@@ -105,7 +105,7 @@ diagnostics. Map dimensions can be overridden with `--width` and `--height`.
 The current engine passes exact, unassisted full-game victories for every
 target on two independent seeds. On seeds 20000 and 20001 respectively, the
 winning turns were Science 1021/940, Culture 559/586, Religion 79/177,
-Diplomacy 395/425, Domination 82/136, and Score 301/301. The diplomatic turns
+Diplomacy 395/395, Domination 82/136, and Score 301/301. The diplomatic turns
 reflect the stock two-stage resolution model rather than the former
 target-only ballots.
 

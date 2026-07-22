@@ -1276,12 +1276,26 @@ impl BasicAi {
                         (resolution.id == "world_leader"
                             || resolution.id == "trade_policy"
                             || resolution.id == "migration_treaty"
+                            || resolution.id == "border_control_treaty"
                             || resolution.id == "public_relations")
                             .then(|| {
                                 resolution
                                     .choices
                                     .iter()
                                     .find(|choice| **choice == own_a)
+                                    .cloned()
+                            })
+                            .flatten()
+                    })
+                    .or_else(|| {
+                        (resolution.id == "world_ideology")
+                            .then(|| {
+                                let own_government = g.players[pid].government.as_deref()?;
+                                let wanted = format!("A:{own_government}");
+                                resolution
+                                    .choices
+                                    .iter()
+                                    .find(|choice| **choice == wanted)
                                     .cloned()
                             })
                             .flatten()
@@ -1296,6 +1310,27 @@ impl BasicAi {
                                     .cloned()
                             })
                             .flatten()
+                    })
+                    .or_else(|| {
+                        let preferred = match resolution.id.as_str() {
+                            "global_energy_treaty" => Some("A:coal_power_plant"),
+                            "public_works_program" => resolution
+                                .choices
+                                .iter()
+                                .find(|choice| choice.starts_with("A:"))
+                                .map(String::as_str),
+                            "deforestation_treaty" => resolution
+                                .choices
+                                .iter()
+                                .find(|choice| choice.starts_with("A:"))
+                                .map(String::as_str),
+                            _ => None,
+                        }?;
+                        resolution
+                            .choices
+                            .iter()
+                            .find(|choice| choice.as_str() == preferred)
+                            .cloned()
                     })
                     .unwrap_or_else(|| resolution.choices[pid % resolution.choices.len()].clone());
                 let votes = if g.players[pid].diplomatic_favor >= 30.0 {
