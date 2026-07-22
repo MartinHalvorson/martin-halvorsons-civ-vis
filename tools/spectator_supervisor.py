@@ -240,6 +240,15 @@ def progress_marker(state: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def resumed_checkpoint(state: dict[str, Any], marker: tuple[Any, ...] | None) -> bool:
+    """Recognize a resume even if Lightning pace advanced before readiness."""
+    return (
+        marker is not None
+        and state.get("seed") == marker[0]
+        and state.get("winner") is None
+    )
+
+
 def should_nudge(state: dict[str, Any], stalled_for: float, timeout: float) -> bool:
     """Distinguish a dead spectator loop from an intentional GUI pause."""
     return not state.get("spectator_paused", False) and stalled_for >= max(0.1, timeout)
@@ -525,7 +534,7 @@ def main() -> int:
             recovered = wait_for_server(args.port, process)
             marker = None
 
-        if marker is not None and progress_marker(recovered) == marker:
+        if resumed_checkpoint(recovered, marker):
             log(
                 f"resumed checkpoint at turn {recovered.get('turn')} "
                 f"(player {recovered.get('current')})"
