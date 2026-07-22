@@ -243,6 +243,8 @@ fn open_url(url: &str) {
     #[cfg(windows)]
     let _ = std::process::Command::new("cmd")
         .args(["/C", "start", "", url]).spawn();
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     let _ = std::process::Command::new("xdg-open").arg(url).spawn();
 }

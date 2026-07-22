@@ -2,140 +2,378 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Martin Halvorson's Civilization VIS</title>
 <style>
+  :root {
+    --ink: #07110f;
+    --panel: #0d1817;
+    --panel-2: #132220;
+    --panel-3: #1a2c28;
+    --line: #29413b;
+    --line-soft: #1d302c;
+    --text: #edf2e9;
+    --muted: #97aaa3;
+    --faint: #62746e;
+    --gold: #d7b66a;
+    --gold-bright: #f0d28c;
+    --gold-deep: #8b6b2d;
+    --green: #76c893;
+    --blue: #76cde4;
+    --violet: #c49be8;
+    --danger: #eb807b;
+    --shadow: 0 18px 60px #0009;
+    --radius: 14px;
+  }
   * { box-sizing: border-box; margin: 0; }
-  body { font: 13px/1.45 "Segoe UI", system-ui, sans-serif; background: #000;
-         color: #e2e8ef; display: flex; height: 100vh; overflow: hidden; }
-  #maparea { flex: 1; position: relative; overflow: hidden; }
+  html, body { height: 100%; }
+  body {
+    font: 13px/1.45 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--ink); color: var(--text); display: flex; overflow: hidden;
+    letter-spacing: .01em;
+  }
+  body::after {
+    content: ""; position: fixed; inset: 0; z-index: 100; pointer-events: none;
+    opacity: .035; mix-blend-mode: soft-light;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.7'/%3E%3C/svg%3E");
+  }
+  button, select, input { font: inherit; }
+  button { -webkit-tap-highlight-color: transparent; }
+  #maparea { flex: 1; min-width: 0; position: relative; overflow: hidden; background: #07110f; }
+  #maparea::after {
+    content: ""; position: absolute; inset: 0; z-index: 3; pointer-events: none;
+    box-shadow: inset 0 0 100px #0208079c;
+  }
   canvas { display: block; }
-  #map { cursor: grab; width: 100%; height: 100%; }
-  #side { width: 350px; min-width: 350px; background: linear-gradient(180deg,#0d1119,#000);
-          padding: 10px; overflow-y: auto; border-left: 1px solid #222c3a; }
-  h1 { font-size: 15px; margin-bottom: 6px; color: #f0c674; letter-spacing: 0.5px; }
-  .sec { background: #1d2430cc; border: 1px solid #28303e; border-radius: 8px;
-         padding: 8px 10px; margin-bottom: 8px; }
-  .sec h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
-            color: #8fa1b5; margin-bottom: 5px; }
-  button { background: #2d3a4d; color: #dde3ea; border: 1px solid #40536b;
-           border-radius: 5px; padding: 4px 9px; margin: 2px; cursor: pointer;
-           font-size: 12px; transition: background .12s; }
-  button:hover { background: #3d4f68; }
-  button.primary { background: linear-gradient(180deg,#caa11c,#a07d0a); color: #14100a;
-                   border-color: #daa520; font-weight: 700; width: 100%;
-                   padding: 9px; font-size: 14px; }
-  button.primary:hover { background: linear-gradient(180deg,#e0b62f,#b78f10); }
-  .bar { background: #0d1117; border-radius: 3px; height: 9px; overflow: hidden; margin: 3px 0; }
-  .bar div { height: 100%; }
-  .chip { display: inline-block; width: 10px; height: 10px; border-radius: 5px; margin-right: 5px; }
-  .row { display: flex; justify-content: space-between; padding: 1px 0; }
-  select { background: #2d3a4d; color: #dde3ea; border: 1px solid #40536b;
-           border-radius: 5px; padding: 3px; max-width: 100%; }
-  .small { font-size: 11px; color: #8fa1b5; }
-  .boost { color: #7fd4ff; }
-  .mini { font-size: 10px; padding: 1px 6px; margin-left: 6px; }
-  #topbar { position: absolute; top: 0; left: 0; right: 0; z-index: 5;
-            background: linear-gradient(180deg,#10151dee,#10151d00);
-            padding: 8px 14px; display: flex; gap: 18px; align-items: center;
-            pointer-events: none; font-size: 13px; }
-  #topbar b { color: #f0c674; }
-  #zoomctl { position: absolute; top: 44px; left: 10px; z-index: 6;
-             display: flex; flex-direction: column; gap: 4px; }
-  #zoomctl button { width: 34px; height: 34px; font-size: 17px; padding: 0; }
-  #ubar { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
-          z-index: 6; background: #141a23ee; border: 1px solid #40536b;
-          border-radius: 10px; padding: 8px 14px; display: none; text-align: center;
-          box-shadow: 0 4px 18px #0009; }
-  #modeline { position: absolute; bottom: 14px; left: 12px; background: #141a23cc;
-              padding: 4px 10px; border-radius: 5px; font-size: 12px; z-index: 6;
-              color: #f0c674; }
-  #tip { position: fixed; pointer-events: none; background: #10151df2;
-         border: 1px solid #40536b; border-radius: 7px; padding: 7px 11px;
-         font-size: 12px; z-index: 20; display: none; max-width: 270px;
-         line-height: 1.5; box-shadow: 0 3px 14px #000a; }
-  #mini { position: absolute; right: 12px; bottom: 14px; z-index: 6;
-          border: 1px solid #40536b; border-radius: 6px; background: #0a0e14;
-          cursor: pointer; box-shadow: 0 3px 12px #0008; }
-  #err { position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%);
-         color: #ff9090; background: #2a1418dd; border: 1px solid #6b3040;
-         padding: 4px 12px; border-radius: 6px; z-index: 7; display: none;
-         font-size: 12px; }
-  #winner { position: absolute; top: 34%; left: 50%; transform: translate(-50%,-50%);
-            background: #141a23f5; border: 2px solid #f0c674; border-radius: 12px;
-            padding: 26px 44px; font-size: 21px; display: none; z-index: 8;
-            text-align: center; box-shadow: 0 8px 40px #000c; }
-  #tree { position: absolute; inset: 4% 3%; background: #141a23fa;
-          border: 1px solid #40536b; border-radius: 10px; z-index: 10;
-          display: none; flex-direction: column; padding: 12px; }
-  #tree.open { display: flex; }
-  #treehead { display: flex; justify-content: space-between; margin-bottom: 8px; }
-  #treecols { display: flex; gap: 14px; overflow: auto; flex: 1; align-items: flex-start; }
-  .tcol { display: flex; flex-direction: column; gap: 8px; min-width: 160px; }
-  .tnode { background: #1e2530; border: 1px solid #40536b; border-radius: 6px;
-           padding: 6px 8px; font-size: 12px; }
-  .tnode.done { border-color: #50c878; color: #7fdc9c; }
-  .tnode.cur { border-color: #7fd4ff; box-shadow: 0 0 6px #7fd4ff60; }
-  .tnode.avail { border-color: #f0c674; cursor: pointer; }
-  .tnode.avail:hover { background: #2d3a4d; }
-  .tnode.locked { opacity: 0.45; }
-  .tnode .req { color: #8fa1b5; font-size: 10px; }
+  #map { cursor: grab; width: 100%; height: 100%; position: relative; z-index: 1; }
+  #map:active { cursor: grabbing; }
+
+  /* Command deck */
+  #side {
+    width: 400px; min-width: 400px; height: 100%; position: relative; z-index: 12;
+    display: flex; flex-direction: column; overflow: hidden;
+    background:
+      radial-gradient(circle at 80% -10%, #23483b80, transparent 34%),
+      linear-gradient(180deg, #101d1b 0%, #08110f 100%);
+    border-left: 1px solid #355047; box-shadow: -16px 0 55px #0008;
+    transition: width .25s ease, min-width .25s ease, opacity .18s ease;
+  }
+  body.sidebar-hidden #side { width: 0; min-width: 0; opacity: 0; pointer-events: none; }
+  .side-head {
+    flex: 0 0 auto; padding: 22px 22px 16px; border-bottom: 1px solid var(--line-soft);
+    background: linear-gradient(180deg, #172825e8, #101d1be8);
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-mark {
+    width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%;
+    color: #172018; font: 700 21px/1 Georgia, serif;
+    background: radial-gradient(circle at 35% 30%, #f8dfa1, #c49c4b 62%, #74541e);
+    border: 1px solid #f1d48e; box-shadow: 0 0 0 3px #1a2924, 0 7px 18px #0008;
+  }
+  .brand-copy { min-width: 0; }
+  h1 {
+    color: var(--gold-bright); font: 600 19px/1.05 Georgia, "Times New Roman", serif;
+    letter-spacing: .12em; text-transform: uppercase;
+  }
+  .tagline { color: var(--muted); font-size: 10px; letter-spacing: .16em; text-transform: uppercase; margin-top: 5px; }
+  #gameidentity { margin-top: 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  #gameidentity .civ-name { font: 600 16px/1.2 Georgia, serif; color: var(--text); }
+  .live-badge {
+    display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 999px;
+    color: #a9dcbc; background: #173126; border: 1px solid #2e5b45;
+    font-size: 9px; font-weight: 800; letter-spacing: .13em; text-transform: uppercase;
+  }
+  .live-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #66d38b; box-shadow: 0 0 0 4px #66d38b1c; }
+  .side-scroll { flex: 1; min-height: 0; padding: 14px 14px 24px; overflow-y: auto; scrollbar-color: #385148 transparent; scrollbar-width: thin; }
+  .side-scroll::-webkit-scrollbar { width: 7px; }
+  .side-scroll::-webkit-scrollbar-thumb { background: #385148; border-radius: 9px; }
+  .side-footer { flex: 0 0 auto; padding: 12px 14px 14px; border-top: 1px solid var(--line); background: #0b1513f2; box-shadow: 0 -12px 30px #0005; }
+
+  .sec {
+    position: relative; padding: 13px 14px; margin-bottom: 10px; border-radius: var(--radius);
+    background: linear-gradient(145deg, #172723e8, #101b19e8);
+    border: 1px solid var(--line); box-shadow: 0 8px 25px #0002;
+  }
+  .sec::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; border-top: 1px solid #ffffff08; }
+  .sec h2, .section-label {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    margin-bottom: 9px; color: var(--muted); font-size: 9px; font-weight: 800;
+    letter-spacing: .18em; text-transform: uppercase;
+  }
+  .section-label { margin: 18px 4px 8px; }
+  .section-label:first-child { margin-top: 2px; }
+  .section-label .rule { height: 1px; flex: 1; background: linear-gradient(90deg, var(--line), transparent); }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .split .sec { min-width: 0; }
+
+  button {
+    color: var(--text); background: linear-gradient(180deg, #263c36, #1b2e2a);
+    border: 1px solid #3b584f; border-radius: 9px; padding: 7px 10px; margin: 2px;
+    cursor: pointer; font-size: 11px; font-weight: 650; letter-spacing: .02em;
+    transition: transform .12s ease, background .12s ease, border-color .12s ease, color .12s ease;
+  }
+  button:hover { transform: translateY(-1px); background: linear-gradient(180deg, #315048, #223a34); border-color: #57776d; }
+  button:active { transform: translateY(0); }
+  button.primary {
+    width: 100%; padding: 12px 14px; margin: 0; border-radius: 11px;
+    color: #17160f; background: linear-gradient(135deg, #f0d58f, #c99e4e);
+    border-color: #efd184; font-size: 12px; font-weight: 850; letter-spacing: .08em;
+    text-transform: uppercase; box-shadow: 0 7px 22px #0005, inset 0 1px #fff7;
+  }
+  button.primary:hover { color: #11140f; background: linear-gradient(135deg, #ffe3a0, #dbae58); border-color: #ffe4a0; }
+  button.ghost { background: transparent; border-color: var(--line); color: var(--muted); }
+  button.icon { width: 36px; height: 36px; padding: 0; display: grid; place-items: center; }
+  button.mini { margin: 0 0 0 auto; padding: 3px 7px; border-radius: 7px; font-size: 9px; font-weight: 700; }
+  button.danger { color: #f3a7a4; border-color: #69423e; background: #331f1d; }
+  select {
+    max-width: 100%; width: 100%; padding: 8px 30px 8px 10px; border-radius: 8px;
+    color: var(--text); background: #0d1816; border: 1px solid #385149; outline: none;
+  }
+  select:focus { border-color: var(--gold); box-shadow: 0 0 0 3px #d7b66a1d; }
+  input[type="checkbox"] { accent-color: var(--gold); }
+  .small { color: var(--muted); font-size: 10px; line-height: 1.45; }
+  .muted { color: var(--muted); }
+  .boost { color: var(--blue); text-shadow: 0 0 12px #76cde477; }
+  .bar { height: 5px; margin: 7px 0 5px; overflow: hidden; border-radius: 6px; background: #050c0b; box-shadow: inset 0 1px 3px #000b; }
+  .bar div { height: 100%; border-radius: inherit; box-shadow: 0 0 12px currentColor; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 3px 0; }
+  .chip { display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; box-shadow: 0 0 0 3px #ffffff09; }
+
+  /* Floating map HUD */
+  #topbar {
+    position: absolute; z-index: 5; top: 16px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: stretch; gap: 5px; max-width: calc(100% - 180px);
+    padding: 5px; border: 1px solid #4961598c; border-radius: 14px;
+    background: #0a1512d9; box-shadow: 0 12px 34px #0008; backdrop-filter: blur(16px) saturate(130%);
+    pointer-events: none; white-space: nowrap;
+  }
+  .hud-turn, .hud-stat { display: flex; align-items: center; gap: 7px; min-height: 38px; padding: 7px 11px; border-radius: 9px; }
+  .hud-turn { color: var(--gold-bright); background: #d7b66a12; border: 1px solid #d7b66a26; font-weight: 800; }
+  .hud-stat { color: var(--text); border-left: 1px solid #ffffff0b; }
+  .hud-stat i { color: var(--muted); font-size: 10px; font-style: normal; }
+  .hud-watch { color: #b4d8c4; }
+  #zoomctl {
+    position: absolute; z-index: 6; top: 76px; left: 16px; display: flex; flex-direction: column;
+    gap: 5px; padding: 5px; border-radius: 13px; background: #0a1512cb; border: 1px solid #3c554c;
+    box-shadow: 0 12px 26px #0006; backdrop-filter: blur(12px);
+  }
+  #zoomctl button { width: 34px; height: 34px; margin: 0; padding: 0; border: 0; background: transparent; font-size: 16px; }
+  #zoomctl button + button { border-top: 1px solid #ffffff0c; border-radius: 0; }
+  #paneltoggle { position: absolute; z-index: 14; top: 17px; right: 16px; background: #0a1512df; backdrop-filter: blur(12px); }
+  body:not(.sidebar-hidden) #paneltoggle { right: 16px; }
+  #ubar {
+    position: absolute; z-index: 7; left: 50%; bottom: 22px; transform: translateX(-50%);
+    display: none; min-width: 360px; max-width: min(680px, calc(100% - 450px)); padding: 13px 16px;
+    color: var(--text); text-align: center; border-radius: 14px; border: 1px solid #50675f;
+    background: #0a1512ec; box-shadow: var(--shadow); backdrop-filter: blur(18px);
+  }
+  #ubar > b { color: var(--gold-bright); font: 600 17px Georgia, serif; text-transform: capitalize; }
+  #modeline {
+    position: absolute; z-index: 6; left: 16px; bottom: 176px; max-width: 360px;
+    display: none; padding: 8px 12px; border-radius: 999px; color: #1b190f;
+    background: var(--gold-bright); box-shadow: 0 7px 20px #0007; font-size: 9px; font-weight: 900; letter-spacing: .1em;
+  }
+  #tip {
+    position: fixed; z-index: 30; display: none; max-width: 290px; padding: 10px 13px;
+    color: var(--text); border: 1px solid #4a635a; border-radius: 11px;
+    background: #091310f2; box-shadow: var(--shadow); pointer-events: none;
+    font-size: 11px; line-height: 1.6; backdrop-filter: blur(14px);
+  }
+  .minimap-frame {
+    position: absolute; z-index: 6; right: 16px; bottom: 20px; padding: 6px; border-radius: 12px;
+    background: #091310e6; border: 1px solid #40584f; box-shadow: 0 14px 35px #0008;
+  }
+  .minimap-label { display: flex; justify-content: space-between; padding: 1px 3px 5px; color: var(--muted); font-size: 8px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+  #mini { border-radius: 7px; background: #07110f; cursor: pointer; }
+  #err {
+    position: absolute; z-index: 20; left: 50%; bottom: 85px; transform: translateX(-50%);
+    display: none; padding: 9px 14px; color: #ffc0bd; background: #3b1e1de8;
+    border: 1px solid #8d4a46; border-radius: 10px; box-shadow: var(--shadow);
+  }
+  #winner {
+    position: absolute; z-index: 18; top: 44%; left: 50%; transform: translate(-50%,-50%);
+    display: none; min-width: 340px; padding: 34px 44px; text-align: center;
+    color: var(--gold-bright); font: 600 28px/1.2 Georgia, serif;
+    background: radial-gradient(circle at top, #2c3524, #0c1714f7 65%); border: 1px solid var(--gold);
+    border-radius: 20px; box-shadow: 0 24px 90px #000e, 0 0 60px #d7b66a22;
+  }
+  #winner .small { display: inline-block; margin-top: 10px; font: 11px/1.5 Inter, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+
+  /* Rich panel content */
+  .research-card { display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 10px; }
+  .research-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: #76cde412; border: 1px solid #76cde42c; font-size: 16px; }
+  .research-card.culture .research-icon { background: #c49be812; border-color: #c49be82c; }
+  .research-title { font-weight: 750; text-transform: capitalize; }
+  .research-turns { color: var(--gold-bright); font: 600 12px Georgia, serif; }
+  .player-card {
+    display: grid; grid-template-columns: 5px 1fr auto; gap: 10px; align-items: center;
+    margin: 5px 0; padding: 9px 10px 9px 7px; border-radius: 10px; background: #0c1715b8;
+    border: 1px solid #1e332e; cursor: pointer; transition: background .12s, border-color .12s, transform .12s;
+  }
+  .player-card:hover { transform: translateX(-2px); background: #13231f; border-color: #3c584f; }
+  .player-card.active { border-color: #d7b66a66; background: #d7b66a0b; box-shadow: 0 0 0 1px #d7b66a13 inset; }
+  .player-card.dead { opacity: .42; filter: grayscale(.7); }
+  .player-color { align-self: stretch; min-height: 28px; border-radius: 4px; }
+  .player-name { color: var(--text); font-weight: 750; }
+  .player-meta { color: var(--muted); font-size: 9px; margin-top: 2px; text-transform: capitalize; }
+  .player-score { text-align: right; color: var(--gold-bright); font: 600 16px Georgia, serif; }
+  .player-score small { display: block; color: var(--faint); font: 700 7px Inter, sans-serif; letter-spacing: .14em; text-transform: uppercase; }
+  .city-hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+  .city-name { color: var(--gold-bright); font: 600 20px/1.1 Georgia, serif; }
+  .city-pop { min-width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%; background: #d7b66a12; border: 1px solid #d7b66a47; color: var(--gold-bright); font: 600 16px Georgia, serif; }
+  .city-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 10px 0; }
+  .metric { padding: 7px 6px; text-align: center; border-radius: 8px; background: #091310; border: 1px solid #1e332e; }
+  .metric b { display: block; color: var(--text); font-size: 12px; }
+  .metric span { color: var(--faint); font-size: 7px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+  .event-list { display: flex; flex-direction: column; gap: 7px; max-height: 180px; overflow: auto; }
+  .event-item { display: grid; grid-template-columns: 25px 1fr; gap: 8px; padding: 8px; border-left: 2px solid #49645a; background: #0b1613; border-radius: 4px 9px 9px 4px; }
+  .event-icon { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 7px; background: #ffffff08; }
+  .event-text { color: #cad5cf; font-size: 10px; }
+  .event-turn { color: var(--faint); font-size: 8px; letter-spacing: .1em; text-transform: uppercase; }
+  .empty-state { padding: 10px 0 2px; color: var(--faint); font-size: 10px; text-align: center; }
+  .spec-controls { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+  .spec-controls button { margin: 0; }
+  .speed-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; margin-top: 9px; }
+  .speed-row span { color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+  .shortcut-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+  .shortcut-grid span { color: var(--muted); font-size: 9px; }
+  kbd { display: inline-grid; min-width: 19px; height: 18px; place-items: center; margin-right: 5px; padding: 0 4px; border-radius: 5px; color: #cbd5d0; background: #091310; border: 1px solid #354c44; box-shadow: inset 0 -1px #000; font: 700 8px Inter, sans-serif; }
+  #newgame-options { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; }
+  #newgame-options button { margin: 0; height: 34px; }
+
+  /* Tech and civic overlay */
+  #tree {
+    position: absolute; z-index: 15; inset: 4% 3%; display: none; flex-direction: column;
+    padding: 20px; border: 1px solid #536c63; border-radius: 18px;
+    background: radial-gradient(circle at top left, #1e332e, #091310f8 58%);
+    box-shadow: 0 28px 100px #000e; backdrop-filter: blur(20px);
+  }
+  #tree.open { display: flex; animation: rise .18s ease-out; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px) scale(.99); } }
+  #treehead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+  #treetitle { color: var(--gold-bright); font: 600 20px Georgia, serif; }
+  #treecols { display: flex; gap: 18px; flex: 1; overflow: auto; align-items: flex-start; }
+  .tcol { display: flex; flex-direction: column; gap: 10px; min-width: 180px; }
+  .tnode { padding: 10px 11px; color: #bcc9c3; background: #101d1a; border: 1px solid #2d443d; border-radius: 10px; font-size: 11px; transition: .12s; }
+  .tnode.done { color: #9bd8ae; border-color: #4a805d; background: #183124; }
+  .tnode.cur { color: #bcecf5; border-color: var(--blue); box-shadow: 0 0 18px #76cde42e; }
+  .tnode.avail { color: var(--gold-bright); border-color: var(--gold); cursor: pointer; }
+  .tnode.avail:hover { transform: translateY(-2px); background: #24372e; }
+  .tnode.locked { opacity: .38; }
+  .tnode .req { color: var(--faint); font-size: 8px; margin-top: 3px; }
+
+  @media (max-width: 980px) {
+    #side { width: 350px; min-width: 350px; }
+    #topbar { left: 14px; transform: none; max-width: calc(100% - 84px); overflow: hidden; }
+    .hud-stat i { display: none; }
+    #ubar { max-width: calc(100% - 70px); }
+  }
+  @media (max-width: 720px) {
+    body { display: block; }
+    #maparea { height: 100%; }
+    #side { position: fixed; inset: 72px 8px 8px auto; width: min(390px, calc(100% - 16px)); min-width: 0; height: auto; border: 1px solid #40584f; border-radius: 16px; }
+    body.sidebar-hidden #side { width: min(390px, calc(100% - 16px)); transform: translateX(calc(100% + 16px)); opacity: 0; }
+    #topbar .hud-stat:nth-of-type(n+5) { display: none; }
+    .minimap-frame { display: none; }
+    #paneltoggle { right: 12px; }
+    #ubar { min-width: 0; width: calc(100% - 28px); bottom: 18px; }
+  }
 </style>
 </head>
 <body>
 <div id="maparea">
   <canvas id="map"></canvas>
   <div id="topbar"></div>
+  <button id="paneltoggle" class="icon" title="Toggle command deck" aria-label="Toggle command deck">☰</button>
   <div id="zoomctl">
-    <button id="zin" title="zoom in">+</button>
-    <button id="zout" title="zoom out">−</button>
-    <button id="zhome" title="center on your empire">⌂</button>
+    <button id="zin" title="Zoom in" aria-label="Zoom in">＋</button>
+    <button id="zout" title="Zoom out" aria-label="Zoom out">−</button>
+    <button id="zhome" title="Center on your empire" aria-label="Center map">⌂</button>
   </div>
   <div id="ubar"></div>
   <div id="modeline"></div>
   <div id="err"></div>
   <div id="winner"></div>
-  <canvas id="mini" width="200" height="140"></canvas>
+  <div class="minimap-frame">
+    <div class="minimap-label"><span>World map</span><span>click to travel</span></div>
+    <canvas id="mini" width="200" height="140"></canvas>
+  </div>
   <div id="tree">
     <div id="treehead"><b id="treetitle"></b>
-      <button onclick='document.getElementById("tree").classList.remove("open")'>✕ close</button>
+      <button class="ghost" onclick='document.getElementById("tree").classList.remove("open")'>✕ Close</button>
     </div>
     <div id="treecols"></div>
   </div>
   <div id="tip"></div>
 </div>
 <div id="side">
-  <h1>CIVILIZATION VIS</h1>
-  <div class="sec"><h2>Research <button class="mini" onclick='openTree("techs")'>tree map</button></h2><div id="research"></div></div>
-  <div class="sec"><h2>Civics <button class="mini" onclick='openTree("civics")'>tree map</button></h2><div id="civics"></div></div>
-  <div class="sec" id="govsec" style="display:none"><h2>Government</h2><div id="gov"></div></div>
-  <div class="sec" id="citysec" style="display:none"><h2>City</h2><div id="citypanel"></div></div>
-  <div class="sec"><h2>Players</h2><div id="players"></div></div>
-  <button class="primary" id="endturn">End Turn (Enter)</button>
-  <div id="specbar" style="display:none">
-    <button class="primary" id="specpause">⏸ Pause (Enter)</button>
-    <div class="sec" style="margin-top:8px"><h2>Watch speed</h2>
-      <select id="specspeed">
-        <option value="500">very fast (0.5s/turn)</option>
-        <option value="1000">fast (1s/turn)</option>
-        <option value="2000" selected>normal (2s/turn)</option>
-        <option value="4000">slow (4s/turn)</option>
+  <div class="side-head">
+    <div class="brand">
+      <div class="brand-mark">VI</div>
+      <div class="brand-copy">
+        <h1>Civilization VIS</h1>
+        <div class="tagline">A living strategy laboratory</div>
+      </div>
+    </div>
+    <div id="gameidentity"></div>
+  </div>
+  <div class="side-scroll">
+    <div class="section-label"><span>Progress</span><span class="rule"></span></div>
+    <div class="split">
+      <div class="sec"><h2>Research <button class="mini" onclick='openTree("techs")'>Tree</button></h2><div id="research"></div></div>
+      <div class="sec"><h2>Civics <button class="mini" onclick='openTree("civics")'>Tree</button></h2><div id="civics"></div></div>
+    </div>
+    <div class="sec" id="govsec" style="display:none"><h2>Government</h2><div id="gov"></div></div>
+    <div class="sec" id="citysec" style="display:none"><h2>City command</h2><div id="citypanel"></div></div>
+
+    <div class="section-label"><span id="worldlabel">World standings</span><span class="rule"></span></div>
+    <div class="sec"><div id="players"></div></div>
+
+    <div id="eventsec">
+      <div class="section-label"><span>Chronicle</span><span class="rule"></span></div>
+      <div class="sec"><div id="events" class="event-list"><div class="empty-state">The world is quiet—for now.</div></div></div>
+    </div>
+
+    <div class="section-label"><span>View & controls</span><span class="rule"></span></div>
+    <div class="sec">
+      <h2>Map style</h2>
+      <select id="viewsel">
+        <option value="beautiful">Cinematic terrain</option>
+        <option value="simple">Strategic map</option>
+        <option value="minimal">Performance mode</option>
       </select>
+      <div class="shortcut-grid" style="margin-top:11px">
+        <span><kbd>1</kbd>Next unit</span><span><kbd>2</kbd>Settler lens</span>
+        <span><kbd>3</kbd>Map tacks</span><span><kbd>F</kbd>Focus mode</span>
+        <span><kbd>Alt</kbd>Rotate map</span><span><kbd>↵</kbd>End / pause</span>
+      </div>
+    </div>
+    <div class="sec">
+      <h2>New world</h2>
+      <div id="newgame-options">
+        <label class="small">Major civilizations<select id="np" style="margin-top:4px"><option>2</option><option selected>4</option><option>6</option></select></label>
+        <button id="newgame">Create</button>
+      </div>
+      <label class="small" style="display:flex;gap:7px;align-items:center;margin-top:10px"><input type="checkbox" id="specchk"> AI-only observer game</label>
     </div>
   </div>
-  <div class="sec" style="margin-top:8px">
-    <h2>Display</h2>
-    <select id="viewsel">
-      <option value="beautiful">beautiful</option>
-      <option value="simple">simple</option>
-      <option value="minimal">minimal (fastest)</option>
-    </select>
-    <div class="small">1 next unit · 2 settler lens · 3 tacks · drag pan · alt+drag rotate · wheel zoom · right-drag orders</div>
-  </div>
-  <div class="sec">
-    <h2>New game</h2>
-    players <select id="np"><option>2</option><option selected>4</option><option>6</option></select>
-    <button id="newgame">Restart</button>
-    <br><label class="small"><input type="checkbox" id="specchk"> AI-only (just watch)</label>
+  <div class="side-footer">
+    <button class="primary" id="endturn">End turn · Enter</button>
+    <div id="specbar" style="display:none">
+      <div class="spec-controls">
+        <button class="primary" id="specpause">⏸ Pause</button>
+        <button class="icon" id="specstep" title="Advance one civilization" aria-label="Step once">›</button>
+      </div>
+      <div class="speed-row"><span>Watch pace</span>
+        <select id="specspeed">
+          <option value="250">Blitz · 0.25s</option>
+          <option value="500">Fast · 0.5s</option>
+          <option value="1000">Brisk · 1s</option>
+          <option value="2000" selected>Measured · 2s</option>
+          <option value="4000">Cinematic · 4s</option>
+        </select>
+      </div>
+    </div>
   </div>
 </div>
 <script>
@@ -169,7 +407,8 @@ const DIRS = [[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]];
 // ---------------------------------------------------------------- state
 let state = null, sel = null, selCity = null, RULES = null;
 let lensOn = false, tackMode = false, tacks = [], lastSeed = null, cycleIdx = -1;
-let SPEC = false, specPaused = false, specTimer = null;
+let SPEC = false, specPaused = false, specTimer = null, specBusy = false;
+let worldEvents = [], lastLeader = null;
 let TMAP = new Map();
 let VIEW = localStorage.getItem("civvis-view") || "beautiful";
 const cam = { x: 0, y: 0, scale: 1 };
@@ -295,11 +534,14 @@ async function send(action) {
 }
 
 // --- spectator auto-step: one AI player's turn per tick
-async function specStep() {
-  if (!SPEC || specPaused) return;
-  const st = await fetchJSON("/step", { method: "POST" });
-  render(st);
-  scheduleSpec(st);
+async function specStep(force) {
+  if (!SPEC || (!force && specPaused) || specBusy) return;
+  specBusy = true;
+  try {
+    const st = await fetchJSON("/step", { method: "POST" });
+    render(st);
+    scheduleSpec(st);
+  } finally { specBusy = false; }
 }
 function scheduleSpec(st) {
   clearTimeout(specTimer);
@@ -315,13 +557,49 @@ function scheduleSpec(st) {
 }
 function legalFor(type) { return state.legal_actions.filter(a => a.type === type); }
 
+function addEvent(icon, text, turn) {
+  worldEvents.unshift({ icon, text, turn });
+  worldEvents = worldEvents.slice(0, 12);
+}
+function chronicle(prev, next) {
+  if (!prev || prev.seed !== next.seed) {
+    worldEvents = [];
+    lastLeader = null;
+    addEvent("✦", `A new world begins with seed ${next.seed}.`, next.turn);
+    return;
+  }
+  if (next.turn > prev.turn) addEvent("☀", `Turn ${next.turn} dawns across the world.`, next.turn);
+  const oldCities = new Map(prev.cities.map(c => [c.id, c]));
+  for (const city of next.cities) {
+    const old = oldCities.get(city.id);
+    const civ = (next.players[city.owner] || {}).civ || "An unknown civilization";
+    if (!old) addEvent("🏛", `${civ} founded ${city.name}.`, next.turn);
+    else if (old.owner !== city.owner) {
+      const former = (prev.players[old.owner] || {}).civ || "its former ruler";
+      addEvent("⚔", `${civ} captured ${city.name} from ${former}.`, next.turn);
+    } else if (city.pop > old.pop) addEvent("◆", `${city.name} grew to ${city.pop} population.`, next.turn);
+    oldCities.delete(city.id);
+  }
+  for (const city of oldCities.values()) addEvent("♜", `${city.name} was lost to history.`, next.turn);
+  for (const p of next.players) {
+    const old = prev.players.find(x => x.id === p.id);
+    if (old && old.alive && !p.alive) addEvent("☠", `${p.civ} has been defeated.`, next.turn);
+  }
+  const majors = next.players.filter(p => !p.is_minor && !p.is_barbarian && p.alive)
+    .sort((a, b) => b.score - a.score);
+  if (majors.length && lastLeader !== null && majors[0].id !== lastLeader)
+    addEvent("♛", `${majors[0].civ} has taken the score lead.`, next.turn);
+  if (majors.length) lastLeader = majors[0].id;
+}
+
 function render(st) {
+  chronicle(state, st);
   state = st;
   SPEC = !!st.spectate;
   document.getElementById("endturn").style.display = SPEC ? "none" : "block";
   document.getElementById("specbar").style.display = SPEC ? "block" : "none";
   if (st.seed !== undefined && st.seed !== lastSeed) { lastSeed = st.seed; loadTacks(); }
-  if (SPEC) { sel = null; selCity = null; }
+  if (SPEC) sel = null;
   if (sel) sel = st.units.find(u => u.id === sel.id && u.owner === 0) || null;
   TMAP = new Map(st.map.tiles.map(t => [key(t.pos), t]));
   const errEl = document.getElementById("err");
@@ -895,13 +1173,21 @@ mini.addEventListener("click", ev => {
 // ---------------------------------------------------------------- panels
 function drawTopbar() {
   const me = state.me, y = me.yields;
+  const actor = state.players[SPEC ? state.current : 0] || state.players[state.player];
+  const era = (state.world_era || "ancient").replaceAll("_", " ");
   document.getElementById("topbar").innerHTML =
-    `<b>Turn ${state.turn}</b>` +
-    (SPEC ? `<span>👁 watching <b>${state.players[state.player].civ}</b></span>` : "") +
-    `<span>🔬 ${y.science}</span><span>🎭 ${y.culture}</span>` +
-    `<span>🪙 ${Math.round(me.gold)} (+${y.gold})</span>` +
-    `<span>✡ ${Math.round(me.faith)} (+${y.faith})</span>` +
-    (me.government ? `<span>🏛 ${me.government.replaceAll("_"," ")}</span>` : "");
+    `<div class="hud-turn"><span>TURN</span><strong>${state.turn}</strong><i>· ${era}</i></div>` +
+    (SPEC ? `<div class="hud-stat hud-watch">◉ <strong>${actor.civ}</strong><i>acting</i></div>` : "") +
+    `<div class="hud-stat">🔬 <strong>${y.science}</strong><i>science</i></div>` +
+    `<div class="hud-stat">🎭 <strong>${y.culture}</strong><i>culture</i></div>` +
+    `<div class="hud-stat">🪙 <strong>${Math.round(me.gold)}</strong><i>+${y.gold}</i></div>` +
+    `<div class="hud-stat">✦ <strong>${Math.round(me.faith)}</strong><i>+${y.faith}</i></div>`;
+
+  const identity = SPEC ? actor : state.players[0];
+  document.getElementById("gameidentity").innerHTML =
+    `<div><div class="civ-name">${identity.civ}</div>` +
+    `<div class="small">${identity.leader || "Unknown leader"}${identity.government ? ` · ${identity.government.replaceAll("_", " ")}` : ""}</div></div>` +
+    `<span class="live-badge">${SPEC ? "Observing" : "Your empire"}</span>`;
 }
 
 function drawUbar() {
@@ -954,25 +1240,46 @@ function itemCost(it) {
 }
 function techCost(t) { return RULES ? RULES.techs[t].cost : 100; }
 function civicCost(c) { return RULES ? RULES.civics[c].cost : 100; }
+function titleCase(n) { return (n || "").replaceAll("_", " ").replace(/\b\w/g, c => c.toUpperCase()); }
+function researchCard(kind, name, progress, total, perTurn, boosted) {
+  const eta = perTurn > 0 ? Math.max(1, Math.ceil((total - progress) / perTurn)) : "∞";
+  const science = kind === "science";
+  return `<div class="research-card ${science ? "" : "culture"}">` +
+    `<div class="research-icon">${science ? "⌬" : "❦"}</div>` +
+    `<div><div class="research-title">${titleCase(name)} ${boosted.includes(name) ? `<span class="boost">⚡</span>` : ""}</div>` +
+    prog(progress, total, science ? "#76cde4" : "#c49be8") + `</div>` +
+    `<div class="research-turns">${eta}<div class="small">turn${eta === 1 ? "" : "s"}</div></div></div>`;
+}
+function drawEvents() {
+  const el = document.getElementById("events");
+  if (!worldEvents.length) {
+    el.innerHTML = `<div class="empty-state">The world is quiet—for now.</div>`;
+    return;
+  }
+  el.innerHTML = worldEvents.map(e =>
+    `<div class="event-item"><div class="event-icon">${e.icon}</div>` +
+    `<div><div class="event-text">${e.text}</div><div class="event-turn">Turn ${e.turn}</div></div></div>`
+  ).join("");
+}
 
 function drawSide() {
   const me = state.me;
   const rdiv = document.getElementById("research");
   if (me.research) {
-    rdiv.innerHTML = nameB(me.research, me.boosted_techs) +
-      prog(me.research_progress, techCost(me.research), "#7fd4ff");
+    rdiv.innerHTML = researchCard("science", me.research, me.research_progress,
+      techCost(me.research), me.yields.science, me.boosted_techs);
   } else if (SPEC) {
-    rdiv.innerHTML = "<span class='small'>—</span>";
+    rdiv.innerHTML = "<div class='empty-state'>Choosing a discovery…</div>";
   } else {
     rdiv.innerHTML = sel1("rsel", legalFor("research").map(a => a.tech), me.boosted_techs);
     hook("rsel", v => send({type: "research", tech: v}));
   }
   const cdiv = document.getElementById("civics");
   if (me.civic) {
-    cdiv.innerHTML = nameB(me.civic, me.boosted_civics) +
-      prog(me.civic_progress, civicCost(me.civic), "#d4a8ff");
+    cdiv.innerHTML = researchCard("culture", me.civic, me.civic_progress,
+      civicCost(me.civic), me.yields.culture, me.boosted_civics);
   } else if (SPEC) {
-    cdiv.innerHTML = "<span class='small'>—</span>";
+    cdiv.innerHTML = "<div class='empty-state'>Shaping a new idea…</div>";
   } else {
     cdiv.innerHTML = sel1("csel", legalFor("civic").map(a => a.civic), me.boosted_civics);
     hook("csel", v => send({type: "civic", civic: v}));
@@ -982,45 +1289,66 @@ function drawSide() {
   if (govs.length || me.government) {
     gs.style.display = "block";
     document.getElementById("gov").innerHTML =
-      "<b>" + (me.government || "none").replaceAll("_", " ") + "</b> " +
+      `<div class="row"><span class="muted">Current</span><b>${titleCase(me.government || "none")}</b></div>` +
       govs.map(a => `<button onclick='send({type:"government",government:"${a.government}"})'>` +
-        a.government.replaceAll("_", " ") + "</button>").join("");
+        titleCase(a.government) + "</button>").join("");
   } else gs.style.display = "none";
-  document.getElementById("players").innerHTML = state.players
-    .filter(p => !p.is_barbarian)
-    .map(p => `<div class="row"><span>${SPEC && p.id === state.player ? "👁 " : ""}` +
-      `<span class="chip" style="background:${pcol(p.id)}"></span>` +
-      `${p.civ}${p.is_minor ? " <span class='small'>(CS)</span>" : ""}${p.alive ? "" : " ☠"}` +
-      `${!SPEC && p.at_war_with_me ? " ⚔" : ""}</span><span>${p.score}</span></div>`).join("");
+  const acting = SPEC ? state.current : 0;
+  document.getElementById("worldlabel").textContent = SPEC ? "World standings" : "Known civilizations";
+  document.getElementById("players").innerHTML = state.players.filter(p => !p.is_barbarian)
+    .sort((a, b) => Number(a.is_minor) - Number(b.is_minor) || b.score - a.score)
+    .map(p => {
+      const role = p.is_minor ? `${titleCase(p.cs_type || "city state")} city-state` :
+        (p.leader || "Unknown leader");
+      const status = !p.alive ? "Defeated" : p.at_war_with_me ? `${role} · at war` : role;
+      return `<div class="player-card ${p.id === acting ? "active" : ""} ${p.alive ? "" : "dead"}" onclick="focusPlayer(${p.id})">` +
+        `<div class="player-color" style="background:${pcol(p.id)}"></div>` +
+        `<div><div class="player-name">${p.id === acting && SPEC ? "◉ " : ""}${p.civ}</div>` +
+        `<div class="player-meta">${status} · ${p.cities} cit${p.cities === 1 ? "y" : "ies"}</div></div>` +
+        `<div class="player-score">${p.score}<small>score</small></div></div>`;
+    }).join("");
   drawCityPanel();
+  drawEvents();
 }
 
 function drawCityPanel() {
   const secEl = document.getElementById("citysec");
-  if (!selCity || SPEC) { secEl.style.display = "none"; return; }
-  const c = state.cities.find(x => x.id === selCity.id && x.owner === 0);
+  if (!selCity) { secEl.style.display = "none"; return; }
+  const c = state.cities.find(x => x.id === selCity.id && (SPEC || x.owner === 0));
   if (!c) { selCity = null; secEl.style.display = "none"; return; }
   const striking = selCity._striking;
   selCity = c; selCity._striking = striking;
   secEl.style.display = "block";
-  let h = `<b>${c.name}</b> <span class="small">pop ${c.pop} · ⌂${c.housing}` +
-    ` · ☺${c.amenity_surplus >= 0 ? "+" : ""}${c.amenity_surplus} · hp ${c.hp}</span><br>` +
-    `<span class="small">food</span>` + prog(c.food, c.growth_need, "#50c878");
-  if (c.queue && c.queue.length) {
-    h += `<span class="small">building: ${itemName(c.queue[0])}</span>` +
-      prog(c.production, c.queue_cost, "#e09050");
-  } else {
-    h += `<span class="small">production idle (${Math.round(c.production)} banked)</span>`;
+  const owner = state.players[c.owner];
+  let h = `<div class="city-hero"><div><div class="city-name">${c.name}${c.is_capital ? " ♛" : ""}</div>` +
+    `<div class="small" style="margin-top:4px">${owner.civ}${c.religion ? ` · ${titleCase(c.religion)}` : ""}</div></div>` +
+    `<div class="city-pop" title="Population">${c.pop}</div></div>` +
+    `<div class="city-stats"><div class="metric"><b>${c.hp}</b><span>Health</span></div>` +
+    `<div class="metric"><b>${c.wall_hp || 0}</b><span>Walls</span></div>` +
+    `<div class="metric"><b>${c.housing === undefined ? "—" : c.housing}</b><span>Housing</span></div></div>`;
+  if (c.food === undefined) {
+    h += `<div class="empty-state">Observer intelligence is limited to public city information.</div>`;
+    document.getElementById("citypanel").innerHTML = h;
+    return;
   }
+  h += `<div class="row"><span class="small">Growth</span><span class="small">${c.amenity_surplus >= 0 ? "+" : ""}${c.amenity_surplus} amenities</span></div>` +
+    prog(c.food, c.growth_need, "#76c893");
+  if (c.queue && c.queue.length) {
+    h += `<div class="row" style="margin-top:8px"><span class="small">Producing</span><b>${titleCase(itemName(c.queue[0]))}</b></div>` +
+      prog(c.production, c.queue_cost, "#d7b66a");
+  } else {
+    h += `<div class="empty-state">Production is idle · ${Math.round(c.production)} ⚙ banked</div>`;
+  }
+  if (SPEC) { document.getElementById("citypanel").innerHTML = h; return; }
   const prods = state.legal_actions.filter(a => a.type === "produce" && a.city === c.id);
-  h += `<br><select id="prodsel"><option value="">— set production —</option>` +
-    prods.map((a, i) => `<option value="${i}">${itemName(a.item)} (${itemCost(a.item)}⚙)</option>`).join("") +
+  h += `<div class="small" style="margin:10px 0 4px">CHOOSE PRODUCTION</div><select id="prodsel"><option value="">Select a project…</option>` +
+    prods.map((a, i) => `<option value="${i}">${titleCase(itemName(a.item))} · ${itemCost(a.item)} ⚙</option>`).join("") +
     `</select>`;
   const buys = state.legal_actions.filter(a => a.type === "buy" && a.city === c.id);
-  if (buys.length) h += "<br>" + buys.map(a =>
-    `<button onclick='send(${JSON.stringify(a)})'>Buy ${a.unit} (${a.currency})</button>`).join("");
+  if (buys.length) h += `<div style="margin-top:7px">` + buys.map(a =>
+    `<button onclick='send(${JSON.stringify(a)})'>Buy ${titleCase(a.unit)} · ${titleCase(a.currency)}</button>`).join("") + `</div>`;
   if (state.legal_actions.some(a => a.type === "city_strike" && a.city === c.id)) {
-    h += `<br><button onclick='selCity._striking=true'>🏹 Strike (click target)</button>`;
+    h += `<button class="danger" onclick='selCity._striking=true'>🏹 Choose ranged target</button>`;
   }
   document.getElementById("citypanel").innerHTML = h;
   const ps = document.getElementById("prodsel");
@@ -1129,12 +1457,22 @@ function centerWorld(pos) {
 }
 function centerHome() {
   if (!state) return;
-  const own = state.cities.find(c => c.owner === 0 && c.is_capital) ||
-              state.cities.find(c => c.owner === 0) ||
-              state.units.find(u => u.owner === 0);
+  const pid = SPEC ? state.current : 0;
+  const own = state.cities.find(c => c.owner === pid && c.is_capital) ||
+              state.cities.find(c => c.owner === pid) ||
+              state.units.find(u => u.owner === pid);
   if (own) centerWorld(own.pos);
 }
 function centerOn(pos) { centerWorld(pos); }
+function focusPlayer(pid) {
+  if (!state) return;
+  const anchor = state.cities.find(c => c.owner === pid && c.is_capital) ||
+                 state.cities.find(c => c.owner === pid) ||
+                 state.units.find(u => u.owner === pid);
+  if (!anchor) return;
+  centerWorld(anchor.pos);
+  if (SPEC && anchor.pop !== undefined) { selCity = anchor; drawSide(); }
+}
 area.addEventListener("wheel", ev => {
   ev.preventDefault();
   const r = cv.getBoundingClientRect();
@@ -1216,7 +1554,12 @@ cv.addEventListener("click", ev => {
     if (i >= 0) tacks.splice(i, 1); else tacks.push([pos[0], pos[1]]);
     saveTacks(); draw(); return;
   }
-  if (SPEC) return;
+  if (SPEC) {
+    const city = state.cities.find(c => c.pos[0] === pos[0] && c.pos[1] === pos[1]);
+    selCity = city || null;
+    drawSide();
+    return;
+  }
   if (sel) {
     const atk = state.legal_actions.find(a => a.unit === sel.id &&
       (a.type === "attack" || a.type === "ranged") && key(a.target) === k);
@@ -1296,6 +1639,13 @@ function nextAction() {
   centerOn(sel.pos);
   drawSide(); drawUbar();
 }
+function togglePanel(force) {
+  const hide = force === undefined ? !document.body.classList.contains("sidebar-hidden") : force;
+  document.body.classList.toggle("sidebar-hidden", hide);
+  document.getElementById("paneltoggle").textContent = hide ? "☷" : "☰";
+  document.getElementById("paneltoggle").title = hide ? "Show command deck" : "Hide command deck";
+  setTimeout(resize, 260);
+}
 document.addEventListener("keydown", ev => {
   if (ev.key === "Alt") {
     if (!ev.repeat) altTap = true;
@@ -1315,6 +1665,7 @@ document.addEventListener("keydown", ev => {
   else if (ev.key === "1") nextAction();
   else if (ev.key === "2") { lensOn = !lensOn; tackMode = false; modeline(); draw(); }
   else if (ev.key === "3") { tackMode = !tackMode; lensOn = false; modeline(); draw(); }
+  else if (ev.key.toLowerCase() === "f") togglePanel();
 });
 document.addEventListener("keyup", ev => {
   if (ev.key !== "Alt") return;
@@ -1323,11 +1674,19 @@ document.addEventListener("keyup", ev => {
   altTap = false;
 });
 document.getElementById("endturn").onclick = () => { sel = null; send({type: "end_turn"}); };
+document.getElementById("paneltoggle").onclick = () => togglePanel();
 document.getElementById("specpause").onclick = () => {
   specPaused = !specPaused;
   document.getElementById("specpause").textContent =
-    specPaused ? "▶ Resume (Enter)" : "⏸ Pause (Enter)";
+    specPaused ? "▶ Resume" : "⏸ Pause";
   if (specPaused) clearTimeout(specTimer); else specStep();
+};
+document.getElementById("specstep").onclick = () => {
+  if (!SPEC) return;
+  specPaused = true;
+  clearTimeout(specTimer);
+  document.getElementById("specpause").textContent = "▶ Resume";
+  specStep(true);
 };
 document.getElementById("specspeed").onchange = () => {
   if (!specPaused) scheduleSpec(state);
@@ -1336,6 +1695,7 @@ document.getElementById("newgame").onclick = async () => {
   const np = +document.getElementById("np").value;
   sel = null; selCity = null;
   clearTimeout(specTimer); specPaused = false;
+  document.getElementById("specpause").textContent = "⏸ Pause";
   render(await fetchJSON("/new", { method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({num_players: np, seed: Math.floor(Math.random() * 1e9),
