@@ -4,6 +4,14 @@ use std::collections::BTreeMap;
 
 use crate::{hex, Pos};
 
+/// A district site that has been placed but has not finished construction.
+/// Placement locks both the chosen district and its production cost.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DistrictFoundation {
+    pub district: String,
+    pub cost: f64,
+}
+
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct Tile {
     pub pos: Pos,
@@ -17,6 +25,10 @@ pub struct Tile {
     #[serde(default)]
     pub pillaged: bool,
     pub district: Option<String>,
+    /// Placed districts occupy their tile and count against district limits,
+    /// but do not grant completed-district yields or abilities.
+    #[serde(default)]
+    pub district_foundation: Option<DistrictFoundation>,
     #[serde(default)]
     pub wonder: Option<String>,
     pub owner_city: Option<u32>,
@@ -66,6 +78,7 @@ impl Tile {
             improvement: None,
             pillaged: false,
             district: None,
+            district_foundation: None,
             wonder: None,
             owner_city: None,
             river_edges: [false; 6],

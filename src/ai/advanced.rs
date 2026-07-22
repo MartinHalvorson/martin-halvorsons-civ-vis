@@ -1632,6 +1632,70 @@ impl AdvancedAi {
                     return;
                 }
             }
+
+            let best = g
+                .quick_deals(pid)
+                .into_iter()
+                .filter(|deal| Some(deal.partner) != excluded_partner)
+                .filter(|deal| {
+                    deal.category == "great_work"
+                        && deal.direction == "buy"
+                        && deal.my_value >= 2.0
+                        && deal.partner_value >= 2.0
+                })
+                .max_by(|left, right| {
+                    left.my_value
+                        .min(left.partner_value)
+                        .partial_cmp(&right.my_value.min(right.partner_value))
+                        .unwrap()
+                        .then_with(|| right.partner.cmp(&left.partner))
+                        .then_with(|| right.item.cmp(&left.item))
+                });
+            if let Some(deal) = best {
+                if g.apply(
+                    pid,
+                    &Action::Trade {
+                        player: deal.partner,
+                        offer: deal.offer,
+                        request: deal.request,
+                    },
+                )
+                .is_ok()
+                {
+                    return;
+                }
+            }
+
+            // A Culture objective preserves its own Great Works. If neither
+            // the strategically useful Open Borders direction nor a housed
+            // purchase is available, it may still take the best ordinary
+            // mutually beneficial quote.
+            let best = g
+                .quick_deals(pid)
+                .into_iter()
+                .filter(|deal| Some(deal.partner) != excluded_partner)
+                .filter(|deal| {
+                    !(deal.category == "great_work" && deal.direction == "sell")
+                        && deal.my_value >= 2.0
+                        && deal.partner_value >= 2.0
+                })
+                .max_by(|left, right| {
+                    left.my_value
+                        .min(left.partner_value)
+                        .partial_cmp(&right.my_value.min(right.partner_value))
+                        .unwrap()
+                });
+            if let Some(deal) = best {
+                let _ = g.apply(
+                    pid,
+                    &Action::Trade {
+                        player: deal.partner,
+                        offer: deal.offer,
+                        request: deal.request,
+                    },
+                );
+            }
+            return;
         }
         self.base
             .bilateral_trade_excluding(g, pid, excluded_partner);
@@ -4976,22 +5040,91 @@ impl AdvancedAi {
         self.base.fortify_or_stop(g, pid, uid)
     }
 
+    fn forcing_reply_line(&self, position: &Game, enemy: usize, victim: u32, depth: usize) -> f64 {
+        if depth == 0 || !position.units.contains_key(&victim) {
+            return 0.0;
+        }
+        let victim_hp = position.units[&victim].hp;
+        let victim_pos = position.units[&victim].pos;
+        let replies: Vec<Action> = position
+            .legal_actions(enemy)
+            .into_iter()
+            .filter(|reply| match reply {
+                Action::Attack { target, .. }
+                | Action::Ranged { target, .. }
+                | Action::AirStrike { target, .. }
+                | Action::CityStrike { target, .. }
+                | Action::EncampmentStrike { target, .. } => *target == victim_pos,
+                _ => false,
+            })
+            .collect();
+
+        let mut ordered = Vec::new();
+        for reply in replies {
+            let reply_unit = match &reply {
+                Action::Attack { unit, .. }
+                | Action::Ranged { unit, .. }
+                | Action::AirStrike { unit, .. } => Some(*unit),
+                _ => None,
+            };
+            let reply_hp =
+                reply_unit.and_then(|unit| position.units.get(&unit).map(|candidate| candidate.hp));
+            let mut branch = position.clone();
+            if branch.apply(enemy, &reply).is_err() {
+                continue;
+            }
+            let loss = branch
+                .units
+                .get(&victim)
+                .map(|unit| (victim_hp - unit.hp).max(0) as f64)
+                .unwrap_or(victim_hp as f64 + 35.0);
+            let counter_loss = match (reply_unit, reply_hp) {
+                (Some(unit), Some(hp)) => branch
+                    .units
+                    .get(&unit)
+                    .map(|unit| (hp - unit.hp).max(0) as f64)
+                    .unwrap_or(hp as f64 + 20.0),
+                _ => 0.0,
+            };
+            ordered.push((
+                (loss - 0.35 * counter_loss).max(0.0),
+                format!("{reply:?}"),
+                branch,
+            ));
+        }
+
+        // Chess-style move ordering keeps the extension bounded: examine all
+        // forcing replies at the frontier, but only extend the four strongest
+        // captures/checks into another focus-fire action.
+        ordered.sort_by(|left, right| {
+            right
+                .0
+                .total_cmp(&left.0)
+                .then_with(|| left.1.cmp(&right.1))
+        });
+        ordered
+            .into_iter()
+            .take(4)
+            .map(|(immediate, _, branch)| {
+                immediate + self.forcing_reply_line(&branch, enemy, victim, depth - 1)
+            })
+            .fold(0.0_f64, f64::max)
+    }
+
     /// Bounded quiescence-style reply search for a proposed attack. The
     /// ordinary exchange evaluator accounts for the target's counter-damage;
     /// this extension makes the move on a cloned position, refreshes only the
-    /// enemy's forcing combat actions, and prices its single best reply to the
-    /// attacking unit. It therefore catches poisoned captures without turning
-    /// every unit decision into an unbounded turn search.
+    /// enemy's forcing combat actions, and prices a two-action focus-fire
+    /// sequence. It catches poisoned captures and coordinated ranged kills
+    /// without turning every unit decision into an unbounded turn search.
     fn forcing_reply_penalty(&self, g: &Game, pid: usize, uid: u32, action: &Action) -> f64 {
         let mut after = g.clone();
         if after.apply(pid, action).is_err() {
             return 1_000.0;
         }
-        let Some(victim) = after.units.get(&uid).cloned() else {
+        if !after.units.contains_key(&uid) {
             return 135.0;
-        };
-        let victim_hp = victim.hp;
-        let victim_pos = victim.pos;
+        }
         let enemies: Vec<usize> = after
             .players
             .iter()
@@ -5025,46 +5158,7 @@ impl AdvancedAi {
                 city.encampment_struck = false;
             }
 
-            let replies: Vec<Action> = reply_position
-                .legal_actions(enemy)
-                .into_iter()
-                .filter(|reply| match reply {
-                    Action::Attack { target, .. }
-                    | Action::Ranged { target, .. }
-                    | Action::AirStrike { target, .. }
-                    | Action::CityStrike { target, .. }
-                    | Action::EncampmentStrike { target, .. } => *target == victim_pos,
-                    _ => false,
-                })
-                .collect();
-            for reply in replies {
-                let reply_unit = match &reply {
-                    Action::Attack { unit, .. }
-                    | Action::Ranged { unit, .. }
-                    | Action::AirStrike { unit, .. } => Some(*unit),
-                    _ => None,
-                };
-                let reply_hp =
-                    reply_unit.and_then(|unit| reply_position.units.get(&unit).map(|unit| unit.hp));
-                let mut branch = reply_position.clone();
-                if branch.apply(enemy, &reply).is_err() {
-                    continue;
-                }
-                let loss = branch
-                    .units
-                    .get(&uid)
-                    .map(|unit| (victim_hp - unit.hp).max(0) as f64)
-                    .unwrap_or(victim_hp as f64 + 35.0);
-                let counter_loss = match (reply_unit, reply_hp) {
-                    (Some(unit), Some(hp)) => branch
-                        .units
-                        .get(&unit)
-                        .map(|unit| (hp - unit.hp).max(0) as f64)
-                        .unwrap_or(hp as f64 + 20.0),
-                    _ => 0.0,
-                };
-                worst_reply = worst_reply.max((loss - 0.35 * counter_loss).max(0.0));
-            }
+            worst_reply = worst_reply.max(self.forcing_reply_line(&reply_position, enemy, uid, 2));
         }
         worst_reply
     }
@@ -7529,6 +7623,83 @@ mod tests {
     }
 
     #[test]
+    fn culture_quick_deals_buy_housed_great_works_and_preserve_our_own() {
+        let mut game = Game::new_full(2, 20, 12, 79_005, 200, 0, false);
+        for pid in 0..2 {
+            game.current = pid;
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+            let city = game.player_city_ids(pid)[0];
+            game.cities
+                .get_mut(&city)
+                .unwrap()
+                .buildings
+                .push("amphitheater".to_string());
+            game.players[pid].gold = 1_000.0;
+        }
+        game.current = 0;
+        game.players[1]
+            .counters
+            .insert("great_work:writing".to_string(), 2);
+        game.turn = 6;
+
+        AdvancedAi::targeting(VictoryTarget::Culture).strategic_bilateral_trade(
+            &mut game,
+            0,
+            None,
+            GrandStrategy::Expansion,
+        );
+        assert_eq!(game.players[0].counters["great_work:writing"], 1);
+        assert_eq!(game.players[1].counters["great_work:writing"], 1);
+
+        let mut preserve = Game::new_full(2, 20, 12, 79_006, 200, 0, false);
+        for pid in 0..2 {
+            preserve.current = pid;
+            let settler = preserve
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| preserve.units[unit].kind == "settler")
+                .unwrap();
+            preserve
+                .apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+            let city = preserve.player_city_ids(pid)[0];
+            preserve
+                .cities
+                .get_mut(&city)
+                .unwrap()
+                .buildings
+                .push("amphitheater".to_string());
+            preserve.players[pid].gold = 1_000.0;
+        }
+        preserve.current = 0;
+        preserve.players[0]
+            .counters
+            .insert("great_work:writing".to_string(), 2);
+        preserve.turn = 6;
+        AdvancedAi::targeting(VictoryTarget::Culture).strategic_bilateral_trade(
+            &mut preserve,
+            0,
+            None,
+            GrandStrategy::Expansion,
+        );
+        assert_eq!(preserve.players[0].counters["great_work:writing"], 2);
+        assert_eq!(
+            preserve.players[1]
+                .counters
+                .get("great_work:writing")
+                .copied()
+                .unwrap_or(0),
+            0
+        );
+    }
+
+    #[test]
     fn explicit_targets_choose_synergistic_secret_societies() {
         for (index, (target, expected)) in [
             (VictoryTarget::Science, "hermetic_order"),
@@ -7954,7 +8125,7 @@ mod tests {
         let mut g = Game::new_full(2, 24, 16, 8_117, 80, 0, false);
         g.at_war.insert((0, 1));
         g.current = 0;
-        let (anchor, risky, safe, reply_square) = g
+        let (anchor, risky, safe, reply_squares) = g
             .map
             .tiles
             .iter()
@@ -7987,17 +8158,22 @@ mod tests {
                         if risky == safe || g.wdist(*risky, *safe) < 2 {
                             continue;
                         }
-                        if let Some(reply) = g.wdisk(*risky, 2).into_iter().find(|reply| {
-                            g.wdist(*risky, *reply) == 2
-                                && g.wdist(*safe, *reply) > 2
-                                && *reply != *anchor
-                                && g.map.get(*reply).is_some_and(|tile| {
-                                    g.rules.is_passable(tile) && !g.rules.is_water(tile)
-                                })
-                                && g.units_at(*reply).is_empty()
-                                && g.city_at(*reply).is_none()
-                        }) {
-                            return Some((*anchor, *risky, *safe, reply));
+                        let replies: Vec<Pos> = g
+                            .wdisk(*risky, 2)
+                            .into_iter()
+                            .filter(|reply| {
+                                g.wdist(*risky, *reply) == 2
+                                    && g.wdist(*safe, *reply) > 2
+                                    && *reply != *anchor
+                                    && g.map.get(*reply).is_some_and(|tile| {
+                                        g.rules.is_passable(tile) && !g.rules.is_water(tile)
+                                    })
+                                    && g.units_at(*reply).is_empty()
+                                    && g.city_at(*reply).is_none()
+                            })
+                            .collect();
+                        if replies.len() >= 2 {
+                            return Some((*anchor, *risky, *safe, replies));
                         }
                     }
                 }
@@ -8016,7 +8192,7 @@ mod tests {
         let safe_defender = g.spawn_test_unit("warrior", 1, safe);
         g.units.get_mut(&risky_defender).unwrap().hp = 1;
         g.units.get_mut(&safe_defender).unwrap().hp = 1;
-        g.spawn_test_unit("archer", 1, reply_square);
+        g.spawn_test_unit("archer", 1, reply_squares[0]);
 
         let risky_action = Action::Attack {
             unit: attacker,
@@ -8027,8 +8203,14 @@ mod tests {
             target: safe,
         };
         let mut ai = AdvancedAi::legacy();
+        let single_reply = ai.forcing_reply_penalty(&g, 0, attacker, &risky_action);
+        g.spawn_test_unit("archer", 1, reply_squares[1]);
         let risky_reply = ai.forcing_reply_penalty(&g, 0, attacker, &risky_action);
         let safe_reply = ai.forcing_reply_penalty(&g, 0, attacker, &safe_action);
+        assert!(
+            risky_reply > single_reply + 5.0,
+            "the reply extension must price coordinated focus fire"
+        );
         assert!(
             risky_reply > safe_reply + 5.0,
             "the ranged recapture must make the exposed kill materially worse"

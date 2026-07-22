@@ -58,9 +58,12 @@ their actual adjacency, specialist and Great Person yields, housing, amenities,
 Loyalty, air capacity, defenses, appeal, and one-time effects. Housing value is
 derived from the post-build city state, including Aqueduct water access and the
 appeal bands for Neighborhoods and Preserves; non-specialty districts are not
-subject to an invented AI population cap. When an Aqueduct, Dam, or Canal is
-under construction, a Military Engineer routes to its foundation and spends
-charges there instead of being absorbed into an army's support screen.
+subject to an invented AI population cap. Search sees each district's
+progress-scaled, underbuilt-discounted cost; once a site is selected, that
+foundation is offered for resumption ahead of fresh sites and retains its
+locked cost through later research. When an Aqueduct, Dam, or Canal is under
+construction, a Military Engineer routes to its foundation and spends charges
+there instead of being absorbed into an army's support screen.
 
 ## Victory targeting and full-game validation
 
@@ -75,9 +78,11 @@ network, recruits cultural Great People, trains and routes capacity-aware
 Archaeologists, reaches the Conservation/Professional Sports tourism unlocks,
 improves tourism tiles, connects every rival with a Tourism-amplifying Trade
 Route before duplicating links, buys the direction of Open Borders that boosts
-its own pressure, and sends promoted Rock Bands to the best risk-adjusted
-foreign venues. It also matches an available Tier 3/4 government used by the
-leading Culture defender to remove the conflicting-government penalty;
+its own pressure, buys compatible Great Works from civilizations with genuine
+duplicates while preserving its own collection, and sends promoted Rock Bands
+to the best risk-adjusted foreign venues. It also matches an available Tier
+3/4 government used by the leading Culture defender to remove the
+conflicting-government penalty;
 Religion founds, enhances, defends,
 and spreads its faith while reconverting its own core first;
 Diplomacy prioritizes Favor, envoys, alliances, city-state liberation, and

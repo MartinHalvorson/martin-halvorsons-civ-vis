@@ -5260,10 +5260,12 @@ mod tests {
             tile.river_edges[(center_edge + 1) % 6] = true;
         }
         game.players[0].techs.insert("engineering".to_string());
-        game.cities.get_mut(&city).unwrap().queue = vec![Item::District {
+        let aqueduct = Item::District {
             district: "aqueduct".to_string(),
             pos: site,
-        }];
+        };
+        game.cities.get_mut(&city).unwrap().queue = vec![aqueduct.clone()];
+        let district_cost = game.item_cost_for_city(0, city, &aqueduct);
         let engineer = game.spawn_test_unit("military_engineer", 0, center);
         let mut ai = BasicAi::new();
 
@@ -5275,7 +5277,7 @@ mod tests {
         assert!(game.can_contribute_district(0, engineer, city));
         assert!(ai.military_engineer_step(&mut game, 0, engineer));
         assert!(
-            (game.cities[&city].production - 7.2).abs() < 1e-9,
+            (game.cities[&city].production - district_cost * 0.2).abs() < 1e-9,
             "production was {}",
             game.cities[&city].production
         );

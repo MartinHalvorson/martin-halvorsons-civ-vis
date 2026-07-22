@@ -451,6 +451,7 @@
       <button class="trade-filter" data-filter="buy" onclick="setTradeFilter('buy')">Buy</button>
       <button class="trade-filter" data-filter="luxury" onclick="setTradeFilter('luxury')">Luxuries</button>
       <button class="trade-filter" data-filter="strategic" onclick="setTradeFilter('strategic')">Strategic</button>
+      <button class="trade-filter" data-filter="great_work" onclick="setTradeFilter('great_work')">Great Works</button>
       <span id="tradecount"></span>
     </div>
     <div id="tradelist"></div>
@@ -2188,6 +2189,8 @@ function drawPlayerHud() {
 function tradeItemIcon(item) {
   if (item === "diplomatic_favor") return "⚜";
   if (item === "open_borders") return "🗺";
+  const greatWorks = {writing:"✒", art:"▣", religious_art:"▣", artifact:"🏺", music:"♫", relic:"✟"};
+  if (greatWorks[item]) return greatWorks[item];
   return RES_ICON[item] || ({niter:"✹", coal:"◆", oil:"◉", aluminum:"◇", uranium:"☢"}[item]) || "◈";
 }
 
@@ -2201,6 +2204,9 @@ function dealTerms(items, kind) {
     const resourceClass = (state?.me?.resources || []).find(entry => entry.id === resource)?.class;
     const duration = resourceClass === "strategic" ? "" : " ×30";
     terms.push(`<span class="term ${kind}">${tradeItemIcon(resource)} ${amount} ${titleCase(resource)}${duration}</span>`);
+  }
+  for (const [work, amount] of Object.entries(items.great_works || {})) {
+    terms.push(`<span class="term ${kind}">${tradeItemIcon(work)} ${amount} ${titleCase(work)} Great Work</span>`);
   }
   if (items.open_borders) terms.push(`<span class="term ${kind}">🗺 Open Borders ×30</span>`);
   return terms;
