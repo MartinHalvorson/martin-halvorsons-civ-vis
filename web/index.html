@@ -1146,6 +1146,7 @@ document.getElementById("zhome").onclick = centerHome;
 
 // ---------------------------------------------------------------- input
 let dragState = null, dragMoved = false, rdrag = null, rdragTo = null;
+let altTap = false; // tapping Alt (no drag) resets the map to north-up
 cv.addEventListener("mousedown", ev => {
   const r = cv.getBoundingClientRect();
   if (ev.button === 0) {
@@ -1169,7 +1170,8 @@ window.addEventListener("mousemove", ev => {
     if (Math.abs(dx) + Math.abs(dy) > 5) dragMoved = true;
     if (dragMoved && dragState.rotate) {
       // alt+drag: rotate the world; the angle persists until rotated again
-      setRot(dragState.rot0 + dx * 0.008);
+      altTap = false;
+      setRot(dragState.rot0 - dx * 0.008);
       draw(); drawMini();
     } else if (dragMoved) {
       const dvx = dx / cam.scale, dvy = dy / cam.scale / YS;
@@ -1295,6 +1297,11 @@ function nextAction() {
   drawSide(); drawUbar();
 }
 document.addEventListener("keydown", ev => {
+  if (ev.key === "Alt") {
+    if (!ev.repeat) altTap = true;
+    ev.preventDefault();
+    return;
+  }
   const tag = (document.activeElement || {}).tagName;
   if (tag === "SELECT" || tag === "INPUT" || tag === "TEXTAREA") return;
   if (ev.key === "Enter") {
@@ -1308,6 +1315,12 @@ document.addEventListener("keydown", ev => {
   else if (ev.key === "1") nextAction();
   else if (ev.key === "2") { lensOn = !lensOn; tackMode = false; modeline(); draw(); }
   else if (ev.key === "3") { tackMode = !tackMode; lensOn = false; modeline(); draw(); }
+});
+document.addEventListener("keyup", ev => {
+  if (ev.key !== "Alt") return;
+  ev.preventDefault();
+  if (altTap) { setRot(0); draw(); drawMini(); }  // tap = back to north-up
+  altTap = false;
 });
 document.getElementById("endturn").onclick = () => { sel = null; send({type: "end_turn"}); };
 document.getElementById("specpause").onclick = () => {
