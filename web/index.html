@@ -338,9 +338,8 @@
     <div class="sec">
       <h2>Map style</h2>
       <select id="viewsel">
-        <option value="beautiful">Cinematic terrain</option>
-        <option value="simple">Strategic map</option>
-        <option value="minimal">Performance mode</option>
+        <option value="cinematic">Cinematic terrain</option>
+        <option value="strategic">Strategic map</option>
       </select>
       <div class="shortcut-grid" style="margin-top:11px">
         <span><kbd>1</kbd>Next unit</span><span><kbd>2</kbd>Settler lens</span>
@@ -410,7 +409,10 @@ let lensOn = false, tackMode = false, tacks = [], lastSeed = null, cycleIdx = -1
 let SPEC = false, specPaused = false, specTimer = null, specBusy = false;
 let worldEvents = [], lastLeader = null;
 let TMAP = new Map();
-let VIEW = localStorage.getItem("civvis-view") || "beautiful";
+let VIEW = localStorage.getItem("civvis-view") || "cinematic";
+// migrate legacy mode names (performance mode lives on as headless sims)
+if (VIEW === "beautiful") VIEW = "cinematic";
+if (VIEW === "simple" || VIEW === "minimal") VIEW = "strategic";
 const cam = { x: 0, y: 0, scale: 1 };
 const cv = document.getElementById("map"), cx = cv.getContext("2d");
 const mini = document.getElementById("mini"), mx2 = mini.getContext("2d");
@@ -454,7 +456,7 @@ function hexXY(q, r) {
   return [COSR * wx - SINR * wy, (SINR * wx + COSR * wy) * YS];
 }
 function elev(t) {
-  if (VIEW !== "beautiful") return 0;
+  if (VIEW !== "cinematic") return 0;
   if (t.terrain === "ocean") return -6;
   if (t.terrain === "coast") return -4;
   let e = 7;
@@ -769,7 +771,7 @@ function drawJungleTree(tx, ty, s, hv) {
 
 function draw() {
   if (!state) return;
-  const beau0 = VIEW === "beautiful";
+  const beau0 = VIEW === "cinematic";
   cx.setTransform(1, 0, 0, 1, 0, 0);
   cx.fillStyle = beau0 ? "#a08d64" : "#0a0e14";
   cx.fillRect(0, 0, cv.width, cv.height);
@@ -811,7 +813,7 @@ function draw() {
     hexXY(a.pos[0], a.pos[1])[1] - hexXY(b.pos[0], b.pos[1])[1]);
   const visSet = new Set(state.visible.map(key));
   const campSet = new Set(state.camps.map(key));
-  const beau = VIEW === "beautiful", minim = VIEW === "minimal";
+  const beau = VIEW === "cinematic";
   const hl = {};
   if (sel) {
     for (const p of (sel.reachable || [])) hl[key(p)] = 1;
@@ -909,30 +911,28 @@ function draw() {
       }
       continue;
     }
-    if (minim) {
-      if (t.district) { cx.fillStyle = DISTRICT_COLOR[t.district] || "#ddd";
-        cx.fillRect(x - 5, y - 4, 10, 8); }
-      continue;
-    }
     if (t.hills && beau) {
       // soft rolling rises in the terrain's own color (Civ 6 style)
       const base = TERRAIN[t.terrain] || "#888";
-      for (const [hx, hy, hw2, hh2] of [[-7, -3, 9.5, 5.5], [5, -6, 8.5, 5], [1, 3, 10.5, 6]]) {
-        cx.fillStyle = shade(base, 0.86);
-        cx.beginPath(); cx.ellipse(x + hx, y + hy + 1.6, hw2, hh2, 0, Math.PI, 0);
+      for (const [hx, hy, hw2, hh2] of [[-8, -3, 13, 8], [7, -7, 11.5, 7], [1, 4, 14.5, 8.5]]) {
+        cx.fillStyle = shade(base, 0.72); // deep shadow base
+        cx.beginPath(); cx.ellipse(x + hx, y + hy + 2.4, hw2, hh2, 0, Math.PI, 0);
         cx.fill();
-        cx.fillStyle = shade(base, 1.16);
+        cx.fillStyle = shade(base, 1.22);
         cx.beginPath(); cx.ellipse(x + hx, y + hy, hw2, hh2, 0, Math.PI, 0);
         cx.fill();
-        cx.fillStyle = shade(base, 1.34);
-        cx.beginPath(); cx.ellipse(x + hx - 1.5 * LITF, y + hy - 0.8,
-                                   hw2 * 0.5, hh2 * 0.45, 0, Math.PI, 0);
+        cx.fillStyle = shade(base, 1.5); // sunlit crest
+        cx.beginPath(); cx.ellipse(x + hx - 2 * LITF, y + hy - 1,
+                                   hw2 * 0.55, hh2 * 0.5, 0, Math.PI, 0);
         cx.fill();
+        cx.strokeStyle = "#00000042"; cx.lineWidth = 1.4; // crest definition
+        cx.beginPath(); cx.ellipse(x + hx, y + hy, hw2, hh2, 0, Math.PI, 0);
+        cx.stroke();
       }
     } else if (t.hills) {
-      cx.strokeStyle = "#00000055"; cx.lineWidth = 1.8;
-      cx.beginPath(); cx.arc(x - 6, y - 7, 5, Math.PI, 0);
-      cx.arc(x + 5, y - 7, 5, Math.PI, 0); cx.stroke();
+      cx.strokeStyle = "#00000066"; cx.lineWidth = 2.4;
+      cx.beginPath(); cx.arc(x - 7, y - 7, 6.5, Math.PI, 0);
+      cx.arc(x + 6, y - 7, 6.5, Math.PI, 0); cx.stroke();
     }
     if (t.terrain === "desert" && !t.feature && beau) {
       // dune ridges: light crest over shadow
@@ -951,12 +951,12 @@ function draw() {
       if (beau) {
         // dense cluster of small individual trees (Civ 6 woods)
         const trees = [];
-        for (let i = 0; i < 7; i++) {
+        for (let i = 0; i < 6; i++) {
           const h1 = hash2(t.pos[0] * 5 + i * 3, t.pos[1] * 7 + i);
           const h2 = hash2(t.pos[0] + i * 11, t.pos[1] * 3 + i * 5);
-          trees.push([x + (h1 - 0.5) * S * 1.25,
-                      y + (h2 - 0.5) * S * 0.8 + 4,
-                      0.7 + h1 * 0.55, h2]);
+          trees.push([x + (h1 - 0.5) * S * 1.3,
+                      y + (h2 - 0.5) * S * 0.85 + 4,
+                      1.1 + h1 * 0.7, h2]);
         }
         trees.sort((a, b) => a[1] - b[1]);
         for (const [tx, ty, sc, hv] of trees) {
@@ -969,42 +969,42 @@ function draw() {
           const ang = hsh * 6.28;
           const tx = x + Math.cos(ang) * 9, ty = y + Math.sin(ang) * 6 + 5;
           cx.fillStyle = jungle ? "#1d5c33" : "#1e4d24";
-          tri(tx - 5, ty, tx, ty - 11, tx + 5, ty);
+          tri(tx - 7, ty, tx, ty - 14, tx + 7, ty);
         }
       }
     } else if (t.feature === "marsh") {
-      cx.strokeStyle = "#2c6b4f"; cx.lineWidth = 1.5;
+      cx.strokeStyle = "#2c6b4f"; cx.lineWidth = 2.2;
       for (let i = -1; i <= 1; i++) { cx.beginPath();
-        cx.moveTo(x + i * 7, y + 8); cx.lineTo(x + i * 7, y - 1); cx.stroke(); }
+        cx.moveTo(x + i * 8, y + 9); cx.lineTo(x + i * 8, y - 3); cx.stroke(); }
     } else if (t.feature === "oasis") {
       cx.fillStyle = "#3d7aa6"; cx.beginPath();
-      cx.ellipse(x, y + 3, 7, 4.5, 0, 0, 7); cx.fill();
-      cx.font = "10px sans-serif"; cx.fillText("🌴", x + 6, y - 4);
+      cx.ellipse(x, y + 3, 8.5, 5.5, 0, 0, 7); cx.fill();
+      cx.font = "13px sans-serif"; cx.fillText("🌴", x + 7, y - 5);
     }
     if (t.improvement === "barbarian_camp" || campSet.has(k)) {
-      cx.font = "15px sans-serif"; cx.fillText("⛺", x, y);
+      cx.font = "18px sans-serif"; cx.fillText("⛺", x, y);
     } else if (t.improvement === "farm") {
       cx.strokeStyle = "#e8d98055"; cx.lineWidth = 2;
       for (let i = -1; i <= 1; i++) { cx.beginPath();
         cx.moveTo(x - 8, y + i * 4 + 2); cx.lineTo(x + 8, y + i * 4 + 2); cx.stroke(); }
     } else if (t.improvement === "mine") {
-      cx.font = "11px sans-serif"; cx.fillText("⛏", x, y + 6);
+      cx.font = "14px sans-serif"; cx.fillText("⛏", x, y + 5);
     } else if (t.improvement) {
       cx.fillStyle = "#5a4632"; cx.fillRect(x - 4, y + 5, 8, 5);
     }
     if (t.resource) {
       // Civ 6-style white-ringed resource badge
-      cx.fillStyle = "#1d2418c8";
-      cx.beginPath(); cx.arc(x + 10, y + 9, 7.5, 0, 7); cx.fill();
-      cx.strokeStyle = "#f6f2e4d8"; cx.lineWidth = 1.6; cx.stroke();
-      cx.font = "9.5px sans-serif";
+      cx.fillStyle = "#1d2418d2";
+      cx.beginPath(); cx.arc(x + 10, y + 9, 9.5, 0, 7); cx.fill();
+      cx.strokeStyle = "#f6f2e4e8"; cx.lineWidth = 2; cx.stroke();
+      cx.font = "12px sans-serif";
       cx.fillText(RES_ICON[t.resource] || "●", x + 10, y + 9.5);
     }
     if (t.district) {
       cx.fillStyle = DISTRICT_COLOR[t.district] || "#ddd";
-      cx.strokeStyle = "#10151d"; cx.lineWidth = 1.4;
-      cx.beginPath(); cx.roundRect(x - 8, y - 6, 16, 12, 3); cx.fill(); cx.stroke();
-      cx.fillStyle = "#10151d"; cx.font = "bold 9px sans-serif";
+      cx.strokeStyle = "#10151d"; cx.lineWidth = 1.6;
+      cx.beginPath(); cx.roundRect(x - 10, y - 7, 20, 14, 3.5); cx.fill(); cx.stroke();
+      cx.fillStyle = "#10151d"; cx.font = "bold 11px sans-serif";
       cx.fillText(t.district[0].toUpperCase(), x, y + 0.5);
     }
   }
@@ -1082,7 +1082,7 @@ function draw() {
     cx.fillStyle = "#8a2f2b";
     cx.beginPath(); cx.moveTo(x - 2, y - 10); cx.lineTo(x + 3, y - 6);
     cx.lineTo(x - 7, y - 6); cx.closePath(); cx.fill();
-    if (!minim) {
+    {
       // parchment-style nameplate
       const name = (c.is_capital ? "★ " : "") + c.name.toUpperCase();
       cx.font = "bold 10px Georgia, serif";
