@@ -60,6 +60,9 @@ TABLE_KEYS = {
     "Districts": "DistrictType",
     "TechnologyPrereqs": ("Technology", "PrereqTech"),
     "CivicPrereqs": ("Civic", "PrereqCivic"),
+    "Building_YieldChanges": ("BuildingType", "YieldType"),
+    "Governments": "GovernmentType",
+    "Government_SlotCounts": ("GovernmentType", "GovernmentSlotType"),
     "Terrains": "TerrainType",
     "Features": "FeatureType",
     "Resources": "ResourceType",
@@ -79,7 +82,7 @@ TABLE_KEYS = {
 FILE_PATTERN = re.compile(
     r"^(Expansion[12]_)?"
     r"(Units|Technologies|Civics|Buildings|Districts"
-    r"|Terrains|Features|Resources|Improvements)"
+    r"|Terrains|Features|Resources|Improvements|Governments)"
     r"(_Major)?\.xml$",
     re.IGNORECASE,
 )
@@ -390,6 +393,37 @@ def project_improvements(database: Database) -> dict[str, dict]:
     )
 
 
+def project_building_yields(database: Database) -> dict[str, dict]:
+    return project_yields(
+        database, "Building_YieldChanges", "BuildingType", "BUILDING_", "Buildings"
+    )
+
+
+SLOTS = ("military", "economic", "diplomatic", "wildcard")
+
+
+def project_governments(database: Database) -> dict[str, dict]:
+    slots: dict[str, dict] = {}
+    for row in database.rows("Government_SlotCounts"):
+        name = slug(row["GovernmentType"], "GOVERNMENT_")
+        slot = slug(row["GovernmentSlotType"], "SLOT_")
+        slots.setdefault(name, {})[slot] = number(row.get("NumSlots"))
+    projected = {}
+    for row in database.rows("Governments"):
+        name = slug(row["GovernmentType"], "GOVERNMENT_")
+        entry = {
+            "influence_per_turn": number(row.get("InfluencePointsPerTurn")),
+            "influence_threshold": number(row.get("InfluencePointsThreshold")),
+            "envoys_per_threshold": number(row.get("InfluenceTokensPerThreshold")),
+        }
+        for slot in SLOTS:
+            entry[f"slot_{slot}"] = slots.get(name, {}).get(slot, 0)
+        if civic := row.get("PrereqCivic"):
+            entry["civic"] = slug(civic, "CIVIC_")
+        projected[name] = entry
+    return projected
+
+
 def project_improvement_upgrades(database: Database) -> dict[str, dict]:
     """Tech- and civic-gated improvement yields, keyed the way CIVVIS keys them.
 
@@ -506,6 +540,25 @@ def ours_improvement_upgrades() -> dict[str, dict]:
         }
         if kept:
             out[node] = kept
+    return out
+
+
+def ours_governments() -> dict[str, dict]:
+    out = {}
+    for name, entry in load_ours("governments").items():
+        row = {
+            field: entry.get(field, 0)
+            for field in (
+                "influence_per_turn",
+                "influence_threshold",
+                "envoys_per_threshold",
+            )
+        }
+        for slot in SLOTS:
+            row[f"slot_{slot}"] = (entry.get("slots") or {}).get(slot, 0)
+        if civic := entry.get("civic"):
+            row["civic"] = civic
+        out[name] = row
     return out
 
 
@@ -652,6 +705,8 @@ def main() -> int:
         ("Features", ours_yields("features"), project_features(database)),
         ("Resources", ours_yields("resources"), project_resources(database)),
         ("Improvements", ours_yields("improvements"), project_improvements(database)),
+        ("BuildingYields", ours_yields("buildings"), project_building_yields(database)),
+        ("Governments", ours_governments(), project_governments(database)),
         (
             "ImprovementUpgrades",
             ours_improvement_upgrades(),
