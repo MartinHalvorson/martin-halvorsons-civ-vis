@@ -342,3 +342,172 @@ fn valletta_purchases_city_center_and_encampment_buildings_with_discounted_walls
     game.players[1].alliances.clear();
     assert_eq!(game.building_faith_purchase_cost(0, city, "granary"), None);
 }
+
+#[test]
+fn final_patch_envoy_thresholds_follow_active_building_tiers() {
+    let (mut game, cities) = game_with_capitals(1, 89_007);
+    let city = cities[0];
+    let scientific = add_city_state(&mut game, "Hattusa");
+    game.cities.get_mut(&city).unwrap().buildings.extend(
+        [
+            "library",
+            "university",
+            "research_lab",
+            "consulate",
+            "chancery",
+        ]
+        .into_iter()
+        .map(str::to_string),
+    );
+
+    game.players[0].envoys = vec![(scientific, 1)];
+    assert_close(game.envoy_yields(0, &game.cities[&city]).science, 2.0);
+    game.players[0].envoys = vec![(scientific, 3)];
+    assert_close(game.envoy_yields(0, &game.cities[&city]).science, 6.0);
+    game.players[0].envoys = vec![(scientific, 6)];
+    assert_close(game.envoy_yields(0, &game.cities[&city]).science, 12.0);
+
+    game.cities
+        .get_mut(&city)
+        .unwrap()
+        .pillaged_buildings
+        .insert("library".to_string());
+    assert_close(game.envoy_yields(0, &game.cities[&city]).science, 11.0);
+}
+
+#[test]
+fn trade_envoys_double_each_independent_commercial_and_harbor_tier() {
+    let (mut game, cities) = game_with_capitals(1, 89_008);
+    let city = cities[0];
+    let trade = add_city_state(&mut game, "Zanzibar");
+    game.cities.get_mut(&city).unwrap().buildings.extend(
+        [
+            "market",
+            "lighthouse",
+            "bank",
+            "shipyard",
+            "stock_exchange",
+            "seaport",
+            "consulate",
+            "chancery",
+        ]
+        .into_iter()
+        .map(str::to_string),
+    );
+
+    game.players[0].envoys = vec![(trade, 1)];
+    assert_close(game.envoy_yields(0, &game.cities[&city]).gold, 6.0);
+    game.players[0].envoys = vec![(trade, 3)];
+    assert_close(game.envoy_yields(0, &game.cities[&city]).gold, 18.0);
+    game.players[0].envoys = vec![(trade, 6)];
+    assert_close(game.envoy_yields(0, &game.cities[&city]).gold, 36.0);
+}
+
+#[test]
+fn production_envoys_obey_unit_and_infrastructure_queues() {
+    let (mut game, cities) = game_with_capitals(1, 89_009);
+    let city = cities[0];
+    let state = add_city_state(&mut game, "Carthage");
+    game.players[0].envoys = vec![(state, 6)];
+    game.cities.get_mut(&city).unwrap().buildings.extend(
+        [
+            "barracks",
+            "armory",
+            "military_academy",
+            "consulate",
+            "chancery",
+        ]
+        .into_iter()
+        .map(str::to_string),
+    );
+    game.cities.get_mut(&city).unwrap().queue = vec![Item::Unit {
+        unit: "warrior".to_string(),
+    }];
+    assert_close(game.envoy_yields(0, &game.cities[&city]).production, 12.0);
+    game.cities.get_mut(&city).unwrap().queue = vec![Item::Building {
+        building: "granary".to_string(),
+    }];
+    assert_close(game.envoy_yields(0, &game.cities[&city]).production, 0.0);
+
+    game.players[state].civ = "Auckland".to_string();
+    game.cities.get_mut(&city).unwrap().buildings = [
+        "workshop",
+        "factory",
+        "coal_power_plant",
+        "consulate",
+        "chancery",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+    assert_close(game.envoy_yields(0, &game.cities[&city]).production, 12.0);
+    game.cities.get_mut(&city).unwrap().queue = vec![Item::Unit {
+        unit: "warrior".to_string(),
+    }];
+    assert_close(game.envoy_yields(0, &game.cities[&city]).production, 0.0);
+}
+
+#[test]
+fn kilwa_scales_total_type_yields_and_matching_production_categories() {
+    let (mut game, cities) = game_with_capitals(1, 89_010);
+    let host = cities[0];
+    let second_position = game
+        .map
+        .tiles
+        .iter()
+        .find_map(|(position, tile)| {
+            (tile.owner_city.is_none()
+                && game.rules.is_passable(tile)
+                && !game.rules.is_water(tile)
+                && game.wdist(game.cities[&host].pos, *position) >= 4)
+                .then_some(*position)
+        })
+        .unwrap();
+    let second = game.found_city_for(0, second_position, Some("Kilwa Reach".to_string()));
+    let first_state = add_city_state(&mut game, "Hattusa");
+    let second_state = add_city_state(&mut game, "Stockholm");
+    game.players[0].envoys = vec![(first_state, 3), (second_state, 3)];
+    let host_position = game.cities[&host].pos;
+    game.cities
+        .get_mut(&host)
+        .unwrap()
+        .wonders
+        .insert("kilwa_kisiwani".to_string(), host_position);
+
+    let mut without_kilwa = game.clone();
+    without_kilwa
+        .cities
+        .get_mut(&host)
+        .unwrap()
+        .wonders
+        .remove("kilwa_kisiwani");
+    assert_close(
+        game.city_yields(host).science,
+        without_kilwa.city_yields(host).science * 1.30,
+    );
+    assert_close(
+        game.city_yields(second).science,
+        without_kilwa.city_yields(second).science * 1.15,
+    );
+
+    game.players[first_state].civ = "Kabul".to_string();
+    game.players[second_state].civ = "Carthage".to_string();
+    let unit = Item::Unit {
+        unit: "warrior".to_string(),
+    };
+    let mut no_production_kilwa = game.clone();
+    no_production_kilwa
+        .cities
+        .get_mut(&host)
+        .unwrap()
+        .wonders
+        .remove("kilwa_kisiwani");
+    assert_close(
+        game.item_prod_mult(0, host, Some(&unit)),
+        no_production_kilwa.item_prod_mult(0, host, Some(&unit)) + 0.30,
+    );
+    assert_close(
+        game.item_prod_mult(0, second, Some(&unit)),
+        no_production_kilwa.item_prod_mult(0, second, Some(&unit)) + 0.15,
+    );
+}

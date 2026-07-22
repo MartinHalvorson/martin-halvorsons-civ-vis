@@ -255,8 +255,9 @@ pub struct DistrictSpec {
     pub specialty: bool,
     #[serde(default = "default_true")]
     pub buildable: bool,
-    /// `null` means that a city may construct multiple copies (Neighborhood
-    /// and Canal); omitted entries default to the normal one-per-city rule.
+    /// `null` means that a city may construct multiple copies (for example
+    /// Neighborhoods, Canals, eligible Dams, and Spaceports); omitted entries
+    /// default to the normal one-per-city rule.
     #[serde(default = "default_one_limit")]
     pub max_per_city: Option<usize>,
     /// `null` means no empire-wide cap. Government Plaza and Diplomatic

@@ -906,19 +906,43 @@ mod tests {
             .is_err());
         // a road was laid toward the destination
         assert!(g.map.tiles.values().any(|t| t.road));
-        // envoys: +2 of the type yield in the capital at 1 envoy
+        // Final-patch envoys: +1 of a non-trade type yield in the Capital at
+        // 1 envoy (trade city-states grant +2 Gold instead).
         let minor = g
             .players
             .iter()
             .find(|p| p.is_minor && !p.is_barbarian)
             .expect("city-state")
             .id;
+        match g.players[minor].civ.as_str() {
+            "Kabul" | "Carthage" | "Valletta" => {
+                g.cities.get_mut(&cap).unwrap().queue = vec![crate::game::Item::Unit {
+                    unit: "warrior".to_string(),
+                }];
+            }
+            "Auckland" => {
+                g.cities.get_mut(&cap).unwrap().queue = vec![crate::game::Item::Building {
+                    building: "granary".to_string(),
+                }];
+            }
+            _ => {}
+        }
         g.players[0].envoys_free = 1;
         let before = g.city_yields(cap);
         g.apply(0, &Action::SendEnvoy { player: minor }).unwrap();
         assert_eq!(g.envoys_at(0, minor), 1);
         let after = g.city_yields(cap);
-        assert!((after.total() - before.total() - 2.0).abs() < 1e-6);
+        let expected = if g.players[minor].civ == "Zanzibar" {
+            2.0
+        } else {
+            1.0
+        };
+        let delta = after.total() - before.total();
+        assert!(
+            (delta - expected).abs() < 1e-6,
+            "{} first Envoy: expected {expected}, got {delta}",
+            g.players[minor].civ
+        );
         // suzerain needs 3+ envoys and a strict lead
         assert_eq!(g.suzerain_of(minor), None);
         g.players[0].envoys[0].1 = 3;

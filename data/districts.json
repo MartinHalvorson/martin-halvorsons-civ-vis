@@ -193,6 +193,7 @@
     "cost": 1800,
     "tech": "rocketry",
     "specialty": false,
+    "max_per_city": null,
     "placement": "flat_land",
     "yields": {},
     "appeal": -1

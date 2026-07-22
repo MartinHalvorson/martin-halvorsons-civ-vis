@@ -3204,7 +3204,7 @@ impl AdvancedAi {
     }
 
     fn science_production(&self, g: &mut Game, pid: usize) {
-        let completed = &g.players[pid].science_projects;
+        let completed = g.players[pid].science_projects.clone();
         let project = if !completed.contains("launch_earth_satellite") {
             "launch_earth_satellite"
         } else if !completed.contains("launch_moon_landing") {
@@ -3219,12 +3219,17 @@ impl AdvancedAi {
         let project_item = Item::Project {
             project: project.to_string(),
         };
-        let already_queued = g.player_city_ids(pid).iter().any(|cid| {
-            matches!(
-                g.cities[cid].queue.first(),
-                Some(Item::Project { project: queued }) if queued == project
-            )
-        });
+        let parallel_project = matches!(
+            project,
+            "lagrange_laser_station" | "terrestrial_laser_station"
+        );
+        let already_queued = !parallel_project
+            && g.player_city_ids(pid).iter().any(|cid| {
+                matches!(
+                    g.cities[cid].queue.first(),
+                    Some(Item::Project { project: queued }) if queued == project
+                )
+            });
         if !already_queued {
             let project_city = g
                 .player_city_ids(pid)
@@ -3232,6 +3237,10 @@ impl AdvancedAi {
                 .filter(|cid| {
                     g.cities[cid].districts.contains_key("spaceport")
                         && g.can_produce(pid, *cid, &project_item)
+                        && !matches!(
+                            g.cities[cid].queue.first(),
+                            Some(Item::Project { project: queued }) if queued == project
+                        )
                         && (self.victory_target == Some(VictoryTarget::Science)
                             || g.cities[cid].queue.is_empty())
                 })
@@ -3254,21 +3263,49 @@ impl AdvancedAi {
             }
         }
 
-        let has_spaceport = g
-            .player_city_ids(pid)
+        let city_ids = g.player_city_ids(pid);
+        let built_spaceports = city_ids
             .iter()
-            .any(|cid| g.cities[cid].districts.contains_key("spaceport"));
-        let spaceport_queued = g.player_city_ids(pid).iter().any(|cid| {
-            matches!(
-                g.cities[cid].queue.first(),
-                Some(Item::District { district, .. }) if district == "spaceport"
-            )
-        });
-        if has_spaceport || spaceport_queued {
+            .filter(|cid| g.cities[cid].districts.contains_key("spaceport"))
+            .count();
+        let queued_spaceports = city_ids
+            .iter()
+            .filter(|cid| {
+                matches!(
+                    g.cities[cid].queue.first(),
+                    Some(Item::District { district, .. }) if district == "spaceport"
+                )
+            })
+            .count();
+        // One launch site is enough for the sequential opening missions. A
+        // second can prepare Mars while the first launches, and up to three
+        // let the post-Exoplanet laser race run in parallel. Separate cities
+        // matter; duplicate Spaceports in one production queue do not.
+        let desired_spaceports = if self.victory_target == Some(VictoryTarget::Science) {
+            if completed.contains("launch_mars_colony") {
+                3
+            } else if completed.contains("launch_moon_landing") {
+                2
+            } else {
+                1
+            }
+        } else {
+            1
+        }
+        .min(city_ids.len());
+        if built_spaceports + queued_spaceports >= desired_spaceports {
             return;
         }
         let mut best: Option<(f64, u32, Pos)> = None;
-        for cid in g.player_city_ids(pid) {
+        for cid in city_ids {
+            if g.cities[&cid].districts.contains_key("spaceport")
+                || matches!(
+                    g.cities[&cid].queue.first(),
+                    Some(Item::District { district, .. }) if district == "spaceport"
+                )
+            {
+                continue;
+            }
             if self.victory_target != Some(VictoryTarget::Science)
                 && !g.cities[&cid].queue.is_empty()
             {
@@ -3928,6 +3965,12 @@ impl AdvancedAi {
             Item::District { district, pos } => {
                 let spec = &g.rules.districts[district];
                 let family = g.district_family(district);
+                if family == "spaceport" && city.districts.contains_key("spaceport") {
+                    // Multiple Spaceports are rules-legal, but one city can
+                    // execute only one project at a time. Put additional
+                    // launch sites in other cities for actual parallelism.
+                    return -10_000.0;
+                }
                 let district_count = g
                     .cities
                     .values()
@@ -7752,6 +7795,114 @@ mod tests {
             g.cities[&city].queue.first(),
             Some(Item::Project { project }) if project == "launch_earth_satellite"
         ));
+    }
+
+    #[test]
+    fn science_target_parallelizes_lasers_across_cities_without_local_spaceport_spam() {
+        let mut game = Game::new_full(1, 34, 20, 71_002, 320, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|uid| game.units[uid].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let mut cities = game.player_city_ids(0);
+        while cities.len() < 3 {
+            let center = game
+                .map
+                .tiles
+                .iter()
+                .find(|(position, tile)| {
+                    tile.owner_city.is_none()
+                        && game.rules.is_passable(tile)
+                        && !game.rules.is_water(tile)
+                        && cities
+                            .iter()
+                            .all(|city| game.wdist(**position, game.cities[city].pos) >= 7)
+                })
+                .map(|(position, _)| *position)
+                .unwrap();
+            game.found_city_for(0, center, None);
+            cities = game.player_city_ids(0);
+        }
+        game.players[0].techs = game.rules.techs.keys().cloned().collect();
+        game.players[0].civics = game.rules.civics.keys().cloned().collect();
+        game.players[0].science_projects.extend([
+            "launch_earth_satellite".to_string(),
+            "launch_moon_landing".to_string(),
+            "launch_mars_colony".to_string(),
+            "exoplanet_expedition".to_string(),
+        ]);
+        for city in &cities {
+            game.cities.get_mut(city).unwrap().pop = 12;
+            for position in game.cities[city].owned_tiles.clone() {
+                if position == game.cities[city].pos {
+                    continue;
+                }
+                let tile = game.map.tiles.get_mut(&position).unwrap();
+                tile.terrain = "plains".to_string();
+                tile.feature = None;
+                tile.hills = false;
+                tile.resource = None;
+                tile.improvement = None;
+                tile.district = None;
+                tile.district_foundation = None;
+                tile.wonder = None;
+            }
+        }
+        for city in cities.iter().take(2) {
+            let position = game.cities[city]
+                .owned_tiles
+                .iter()
+                .copied()
+                .find(|position| *position != game.cities[city].pos)
+                .unwrap();
+            game.map.tiles.get_mut(&position).unwrap().district = Some("spaceport".to_string());
+            game.cities
+                .get_mut(city)
+                .unwrap()
+                .districts
+                .insert("spaceport".to_string(), position);
+        }
+        game.cities.get_mut(&cities[0]).unwrap().queue = vec![Item::Project {
+            project: "lagrange_laser_station".to_string(),
+        }];
+
+        let ai = AdvancedAi::targeting(VictoryTarget::Science);
+        ai.science_production(&mut game, 0);
+        assert_eq!(
+            cities
+                .iter()
+                .filter(|city| matches!(
+                    game.cities[city].queue.first(),
+                    Some(Item::Project { project }) if project == "lagrange_laser_station"
+                ))
+                .count(),
+            2
+        );
+
+        ai.science_production(&mut game, 0);
+        assert!(matches!(
+            game.cities[&cities[2]].queue.first(),
+            Some(Item::District { district, .. }) if district == "spaceport"
+        ));
+
+        let duplicate = Item::District {
+            district: "spaceport".to_string(),
+            pos: game.district_sites(cities[0], "spaceport")[0],
+        };
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Science,
+            target_player: None,
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+        assert!(
+            ai.production_value(&game, 0, cities[0], &duplicate, &plan, &ai.counts(&game, 0))
+                <= -10_000.0
+        );
     }
 
     #[test]
