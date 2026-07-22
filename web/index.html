@@ -2096,15 +2096,40 @@ function drawTopbar() {
     `<div class="hud-stat">🎭 <strong>${y.culture}</strong><i>culture</i></div>` +
     `<div class="hud-stat">🪙 <strong>${Math.round(me.gold)}</strong><i>+${y.gold}</i></div>` +
     `<div class="hud-stat">✦ <strong>${Math.round(me.faith)}</strong><i>+${y.faith}</i></div>` +
-    `<div class="hud-stat">⚜ <strong>${Math.round(me.diplomatic_favor || 0)}</strong><i>favor</i></div>`;
+    `<div class="hud-stat">⚜ <strong>${Math.round(me.diplomatic_favor || 0)}</strong><i>favor</i></div>` +
+    ((Number(me.global_co2) || 0) !== 0 || Number(eraRaw) >= 4
+      ? `<div class="hud-stat" title="Global lifetime carbon emissions">☁ <strong>${compactStat(me.global_co2)}</strong><i>CO₂</i></div>`
+      : "");
 
   const identity = SPEC ? actor : state.players[0];
   const mapLabel = `${state.map.size_name || "Custom"} ${state.map.width}×${state.map.height}`;
+  const profile = spectatorIdentity(identity);
+  const meta = [...profile.details, mapLabel].join(" · ");
   document.getElementById("gameidentity").innerHTML =
     `<div class="identity-copy"><div class="civ-name">${identity.civ}</div>` +
-    `<div class="identity-meta" title="${identity.leader || "Unknown leader"} · ${mapLabel}">` +
-    `${identity.leader || "Unknown leader"}${identity.government ? ` · ${identity.government.replaceAll("_", " ")}` : ""} · ${mapLabel}</div></div>` +
+    `<div class="identity-meta" title="${profile.role} · ${meta}">` +
+    `${profile.role} · ${meta}</div></div>` +
     `<span class="live-badge">${SPEC ? "Observing" : "Your empire"}</span>`;
+}
+
+function spectatorIdentity(player) {
+  if (player.is_barbarian) {
+    return {role: "Barbarian clans", details: ["Hostile raiders"]};
+  }
+  if (player.is_minor) {
+    const kind = titleCase(player.cs_type || "independent");
+    const suzerain = Number.isInteger(player.suzerain)
+      ? state.players.find(candidate => candidate.id === player.suzerain)
+      : null;
+    return {
+      role: `${kind} city-state`,
+      details: [suzerain ? `Suzerain: ${suzerain.civ}` : "Independent"],
+    };
+  }
+  return {
+    role: player.leader || "Leader unknown",
+    details: player.government ? [titleCase(player.government)] : ["Unformed government"],
+  };
 }
 
 function compactStat(value) {

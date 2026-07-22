@@ -536,6 +536,8 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("Quick Deals"));
         assert!(EMBEDDED_INDEX.contains("function drawQuickDeals()"));
         assert!(EMBEDDED_INDEX.contains("type:\"trade\""));
+        assert!(EMBEDDED_INDEX.contains("function spectatorIdentity(player)"));
+        assert!(EMBEDDED_INDEX.contains("Global lifetime carbon emissions"));
     }
 
     #[test]
