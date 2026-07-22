@@ -1,6 +1,7 @@
 //! Core turn engine (mirrors civvis/game.py — same mechanics and action protocol).
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 
 use crate::rng::Rng;
 use crate::rules::{Rules, Yields};
@@ -1820,6 +1821,161 @@ impl Game {
         };
         let best = self.flow(uid, start, moves);
         best.into_keys().filter(|p| *p != start).collect()
+    }
+
+    /// First step of a deterministic long-range route to `to`, stopping once
+    /// the unit is within `stop_range`. Unlike `reachable`, this plans across
+    /// future turns so AI units can detour around mountains, coastlines, and
+    /// occupied choke points instead of getting stuck in a greedy local
+    /// minimum. The returned step is still validated against the current
+    /// turn by the caller's normal Move action.
+    pub fn route_step(&self, uid: u32, to: Pos, stop_range: i32) -> Option<Pos> {
+        let unit = self.units.get(&uid)?;
+        let start = unit.pos;
+        let range = stop_range.max(0);
+        if unit.zoc_stopped || self.wdist(start, to) <= range {
+            return None;
+        }
+        if range == 0 {
+            let target = self.map.get(to)?;
+            let spec = &self.rules.units[unit.kind.as_str()];
+            let target_is_water = self.rules.is_water(target);
+            let sea_unit = spec.domain.as_deref() == Some("sea");
+            if sea_unit != target_is_water
+                && (sea_unit || !self.players[unit.owner].techs.contains("shipbuilding"))
+            {
+                return None;
+            }
+        }
+
+        // A* keeps known-target routing cheap enough for high-throughput
+        // self-play. Tuple ordering gives deterministic tie-breaking.
+        let mut frontier = BinaryHeap::with_capacity(128);
+        let mut distance: HashMap<Pos, i32> = HashMap::with_capacity(128);
+        let mut parent: HashMap<Pos, Pos> = HashMap::with_capacity(128);
+        distance.insert(start, 0);
+        frontier.push(Reverse((self.wdist(start, to), 0, start)));
+
+        let mut goal = None;
+        let mut expanded = 0;
+        while let Some(Reverse((_, traveled, cur))) = frontier.pop() {
+            if traveled != distance[&cur] {
+                continue;
+            }
+            expanded += 1;
+            if expanded > 64 {
+                break; // avoid exhaustive scans for disconnected landmasses
+            }
+            if self.wdist(cur, to) <= range {
+                goal = Some(cur);
+                break;
+            }
+            for n in self.nbrs(cur) {
+                let enterable = if cur == start {
+                    self.can_enter(uid, cur, n)
+                } else {
+                    self.can_path_through(uid, cur, n)
+                };
+                if !enterable {
+                    continue;
+                }
+                let next_distance = traveled + 1;
+                if distance.get(&n).map(|d| next_distance >= *d).unwrap_or(false) {
+                    continue;
+                }
+                distance.insert(n, next_distance);
+                parent.insert(n, cur);
+                let estimate = next_distance + (self.wdist(n, to) - range).max(0);
+                frontier.push(Reverse((estimate, next_distance, n)));
+            }
+        }
+        Self::unwind_route(start, goal?, &parent)
+    }
+
+    /// Terrain/domain legality for future route segments. Dynamic unit
+    /// occupancy is enforced on the returned first step; ignoring it deeper
+    /// in the plan avoids expensive scans and lets moving units clear before
+    /// the traveler arrives. Routes are recalculated whenever the immediate
+    /// step remains blocked.
+    fn can_path_through(&self, uid: u32, from: Pos, pos: Pos) -> bool {
+        if self.wdist(from, pos) != 1 {
+            return false;
+        }
+        let unit = &self.units[&uid];
+        let tile = match self.map.get(pos) {
+            Some(tile) => tile,
+            None => return false,
+        };
+        if !self.rules.is_passable(tile) {
+            return false;
+        }
+        let spec = &self.rules.units[unit.kind.as_str()];
+        let water = self.rules.is_water(tile);
+        if spec.domain.as_deref() == Some("sea") {
+            if !water {
+                return false;
+            }
+        } else if water && !self.players[unit.owner].techs.contains("shipbuilding") {
+            return false;
+        }
+        self.city_at(pos)
+            .map(|cid| self.cities[&cid].owner == unit.owner)
+            .unwrap_or(true)
+    }
+
+    /// First step toward the nearest reachable member of `goals`. This is
+    /// useful for exploration, where the geometrically nearest hidden tile
+    /// may be on the far side of an impassable ridge or pre-embarkation sea.
+    pub fn route_step_to_any(&self, uid: u32, goals: &HashSet<Pos>) -> Option<Pos> {
+        self.first_route_step(uid, |p| goals.contains(&p))
+    }
+
+    fn first_route_step<F>(&self, uid: u32, is_goal: F) -> Option<Pos>
+    where
+        F: Fn(Pos) -> bool,
+    {
+        let unit = self.units.get(&uid)?;
+        let start = unit.pos;
+        if unit.zoc_stopped || is_goal(start) {
+            return None;
+        }
+
+        let mut parent: HashMap<Pos, Pos> = HashMap::new();
+        let mut seen = HashSet::new();
+        let mut queue = VecDeque::new();
+        seen.insert(start);
+        queue.push_back(start);
+
+        let mut goal = None;
+        'search: while let Some(cur) = queue.pop_front() {
+            for n in self.nbrs(cur) {
+                let enterable = if cur == start {
+                    self.can_enter(uid, cur, n)
+                } else {
+                    self.can_path_through(uid, cur, n)
+                };
+                if seen.contains(&n) || !enterable {
+                    continue;
+                }
+                seen.insert(n);
+                parent.insert(n, cur);
+                if is_goal(n) {
+                    goal = Some(n);
+                    break 'search;
+                }
+                queue.push_back(n);
+            }
+        }
+
+        Self::unwind_route(start, goal?, &parent)
+    }
+
+    fn unwind_route(start: Pos, goal: Pos, parent: &HashMap<Pos, Pos>) -> Option<Pos> {
+        let mut step = goal;
+        while parent.get(&step).copied()? != start {
+            step = parent.get(&step).copied()?;
+        }
+        Some(step)
     }
 
     fn flow(&self, uid: u32, start: Pos, moves: f64) -> BTreeMap<Pos, f64> {

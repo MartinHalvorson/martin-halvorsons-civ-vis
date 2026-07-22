@@ -3,6 +3,7 @@
 use crate::game::{effective_strength, Action, Game, Item};
 use crate::rng::Rng;
 use crate::Pos;
+use std::collections::HashSet;
 
 const TECH_PRIORITY: [&str; 15] = ["pottery", "animal_husbandry", "mining", "writing",
     "archery", "bronze_working", "currency", "masonry", "irrigation", "iron_working",
@@ -592,7 +593,7 @@ impl BasicAi {
     /// tile (stay put or any legal neighbor) by progress toward the target,
     /// adjacent friendly support, and expected incoming damage; take the best.
     fn tactical_step(&self, g: &mut Game, pid: usize, uid: u32, target: Pos,
-                     enemy_ids: &[usize]) -> bool {
+                     enemy_ids: &[usize], attack_range: i32) -> bool {
         let upos = g.units[&uid].pos;
         let u = &g.units[&uid];
         let my_def = effective_strength(g.unit_strength(u, true), u.hp);
@@ -629,25 +630,39 @@ impl BasicAi {
             Some((sc, n)) if sc > stay => {
                 g.apply(pid, &Action::Move { unit: uid, to: n }).is_ok()
             }
-            _ => false,
+            _ => {
+                // Long-range search is the fallback, not the hot path: most
+                // turns keep the original cheap local tactic, while a unit at
+                // a genuine obstacle can take the first safe detour step.
+                let n = match g.route_step(uid, target, attack_range) {
+                    Some(n) if g.can_move(uid, n) => n,
+                    _ => return false,
+                };
+                let routed = score(g, n) + 2.5;
+                routed > stay && g.apply(pid, &Action::Move { unit: uid, to: n }).is_ok()
+            }
         }
     }
 
     fn step_toward(&self, g: &mut Game, pid: usize, uid: u32, target: Pos) -> bool {
         let cur = g.units[&uid].pos;
-        let mut opts: Vec<Pos> = g.nbrs(cur)
-            .into_iter()
-            .filter(|n| g.can_move(uid, *n))
+        let mut local: Vec<Pos> = g.nbrs(cur).into_iter()
+            .filter(|p| g.can_move(uid, *p))
             .collect();
-        if opts.is_empty() {
-            return false;
+        local.sort_by_key(|p| (g.wdist(*p, target), *p));
+        if let Some(next) = local.first().copied() {
+            if g.wdist(next, target) < g.wdist(cur, target) {
+                return g.apply(pid, &Action::Move { unit: uid, to: next }).is_ok();
+            }
         }
-        opts.sort_by_key(|n| (g.wdist(*n, target), *n));
-        let best = opts[0];
-        if g.wdist(best, target) >= g.wdist(cur, target) {
-            return false;
-        }
-        g.apply(pid, &Action::Move { unit: uid, to: best }).is_ok()
+
+        // The common case above stays as cheap as the original greedy AI;
+        // invoke A* only when no legal neighbor makes geometric progress.
+        let next = match g.route_step(uid, target, 0) {
+            Some(p) if g.can_move(uid, p) => p,
+            _ => return false,
+        };
+        g.apply(pid, &Action::Move { unit: uid, to: next }).is_ok()
     }
 
     fn settle_value(&self, g: &Game, pos: Pos) -> f64 {
@@ -889,18 +904,38 @@ impl BasicAi {
         best.map(|(_, p)| p)
     }
 
-    fn nearest_unexplored(&self, g: &Game, pid: usize, pos: Pos) -> Option<Pos> {
-        let mut best: Option<(i32, Pos)> = None;
-        for tpos in g.map.tiles.keys() {
-            if g.players[pid].explored.contains(tpos) {
-                continue;
-            }
-            let d = g.wdist(pos, *tpos);
-            if best.map(|b| (d, *tpos) < b).unwrap_or(true) {
-                best = Some((d, *tpos));
+    fn explore_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
+        let upos = g.units[&uid].pos;
+        let spec = &g.rules.units[g.units[&uid].kind.as_str()];
+        let sea_unit = spec.domain.as_deref() == Some("sea");
+        let can_embark = g.players[pid].techs.contains("shipbuilding");
+        let can_reach_terrain = |tile: &crate::world::Tile| {
+            let water = g.rules.is_water(tile);
+            g.rules.is_passable(tile) && if sea_unit { water } else { !water || can_embark }
+        };
+        let goals: HashSet<Pos> = g.map.tiles
+            .iter()
+            .filter(|(pos, tile)| {
+                !g.players[pid].explored.contains(pos) && can_reach_terrain(tile)
+            })
+            .map(|(pos, _)| *pos)
+            .collect();
+        let nearest = goals.iter()
+            .min_by_key(|pos| (g.wdist(upos, **pos), **pos))
+            .copied();
+        if let Some(target) = nearest {
+            if self.step_toward(g, pid, uid, target) {
+                return true;
             }
         }
-        best.map(|(_, p)| p)
+
+        // If the geometrically nearest hidden tile was unreachable, search
+        // for the nearest hidden tile by actual traversable route instead.
+        let next = match g.route_step_to_any(uid, &goals) {
+            Some(p) if g.can_move(uid, p) => p,
+            _ => return false,
+        };
+        g.apply(pid, &Action::Move { unit: uid, to: next }).is_ok()
     }
 
     fn military_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
@@ -940,7 +975,7 @@ impl BasicAi {
                 }
             }
             return match self.nearest_enemy(g, pid, upos, &enemy_ids) {
-                Some(t) => self.tactical_step(g, pid, uid, t, &enemy_ids),
+                Some(t) => self.tactical_step(g, pid, uid, t, &enemy_ids, radius),
                 None => self.fortify_or_stop(g, pid, uid),
             };
         }
@@ -956,30 +991,21 @@ impl BasicAi {
             }
             return self.fortify_or_stop(g, pid, uid);
         }
-        let target = match self.nearest_unexplored(g, pid, upos) {
-            Some(t) => Some(t),
-            None => {
-                let cities = g.player_city_ids(pid);
-                if cities.is_empty() {
-                    None
-                } else {
-                    let cap = cities
-                        .iter()
-                        .min_by_key(|c| (g.wdist(upos, g.cities[c].pos), **c))
-                        .unwrap();
-                    let cpos = g.cities[cap].pos;
-                    if cpos == upos {
-                        None
-                    } else {
-                        Some(cpos)
-                    }
-                }
-            }
-        };
-        match target {
-            Some(t) => self.step_toward(g, pid, uid, t),
-            None => self.fortify_or_stop(g, pid, uid),
+        if self.explore_step(g, pid, uid) {
+            return true;
         }
+        let cities = g.player_city_ids(pid);
+        if !cities.is_empty() {
+            let cap = cities
+                .iter()
+                .min_by_key(|c| (g.wdist(upos, g.cities[c].pos), **c))
+                .unwrap();
+            let cpos = g.cities[cap].pos;
+            if cpos != upos && self.step_toward(g, pid, uid, cpos) {
+                return true;
+            }
+        }
+        self.fortify_or_stop(g, pid, uid)
     }
 
     fn fortify_or_stop(&self, g: &mut Game, pid: usize, uid: u32) -> bool {

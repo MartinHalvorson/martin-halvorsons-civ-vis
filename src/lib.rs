@@ -132,6 +132,38 @@ mod tests {
     }
 
     #[test]
+    fn long_range_route_detours_around_obstacles() {
+        let mut g = Game::new_full(1, 20, 14, 17, 30, 0, false);
+        let uid = g.player_unit_ids(0).into_iter()
+            .find(|id| g.units[id].kind == "warrior").unwrap();
+        let start = *g.map.tiles.keys()
+            .find(|p| g.wdisk(**p, 3).len() == 37).unwrap();
+        let target = (start.0 + 3, start.1);
+
+        // Make a controlled open field, then block every greedy move that
+        // immediately reduces hex distance. A valid route must initially go
+        // sideways or backward around this wedge.
+        for tile in g.map.tiles.values_mut() {
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+        }
+        let mut g = teleport(&g, uid, start);
+        let direct: Vec<_> = g.nbrs(start).into_iter()
+            .filter(|p| g.wdist(*p, target) < g.wdist(start, target))
+            .collect();
+        assert!(!direct.is_empty());
+        for p in direct {
+            g.map.tiles.get_mut(&p).unwrap().terrain = "mountain".to_string();
+        }
+
+        let step = g.route_step(uid, target, 0).expect("detour should exist");
+        assert!(g.wdist(step, target) >= g.wdist(start, target));
+        assert!(g.can_move(uid, step));
+        g.apply(0, &Action::Move { unit: uid, to: step }).unwrap();
+        assert_eq!(g.units[&uid].pos, step);
+    }
+
+    #[test]
     fn world_wraps_east_west() {
         let g = Game::new_full(2, 20, 14, 5, 30, 0, false);
         let a = crate::hex::offset_to_axial(0, 4);
