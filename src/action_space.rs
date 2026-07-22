@@ -15,7 +15,7 @@ use crate::Pos;
 
 /// Every `Action` discriminant, in a stable order. Appending is safe;
 /// reordering invalidates trained policies.
-pub const KINDS: [&str; 70] = [
+pub const KINDS: [&str; 72] = [
     "move", "move_to", "attack", "ranged", "found_city", "improve",
     "found_corporation", "move_product", "contribute_project",
     "contribute_district", "perform_concert", "pillage", "repair_improvement",
@@ -32,7 +32,7 @@ pub const KINDS: [&str; 70] = [
     "theological_attack", "condemn_heretic", "heal_religious", "remove_heresy",
     "launch_inquisition", "evangelize_belief", "convert_barbarians",
     "city_strike", "encampment_strike", "keep_city", "raze_city",
-    "liberate_city", "end_turn",
+    "liberate_city", "end_turn", "air_pillage", "priority_target",
 ];
 
 /// Width of one action's feature row: kind one-hot plus the shared
@@ -119,6 +119,8 @@ pub fn kind_name(action: &Action) -> &'static str {
         Action::RazeCity { .. } => "raze_city",
         Action::LiberateCity { .. } => "liberate_city",
         Action::EndTurn => "end_turn",
+        Action::AirPillage { .. } => "air_pillage",
+        Action::PriorityTarget { .. } => "priority_target",
     }
 }
 
@@ -131,6 +133,8 @@ pub fn target_tile(g: &Game, action: &Action) -> Option<Pos> {
         Action::Attack { target, .. }
         | Action::Ranged { target, .. }
         | Action::AirStrike { target, .. }
+        | Action::AirPillage { target, .. }
+        | Action::PriorityTarget { target, .. }
         | Action::CityStrike { target, .. }
         | Action::EncampmentStrike { target, .. } => Some(*target),
         Action::FoundCity { unit }
@@ -216,6 +220,8 @@ fn acting_unit(action: &Action) -> Option<u32> {
         | Action::AirRebase { unit, .. }
         | Action::AirStrike { unit, .. }
         | Action::AirPatrol { unit, .. }
+        | Action::AirPillage { unit, .. }
+        | Action::PriorityTarget { unit, .. }
         | Action::Fortify { unit }
         | Action::Promote { unit, .. }
         | Action::Spread { unit }

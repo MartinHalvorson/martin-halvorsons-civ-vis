@@ -135,7 +135,7 @@ impl Session {
     }
 
     fn set_view_player(&mut self, player: Option<usize>) -> Result<(), String> {
-        if !self.params.spectate {
+        if !self.params.spectate && player.is_none() {
             return Err("player views are only available in spectate mode".into());
         }
         if let Some(pid) = player {
@@ -145,6 +145,11 @@ impl Session {
             if candidate.is_minor || candidate.is_barbarian {
                 return Err(format!("player {pid} is not a major civilization"));
             }
+            // Selecting a civilization from the HUD is also the handoff from
+            // an interactive match to AI-only observation. Keep the current
+            // world intact; the already-created AI fleet can take over every
+            // seat on the next spectator step.
+            self.params.spectate = true;
         }
         self.view_player = player;
         Ok(())
@@ -166,9 +171,30 @@ impl Session {
             {
                 return Err("finished game is no longer the active session".into());
             }
+        } else if self.params.spectate
+            && self.game.winner.is_none()
+            && request["force"].as_bool() != Some(true)
+        {
+            // Old spectator pages used an unguarded result timer. If one
+            // survives a process handoff, it must not reset a healthy game.
+            // The visible setup button explicitly opts into a manual reset.
+            return Err("active spectator game requires an explicit reset".into());
         }
+        let previous_view = self.view_player;
         let params = new_game_params(&self.params, request);
-        *self = Session::new(params);
+        let mut next = Session::new(params);
+        // Observation perspective is a display setting, not part of the
+        // simulated world. Keep it when rolling into another spectator game
+        // as long as that major-player seat still exists in the new setup.
+        if next.params.spectate {
+            next.view_player = previous_view.filter(|pid| {
+                next.game
+                    .players
+                    .get(*pid)
+                    .is_some_and(|player| !player.is_minor && !player.is_barbarian)
+            });
+        }
+        *self = next;
         Ok(())
     }
 
@@ -664,7 +690,7 @@ mod tests {
     }
 
     #[test]
-    fn browser_exposes_every_stock_size_with_setup_first() {
+    fn browser_orders_settings_event_log_and_strategy() {
         for players in [2, 4, 6, 8, 10, 12] {
             assert!(
                 EMBEDDED_INDEX.contains(&format!("<option value=\"{players}\"")),
@@ -674,13 +700,26 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("RULES.map_sizes.map(size =>"));
         assert!(!EMBEDDED_INDEX.contains("RULES.map_sizes.filter"));
 
-        let setup = EMBEDDED_INDEX
-            .find("<details class=\"utility-panel\">")
-            .expect("simulation setup panel");
+        let game_settings = EMBEDDED_INDEX
+            .find("id=\"game-settings\"")
+            .expect("game settings panel");
+        let display_settings = EMBEDDED_INDEX
+            .find("id=\"display-settings\"")
+            .expect("display settings panel");
+        let event_log = EMBEDDED_INDEX
+            .find("<span>Game event log</span>")
+            .expect("game event log");
         let strategy = EMBEDDED_INDEX
             .find("<span>Active strategy</span>")
             .expect("active strategy section");
-        assert!(setup < strategy, "simulation setup should be at the top");
+        assert!(
+            game_settings < display_settings
+                && display_settings < event_log
+                && event_log < strategy,
+            "right panel should show game settings, display settings, and the event log first"
+        );
+        assert!(EMBEDDED_INDEX.contains("<span>Display settings</span>"));
+        assert!(!EMBEDDED_INDEX.contains("Simulator settings"));
         assert!(EMBEDDED_INDEX.contains("Quick Deals"));
         assert!(EMBEDDED_INDEX.contains("function drawQuickDeals()"));
         assert!(EMBEDDED_INDEX.contains("type:\"trade\""));
@@ -698,6 +737,62 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("View as"));
         assert!(EMBEDDED_INDEX.contains("id=\"viewplayer\""));
         assert!(EMBEDDED_INDEX.contains("fetchJSON(\"/view\""));
+        assert!(EMBEDDED_INDEX.contains("onclick=\"spectatePlayer(${p.id})\""));
+        assert!(EMBEDDED_INDEX.contains("async function spectatePlayer(player)"));
+        assert!(EMBEDDED_INDEX.contains("player log"));
+        assert!(EMBEDDED_INDEX.contains("Spectator · combined summary"));
+        assert!(EMBEDDED_INDEX.contains("let eventLogs = new Map()"));
+        assert!(EMBEDDED_INDEX.contains(".sort((a, b) => b.score - a.score || a.id - b.id)"));
+        assert!(EMBEDDED_INDEX.contains("class=\"diplomacy-rank\">#${rank}"));
+    }
+
+    #[test]
+    fn next_spectator_game_preserves_settings_and_watched_player() {
+        let mut params = current();
+        params.spectate = true;
+        let mut session = Session::new(params);
+        session.set_view_player(Some(1)).unwrap();
+        let previous_settings = (
+            session.params.num_players,
+            session.params.width,
+            session.params.height,
+            session.params.num_city_states,
+            session.params.spectate,
+        );
+
+        session
+            .start_new_game(&json!({"seed": 2, "force": true}))
+            .unwrap();
+
+        assert_eq!(session.params.seed, 2);
+        assert_eq!(
+            (
+                session.params.num_players,
+                session.params.width,
+                session.params.height,
+                session.params.num_city_states,
+                session.params.spectate,
+            ),
+            previous_settings
+        );
+        assert_eq!(session.state()["view_player"].as_u64(), Some(1));
+    }
+
+    #[test]
+    fn next_game_drops_a_watched_player_that_is_not_in_the_new_world() {
+        let mut params = current();
+        params.num_players = 4;
+        params.width = 30;
+        params.height = 20;
+        params.spectate = true;
+        let mut session = Session::new(params);
+        session.set_view_player(Some(3)).unwrap();
+
+        session
+            .start_new_game(&json!({"num_players": 2, "seed": 2, "force": true}))
+            .unwrap();
+
+        assert!(session.state()["view_player"].is_null());
     }
 
     #[test]
@@ -764,6 +859,24 @@ mod tests {
     }
 
     #[test]
+    fn selecting_any_ranked_player_promotes_the_live_match_to_spectator_mode() {
+        for pid in 0..current().num_players {
+            let mut session = Session::new(current());
+            assert!(!session.params.spectate);
+            let omniscient_tile_count = session.game.map.tiles.len();
+
+            session.set_view_player(Some(pid)).unwrap();
+            let player_view = session.state();
+
+            assert!(session.params.spectate);
+            assert_eq!(player_view["spectate"].as_bool(), Some(true));
+            assert_eq!(player_view["player"].as_u64(), Some(pid as u64));
+            assert_eq!(player_view["view_player"].as_u64(), Some(pid as u64));
+            assert!(player_view["map"]["tiles"].as_array().unwrap().len() < omniscient_tile_count);
+        }
+    }
+
+    #[test]
     fn spectator_view_rejects_non_major_and_unknown_players() {
         let mut params = current();
         params.spectate = true;
@@ -798,8 +911,25 @@ mod tests {
 
         assert!(session.start_new_game(&guarded).is_err());
         assert_eq!(session.game.seed, original_seed);
+        assert!(session
+            .start_new_game(&json!({"seed": 4, "spectate": true}))
+            .is_err());
+        assert_eq!(session.game.seed, original_seed);
+
+        assert!(session
+            .start_new_game(&json!({"seed": 5, "spectate": true, "force": true}))
+            .is_ok());
+        assert_eq!(session.game.seed, 5);
 
         session.game.winner = Some(0);
+        let guarded = json!({
+            "seed": 2,
+            "spectate": true,
+            "replace_finished": {
+                "seed": 5,
+                "server_instance": std::process::id()
+            }
+        });
         assert!(session.start_new_game(&guarded).is_ok());
         assert_eq!(session.game.seed, 2);
 

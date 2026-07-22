@@ -11498,12 +11498,12 @@ mod tests {
             .pressure
             .insert("Rival Faith".to_string(), 2_000.0);
         let converted_units = converted.player_unit_ids(0).len();
-        ai.religious_spending(&mut converted, 0);
+        ai.religious_spending(&mut converted, 0, true);
         assert_eq!(converted.player_unit_ids(0).len(), converted_units);
         assert_eq!(converted.players[0].faith, 1_000.0);
 
         let before_units = game.player_unit_ids(0).len();
-        ai.religious_spending(&mut game, 0);
+        ai.religious_spending(&mut game, 0, true);
         assert_eq!(game.player_unit_ids(0).len(), before_units + 1);
         let inquisitor = game
             .units

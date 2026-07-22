@@ -123,7 +123,10 @@
   .progress-slot { height: 55px; min-height: 55px; display: flex; align-items: center; }
   .progress-slot > * { width: 100%; }
   #govsec { min-height: 70px; }
-  .utility-panel { margin: 0 0 12px; border: 1px solid var(--line); border-radius: 12px; background: #0b1614a6; overflow: hidden; }
+  .settings-sec { padding: 11px 13px; }
+  .settings-sec h2 { margin-bottom: 7px; }
+  .observer-settings { display: none; }
+  .utility-panel { margin: 10px 0 0; border: 1px solid var(--line-soft); border-radius: 9px; background: #09131080; overflow: hidden; }
   .utility-panel summary {
     padding: 11px 13px; color: var(--muted); cursor: pointer; list-style: none;
     font-size: 9px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase;
@@ -134,6 +137,7 @@
   .utility-panel[open] summary { border-bottom: 1px solid var(--line-soft); }
   .utility-body { padding: 12px 13px 13px; }
   .utility-group + .utility-group { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line-soft); }
+  .event-scope { color: var(--gold); font-size: 8px; letter-spacing: .07em; white-space: nowrap; }
 
   button {
     color: var(--text); background: linear-gradient(180deg, #263c36, #1b2e2a);
@@ -217,6 +221,7 @@
   }
   .diplomacy-identity { min-width: 0; }
   .diplomacy-name { display: block; overflow: hidden; color: #f1f4ed; font-size: 14px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+  .diplomacy-rank { margin-right: 5px; color: var(--gold-bright); font: 700 11px Georgia, serif; }
   .diplomacy-leader { display: block; margin-top: 3px; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
   .ai-plan { font-weight: 850; }
   .ai-plan.expansion { color: #89c990; }
@@ -483,40 +488,66 @@
     <div id="gameidentity"></div>
   </div>
   <div class="side-scroll">
-    <details class="utility-panel">
-      <summary>Simulation setup & display</summary>
-      <div class="utility-body">
-        <div class="utility-group">
-          <h2>Map style</h2>
-          <select id="viewsel">
-            <option value="cinematic">Cinematic terrain</option>
-            <option value="strategic">Strategic map</option>
+    <div class="section-label"><span>Game settings</span><span class="rule"></span></div>
+    <div class="sec settings-sec" id="game-settings">
+      <div id="newgame-options">
+        <label class="small">World size<select id="np" style="margin-top:4px">
+          <option value="2">Duel · 2 civs · 3 city-states · 44×26</option>
+          <option value="4" selected>Tiny · 4 civs · 6 city-states · 60×38</option>
+          <option value="6">Small · 6 civs · 9 city-states · 74×46</option>
+          <option value="8">Standard · 8 civs · 12 city-states · 84×54</option>
+          <option value="10">Large · 10 civs · 15 city-states · 96×60</option>
+          <option value="12">Huge · 12 civs · 18 city-states · 106×66</option>
+        </select></label>
+        <label class="small" style="display:flex;gap:7px;align-items:center;margin:10px 0 7px"><input type="checkbox" id="specchk"> AI-only observer game</label>
+        <button id="newgame">Create new game</button>
+      </div>
+    </div>
+
+    <div class="section-label"><span>Display settings</span><span class="rule"></span></div>
+    <div class="sec settings-sec" id="display-settings">
+      <div class="utility-group">
+        <h2>Display</h2>
+        <select id="viewsel" aria-label="Map style">
+          <option value="cinematic">Cinematic terrain</option>
+          <option value="strategic">Strategic map</option>
+        </select>
+        <label class="setting-row"><span><input type="checkbox" id="yieldchk"> Show yields per tile</span><kbd>Y</kbd></label>
+        <label class="setting-row"><span><input type="checkbox" id="artifactchk"> Show artifact sites &amp; shipwrecks</span></label>
+      </div>
+      <div class="utility-group observer-settings" id="observer-settings">
+        <h2>Observation</h2>
+        <div class="view-row"><span>View as</span>
+          <select id="viewplayer" aria-label="Observation perspective">
+            <option value="spectator">Spectator · full map</option>
           </select>
-          <label class="setting-row"><span><input type="checkbox" id="yieldchk"> Show yields per tile</span><kbd>Y</kbd></label>
         </div>
-        <div class="utility-group">
-          <h2>New simulation</h2>
-          <div id="newgame-options">
-            <label class="small">World size<select id="np" style="margin-top:4px">
-              <option value="2">Duel · 2 civs · 3 city-states · 44×26</option>
-              <option value="4" selected>Tiny · 4 civs · 6 city-states · 60×38</option>
-              <option value="6">Small · 6 civs · 9 city-states · 74×46</option>
-              <option value="8">Standard · 8 civs · 12 city-states · 84×54</option>
-              <option value="10">Large · 10 civs · 15 city-states · 96×60</option>
-              <option value="12">Huge · 12 civs · 18 city-states · 106×66</option>
-            </select></label>
-            <button id="newgame">Create</button>
-          </div>
-          <label class="small" style="display:flex;gap:7px;align-items:center;margin-top:10px"><input type="checkbox" id="specchk"> AI-only observer game</label>
+        <div class="speed-row"><span>Watch pace</span>
+          <select id="specspeed">
+            <option value="100" selected>Lightning · 0.1s</option>
+            <option value="250">Blitz · 0.25s</option>
+            <option value="500">Fast · 0.5s</option>
+            <option value="1000">Brisk · 1s</option>
+            <option value="2000">Measured · 2s</option>
+            <option value="4000">Cinematic · 4s</option>
+          </select>
         </div>
-        <div class="utility-group shortcut-grid">
+      </div>
+      <details class="utility-panel">
+        <summary>Keyboard shortcuts</summary>
+        <div class="utility-body shortcut-grid">
           <span><kbd>1</kbd>Next unit</span><span><kbd>2</kbd>Settler lens</span>
           <span><kbd>3</kbd>Map tacks</span><span><kbd>F</kbd>Focus mode</span>
           <span><kbd>D</kbd>Quick Deals</span><span><kbd>Alt</kbd>Rotate map</span>
           <span><kbd>Y</kbd>Tile yields</span><span><kbd>↵</kbd>End / pause</span>
         </div>
-      </div>
-    </details>
+      </details>
+    </div>
+
+    <div id="eventsec">
+      <div class="section-label"><span>Game event log</span><span class="event-scope" id="eventscope"></span></div>
+      <div class="sec"><div id="events" class="event-list"><div class="empty-state">The world is quiet—for now.</div></div></div>
+    </div>
 
     <div class="section-label"><span>Active strategy</span><span class="rule"></span></div>
     <div class="sec strategy-sec">
@@ -532,11 +563,6 @@
     <div class="sec" id="govsec" style="display:none"><h2>Government</h2><div id="gov"></div></div>
     <div class="sec" id="citysec" style="display:none"><h2>City command</h2><div id="citypanel"></div></div>
 
-    <div id="eventsec">
-      <div class="section-label"><span>Latest events</span><span class="rule"></span></div>
-      <div class="sec"><div id="events" class="event-list"><div class="empty-state">The world is quiet—for now.</div></div></div>
-    </div>
-
   </div>
   <div class="side-footer">
     <div class="footer-actions" id="humanfooter">
@@ -548,21 +574,6 @@
         <button class="primary" id="specpause">⏸ Pause</button>
         <button class="icon" id="specdirector" title="Camera locked (click for auto-focus)" aria-label="Toggle camera auto-focus">○</button>
         <button class="icon" id="specstep" title="Advance one civilization" aria-label="Step once">›</button>
-      </div>
-      <div class="view-row"><span>View as</span>
-        <select id="viewplayer" aria-label="Observation perspective">
-          <option value="spectator">Spectator · full map</option>
-        </select>
-      </div>
-      <div class="speed-row"><span>Watch pace</span>
-        <select id="specspeed">
-          <option value="100" selected>Lightning · 0.1s</option>
-          <option value="250">Blitz · 0.25s</option>
-          <option value="500">Fast · 0.5s</option>
-          <option value="1000">Brisk · 1s</option>
-          <option value="2000">Measured · 2s</option>
-          <option value="4000">Cinematic · 4s</option>
-        </select>
       </div>
     </div>
   </div>
@@ -596,7 +607,8 @@ const PARCH = "#c7b58a", PARCH_GRID = "#8a795533", PARCH_INK = "#6d5c3a";
 const FEAT_ICON = { forest:"🌲", jungle:"🌴", marsh:"🌾", oasis:"🏝" };
 const RES_ICON = { wheat:"🌾", cattle:"🐄", sheep:"🐑", stone:"🪨", deer:"🦌",
                    fish:"🐟", bananas:"🍌", horses:"🐎", iron:"⚒️", silk:"🧵",
-                   wine:"🍷", salt:"🧂" };
+                   wine:"🍷", salt:"🧂", antiquity_site:"🏺", shipwreck:"⚓" };
+const ARTIFACT_RESOURCES = new Set(["antiquity_site", "shipwreck"]);
 const UNIT_ICON = { settler:"🏳", builder:"🔨", scout:"👁", warrior:"⚔",
                     slinger:"🪃", archer:"🏹", spearman:"↑", swordsman:"⚔",
                     horseman:"🐎", catapult:"☄", crossbowman:"🏹", pikeman:"↑",
@@ -627,11 +639,12 @@ let state = null, sel = null, selCity = null, RULES = null;
 let lensOn = false, tackMode = false, tacks = [], lastSeed = null, cycleIdx = -1;
 let SPEC = false, specPaused = false, specTimer = null, specBusy = false;
 let viewChanging = false;
-let worldEvents = [], lastLeader = null, lastSidePaint = 0;
+let eventLogs = new Map(), lastLeaderByView = new Map(), lastSidePaint = 0;
 let TMAP = new Map();
 let tradeFilter = "all", tradeBusy = false;
 let VIEW = localStorage.getItem("civvis-view") || "cinematic";
 let SHOW_YIELDS = localStorage.getItem("civvis-show-yields") === "1";
+let SHOW_ARTIFACT_SITES = localStorage.getItem("civvis-show-artifact-sites") === "1";
 // A stable map is easier to watch at Lightning speed. Action-following remains
 // available as an explicit spectator option, but every browser starts locked.
 let DIRECTOR = localStorage.getItem("civvis-director-v2") === "1";
@@ -995,11 +1008,26 @@ async function specStep() {
 function scheduleSpec(_st) {} // server-driven; kept for legacy call sites
 function legalFor(type) { return state.legal_actions.filter(a => a.type === type); }
 
-// The engine keeps its own per-civilization event stream (see obs "events"),
-// which knows things a client-side diff cannot: what finished researching,
-// which Great Person joined, why a city changed hands. Spectate already
-// narrates cities and wars omnisciently, so there we take only what it cannot
-// see; at the keyboard we take the lot.
+function eventViewKey(st) {
+  if (!st) return "none";
+  const player = eventViewPlayer(st);
+  return player === null || player === undefined
+    ? `${st.seed}:spectator` : `${st.seed}:player:${player}`;
+}
+function eventViewPlayer(st) {
+  if (!st) return null;
+  return st.spectate ? st.view_player : st.player;
+}
+function eventsFor(st) {
+  return eventLogs.get(eventViewKey(st)) || [];
+}
+function addEvent(icon, text, turn, st, important = false) {
+  const viewKey = eventViewKey(st);
+  const events = eventLogs.get(viewKey) || [];
+  events.unshift({ icon, text, turn, important, at: performance.now() });
+  eventLogs.set(viewKey, events.slice(0, 12));
+}
+
 const SERVER_EVENT_ICONS = {
   General: "✦", Cities: "🏛", War: "⚔", Science: "⌬",
   Culture: "❦", Faith: "☥", People: "★", Diplomacy: "⚖",
@@ -1007,27 +1035,22 @@ const SERVER_EVENT_ICONS = {
 let seenServerEvents = new Set();
 function chronicleServer(next) {
   const events = Array.isArray(next.events) ? next.events : [];
-  const spectating = !!next.spectate;
+  const viewKey = eventViewKey(next);
   for (const event of events) {
-    const key = `${event.turn}|${event.category}|${event.text}`;
+    const key = `${viewKey}|${event.turn}|${event.category}|${event.text}`;
     if (seenServerEvents.has(key)) continue;
     seenServerEvents.add(key);
-    if (spectating && (event.category === "Cities" || event.category === "War")) continue;
     addEvent(SERVER_EVENT_ICONS[event.category] || "✦", event.text, event.turn,
-      event.category === "General");
+      next, event.category === "General");
   }
-  if (seenServerEvents.size > 600) seenServerEvents = new Set();
+  if (seenServerEvents.size > 1200) seenServerEvents = new Set();
 }
 
-function addEvent(icon, text, turn, important = false) {
-  worldEvents.unshift({ icon, text, turn, important, at: performance.now() });
-  worldEvents = worldEvents.slice(0, 12);
-}
-function chronicleActions(next) {
-  const actions = next.actions_taken;
-  if (!Array.isArray(actions) || next.stepped === undefined) return;
-  const actor = next.players[next.stepped];
-  if (!actor) return;
+function actionSummary(next, batch, includeMovement) {
+  const actions = batch.actions_taken;
+  if (!Array.isArray(actions) || batch.stepped === undefined) return null;
+  const actor = next.players[batch.stepped];
+  if (!actor) return null;
   const parts = [];
   const research = actions.find(a => a.type === "research");
   const civic = actions.find(a => a.type === "civic");
@@ -1058,52 +1081,105 @@ function chronicleActions(next) {
   if (trade.length) parts.push(`opened ${trade.length} trade route${trade.length === 1 ? "" : "s"}`);
   if (envoys.length) parts.push(`sent ${envoys.length} envoy${envoys.length === 1 ? "" : "s"}`);
   if (attacks.length) parts.push(`launched ${attacks.length} attack${attacks.length === 1 ? "" : "s"}`);
-  if (moves.length && parts.length < 3) parts.push(`maneuvered ${moves.length} unit${moves.length === 1 ? "" : "s"}`);
-  if (!parts.length) return;
-  const shown = parts.slice(0, 3);
-  const more = parts.length - shown.length;
-  addEvent(actor.is_barbarian ? "☠" : actor.is_minor ? "♜" : "◈",
-    `${actor.civ} ${shown.join(" · ")}${more ? ` · +${more} more` : ""}.`, next.turn);
+  if (includeMovement && moves.length && parts.length < 4)
+    parts.push(`maneuvered ${moves.length} unit${moves.length === 1 ? "" : "s"}`);
+  return { actor, parts, moves: moves.length };
+}
+function chronicleActions(next) {
+  const batches = Array.isArray(next.step_batches) ? next.step_batches : [next];
+  const viewer = eventViewPlayer(next);
+  if (viewer !== null && viewer !== undefined) {
+    for (const batch of batches) {
+      const summary = actionSummary(next, batch, true);
+      if (!summary || summary.actor.id !== viewer) continue;
+      const shown = summary.parts.slice(0, 4);
+      const more = summary.parts.length - shown.length;
+      addEvent("◈", shown.length
+        ? `${summary.actor.civ} ${shown.join(" · ")}${more ? ` · +${more} more` : ""}.`
+        : `${summary.actor.civ} completed its turn.`, next.turn, next);
+    }
+    return;
+  }
+
+  // Omniscient spectator paints can contain several simulated turns. Keep
+  // them together as one readable world summary instead of flooding the log
+  // with every unit-level action from every civilization.
+  const summaries = batches.map(batch => actionSummary(next, batch, false)).filter(Boolean);
+  if (!summaries.length) return;
+  const majorActivity = summaries.filter(summary => summary.parts.length &&
+    !summary.actor.is_minor && !summary.actor.is_barbarian);
+  const noteworthy = majorActivity.length ? majorActivity :
+    summaries.filter(summary => summary.parts.length);
+  const clauses = noteworthy.slice(0, 3).map(summary =>
+    `${summary.actor.civ}: ${summary.parts.slice(0, 2).join(", ")}`);
+  const omitted = noteworthy.length - clauses.length;
+  const moves = summaries.reduce((total, summary) => total + summary.moves, 0);
+  let text;
+  if (clauses.length) {
+    text = clauses.join(" • ") + (omitted > 0 ? ` • +${omitted} more civilizations` : "");
+  } else {
+    text = `${summaries.length} civilization${summaries.length === 1 ? "" : "s"} completed ` +
+      `${summaries.length === 1 ? "its" : "their"} turn${summaries.length === 1 ? "" : "s"}` +
+      (moves ? ` · ${moves} unit maneuvers` : "");
+  }
+  addEvent("◎", `${text}.`, next.turn, next);
 }
 function chronicle(prev, next) {
   if (!prev || prev.seed !== next.seed) {
-    worldEvents = [];
+    eventLogs = new Map();
+    lastLeaderByView = new Map();
     seenServerEvents = new Set();
-    lastLeader = null;
-    addEvent("✦", `A new world begins with seed ${next.seed}.`, next.turn);
+    addEvent("✦", `A new world begins with seed ${next.seed}.`, next.turn, next);
     chronicleServer(next);
     return;
   }
-  if (next.turn > prev.turn) addEvent("☀", `Turn ${next.turn} dawns across the world.`, next.turn);
+  const viewer = eventViewPlayer(next);
+  const playerView = viewer !== null && viewer !== undefined;
+  if (next.turn > prev.turn) {
+    const civ = viewer === null ? null : (next.players[viewer] || {}).civ;
+    addEvent("☀", civ ? `Turn ${next.turn} begins for ${civ}.` :
+      `Turn ${next.turn} dawns across the world.`, next.turn, next);
+  }
   const oldCities = new Map(prev.cities.map(c => [c.id, c]));
   for (const city of next.cities) {
     const old = oldCities.get(city.id);
     const civ = (next.players[city.owner] || {}).civ || "An unknown civilization";
-    if (!old) addEvent("🏛", `${civ} founded ${city.name}.`, next.turn);
-    else if (old.owner !== city.owner) {
+    if (!old && (viewer === null || city.owner === viewer))
+      addEvent("🏛", `${civ} founded ${city.name}.`, next.turn, next);
+    else if (old && old.owner !== city.owner &&
+             (viewer === null || city.owner === viewer || old.owner === viewer)) {
       const former = (prev.players[old.owner] || {}).civ || "its former ruler";
-      addEvent("⚔", `${civ} captured ${city.name} from ${former}.`, next.turn);
-    } else if (city.pop > old.pop) addEvent("◆", `${city.name} grew to ${city.pop} population.`, next.turn);
+      addEvent("⚔", `${civ} captured ${city.name} from ${former}.`, next.turn, next);
+    } else if (old && city.pop > old.pop && (viewer === null || city.owner === viewer))
+      addEvent("◆", `${city.name} grew to ${city.pop} population.`, next.turn, next);
     oldCities.delete(city.id);
   }
-  for (const city of oldCities.values()) addEvent("♜", `${city.name} was lost to history.`, next.turn);
+  for (const city of oldCities.values()) {
+    if (viewer === null || city.owner === viewer)
+      addEvent("♜", `${city.name} was lost to history.`, next.turn, next);
+  }
   for (const p of next.players) {
     const old = prev.players.find(x => x.id === p.id);
-    if (old && old.alive && !p.alive) addEvent("☠", `${p.civ} has been defeated.`, next.turn);
+    if (old && old.alive && !p.alive && (viewer === null || p.id === viewer))
+      addEvent("☠", `${p.civ} has been defeated.`, next.turn, next);
     if (old && !p.is_minor && !p.is_barbarian && old.ai_strategy && p.ai_strategy &&
-        old.ai_strategy !== p.ai_strategy) {
+        old.ai_strategy !== p.ai_strategy && (viewer === null || p.id === viewer)) {
       const icon = {expansion:"⌂", science:"⚛", culture:"♪", religion:"✦",
                     diplomacy:"⚜", conquest:"⚔", recovery:"♜"}[p.ai_strategy] || "◇";
       addEvent(icon,
         `${p.civ} changed its grand strategy from ${titleCase(old.ai_strategy)} to ${titleCase(p.ai_strategy)}.`,
-        next.turn, true);
+        next.turn, next, true);
     }
   }
-  const majors = next.players.filter(p => !p.is_minor && !p.is_barbarian && p.alive)
-    .sort((a, b) => b.score - a.score);
-  if (majors.length && lastLeader !== null && majors[0].id !== lastLeader)
-    addEvent("♛", `${majors[0].civ} has taken the score lead.`, next.turn);
-  if (majors.length) lastLeader = majors[0].id;
+  if (!playerView) {
+    const majors = next.players.filter(p => !p.is_minor && !p.is_barbarian && p.alive)
+      .sort((a, b) => b.score - a.score || a.id - b.id);
+    const viewKey = eventViewKey(next);
+    const lastLeader = lastLeaderByView.get(viewKey);
+    if (majors.length && lastLeader !== undefined && majors[0].id !== lastLeader)
+      addEvent("♛", `${majors[0].civ} has taken the score lead.`, next.turn, next);
+    if (majors.length) lastLeaderByView.set(viewKey, majors[0].id);
+  }
   chronicleActions(next);
   chronicleServer(next);
 }
@@ -1119,6 +1195,7 @@ function render(st, recordChronicle = true) {
   if (st.server_instance !== undefined) serverInstance = st.server_instance;
   const newWorld = !state || st.seed !== state.seed || st.turn < state.turn;
   const viewChanged = !!state && !newWorld && st.view_player !== state.view_player;
+  const spectateChanged = !!state && !!st.spectate !== !!state.spectate;
   if (recordChronicle && !viewChanged) chronicle(state, st);
   const sameWorld = state && state.seed === st.seed;
   if (!viewChanged) {
@@ -1139,6 +1216,9 @@ function render(st, recordChronicle = true) {
   }
   document.getElementById("humanfooter").style.display = SPEC ? "none" : "grid";
   document.getElementById("specbar").style.display = SPEC ? "block" : "none";
+  document.getElementById("observer-settings").style.display = SPEC ? "block" : "none";
+  if (newWorld || spectateChanged)
+    document.getElementById("specchk").checked = SPEC;
   if (SPEC) closeTrade();
   syncViewPlayer();
   if (newWorld && st.seed !== undefined) { lastSeed = st.seed; loadTacks(); }
@@ -1628,6 +1708,7 @@ function draw() {
   const campSet = new Set(state.camps.map(key));
   const workedSet = new Set(state.cities.flatMap(c =>
     c.citizens ? c.citizens.worked_tiles.map(key) : []));
+  const unitOwnerByTile = new Map(state.units.map(u => [key(u.pos), u.owner]));
   const beau = VIEW === "cinematic";
   const hl = {};
   if (sel) {
@@ -1675,6 +1756,23 @@ function draw() {
         cx.fill();
       }
     }
+    // Translucent civ-color washes make control and unit positions readable
+    // without covering terrain detail. An occupied owned tile intentionally
+    // receives both layers, so units remain easy to locate inside their empire.
+    if (t.owner !== null && t.owner !== undefined) {
+      hexPath(x, y, S + 0.15);
+      cx.globalAlpha = 0.11;
+      cx.fillStyle = pcol(t.owner);
+      cx.fill();
+    }
+    const unitOwner = unitOwnerByTile.get(key(t.pos));
+    if (unitOwner !== undefined) {
+      hexPath(x, y, S - 0.5);
+      cx.globalAlpha = 0.20;
+      cx.fillStyle = pcol(unitOwner);
+      cx.fill();
+    }
+    cx.globalAlpha = 1;
     if (!beau) { hexPath(x, y); cx.strokeStyle = "#00000038"; cx.lineWidth = 1; cx.stroke(); }
   }
   // A narrow beach/foam seam gives continents a natural readable coastline.
@@ -1860,7 +1958,7 @@ function draw() {
     } else if (t.improvement) {
       cx.fillStyle = "#5a4632"; cx.fillRect(x - 4, y + 5, 8, 5);
     }
-    if (t.resource) {
+    if (t.resource && (SHOW_ARTIFACT_SITES || !ARTIFACT_RESOURCES.has(t.resource))) {
       // Civ 6-style white-ringed resource badge
       cx.fillStyle = "#1d2418d2";
       cx.beginPath(); cx.arc(x + 10, y + 9, 9.5, 0, 7); cx.fill();
@@ -2275,9 +2373,8 @@ function drawPlayerHud() {
   const acting = SPEC ? state.current : 0;
   const majors = state.players
     .filter(p => !p.is_minor && !p.is_barbarian)
-    .sort((a, b) => a.id - b.id);
-  const standings = [...majors].sort((a, b) => b.score - a.score || a.id - b.id);
-  const rankById = new Map(standings.map((p, index) => [p.id, index + 1]));
+    .sort((a, b) => b.score - a.score || a.id - b.id);
+  const rankById = new Map(majors.map((p, index) => [p.id, index + 1]));
   hud.innerHTML =
     `<div class="ribbon-heading"><span>World leaders</span><span>output / turn · strength · score</span></div>` +
     `<div class="diplomacy-ribbon">` + majors.map(p => {
@@ -2311,10 +2408,10 @@ function drawPlayerHud() {
         ["military", "MIL", p.military, `Military strength: ${compactStat(p.military)}`],
         ["score", "SCORE", p.score, `Score: ${compactStat(p.score)} · rank ${rank}`],
       ];
-      return `<button class="diplomacy-card ${stateClass}" style="--civ:${color}" onclick="focusPlayer(${p.id})" ` +
-        `title="Center on ${p.civ} · ${relationSummary}" aria-label="${p.civ}, rank ${rank}, ${relationSummary}">` +
+      return `<button class="diplomacy-card ${stateClass}" style="--civ:${color}" onclick="spectatePlayer(${p.id})" ` +
+        `title="Watch ${p.civ} through its fog of war · ${relationSummary}" aria-label="Watch ${p.civ}, rank ${rank}, ${relationSummary}">` +
         `<span class="leader-medallion">${initial}</span>` +
-        `<span class="diplomacy-identity"><span class="diplomacy-name">${p.id === acting && SPEC ? "◉ " : ""}${p.civ}</span>` +
+        `<span class="diplomacy-identity"><span class="diplomacy-name"><span class="diplomacy-rank">#${rank}</span>${p.id === acting && SPEC ? "◉ " : ""}${p.civ}</span>` +
         `<span class="diplomacy-leader">${leader} · ${strategyLabel}${relation}</span></span>` +
         `<span class="diplomacy-stats">` + stats.map(([kind, shortLabel, value, label]) =>
           `<span class="ribbon-stat ${kind}" title="${label}"><b>${compactStat(value)}</b><em>${shortLabel}</em></span>`
@@ -2567,14 +2664,23 @@ function drawResearchSlot(el, kind, name, progress, total, perTurn, boosted) {
 }
 function drawEvents() {
   const el = document.getElementById("events");
+  const scope = document.getElementById("eventscope");
+  const viewer = eventViewPlayer(state);
+  const playerView = viewer !== null && viewer !== undefined;
+  const player = playerView ? state.players[viewer] : null;
+  scope.textContent = playerView ? `${player.civ} · player log` : "Spectator · combined summary";
+  const events = eventsFor(state);
   const now = performance.now();
-  const pinned = worldEvents.filter(e => e.important && now - e.at < 6000);
-  const ordered = [...pinned, ...worldEvents.filter(e => !pinned.includes(e))];
-  const signature = ordered.map(e => `${e.turn}:${e.icon}:${e.text}:${pinned.includes(e)}`).join("|");
+  const pinned = events.filter(e => e.important && now - e.at < 6000);
+  const ordered = [...pinned, ...events.filter(e => !pinned.includes(e))];
+  const signature = `${eventViewKey(state)}|` + ordered
+    .map(e => `${e.turn}:${e.icon}:${e.text}:${pinned.includes(e)}`).join("|");
   if (el.dataset.signature === signature) return;
   el.dataset.signature = signature;
-  if (!worldEvents.length) {
-    el.innerHTML = `<div class="empty-state">The world is quiet—for now.</div>`;
+  if (!events.length) {
+    el.innerHTML = `<div class="empty-state">${playerView
+      ? `Waiting for ${player.civ}'s next turn…`
+      : "The world is quiet—for now."}</div>`;
     return;
   }
   el.innerHTML = ordered.map(e =>
@@ -3204,12 +3310,10 @@ document.getElementById("specstep").onclick = () => {
 document.getElementById("specspeed").onchange = () => {
   setPace({ms: +document.getElementById("specspeed").value});
 };
-document.getElementById("viewplayer").onchange = async ev => {
-  if (!SPEC || viewChanging) return;
-  const select = ev.currentTarget;
-  const player = select.value === "spectator" ? null : +select.value;
+async function spectatePlayer(player) {
+  if (!state || viewChanging) return;
   viewChanging = true;
-  select.disabled = true;
+  syncViewPlayer();
   clearTimeout(specTimer);
   try {
     render(await fetchJSON("/view", { method: "POST",
@@ -3225,6 +3329,11 @@ document.getElementById("viewplayer").onchange = async ev => {
     syncViewPlayer();
     scheduleSpec(state);
   }
+}
+document.getElementById("viewplayer").onchange = ev => {
+  const select = ev.currentTarget;
+  const player = select.value === "spectator" ? null : +select.value;
+  spectatePlayer(player);
 };
 document.getElementById("newgame").onclick = async () => {
   const np = +document.getElementById("np").value;
@@ -3233,7 +3342,7 @@ document.getElementById("newgame").onclick = async () => {
   document.getElementById("specpause").textContent = "⏸ Pause";
   render(await fetchJSON("/new", { method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({num_players: np, seed: Math.floor(Math.random() * 1e9),
+    body: JSON.stringify({num_players: np, seed: Math.floor(Math.random() * 1e9), force: true,
                           spectate: document.getElementById("specchk").checked}) }));
   if (SPEC) centerMainLandmass(); else centerHome();
   setPace({paused: false});
@@ -3254,6 +3363,15 @@ document.getElementById("newgame").onclick = async () => {
   ys.onchange = () => {
     SHOW_YIELDS = ys.checked;
     localStorage.setItem("civvis-show-yields", SHOW_YIELDS ? "1" : "0");
+    if (state) draw();
+  };
+}
+{
+  const artifacts = document.getElementById("artifactchk");
+  artifacts.checked = SHOW_ARTIFACT_SITES;
+  artifacts.onchange = () => {
+    SHOW_ARTIFACT_SITES = artifacts.checked;
+    localStorage.setItem("civvis-show-artifact-sites", SHOW_ARTIFACT_SITES ? "1" : "0");
     if (state) draw();
   };
 }
