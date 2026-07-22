@@ -9031,10 +9031,8 @@ impl Game {
             // purchase instead of first earning combat experience.
             u.xp = Self::promotion_threshold(1);
         }
-        if kind == "apostle" {
-            if self.empire_wonder_effect(owner, "apostles_gain_martyr") > 0.0 {
-                u.promotions.insert("martyr".to_string());
-            }
+        if kind == "apostle" && self.empire_wonder_effect(owner, "apostles_gain_martyr") > 0.0 {
+            u.promotions.insert("martyr".to_string());
         }
         self.next_id += 1;
         let id = u.id;
