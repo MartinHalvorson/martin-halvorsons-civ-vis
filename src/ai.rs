@@ -77,19 +77,107 @@ const POLICY_PRIORITY: [&str; 20] = ["urban_planning", "colonization", "ilkum",
     "serfdom", "conscription", "bastions", "retainers", "town_charters", "craftsmen",
     "maritime_industries", "maneuver", "limes", "survey", "strategos"];
 
+/// Strategy weights steering BasicAi decisions. Defaults reproduce the
+/// original hand-tuned behavior; the `evolve` GA searches this space.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Weights {
+    pub city_target: f64,       // stop settling at this many cities+settlers
+    pub settler_min_pop: f64,   // city pop needed before making a settler
+    pub settler_stop_turn: f64, // no new settlers after this turn
+    pub mil_per_city: f64,      // military units to keep per city
+    pub builder_per_city: f64,  // builders to keep per city
+    pub war_ratio: f64,         // declare war if my power > ratio*theirs+margin
+    pub war_margin: f64,
+    pub peace_ratio: f64,       // sue for peace if my power < ratio*theirs
+    pub war_min_turn: f64,
+    pub attack_margin: f64,     // attack if my strength >= theirs - margin
+    pub settle_food: f64,       // settle-site yield weights
+    pub settle_prod: f64,
+    pub settle_gold: f64,
+    pub settle_dist: f64,       // per-hex penalty on distant settle sites
+    pub min_city_dist: f64,
+    pub wonder_min_bld: f64,    // buildings before a city tries wonders
+    pub faith_builder: f64,     // faith reserve before buying a builder
+    pub d_campus: f64,          // district build priorities (higher first)
+    pub d_commercial: f64,
+    pub d_holy: f64,
+    pub d_theater: f64,
+}
+
+impl Default for Weights {
+    fn default() -> Weights {
+        Weights {
+            city_target: 4.0, settler_min_pop: 2.0, settler_stop_turn: 150.0,
+            mil_per_city: 1.0, builder_per_city: 0.5,
+            war_ratio: 1.8, war_margin: 20.0, peace_ratio: 0.6, war_min_turn: 40.0,
+            attack_margin: 8.0,
+            settle_food: 1.2, settle_prod: 1.0, settle_gold: 0.3, settle_dist: 0.4,
+            min_city_dist: 4.0, wonder_min_bld: 3.0, faith_builder: 120.0,
+            d_campus: 4.0, d_commercial: 3.0, d_holy: 2.0, d_theater: 1.0,
+        }
+    }
+}
+
+impl Weights {
+    pub fn to_vec(&self) -> Vec<f64> {
+        vec![self.city_target, self.settler_min_pop, self.settler_stop_turn,
+             self.mil_per_city, self.builder_per_city, self.war_ratio,
+             self.war_margin, self.peace_ratio, self.war_min_turn,
+             self.attack_margin, self.settle_food, self.settle_prod,
+             self.settle_gold, self.settle_dist, self.min_city_dist,
+             self.wonder_min_bld, self.faith_builder,
+             self.d_campus, self.d_commercial, self.d_holy, self.d_theater]
+    }
+
+    pub fn from_vec(v: &[f64]) -> Weights {
+        Weights {
+            city_target: v[0], settler_min_pop: v[1], settler_stop_turn: v[2],
+            mil_per_city: v[3], builder_per_city: v[4], war_ratio: v[5],
+            war_margin: v[6], peace_ratio: v[7], war_min_turn: v[8],
+            attack_margin: v[9], settle_food: v[10], settle_prod: v[11],
+            settle_gold: v[12], settle_dist: v[13], min_city_dist: v[14],
+            wonder_min_bld: v[15], faith_builder: v[16],
+            d_campus: v[17], d_commercial: v[18], d_holy: v[19], d_theater: v[20],
+        }
+    }
+
+    /// (lo, hi) clamp per gene, same order as to_vec.
+    pub fn bounds() -> [(f64, f64); 21] {
+        [(2.0, 12.0), (1.0, 5.0), (60.0, 400.0), (0.3, 4.0), (0.2, 2.0),
+         (0.8, 5.0), (-20.0, 80.0), (0.2, 1.2), (10.0, 200.0), (-10.0, 30.0),
+         (0.2, 3.0), (0.2, 3.0), (0.0, 2.0), (0.0, 2.0), (3.0, 7.0),
+         (0.0, 8.0), (40.0, 400.0),
+         (0.0, 8.0), (0.0, 8.0), (0.0, 8.0), (0.0, 8.0)]
+    }
+}
+
 #[derive(Default)]
 pub struct BasicAi {
     minor: bool,
     barb: bool,
+    w: Weights,
 }
 
 impl BasicAi {
     pub fn new() -> BasicAi {
-        BasicAi { minor: false, barb: false }
+        BasicAi { minor: false, barb: false, w: Weights::default() }
+    }
+
+    pub fn with_weights(w: Weights) -> BasicAi {
+        BasicAi { minor: false, barb: false, w }
     }
 
     pub fn fleet(g: &Game) -> Vec<BasicAi> {
         g.players.iter().map(|_| BasicAi::new()).collect()
+    }
+
+    /// Majors get `w`; minors/barbarians keep default weights.
+    pub fn fleet_weighted(g: &Game, w: &Weights) -> Vec<BasicAi> {
+        g.players.iter().map(|p| {
+            if p.is_minor || p.is_barbarian { BasicAi::new() }
+            else { BasicAi::with_weights(w.clone()) }
+        }).collect()
     }
 }
 
@@ -180,7 +268,7 @@ impl BasicAi {
             .map(|o| o.id)
             .collect();
         for o in &others {
-            if g.is_at_war(pid, *o) && my_power < 0.6 * g.military_power(*o) {
+            if g.is_at_war(pid, *o) && my_power < self.w.peace_ratio * g.military_power(*o) {
                 let _ = g.apply(pid, &Action::MakePeace { player: *o });
             }
         }
@@ -188,14 +276,15 @@ impl BasicAi {
             return;
         }
         let at_war = others.iter().any(|o| g.is_at_war(pid, *o));
-        if !at_war && g.turn > 40 && g.player_city_ids(pid).len() >= 2 && !others.is_empty() {
+        if !at_war && (g.turn as f64) > self.w.war_min_turn
+            && g.player_city_ids(pid).len() >= 2 && !others.is_empty() {
             let weakest = *others
                 .iter()
                 .min_by(|a, b| {
                     g.military_power(**a).partial_cmp(&g.military_power(**b)).unwrap()
                 })
                 .unwrap();
-            if my_power > 1.8 * g.military_power(weakest) + 20.0 {
+            if my_power > self.w.war_ratio * g.military_power(weakest) + self.w.war_margin {
                 let _ = g.apply(pid, &Action::DeclareWar { player: weakest });
             }
         }
@@ -253,7 +342,8 @@ impl BasicAi {
                 }
             }
         }
-        if g.players[pid].faith >= 120.0 && builders < n_cities && !city_ids.is_empty() {
+        if g.players[pid].faith >= self.w.faith_builder && builders < n_cities
+            && !city_ids.is_empty() {
             let _ = g.apply(pid, &Action::Buy {
                 city: city_ids[0],
                 unit: "builder".to_string(),
@@ -283,17 +373,19 @@ impl BasicAi {
     fn pick_item(&self, g: &Game, pid: usize, cid: u32, n_cities: usize,
                  settlers: usize, builders: usize, military: usize) -> Option<Item> {
         let city_pop = g.cities[&cid].pop;
-        if military < n_cities {
+        if (military as f64) < self.w.mil_per_city * n_cities as f64 {
             if let Some(m) = self.best_military(g, pid, cid) {
                 return Some(Item::Unit { unit: m });
             }
         }
-        if !self.minor && !self.barb && n_cities + settlers < 4 && settlers == 0 && city_pop >= 2
-            && g.turn < 150
+        if !self.minor && !self.barb
+            && ((n_cities + settlers) as f64) < self.w.city_target && settlers == 0
+            && (city_pop as f64) >= self.w.settler_min_pop
+            && (g.turn as f64) < self.w.settler_stop_turn
         {
             return Some(Item::Unit { unit: "settler".to_string() });
         }
-        if builders < (n_cities + 1) / 2 {
+        if (builders as f64) < self.w.builder_per_city * n_cities as f64 {
             return Some(Item::Unit { unit: "builder".to_string() });
         }
         if !self.minor {
@@ -308,7 +400,11 @@ impl BasicAi {
         if !g.cities[&cid].buildings.iter().any(|b| b == "monument") {
             return Some(Item::Building { building: "monument".to_string() });
         }
-        for dname in DISTRICT_PRIORITY {
+        let mut dpri: Vec<(&str, f64)> = DISTRICT_PRIORITY.iter().cloned()
+            .zip([self.w.d_campus, self.w.d_commercial, self.w.d_holy, self.w.d_theater])
+            .collect();
+        dpri.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        for (dname, _) in dpri {
             if g.cities[&cid].districts.contains_key(dname) {
                 continue;
             }
@@ -345,7 +441,7 @@ impl BasicAi {
             return Some(Item::Building { building: buildable[0].1.clone() });
         }
         // developed cities turn to wonders
-        if g.cities[&cid].buildings.len() >= 3 {
+        if g.cities[&cid].buildings.len() as f64 >= self.w.wonder_min_bld {
             let mut wonders: Vec<(i64, String)> = g.rules.buildings.iter()
                 .filter(|(b, s)| {
                     s.wonder && g.can_produce(pid, cid, &Item::Building { building: (*b).clone() })
@@ -408,7 +504,8 @@ impl BasicAi {
                     continue;
                 }
                 let ys = g.rules.tile_yields(t);
-                total += ys.food * 1.2 + ys.production + ys.gold * 0.3;
+                total += ys.food * self.w.settle_food + ys.production * self.w.settle_prod
+                    + ys.gold * self.w.settle_gold;
             }
         }
         total
@@ -428,7 +525,7 @@ impl BasicAi {
             if g.rules.is_water(t) || !g.rules.is_passable(t) {
                 continue;
             }
-            if g.cities.values().any(|c| g.wdist(c.pos, pos) < 4) {
+            if g.cities.values().any(|c| (g.wdist(c.pos, pos) as f64) < self.w.min_city_dist) {
                 continue;
             }
             if let Some(oc) = t.owner_city {
@@ -436,7 +533,7 @@ impl BasicAi {
                     continue;
                 }
             }
-            let val = self.settle_value(g, pos) - 0.4 * g.wdist(upos, pos) as f64;
+            let val = self.settle_value(g, pos) - self.w.settle_dist * g.wdist(upos, pos) as f64;
             let better = match &best {
                 None => true,
                 Some((bv, bp)) => val > *bv || (val == *bv && pos > *bp),
@@ -535,7 +632,7 @@ impl BasicAi {
             let o = &g.units[&oid];
             if g.rules.units[o.kind.as_str()].class == "military" {
                 let theirs = effective_strength(g.unit_strength(o, true), o.hp);
-                return mine >= theirs - 8.0;
+                return mine >= theirs - self.w.attack_margin;
             }
         }
         true

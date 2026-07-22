@@ -61,6 +61,10 @@ impl EloPool {
 pub fn builtin_ai(name: &str, seed: u64) -> Box<dyn Ai> {
     match name {
         "random" => Box::new(RandomAi::new(seed)),
+        "evolved" => Box::new(
+            crate::evolve::load_champion("evolved")
+                .map(BasicAi::with_weights)
+                .unwrap_or_else(BasicAi::new)),
         _ => Box::new(BasicAi::new()),
     }
 }

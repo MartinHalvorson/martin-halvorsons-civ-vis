@@ -3,3 +3,5 @@ target/
 .idea/
 .pytest_cache/
 civvis-play*.log
+evolved/
+*.log

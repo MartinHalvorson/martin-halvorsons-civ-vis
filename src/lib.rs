@@ -4,6 +4,7 @@
 
 pub mod ai;
 pub mod elo;
+pub mod evolve;
 pub mod game;
 pub mod hex;
 pub mod mapgen;

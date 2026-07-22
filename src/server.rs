@@ -34,7 +34,11 @@ impl Session {
         let game = Game::new_full(params.num_players, params.width, params.height,
                                   params.seed, params.max_turns,
                                   params.num_city_states, true);
-        let ais = BasicAi::fleet(&game);
+        // majors use the latest evolved champion weights when available
+        let ais = match crate::evolve::load_champion("evolved") {
+            Some(w) => BasicAi::fleet_weighted(&game, &w),
+            None => BasicAi::fleet(&game),
+        };
         Session { params, game, ais }
     }
 

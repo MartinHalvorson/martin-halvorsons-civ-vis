@@ -186,6 +186,21 @@ fn main() {
             println!();
             print!("{}", civvis::elo::leaderboard(&pool));
         }
+        "evolve" => {
+            let players = arg(&args, "--players", 4);
+            civvis::evolve::evolve(&civvis::evolve::EvoCfg {
+                generations: arg(&args, "--generations", 1_000_000) as u32,
+                pop: arg(&args, "--pop", 16) as usize,
+                games: arg(&args, "--games", 8) as usize,
+                players: players as usize,
+                width: arg(&args, "--width", 24) as i32,
+                height: arg(&args, "--height", 16) as i32,
+                max_turns: arg(&args, "--turns", 160) as u32,
+                seed: arg(&args, "--seed", 1) as u64,
+                threads: arg(&args, "--threads", 8) as usize,
+                dir: "evolved".to_string(),
+            });
+        }
         "play" => {
             let players = arg(&args, "--players", 4);
             let seed = {
@@ -212,7 +227,7 @@ fn main() {
                 });
         }
         _ => {
-            println!("usage: civvis <simulate|soak|benchmark|tournament|play> \
+            println!("usage: civvis <simulate|soak|benchmark|tournament|play|evolve> \
                       [--players N] [--seed N] [--turns N] [--width N] [--height N] \
                       [--city-states N] [--games N] [--ais a,b] [--port N] [--no-open] \
                       [--spectate]");
