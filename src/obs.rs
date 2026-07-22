@@ -110,6 +110,8 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             let ext = json!({
                 "food": round1(c.food), "production": round1(c.production),
                 "queue": c.queue, "buildings": c.buildings,
+                "products": c.products,
+                "product_capacity": g.product_capacity(c),
                 "districts": c.districts,
                 "wonders": c.wonders,
                 "owned_tiles": c.owned_tiles.iter()
@@ -205,6 +207,8 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             "age": p.age,
             "tourism": round1(p.tourism_lifetime),
             "religious_tourism": round1(p.religious_tourism_lifetime),
+            "monopoly_gold_per_turn": round1(g.monopoly_bonuses(pid).0),
+            "monopoly_tourism_pct": round1(g.monopoly_bonuses(pid).1),
             "secret_society": p.secret_society,
             "domestic_tourists": g.domestic_tourists(pid),
             "foreign_tourists": g.foreign_tourists(pid),
@@ -226,6 +230,8 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
                     "class": spec.class,
                     "native": g.connected_resource_count(pid, resource),
                     "available": g.resource_access_count(pid, resource),
+                    "controlled": (spec.class == "luxury")
+                        .then(|| g.controlled_resource_count(pid, resource)),
                     "stockpile": (spec.class == "strategic")
                         .then(|| round1(g.strategic_stockpile(pid, resource))),
                     "capacity": (spec.class == "strategic")

@@ -41,6 +41,17 @@ lead is met with theological pressure (or military denial when no religion is
 available), a Diplomatic Victory lead redirects Favor and envoys, and captured
 foreign Capitals force a recovery posture. This urgency can override a nearer,
 weaker distraction, while an explicit benchmark victory target remains fixed.
+Economic plans normally persist for five turns to avoid strategic thrashing,
+but a surprise major war, a newly threatened city, or an imminent rival
+victory interrupts that window and triggers an immediate reassessment.
+Incoming diplomatic proposals are priced against their Gold transfer,
+grievances, current strategy, alliance type, war position, and campaign
+fatigue; the agent no longer accepts an exploitative friendship payment or a
+non-peace pact with the rival it is trying to deny.
+Congress ballots follow the same plan: Diplomatic agents back themselves for
+World Leader, other strategies steer target rewards toward the civilization
+furthest from victory, and competition votes predict the strongest public
+candidate instead of mechanically voting for the current player.
 
 ## Victory targeting and full-game validation
 

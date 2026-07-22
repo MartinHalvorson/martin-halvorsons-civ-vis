@@ -4,7 +4,7 @@
 //! agent adds a shared strategic model so research, production, diplomacy,
 //! civilian work, and military movement pursue the same medium-term goal.
 use super::{Ai, BasicAi, UnitDoctrine, Weights};
-use crate::game::{Action, Game, Item};
+use crate::game::{Action, CongressResolution, DiplomaticDeal, Game, Item};
 use crate::rules::Yields;
 use crate::Pos;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -354,7 +354,62 @@ impl AdvancedAi {
                 return true;
             }
         }
+        // The five-turn planning horizon keeps economic choices stable, but
+        // wars and victory races are interrupts rather than ordinary inputs.
+        // Waiting four more turns after a surprise attack or a rival's final
+        // launch can make the eventual plan irrelevant.
+        let major_wars: Vec<usize> = g
+            .players
+            .iter()
+            .filter(|player| {
+                player.id != pid
+                    && player.alive
+                    && !player.is_minor
+                    && !player.is_barbarian
+                    && g.is_at_war(pid, player.id)
+            })
+            .map(|player| player.id)
+            .collect();
+        if !major_wars.is_empty()
+            && !plan
+                .target_player
+                .is_some_and(|target| major_wars.contains(&target))
+        {
+            return true;
+        }
+        if let Some(threatened) = self.threatened_city(g, pid) {
+            if plan.threatened_city != Some(threatened) {
+                return true;
+            }
+        }
+        if let Some((rival, counter)) = self.victory_denial(g, pid) {
+            if plan.target_player != Some(rival)
+                || (major_wars.is_empty() && plan.strategy != counter)
+            {
+                return true;
+            }
+        }
         false
+    }
+
+    fn threatened_city(&self, g: &Game, pid: usize) -> Option<u32> {
+        g.player_city_ids(pid)
+            .into_iter()
+            .filter_map(|cid| {
+                let city = &g.cities[&cid];
+                let nearby = g
+                    .units
+                    .values()
+                    .filter(|unit| unit.owner != pid && g.is_at_war(pid, unit.owner))
+                    .map(|unit| g.wdist(city.pos, unit.pos))
+                    .min()
+                    .unwrap_or(i32::MAX);
+                let recently_hit =
+                    city.last_attacked > 0 && g.turn.saturating_sub(city.last_attacked) <= 3;
+                (nearby <= 6 || recently_hit).then_some((nearby, city.hp, cid))
+            })
+            .min()
+            .map(|(_, _, cid)| cid)
     }
 
     fn religious_opening_viable(&self, g: &Game, pid: usize) -> bool {
@@ -477,11 +532,16 @@ impl AdvancedAi {
     /// the game, not only by how cheap their nearest city looks to capture.
     fn rival_victory_pressure(&self, g: &Game, pid: usize) -> VictoryFocus {
         let player = &g.players[pid];
-        let majors: Vec<usize> = g
+        let starting_majors: Vec<usize> = g
             .players
             .iter()
             .filter(|candidate| !candidate.is_minor && !candidate.is_barbarian)
             .map(|candidate| candidate.id)
+            .collect();
+        let living_majors: Vec<usize> = starting_majors
+            .iter()
+            .copied()
+            .filter(|candidate| g.players[*candidate].alive)
             .collect();
 
         let science = if player.science_projects.contains("exoplanet_expedition") {
@@ -496,7 +556,7 @@ impl AdvancedAi {
             0
         };
 
-        let culture_target = majors
+        let culture_target = living_majors
             .iter()
             .filter(|other| **other != pid)
             .map(|other| g.domestic_tourists(*other))
@@ -506,7 +566,7 @@ impl AdvancedAi {
         let culture = (100 * g.foreign_tourists(pid) / culture_target).clamp(0, 100) as i32;
 
         let converted = player.religion.as_ref().map_or(0, |religion| {
-            majors
+            living_majors
                 .iter()
                 .filter(|other| {
                     let cities = g.player_city_ids(**other);
@@ -519,13 +579,16 @@ impl AdvancedAi {
                 .count()
         });
         let religion = if player.religion.is_some() {
-            (100 * converted / majors.len().max(1)) as i32
+            (100 * converted / living_majors.len().max(1)) as i32
         } else {
             0
         };
         let diplomacy = (player.dvp * 5).clamp(0, 100) as i32;
 
-        let foreign_capitals = majors.iter().filter(|owner| **owner != pid).count();
+        let foreign_capitals = starting_majors
+            .iter()
+            .filter(|owner| **owner != pid)
+            .count();
         let controlled_capitals = g
             .cities
             .values()
@@ -537,7 +600,11 @@ impl AdvancedAi {
 
         let score = if g.max_turns > 0
             && g.turn.saturating_mul(4) >= g.max_turns.saturating_mul(3)
-            && majors.iter().map(|candidate| g.score(*candidate)).max() == Some(g.score(pid))
+            && living_majors
+                .iter()
+                .map(|candidate| g.score(*candidate))
+                .max()
+                == Some(g.score(pid))
         {
             (40 + 60 * g.turn.min(g.max_turns) / g.max_turns) as i32
         } else {
@@ -575,6 +642,40 @@ impl AdvancedAi {
         .unwrap()
     }
 
+    fn victory_denial(&self, g: &Game, pid: usize) -> Option<(usize, GrandStrategy)> {
+        if self.victory_target.is_some() {
+            return None;
+        }
+        let own_progress = self.victory_focus(g, pid).progress;
+        let (rival, pressure) = g
+            .players
+            .iter()
+            .filter(|player| {
+                player.id != pid && player.alive && !player.is_minor && !player.is_barbarian
+            })
+            .map(|player| (player.id, self.rival_victory_pressure(g, player.id)))
+            .max_by(|left, right| {
+                left.1
+                    .progress
+                    .cmp(&right.1.progress)
+                    .then_with(|| right.0.cmp(&left.0))
+            })?;
+        if pressure.progress < 78 || pressure.progress < own_progress + 15 {
+            return None;
+        }
+        let counter = match pressure.strategy {
+            GrandStrategy::Science => GrandStrategy::Conquest,
+            GrandStrategy::Culture => GrandStrategy::Culture,
+            GrandStrategy::Religion if g.players[pid].religion.is_some() => GrandStrategy::Religion,
+            GrandStrategy::Religion => GrandStrategy::Conquest,
+            GrandStrategy::Diplomacy => GrandStrategy::Diplomacy,
+            GrandStrategy::Conquest => GrandStrategy::Recovery,
+            GrandStrategy::Expansion => GrandStrategy::Conquest,
+            GrandStrategy::Recovery => GrandStrategy::Recovery,
+        };
+        Some((rival, counter))
+    }
+
     fn assess(&self, g: &Game, pid: usize) -> StrategicPlan {
         let cities = g.player_city_ids(pid);
         let my_power = g.military_power(pid);
@@ -603,23 +704,7 @@ impl AdvancedAi {
             .map(|o| g.military_power(*o))
             .fold(f64::INFINITY, f64::min);
 
-        let threatened_city = cities
-            .iter()
-            .filter_map(|cid| {
-                let c = &g.cities[cid];
-                let nearby = g
-                    .units
-                    .values()
-                    .filter(|u| u.owner != pid && g.is_at_war(pid, u.owner))
-                    .map(|u| g.wdist(c.pos, u.pos))
-                    .min()
-                    .unwrap_or(i32::MAX);
-                let recently_hit =
-                    c.last_attacked > 0 && g.turn.saturating_sub(c.last_attacked) <= 3;
-                (nearby <= 6 || recently_hit).then_some((nearby, c.hp, *cid))
-            })
-            .min()
-            .map(|(_, _, cid)| cid);
+        let threatened_city = self.threatened_city(g, pid);
 
         let land = g
             .map
@@ -654,36 +739,7 @@ impl AdvancedAi {
             "Sumeria" | "Aztec" | "Nubia" | "Scythia"
         );
         let victory = self.victory_focus(g, pid);
-        let leading_rival = major_rivals
-            .iter()
-            .map(|rival| (*rival, self.rival_victory_pressure(g, *rival)))
-            .max_by(|left, right| {
-                left.1
-                    .progress
-                    .cmp(&right.1.progress)
-                    .then_with(|| right.0.cmp(&left.0))
-            });
-        let denial = leading_rival
-            .filter(|(_, pressure)| {
-                self.victory_target.is_none()
-                    && pressure.progress >= 78
-                    && pressure.progress >= victory.progress + 15
-            })
-            .map(|(rival, pressure)| {
-                let counter = match pressure.strategy {
-                    GrandStrategy::Science => GrandStrategy::Conquest,
-                    GrandStrategy::Culture => GrandStrategy::Culture,
-                    GrandStrategy::Religion if g.players[pid].religion.is_some() => {
-                        GrandStrategy::Religion
-                    }
-                    GrandStrategy::Religion => GrandStrategy::Conquest,
-                    GrandStrategy::Diplomacy => GrandStrategy::Diplomacy,
-                    GrandStrategy::Conquest => GrandStrategy::Recovery,
-                    GrandStrategy::Expansion => GrandStrategy::Conquest,
-                    GrandStrategy::Recovery => GrandStrategy::Recovery,
-                };
-                (rival, counter)
-            });
+        let denial = self.victory_denial(g, pid);
         let strategy = if at_war && (threatened_city.is_some() || my_power * 1.25 < strongest_rival)
         {
             GrandStrategy::Recovery
@@ -1230,6 +1286,144 @@ impl AdvancedAi {
         (value + 32.0) / spec.cost.max(10.0).sqrt()
     }
 
+    fn incoming_deal_value(
+        &self,
+        g: &Game,
+        pid: usize,
+        deal: &DiplomaticDeal,
+        plan: &StrategicPlan,
+    ) -> f64 {
+        let partner = deal.from;
+        let my_power = g.military_power(pid);
+        let partner_power = g.military_power(partner);
+        let grievance = g.players[pid]
+            .grievances
+            .get(&partner)
+            .copied()
+            .unwrap_or(0.0);
+        let fatigued = self.major_war_since.is_some_and(|started| {
+            g.turn.saturating_sub(started) >= 24
+                && g.turn.saturating_sub(self.last_campaign_progress) >= 12
+        });
+        let denied_partner = plan.target_player == Some(partner)
+            && (g.is_at_war(pid, partner)
+                || self.rival_victory_pressure(g, partner).progress >= 78);
+
+        let mut value = deal.give_gold - deal.request_gold;
+        if deal.peace {
+            value += if plan.strategy == GrandStrategy::Recovery
+                || my_power < partner_power * 0.85
+                || fatigued
+            {
+                320.0
+            } else if plan.strategy == GrandStrategy::Conquest
+                && plan.target_player == Some(partner)
+            {
+                -260.0
+            } else {
+                35.0
+            };
+        } else if denied_partner {
+            return -1_000.0;
+        }
+        if deal.open_borders {
+            value += match plan.strategy {
+                GrandStrategy::Culture => 70.0,
+                GrandStrategy::Conquest => 45.0,
+                _ => 25.0,
+            };
+        }
+        if deal.friendship {
+            value += if plan.strategy == GrandStrategy::Diplomacy {
+                80.0
+            } else {
+                40.0
+            };
+        }
+        if let Some(alliance) = deal.alliance.as_deref() {
+            value += match (plan.strategy, alliance) {
+                (GrandStrategy::Science, "research")
+                | (GrandStrategy::Culture, "cultural")
+                | (GrandStrategy::Religion, "religious")
+                | (GrandStrategy::Conquest | GrandStrategy::Recovery, "military")
+                | (GrandStrategy::Expansion | GrandStrategy::Diplomacy, "economic") => 150.0,
+                (GrandStrategy::Diplomacy, _) => 110.0,
+                _ => 55.0,
+            };
+        }
+        value - grievance * 0.8
+    }
+
+    fn congress_choice(
+        &self,
+        g: &Game,
+        pid: usize,
+        resolution: &CongressResolution,
+        strategy: GrandStrategy,
+    ) -> Option<String> {
+        let own_choice = pid.to_string();
+        let eligible = |choice: &String| {
+            choice
+                .parse::<usize>()
+                .ok()
+                .filter(|target| {
+                    g.players.get(*target).is_some_and(|player| {
+                        player.alive && !player.is_minor && !player.is_barbarian
+                    })
+                })
+                .map(|target| (choice.clone(), target))
+        };
+        match resolution.id.as_str() {
+            "world_leader" if strategy == GrandStrategy::Diplomacy => resolution
+                .choices
+                .iter()
+                .find(|choice| choice.as_str() == own_choice.as_str())
+                .cloned(),
+            "international_aid" if strategy == GrandStrategy::Diplomacy => resolution
+                .choices
+                .iter()
+                .find(|choice| choice.as_str() == own_choice.as_str())
+                .cloned(),
+            // If we cannot credibly win the leadership ballot ourselves,
+            // award its target points to the civilization furthest from a
+            // Diplomatic Victory. This is active denial, not abstention.
+            "world_leader" | "international_aid" => resolution
+                .choices
+                .iter()
+                .filter_map(eligible)
+                .min_by_key(|(_, target)| (g.players[*target].dvp, *target))
+                .map(|(choice, _)| choice),
+            "world_fair" if strategy == GrandStrategy::Culture => resolution
+                .choices
+                .iter()
+                .find(|choice| choice.as_str() == own_choice.as_str())
+                .cloned(),
+            "world_fair" => resolution
+                .choices
+                .iter()
+                .filter_map(eligible)
+                .max_by(|left, right| {
+                    g.players[left.1]
+                        .culture_lifetime
+                        .partial_cmp(&g.players[right.1].culture_lifetime)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| right.1.cmp(&left.1))
+                })
+                .map(|(choice, _)| choice),
+            _ => {
+                let mut totals: BTreeMap<&str, u32> = BTreeMap::new();
+                for (choice, votes) in resolution.ballots.values() {
+                    *totals.entry(choice.as_str()).or_default() += *votes;
+                }
+                totals
+                    .into_iter()
+                    .max_by(|left, right| left.1.cmp(&right.1).then_with(|| right.0.cmp(left.0)))
+                    .map(|(choice, _)| choice.to_string())
+                    .or_else(|| resolution.choices.first().cloned())
+            }
+        }
+    }
+
     fn advanced_diplomacy(&mut self, g: &mut Game, pid: usize, plan: &StrategicPlan) {
         while let Some(dedication) = g.available_dedications(pid).into_iter().next() {
             if g.apply(pid, &Action::ChooseDedication { dedication })
@@ -1244,8 +1438,18 @@ impl AdvancedAi {
             .filter(|deal| deal.to == pid && deal.expires >= g.turn)
             .map(|deal| deal.id)
             .collect();
-        for deal in incoming {
-            let _ = g.apply(pid, &Action::AcceptDeal { deal });
+        for deal_id in incoming {
+            let accept = g
+                .pending_deals
+                .iter()
+                .find(|deal| deal.id == deal_id)
+                .is_some_and(|deal| self.incoming_deal_value(g, pid, deal, plan) >= 0.0);
+            let action = if accept {
+                Action::AcceptDeal { deal: deal_id }
+            } else {
+                Action::RejectDeal { deal: deal_id }
+            };
+            let _ = g.apply(pid, &action);
         }
         if let Some(session) = g.congress.clone() {
             for resolution in session.resolutions {
@@ -1263,8 +1467,7 @@ impl AdvancedAi {
                 {
                     continue;
                 }
-                let choice = pid.to_string();
-                if resolution.choices.contains(&choice) {
+                if let Some(choice) = self.congress_choice(g, pid, &resolution, plan.strategy) {
                     let votes = if plan.strategy == GrandStrategy::Diplomacy
                         && g.players[pid].diplomatic_favor >= 30.0
                     {
@@ -1412,6 +1615,84 @@ impl AdvancedAi {
             if g.apply(pid, &Action::SendEnvoy { player: target }).is_err() {
                 break;
             }
+        }
+    }
+
+    /// Buy out a close Great Person race only when the person advances the
+    /// active plan and the purchase leaves a useful operating reserve. Normal
+    /// GPP recruitment is automatic at turn start; this phase is deliberately
+    /// limited to one tempo purchase per turn.
+    fn advanced_great_people(&self, g: &mut Game, pid: usize, strategy: GrandStrategy) {
+        let city_count = g.player_city_ids(pid).len() as f64;
+        let gold_reserve = 150.0 + 50.0 * city_count;
+        let faith_reserve = match strategy {
+            GrandStrategy::Religion => 250.0,
+            GrandStrategy::Culture if g.players[pid].civics.contains("cold_war") => 700.0,
+            _ => 100.0,
+        };
+        let mut candidates = Vec::new();
+        for kind in [
+            "scientist",
+            "engineer",
+            "writer",
+            "artist",
+            "musician",
+            "merchant",
+            "general",
+            "admiral",
+            "prophet",
+        ] {
+            let Some((_, person)) = g.current_great_person(kind) else {
+                continue;
+            };
+            let points = g.players[pid].gpp.get(kind).copied().unwrap_or(0.0);
+            let missing = (person.cost - points).max(0.0);
+            if missing <= f64::EPSILON {
+                continue;
+            }
+            let affinity = match (strategy, kind) {
+                (GrandStrategy::Science, "scientist")
+                | (GrandStrategy::Culture, "writer" | "artist" | "musician")
+                | (GrandStrategy::Diplomacy, "merchant")
+                | (GrandStrategy::Conquest, "general" | "admiral") => 500.0,
+                (GrandStrategy::Religion, "prophet") if g.players[pid].religion.is_none() => 650.0,
+                (GrandStrategy::Expansion | GrandStrategy::Recovery, "engineer" | "merchant")
+                | (GrandStrategy::Science | GrandStrategy::Culture, "engineer") => 300.0,
+                (_, "prophet") if g.players[pid].religion.is_some() => -1_000.0,
+                _ => 100.0,
+            };
+            let close_fraction = missing / person.cost.max(1.0);
+            let limit = if affinity >= 500.0 { 0.40 } else { 0.15 };
+            if affinity < 0.0 || close_fraction > limit {
+                continue;
+            }
+            let effect_value = person.effects.values().sum::<f64>() * 12.0;
+            for (currency, price, bank, reserve) in [
+                ("gold", missing * 15.0, g.players[pid].gold, gold_reserve),
+                ("faith", missing * 10.0, g.players[pid].faith, faith_reserve),
+            ] {
+                if bank + f64::EPSILON < price + reserve {
+                    continue;
+                }
+                let opportunity = price / (bank - reserve).max(1.0);
+                let score = (affinity + effect_value) * (1.0 - opportunity.min(0.95));
+                candidates.push((
+                    score,
+                    std::cmp::Reverse((kind.to_string(), currency.to_string())),
+                    Action::PatronizeGreatPerson {
+                        kind: kind.to_string(),
+                        currency: currency.to_string(),
+                    },
+                ));
+            }
+        }
+        if let Some((_, _, action)) = candidates.into_iter().max_by(|left, right| {
+            left.0
+                .partial_cmp(&right.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| left.1.cmp(&right.1))
+        }) {
+            let _ = g.apply(pid, &action);
         }
     }
 
@@ -1566,6 +1847,37 @@ impl AdvancedAi {
             {
                 return;
             }
+        }
+    }
+
+    fn faith_building_spending(&self, g: &mut Game, pid: usize, strategy: GrandStrategy) {
+        let reserve = match strategy {
+            GrandStrategy::Religion => 180.0,
+            GrandStrategy::Culture if g.players[pid].civics.contains("cold_war") => 700.0,
+            _ => 80.0,
+        };
+        let best = g
+            .legal_actions(pid)
+            .into_iter()
+            .filter_map(|action| match &action {
+                Action::BuyBuilding { city, building, .. } => {
+                    let spec = &g.rules.buildings[building];
+                    let estimated_cost = spec.cost * 2.0;
+                    if g.players[pid].faith + f64::EPSILON < estimated_cost + reserve {
+                        return None;
+                    }
+                    let worship = spec.worship_belief.is_some() as i32;
+                    let score = (self.yield_value(spec.yields, strategy) * 25.0) as i32
+                        + (spec.housing * 35.0 + spec.amenity * 50.0) as i32
+                        + spec.great_work_slots.values().sum::<i32>() * 60
+                        + worship * 220;
+                    Some((score, std::cmp::Reverse((*city, building.clone())), action))
+                }
+                _ => None,
+            })
+            .max_by_key(|(score, key, _)| (*score, key.clone()));
+        if let Some((_, _, action)) = best {
+            let _ = g.apply(pid, &action);
         }
     }
 
@@ -2181,6 +2493,22 @@ impl AdvancedAi {
                     }
                 }
             }
+            Item::Product { product } => {
+                let existing = g
+                    .cities
+                    .values()
+                    .filter(|other| other.owner == pid)
+                    .flat_map(|other| other.products.iter())
+                    .filter(|existing| *existing == product)
+                    .count() as f64;
+                let strategic = match (plan.strategy, product.as_str()) {
+                    (GrandStrategy::Culture, "silk" | "wine") => 2_000.0,
+                    (GrandStrategy::Expansion | GrandStrategy::Recovery, "salt") => 1_650.0,
+                    (GrandStrategy::Diplomacy, _) => 900.0,
+                    _ => 600.0,
+                };
+                1_600.0 + strategic - existing * 280.0
+            }
         };
         if raw <= -9_999.0 {
             return raw;
@@ -2575,6 +2903,38 @@ impl AdvancedAi {
             .clone()
             .or_else(|| g.players[pid].religion.clone());
         let legal = g.legal_actions(pid);
+
+        if unit.kind == "apostle" && g.players[pid].religion_beliefs.len() < 4 {
+            let objective = self
+                .victory_target
+                .map(VictoryTarget::strategy)
+                .unwrap_or(GrandStrategy::Religion);
+            let evangelize = legal
+                .iter()
+                .filter_map(|action| match action {
+                    Action::EvangelizeBelief { unit, belief } if *unit == uid => {
+                        let score = match (objective, belief.as_str()) {
+                            (GrandStrategy::Science, "wat")
+                            | (GrandStrategy::Culture, "cathedral")
+                            | (GrandStrategy::Diplomacy, "pagoda")
+                            | (GrandStrategy::Conquest, "crusade")
+                            | (GrandStrategy::Expansion, "religious_colonization")
+                            | (GrandStrategy::Religion, "holy_order") => 300,
+                            (GrandStrategy::Conquest, "meeting_house")
+                            | (GrandStrategy::Expansion, "gurdwara")
+                            | (GrandStrategy::Religion, "mosque") => 240,
+                            (_, "holy_order" | "mosque" | "wat" | "pagoda") => 180,
+                            _ => 100,
+                        };
+                        Some((score, std::cmp::Reverse(belief.clone()), action.clone()))
+                    }
+                    _ => None,
+                })
+                .max_by_key(|(score, belief, _)| (*score, belief.clone()));
+            if let Some((_, _, action)) = evangelize {
+                return g.apply(pid, &action).is_ok();
+            }
+        }
 
         if unit.kind == "guru" {
             if let Some(action) = legal
@@ -3999,6 +4359,9 @@ impl Ai for AdvancedAi {
         // Keep the mature ancillary systems: governments, policies, beliefs,
         // governors, religions, and envoys. Research is already selected.
         self.base.research(g, pid);
+        self.base.corporations(g, pid);
+        self.advanced_great_people(g, pid, plan.strategy);
+        self.faith_building_spending(g, pid, plan.strategy);
         self.strategic_policies(g, pid, plan.strategy);
         self.advanced_diplomacy(g, pid, &plan);
 
@@ -4257,6 +4620,92 @@ mod tests {
     }
 
     #[test]
+    fn congress_strategy_contests_leaders_and_predicts_competitions() {
+        let mut game = Game::new_full(3, 24, 16, 780, 200, 0, false);
+        game.players[0].dvp = 10;
+        game.players[1].dvp = 18;
+        game.players[2].dvp = 3;
+        game.players[1].culture_lifetime = 2_000.0;
+        let ai = AdvancedAi::new();
+        let resolution = |id: &str| CongressResolution {
+            id: id.to_string(),
+            title: id.to_string(),
+            choices: vec!["0".to_string(), "1".to_string(), "2".to_string()],
+            ballots: BTreeMap::new(),
+        };
+
+        assert_eq!(
+            ai.congress_choice(
+                &game,
+                0,
+                &resolution("world_leader"),
+                GrandStrategy::Expansion,
+            ),
+            Some("2".to_string())
+        );
+        assert_eq!(
+            ai.congress_choice(
+                &game,
+                0,
+                &resolution("world_leader"),
+                GrandStrategy::Diplomacy,
+            ),
+            Some("0".to_string())
+        );
+        assert_eq!(
+            ai.congress_choice(&game, 0, &resolution("world_fair"), GrandStrategy::Science,),
+            Some("1".to_string())
+        );
+        assert_eq!(
+            ai.congress_choice(&game, 0, &resolution("world_fair"), GrandStrategy::Culture,),
+            Some("0".to_string())
+        );
+    }
+
+    #[test]
+    fn strategic_diplomacy_prices_incoming_deals_and_rejects_victory_leaders() {
+        let mut game = Game::new_full(2, 24, 16, 781, 300, 0, false);
+        let ai = AdvancedAi::new();
+        let mut plan = StrategicPlan {
+            strategy: GrandStrategy::Expansion,
+            target_player: Some(1),
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 4,
+            assessed_turn: game.turn,
+        };
+        let expires = game.turn + 10;
+        let deal = |give_gold, request_gold, friendship, peace| DiplomaticDeal {
+            id: 1,
+            from: 1,
+            to: 0,
+            give_gold,
+            request_gold,
+            open_borders: false,
+            friendship,
+            peace,
+            alliance: None,
+            expires,
+        };
+
+        assert!(ai.incoming_deal_value(&game, 0, &deal(0.0, 100.0, true, false), &plan) < 0.0);
+        assert!(ai.incoming_deal_value(&game, 0, &deal(10.0, 0.0, true, false), &plan) > 0.0);
+
+        game.players[1].science_projects.extend([
+            "launch_earth_satellite".to_string(),
+            "launch_moon_landing".to_string(),
+            "launch_mars_colony".to_string(),
+            "exoplanet_expedition".to_string(),
+        ]);
+        game.players[1].exoplanet_distance = 42.0;
+        assert!(ai.incoming_deal_value(&game, 0, &deal(10.0, 0.0, true, false), &plan) < 0.0);
+
+        game.at_war.insert((0, 1));
+        plan.strategy = GrandStrategy::Recovery;
+        assert!(ai.incoming_deal_value(&game, 0, &deal(0.0, 100.0, false, true), &plan) > 0.0);
+    }
+
+    #[test]
     fn initial_plan_coordinates_expansion() {
         let g = Game::new(2, 24, 16, 71, 80, 0);
         let ai = AdvancedAi::new();
@@ -4274,6 +4723,50 @@ mod tests {
         let first = ai.current_plan().unwrap().clone();
         assert!(!ai.plan_stale(&g, 0));
         assert_eq!(ai.current_plan(), Some(&first));
+    }
+
+    #[test]
+    fn surprise_wars_and_imminent_victories_interrupt_the_planning_window() {
+        let mut game = Game::new_full(3, 30, 18, 721, 300, 0, false);
+        for pid in 0..3 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.current = pid;
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        game.current = 0;
+        game.turn = 190;
+        let mut ai = AdvancedAi::new();
+        ai.plan = Some(StrategicPlan {
+            strategy: GrandStrategy::Expansion,
+            target_player: Some(2),
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 4,
+            assessed_turn: game.turn,
+        });
+        assert!(!ai.plan_stale(&game, 0));
+
+        game.at_war.insert((0, 1));
+        assert!(ai.plan_stale(&game, 0), "a surprise war must replan now");
+
+        game.at_war.clear();
+        ai.plan.as_mut().unwrap().target_player = Some(1);
+        game.players[2].science_projects.extend([
+            "launch_earth_satellite".to_string(),
+            "launch_moon_landing".to_string(),
+            "launch_mars_colony".to_string(),
+            "exoplanet_expedition".to_string(),
+        ]);
+        game.players[2].exoplanet_distance = 42.0;
+        assert!(
+            ai.plan_stale(&game, 0),
+            "an imminent rival victory must replan now"
+        );
     }
 
     #[test]
@@ -4305,6 +4798,19 @@ mod tests {
             ai.victory_focus(&culture, 0).strategy,
             GrandStrategy::Culture
         );
+    }
+
+    #[test]
+    fn rival_pressure_uses_living_civilizations_for_active_victory_races() {
+        let mut game = Game::new_full(3, 24, 16, 760, 300, 0, false);
+        game.players[1].tourism_lifetime = 300_000.0;
+        game.players[0].culture_lifetime = 100.0;
+        game.players[2].culture_lifetime = 1_000_000.0;
+        game.players[2].alive = false;
+
+        let pressure = AdvancedAi::new().rival_victory_pressure(&game, 1);
+        assert_eq!(pressure.strategy, GrandStrategy::Culture);
+        assert_eq!(pressure.progress, 100);
     }
 
     #[test]
@@ -4394,6 +4900,49 @@ mod tests {
                 > 0.0
         );
         assert_eq!(game.units[&missionary].pos, game.cities[&home].pos);
+    }
+
+    #[test]
+    fn apostles_complete_one_worship_and_one_enhancer_belief_for_the_plan() {
+        let mut game = Game::new(2, 24, 16, 7_632, 200, 0);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = game.player_city_ids(0)[0];
+        game.players[0].religion = Some("Planned Faith".to_string());
+        game.players[0].religion_beliefs = vec!["work_ethic".to_string(), "tithe".to_string()];
+        let ai = AdvancedAi::targeting(VictoryTarget::Science);
+
+        let first = game.spawn_test_unit("apostle", 0, game.cities[&city].pos);
+        game.units.get_mut(&first).unwrap().religion = Some("Planned Faith".to_string());
+        assert!(ai.advanced_religious_step(&mut game, 0, first));
+        assert!(game.players[0]
+            .religion_beliefs
+            .contains(&"wat".to_string()));
+
+        let second = game.spawn_test_unit("apostle", 0, game.cities[&city].pos);
+        game.units.get_mut(&second).unwrap().religion = Some("Planned Faith".to_string());
+        assert!(ai.advanced_religious_step(&mut game, 0, second));
+        assert_eq!(game.players[0].religion_beliefs.len(), 4);
+        assert_eq!(
+            game.players[0]
+                .religion_beliefs
+                .iter()
+                .filter(|belief| game.rules.beliefs.enhancer.contains_key(*belief))
+                .count(),
+            1
+        );
+        assert_eq!(
+            game.players[0]
+                .religion_beliefs
+                .iter()
+                .filter(|belief| game.rules.beliefs.worship.contains_key(*belief))
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -4489,6 +5038,84 @@ mod tests {
             ai.production_value(&game, 0, city, &nuclear, &plan, &counts)
                 > ai.production_value(&game, 0, city, &coal, &plan, &counts)
         );
+    }
+
+    #[test]
+    fn great_person_patronage_buys_close_strategy_races_without_spending_the_reserve() {
+        let mut game = Game::new(2, 24, 16, 7_102, 200, 0);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let cost = game.current_great_person("scientist").unwrap().1.cost;
+        game.players[0]
+            .gpp
+            .insert("scientist".to_string(), cost - 5.0);
+        let ai = AdvancedAi::targeting(VictoryTarget::Science);
+
+        game.players[0].gold = 250.0;
+        ai.advanced_great_people(&mut game, 0, GrandStrategy::Science);
+        assert_eq!(
+            game.players[0]
+                .gp_claimed
+                .get("scientist")
+                .copied()
+                .unwrap_or(0),
+            0
+        );
+
+        game.players[0].gold = 500.0;
+        ai.advanced_great_people(&mut game, 0, GrandStrategy::Science);
+        assert_eq!(game.players[0].gp_claimed["scientist"], 1);
+        assert_eq!(game.players[0].gold, 425.0);
+    }
+
+    #[test]
+    fn faith_spending_buys_the_victory_aligned_worship_building() {
+        let mut game = Game::new(2, 24, 16, 7_103, 200, 0);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = game.player_city_ids(0)[0];
+        let holy_site = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != game.cities[&city].pos)
+            .unwrap();
+        game.map.tiles.get_mut(&holy_site).unwrap().district = Some("holy_site".to_string());
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert("holy_site".to_string(), holy_site);
+        game.cities.get_mut(&city).unwrap().buildings =
+            vec!["shrine".to_string(), "temple".to_string()];
+        game.players[0].religion = Some("Scholastic Faith".to_string());
+        game.players[0].religion_beliefs = vec![
+            "work_ethic".to_string(),
+            "tithe".to_string(),
+            "wat".to_string(),
+        ];
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .pressure
+            .insert("Scholastic Faith".to_string(), 1_000.0);
+        game.players[0].faith = 1_000.0;
+
+        AdvancedAi::targeting(VictoryTarget::Science).faith_building_spending(
+            &mut game,
+            0,
+            GrandStrategy::Science,
+        );
+        assert!(game.cities[&city].buildings.contains(&"wat".to_string()));
+        assert!(game.players[0].faith < 1_000.0);
     }
 
     #[test]

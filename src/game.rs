@@ -43,6 +43,365 @@ fn city_names(civ: &str) -> &'static [&'static str] {
 }
 
 #[cfg(test)]
+mod corporation_mechanics {
+    use super::*;
+
+    fn economic_game() -> (Game, u32, Vec<Pos>) {
+        let mut game = Game::new_full(2, 20, 14, 92_001, 200, 0, false);
+        let units: Vec<u32> = game.units.keys().copied().collect();
+        for unit in units {
+            game.remove_unit(unit);
+        }
+        for tile in game.map.tiles.values_mut() {
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.district = None;
+            tile.wonder = None;
+            tile.owner_city = None;
+            tile.hills = false;
+        }
+        let center = *game
+            .map
+            .tiles
+            .keys()
+            .find(|position| game.wdisk(**position, 2).len() == 19)
+            .expect("economic test has an interior city site");
+        let city = game.found_city_for(0, center, Some("Market".to_string()));
+        let ring = game.nbrs(center);
+        game.current = 0;
+        game.at_war.clear();
+        (game, city, ring)
+    }
+
+    #[test]
+    fn industries_corporations_products_and_monopolies_follow_mode_thresholds() {
+        let (mut game, city, ring) = economic_game();
+        game.players[0]
+            .techs
+            .extend(["currency".to_string(), "economics".to_string()]);
+
+        for position in ring.iter().take(2) {
+            let tile = game.map.tiles.get_mut(position).unwrap();
+            tile.resource = Some("salt".to_string());
+            tile.improvement = Some("mine".to_string());
+        }
+        game.map.tiles.get_mut(&ring[2]).unwrap().resource = Some("salt".to_string());
+        assert!(game
+            .valid_improvements(0, ring[0])
+            .contains(&"industry".to_string()));
+        assert!(
+            !game
+                .valid_improvements(0, ring[2])
+                .contains(&"industry".to_string()),
+            "an Industry must replace an existing luxury improvement"
+        );
+
+        let builder = game.spawn_unit("builder", 0, ring[0]);
+        game.apply(
+            0,
+            &Action::Improve {
+                unit: builder,
+                improvement: "industry".to_string(),
+            },
+        )
+        .unwrap();
+        let merchant_cost = game.gp_cost(0, "merchant");
+        game.players[0]
+            .gpp
+            .insert("merchant".to_string(), merchant_cost);
+        assert!(
+            !game.can_found_corporation(0, ring[0]),
+            "a two-copy world does not relax the three-copy Corporation gate"
+        );
+
+        game.map.tiles.get_mut(&ring[2]).unwrap().improvement = Some("mine".to_string());
+        assert!(game.can_found_corporation(0, ring[0]));
+        game.do_found_corporation(0, ring[0]).unwrap();
+        assert_eq!(
+            game.map.tiles[&ring[0]].improvement.as_deref(),
+            Some("corporation")
+        );
+
+        let (gold, tourism) = game.monopoly_bonuses(0);
+        assert_eq!(gold, 25.0);
+        assert_eq!(tourism, 9.0);
+
+        let remote: Vec<Pos> = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .filter(|position| game.map.tiles[position].owner_city.is_none())
+            .take(2)
+            .collect();
+        assert_eq!(remote.len(), 2);
+        game.map.tiles.get_mut(&remote[0]).unwrap().resource = Some("salt".to_string());
+        assert_eq!(game.monopoly_bonuses(0).0, 10.0, "three of four is 75%");
+        game.map.tiles.get_mut(&remote[1]).unwrap().resource = Some("salt".to_string());
+        assert_eq!(game.monopoly_bonuses(0).0, 5.0, "three of five is 60%");
+
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .extend(["stock_exchange".to_string(), "seaport".to_string()]);
+        let product = Item::Product {
+            product: "salt".to_string(),
+        };
+        for _ in 0..5 {
+            assert!(game.can_produce(0, city, &product));
+            assert!(game.complete_item(0, city, &product));
+        }
+        assert_eq!(game.cities[&city].products.len(), 5);
+        assert!(!game.can_produce(0, city, &product));
+    }
+}
+
+#[cfg(test)]
+mod corporation_tests {
+    use super::*;
+
+    fn industry_game() -> (Game, u32, Vec<Pos>) {
+        let mut game = Game::new_full(2, 24, 16, 91_700, 200, 0, false);
+        for tile in game.map.tiles.values_mut() {
+            tile.resource = None;
+            tile.improvement = None;
+            tile.pillaged = false;
+        }
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        let center = game.units[&settler].pos;
+        game.found_city_for(0, center, None);
+        let city = game.city_at(center).unwrap();
+        let positions: Vec<Pos> = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .filter(|position| *position != center)
+            .take(3)
+            .collect();
+        assert_eq!(positions.len(), 3);
+        for position in &positions {
+            let tile = game.map.tiles.get_mut(position).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.hills = false;
+            tile.resource = Some("silk".to_string());
+            tile.improvement = Some("plantation".to_string());
+        }
+        game.players[0].techs.insert("currency".to_string());
+        (game, city, positions)
+    }
+
+    #[test]
+    fn industry_corporation_and_products_form_one_playable_save_stable_chain() {
+        let (mut game, city, positions) = industry_game();
+        let builder = game.spawn_unit("builder", 0, positions[0]);
+        assert_eq!(game.controlled_resource_count(0, "silk"), 3);
+        assert!(game
+            .valid_improvements(0, positions[0])
+            .contains(&"industry".to_string()));
+        game.apply(
+            0,
+            &Action::Improve {
+                unit: builder,
+                improvement: "industry".to_string(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            game.map.tiles[&positions[0]].improvement.as_deref(),
+            Some("industry")
+        );
+        assert!(!game
+            .valid_improvements(0, positions[1])
+            .contains(&"industry".to_string()));
+
+        let merchant_before = game.players[0].gpp.get("merchant").copied().unwrap_or(0.0);
+        game.process_great_people(0);
+        assert_eq!(game.players[0].gpp["merchant"], merchant_before + 1.0);
+
+        game.players[0].techs.insert("economics".to_string());
+        let merchant_cost = game.gp_cost(0, "merchant");
+        game.players[0]
+            .gpp
+            .insert("merchant".to_string(), merchant_cost);
+        assert!(game.can_found_corporation(0, positions[0]));
+        let gold_before = game.players[0].gold;
+        game.apply(0, &Action::FoundCorporation { pos: positions[0] })
+            .unwrap();
+        assert_eq!(
+            game.players[0].gold, gold_before,
+            "the retired Merchant's named effect is forgone"
+        );
+        assert_eq!(
+            game.map.tiles[&positions[0]].improvement.as_deref(),
+            Some("corporation")
+        );
+
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("stock_exchange".to_string());
+        assert_eq!(game.product_capacity(&game.cities[&city]), 3);
+        let product = Item::Product {
+            product: "silk".to_string(),
+        };
+        assert!(game.can_produce(0, city, &product));
+        game.apply(
+            0,
+            &Action::Produce {
+                city,
+                item: product.clone(),
+            },
+        )
+        .unwrap();
+        game.cities.get_mut(&city).unwrap().production = 500.0;
+        let culture_before = game.city_yields(city).culture;
+        game.process_city(0, city);
+        assert_eq!(game.cities[&city].products, vec!["silk"]);
+        assert!(game.city_yields(city).culture > culture_before);
+        assert!(game.tourism_per_turn(0) >= 1.0);
+
+        let encoded = serde_json::to_value(&game).unwrap();
+        let restored: Game = serde_json::from_value(encoded).unwrap();
+        assert_eq!(restored.cities[&city].products, vec!["silk"]);
+        assert_eq!(
+            restored.map.tiles[&positions[0]].improvement.as_deref(),
+            Some("corporation")
+        );
+        assert_eq!(restored.product_capacity(&restored.cities[&city]), 3);
+    }
+
+    #[test]
+    fn products_move_between_exact_slots_and_pillaged_hosts_stop_their_effects() {
+        let (mut game, origin, positions) = industry_game();
+        game.map.tiles.get_mut(&positions[0]).unwrap().improvement =
+            Some("corporation".to_string());
+        game.cities
+            .get_mut(&origin)
+            .unwrap()
+            .buildings
+            .push("stock_exchange".to_string());
+        game.cities
+            .get_mut(&origin)
+            .unwrap()
+            .products
+            .push("silk".to_string());
+
+        let second_position = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .filter(|position| game.map.tiles[position].owner_city.is_none())
+            .filter(|position| {
+                game.rules.is_passable(&game.map.tiles[position])
+                    && !game.rules.is_water(&game.map.tiles[position])
+            })
+            .max_by_key(|position| game.wdist(game.cities[&origin].pos, *position))
+            .unwrap();
+        game.found_city_for(0, second_position, Some("Product Host".to_string()));
+        let target = game.city_at(second_position).unwrap();
+        game.cities
+            .get_mut(&target)
+            .unwrap()
+            .buildings
+            .push("seaport".to_string());
+        game.apply(
+            0,
+            &Action::MoveProduct {
+                from: origin,
+                to: target,
+                product: "silk".to_string(),
+            },
+        )
+        .unwrap();
+        assert!(game.cities[&origin].products.is_empty());
+        assert_eq!(game.cities[&target].products, vec!["silk"]);
+
+        let active = game.city_yields(target).culture;
+        game.cities
+            .get_mut(&target)
+            .unwrap()
+            .pillaged_buildings
+            .insert("seaport".to_string());
+        assert_eq!(game.product_capacity(&game.cities[&target]), 0);
+        assert!(game.city_yields(target).culture < active);
+        assert!(
+            game.do_move_product(0, target, origin, "silk").is_ok(),
+            "an inactive Product remains movable into a valid open slot"
+        );
+    }
+
+    #[test]
+    fn monopoly_thresholds_and_industry_multiplier_match_civilopedia_formula() {
+        let mut game = Game::new_full(3, 24, 16, 91_701, 200, 0, false);
+        for pid in 0..3 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.found_city_for(pid, game.units[&settler].pos, None);
+        }
+        for tile in game.map.tiles.values_mut() {
+            tile.resource = None;
+            tile.improvement = None;
+        }
+        let owned: Vec<Pos> = game
+            .cities
+            .values()
+            .filter(|city| city.owner == 0)
+            .flat_map(|city| city.owned_tiles.iter().copied())
+            .filter(|position| game.city_at(*position).is_none())
+            .take(3)
+            .collect();
+        assert_eq!(owned.len(), 3);
+        for position in &owned {
+            let tile = game.map.tiles.get_mut(position).unwrap();
+            tile.resource = Some("wine".to_string());
+            tile.improvement = Some("plantation".to_string());
+        }
+        let rival_copy = game
+            .cities
+            .values()
+            .find(|city| city.owner == 1)
+            .unwrap()
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| game.city_at(*position).is_none())
+            .unwrap();
+        {
+            let tile = game.map.tiles.get_mut(&rival_copy).unwrap();
+            tile.resource = Some("wine".to_string());
+            tile.improvement = Some("plantation".to_string());
+        }
+        let uncontrolled: Vec<Pos> = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .filter(|position| game.map.tiles[position].owner_city.is_none())
+            .take(1)
+            .collect();
+        for position in uncontrolled {
+            game.map.tiles.get_mut(&position).unwrap().resource = Some("wine".to_string());
+        }
+        assert_eq!(game.monopoly_bonuses(0), (5.0, 3.0));
+        game.map.tiles.get_mut(&owned[0]).unwrap().improvement = Some("industry".to_string());
+        assert_eq!(game.monopoly_bonuses(0), (5.0, 9.0));
+    }
+}
+
+#[cfg(test)]
 mod trade_deal_tests {
     use super::*;
     use crate::ai::BasicAi;
@@ -1017,6 +1376,117 @@ mod power_tests {
 }
 
 #[cfg(test)]
+mod maintenance_tests {
+    use super::*;
+
+    fn one_city() -> (Game, u32) {
+        let mut game = Game::new_full(1, 24, 16, 73_101, 120, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|uid| game.units[uid].kind == "settler")
+            .unwrap();
+        let city = game.found_city_for(0, game.units[&settler].pos, None);
+        (game, city)
+    }
+
+    #[test]
+    fn unit_upkeep_uses_per_type_formation_and_policy_values() {
+        let (mut game, city) = one_city();
+        assert_eq!(game.unit_gold_maintenance(0), 0.0);
+        let archer = game.spawn_unit("archer", 0, game.cities[&city].pos);
+        let swordsman = game.spawn_unit("swordsman", 0, game.cities[&city].pos);
+        game.units.get_mut(&swordsman).unwrap().formation = 1;
+
+        assert_eq!(game.rules.units["archer"].maintenance, 1.0);
+        assert_eq!(game.rules.units["giant_death_robot"].maintenance, 15.0);
+        assert_eq!(game.unit_gold_maintenance(0), 4.0);
+
+        game.players[0].policies.insert("conscription".to_string());
+        assert_eq!(game.unit_gold_maintenance(0), 2.0);
+        game.units.get_mut(&swordsman).unwrap().formation = 2;
+        assert_eq!(game.unit_gold_maintenance(0), 3.0);
+
+        game.remove_unit(archer);
+        let mut baseline = game.clone();
+        game.spawn_unit("crossbowman", 0, game.cities[&city].pos);
+        baseline.begin_turn(0);
+        game.begin_turn(0);
+        assert_eq!(baseline.players[0].gold - game.players[0].gold, 2.0);
+    }
+
+    #[test]
+    fn infrastructure_upkeep_respects_exemptions_pillaging_and_flood_level() {
+        let (mut game, city) = one_city();
+        let positions: Vec<Pos> = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .filter(|position| *position != game.cities[&city].pos)
+            .take(4)
+            .collect();
+        assert_eq!(positions.len(), 4);
+        for position in game.cities[&city].owned_tiles.clone() {
+            game.map.tiles.get_mut(&position).unwrap().coastal_lowland = 0;
+        }
+        for position in positions.iter().copied().skip(2) {
+            game.map.tiles.get_mut(&position).unwrap().coastal_lowland = 1;
+        }
+        for (district, position) in [("campus", positions[0]), ("commercial_hub", positions[1])] {
+            game.cities
+                .get_mut(&city)
+                .unwrap()
+                .districts
+                .insert(district.to_string(), position);
+            game.map.tiles.get_mut(&position).unwrap().district = Some(district.to_string());
+        }
+        game.cities.get_mut(&city).unwrap().buildings.extend([
+            "library".to_string(),
+            "university".to_string(),
+            "flood_barrier".to_string(),
+        ]);
+        game.climate_phase = 2;
+
+        // Campus 1 + Library 1 + University 2 + Barrier (2 tiles x level 2).
+        assert_eq!(game.infrastructure_gold_maintenance(0), 8.0);
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .pillaged_buildings
+            .insert("university".to_string());
+        assert_eq!(game.infrastructure_gold_maintenance(0), 6.0);
+        game.map.tiles.get_mut(&positions[0]).unwrap().pillaged = true;
+        assert_eq!(game.infrastructure_gold_maintenance(0), 4.0);
+
+        game.map.tiles.get_mut(&positions[0]).unwrap().pillaged = false;
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .pillaged_buildings
+            .remove("university");
+        game.climate_phase = 4;
+        assert_eq!(game.infrastructure_gold_maintenance(0), 10.0);
+    }
+
+    #[test]
+    fn nuclear_devices_charge_fourteen_and_sixteen_gold_before_policy_discount() {
+        let (mut game, _) = one_city();
+        game.players[0]
+            .counters
+            .insert("project_effect:nuclear_devices".to_string(), 2);
+        game.players[0]
+            .counters
+            .insert("project_effect:thermonuclear_devices".to_string(), 1);
+        assert_eq!(game.nuclear_gold_maintenance(0), 44.0);
+
+        game.players[0]
+            .policies
+            .insert("second_strike_capability".to_string());
+        assert_eq!(game.nuclear_gold_maintenance(0), 22.0);
+    }
+}
+
+#[cfg(test)]
 mod district_building_wonder_runtime_tests {
     use super::*;
 
@@ -1873,6 +2343,11 @@ pub enum Item {
     Project {
         project: String,
     },
+    /// Monopolies & Corporations city project. The resource identifies the
+    /// Corporation brand; each Corporation can manufacture five Products.
+    Product {
+        product: String,
+    },
 }
 
 /// District placements owned by a city.
@@ -2005,6 +2480,10 @@ pub struct City {
     pub border_culture: f64,
     pub hp: i32,
     pub buildings: Vec<String>,
+    /// Economic Great Works housed in Stock Exchange/Seaport Product slots.
+    /// The resource ID is also the Product's brand/effect identity.
+    #[serde(default)]
+    pub products: Vec<String>,
     /// World era in which each building was completed. Era-scaling effects
     /// such as the Dar-e Mehr use this while old saves safely default to no
     /// retroactive age bonus.
@@ -2409,6 +2888,17 @@ pub enum Action {
     Improve {
         unit: u32,
         improvement: String,
+    },
+    /// Retire the currently available Great Merchant to upgrade an Industry.
+    FoundCorporation {
+        pos: Pos,
+    },
+    /// Products are movable economic Great Works. Equal-resource Products are
+    /// interchangeable, so the resource ID is a stable save/replay handle.
+    MoveProduct {
+        from: u32,
+        to: u32,
+        product: String,
     },
     ContributeProject {
         unit: u32,
@@ -4265,6 +4755,17 @@ impl Game {
         {
             return Err("belief is not an enhancer or worship belief".into());
         }
+        let enhancer = self.rules.beliefs.enhancer.contains_key(belief);
+        let category_already_chosen = self.players[pid].religion_beliefs.iter().any(|chosen| {
+            if enhancer {
+                self.rules.beliefs.enhancer.contains_key(chosen)
+            } else {
+                self.rules.beliefs.worship.contains_key(chosen)
+            }
+        });
+        if category_already_chosen {
+            return Err("religion already has a belief in that category".into());
+        }
         if self
             .players
             .iter()
@@ -4414,6 +4915,61 @@ impl Game {
         60.0 * (1u64 << n.min(6) as u64) as f64
     }
 
+    fn corporation_owner(&self, resource: &str) -> Option<usize> {
+        self.cities.values().find_map(|city| {
+            city.owned_tiles.iter().find_map(|position| {
+                let tile = &self.map.tiles[position];
+                (tile.improvement.as_deref() == Some("corporation")
+                    && tile.resource.as_deref() == Some(resource))
+                .then_some(city.owner)
+            })
+        })
+    }
+
+    pub fn can_found_corporation(&self, pid: usize, pos: Pos) -> bool {
+        let Some(tile) = self.map.get(pos) else {
+            return false;
+        };
+        let Some(city_id) = tile.owner_city else {
+            return false;
+        };
+        let Some(resource) = tile.resource.as_deref() else {
+            return false;
+        };
+        if self.cities[&city_id].owner != pid
+            || tile.improvement.as_deref() != Some("industry")
+            || tile.pillaged
+            || !self.players[pid].techs.contains("economics")
+            || self.controlled_resource_count(pid, resource) < 3
+            || self
+                .current_great_person("merchant")
+                .is_none_or(|(_, person)| {
+                    self.players[pid]
+                        .gpp
+                        .get("merchant")
+                        .copied()
+                        .unwrap_or(0.0)
+                        + f64::EPSILON
+                        < person.cost
+                })
+        {
+            return false;
+        }
+        self.corporation_owner(resource).is_none_or(|owner| {
+            owner != pid
+                && self.controlled_resource_count(pid, resource)
+                    > self.controlled_resource_count(owner, resource)
+        })
+    }
+
+    fn has_foundable_corporation(&self, pid: usize) -> bool {
+        self.cities
+            .values()
+            .filter(|city| city.owner == pid)
+            .flat_map(|city| city.owned_tiles.iter().copied())
+            .any(|position| self.can_found_corporation(pid, position))
+    }
+
     /// Accrue great person points and auto-claim on reaching the threshold
     /// (simplified: generic named-less great people with instant effects).
     fn process_great_people(&mut self, pid: usize) {
@@ -4422,6 +4978,17 @@ impl Game {
         }
         let mut earn: BTreeMap<String, f64> = BTreeMap::new();
         for c in self.cities.values().filter(|c| c.owner == pid) {
+            for position in &c.owned_tiles {
+                let tile = &self.map.tiles[position];
+                if !tile.pillaged && tile.improvement.as_deref() == Some("industry") {
+                    *earn.entry("merchant".to_string()).or_insert(0.0) += self.rules.improvements
+                        ["industry"]
+                        .effects
+                        .get("great_merchant_points")
+                        .copied()
+                        .unwrap_or(0.0);
+                }
+            }
             for (d, position) in &c.districts {
                 if !self.district_is_active(c, d, *position) {
                     continue;
@@ -4577,8 +5144,101 @@ impl Game {
             .map(|(t, _)| t.clone())
             .collect();
         for t in due {
+            // A ready Great Merchant may be retired either for their named
+            // effect or to found a Corporation. Preserve that player choice
+            // instead of auto-activating the Merchant at turn start.
+            if t == "merchant" && self.has_foundable_corporation(pid) {
+                continue;
+            }
             let _ = self.claim_great_person(pid, &t, None);
         }
+    }
+
+    fn retire_merchant_for_corporation(&mut self, pid: usize) -> Result<(), String> {
+        let (id, cost) = self
+            .current_great_person("merchant")
+            .map(|(id, spec)| (id.to_string(), spec.cost))
+            .ok_or_else(|| "no Great Merchant is currently available".to_string())?;
+        let points = self.players[pid]
+            .gpp
+            .get("merchant")
+            .copied()
+            .unwrap_or(0.0);
+        if points + f64::EPSILON < cost {
+            return Err("not enough Great Merchant points".into());
+        }
+        self.players[pid].gpp.insert("merchant".to_string(), 0.0);
+        self.retired_great_people.insert(id.clone());
+        self.players[pid].great_people.push(id);
+        *self.players[pid]
+            .gp_claimed
+            .entry("merchant".to_string())
+            .or_insert(0) += 1;
+        self.add_era_score(pid, 2);
+        bump(&mut self.players[pid], "great_people");
+        self.apply_great_person_district_effects(pid);
+        Ok(())
+    }
+
+    fn do_found_corporation(&mut self, pid: usize, pos: Pos) -> Result<(), String> {
+        if !self.can_found_corporation(pid, pos) {
+            return Err("cannot found a Corporation here".into());
+        }
+        let resource = self.map.tiles[&pos].resource.clone().unwrap();
+        self.retire_merchant_for_corporation(pid)?;
+        if let Some(previous) = self.corporation_owner(&resource) {
+            if previous != pid {
+                if let Some((position, _)) = self.map.tiles.iter().find(|(_, tile)| {
+                    tile.improvement.as_deref() == Some("corporation")
+                        && tile.resource.as_deref() == Some(resource.as_str())
+                }) {
+                    let position = *position;
+                    self.map.tiles.get_mut(&position).unwrap().improvement =
+                        Some("industry".to_string());
+                }
+            }
+        }
+        self.map.tiles.get_mut(&pos).unwrap().improvement = Some("corporation".to_string());
+        self.map.tiles.get_mut(&pos).unwrap().pillaged = false;
+        bump(&mut self.players[pid], "corporations");
+        Ok(())
+    }
+
+    fn do_move_product(
+        &mut self,
+        pid: usize,
+        from: u32,
+        to: u32,
+        product: &str,
+    ) -> Result<(), String> {
+        if from == to {
+            return Err("Product is already in that city".into());
+        }
+        let source = self
+            .cities
+            .get(&from)
+            .filter(|city| city.owner == pid)
+            .ok_or_else(|| "not your source city".to_string())?;
+        let index = source
+            .products
+            .iter()
+            .position(|candidate| candidate == product)
+            .ok_or_else(|| "source city does not house that Product".to_string())?;
+        let target = self
+            .cities
+            .get(&to)
+            .filter(|city| city.owner == pid)
+            .ok_or_else(|| "not your target city".to_string())?;
+        if target.products.len() >= self.product_capacity(target) {
+            return Err("target city has no open Product slot".into());
+        }
+        self.cities.get_mut(&from).unwrap().products.remove(index);
+        self.cities
+            .get_mut(&to)
+            .unwrap()
+            .products
+            .push(product.to_string());
+        Ok(())
     }
 
     fn claim_great_person(
@@ -5354,6 +6014,11 @@ impl Game {
                         .unwrap_or(0.0)
                     / 100.0;
             }
+            Some(Item::Product { .. }) => {
+                // Create New Product is a city project, so project modifiers
+                // apply even though its resource identity is dynamic.
+                bonus += self.gov_effects(pid).project_production_pct / 100.0;
+            }
             _ => {}
         }
         1.0 + bonus
@@ -5760,6 +6425,18 @@ impl Game {
         if self.players[city.owner].governors.contains(&city.id) {
             h += self.policy_effect(city.owner, "governor_housing");
         }
+        let mut salt_industry_units = city
+            .products
+            .iter()
+            .take(self.product_capacity(city))
+            .filter(|product| product.as_str() == "salt")
+            .count() as f64;
+        if let Some((resource, corporation)) = self.city_active_economic_improvement(city) {
+            if resource == "salt" {
+                salt_industry_units += if corporation { 2.0 } else { 1.0 };
+            }
+        }
+        h += 3.0 * salt_industry_units;
         h + self.gov_effects(city.owner).housing
     }
 
@@ -7004,9 +7681,178 @@ impl Game {
                 tile.resource.as_deref() == Some(res)
                     && !tile.pillaged
                     && (**position == city.pos
-                        || tile.improvement.as_deref() == Some(spec.improvement.as_str()))
+                        || tile.improvement.as_deref() == Some(spec.improvement.as_str())
+                        || matches!(
+                            tile.improvement.as_deref(),
+                            Some("industry" | "corporation")
+                        ))
             })
             .count() as i32
+    }
+
+    /// Improved map copies controlled for the Monopolies & Corporations mode.
+    /// Unlike ordinary resource access this includes suzerain city-states, but
+    /// deliberately excludes diplomatic imports and synthetic luxury grants.
+    pub fn controlled_resource_count(&self, pid: usize, res: &str) -> i32 {
+        let own = self.connected_resource_count(pid, res);
+        own + self
+            .players
+            .iter()
+            .filter(|player| {
+                player.is_minor && !player.is_barbarian && self.suzerain_of(player.id) == Some(pid)
+            })
+            .map(|minor| self.connected_resource_count(minor.id, res))
+            .sum::<i32>()
+    }
+
+    fn world_resource_count(&self, resource: &str) -> i32 {
+        self.map
+            .tiles
+            .values()
+            .filter(|tile| tile.resource.as_deref() == Some(resource) && !tile.submerged)
+            .count() as i32
+    }
+
+    fn city_economic_improvement(&self, city: &City) -> Option<(String, bool)> {
+        city.owned_tiles.iter().find_map(|position| {
+            let tile = &self.map.tiles[position];
+            let corporation = match tile.improvement.as_deref() {
+                Some("industry") => false,
+                Some("corporation") => true,
+                _ => return None,
+            };
+            tile.resource
+                .as_ref()
+                .map(|resource| (resource.clone(), corporation))
+        })
+    }
+
+    fn city_active_economic_improvement(&self, city: &City) -> Option<(String, bool)> {
+        self.city_economic_improvement(city).filter(|_| {
+            city.owned_tiles.iter().any(|position| {
+                let tile = &self.map.tiles[position];
+                !tile.pillaged
+                    && matches!(
+                        tile.improvement.as_deref(),
+                        Some("industry" | "corporation")
+                    )
+            })
+        })
+    }
+
+    fn empire_has_economic_improvement(&self, pid: usize, resource: &str) -> bool {
+        self.cities.values().any(|city| {
+            city.owner == pid
+                && self
+                    .city_economic_improvement(city)
+                    .is_some_and(|(candidate, _)| candidate == resource)
+        })
+    }
+
+    pub fn product_capacity(&self, city: &City) -> usize {
+        city.buildings
+            .iter()
+            .filter(|building| !city.pillaged_buildings.contains(*building))
+            .map(|building| {
+                self.rules.buildings[building.as_str()]
+                    .effects
+                    .get("product_slots")
+                    .copied()
+                    .unwrap_or(0.0)
+                    .max(0.0) as usize
+            })
+            .sum()
+    }
+
+    fn world_product_count(&self, resource: &str) -> usize {
+        self.cities
+            .values()
+            .flat_map(|city| city.products.iter())
+            .filter(|product| product.as_str() == resource)
+            .count()
+    }
+
+    fn product_slot_city(&self, pid: usize, preferred: u32) -> Option<u32> {
+        self.cities
+            .get(&preferred)
+            .filter(|city| city.owner == pid && city.products.len() < self.product_capacity(city))
+            .map(|city| city.id)
+            .or_else(|| {
+                self.cities
+                    .values()
+                    .filter(|city| {
+                        city.owner == pid && city.products.len() < self.product_capacity(city)
+                    })
+                    .map(|city| city.id)
+                    .min()
+            })
+    }
+
+    /// Per-turn Gold and outgoing Tourism modifier from live luxury
+    /// Monopolies. The percentage follows Civ VI's 1% per controlled copy and
+    /// foreign non-controller, or 3% after establishing an Industry/Corporation.
+    pub fn monopoly_bonuses(&self, pid: usize) -> (f64, f64) {
+        let mut gold = 0.0;
+        let mut tourism_percent = 0.0;
+        let mut monopolies = 0usize;
+        for (resource, spec) in &self.rules.resources {
+            if spec.class != "luxury" {
+                continue;
+            }
+            let total = self.world_resource_count(resource);
+            let controlled = self.controlled_resource_count(pid, resource);
+            if total <= 0 || controlled * 100 < total * 60 {
+                continue;
+            }
+            monopolies += 1;
+            gold += if controlled >= total {
+                25.0
+            } else if controlled * 100 >= total * 75 {
+                10.0
+            } else {
+                5.0
+            };
+            let foreign_noncontrollers = self
+                .players
+                .iter()
+                .filter(|player| {
+                    player.id != pid
+                        && player.alive
+                        && !player.is_minor
+                        && !player.is_barbarian
+                        && self.controlled_resource_count(player.id, resource) == 0
+                })
+                .count() as f64;
+            let developed = self.cities.values().any(|city| {
+                city.owner == pid
+                    && city.owned_tiles.iter().any(|position| {
+                        let tile = &self.map.tiles[position];
+                        tile.resource.as_deref() == Some(resource.as_str())
+                            && matches!(
+                                tile.improvement.as_deref(),
+                                Some("industry" | "corporation")
+                            )
+                    })
+            });
+            tourism_percent +=
+                controlled as f64 * foreign_noncontrollers * if developed { 3.0 } else { 1.0 };
+        }
+        if monopolies > 0 {
+            let partners = self
+                .routes
+                .iter()
+                .filter(|route| route.owner == pid && route.ends > self.turn)
+                .filter_map(|route| self.cities.get(&route.dest).map(|city| city.owner))
+                .filter(|owner| {
+                    *owner != pid
+                        && !self.players[*owner].is_minor
+                        && !self.players[*owner].is_barbarian
+                })
+                .collect::<BTreeSet<_>>()
+                .len();
+            gold += 5.0 * partners as f64;
+        }
+        (gold, tourism_percent)
     }
 
     fn resource_trade_balance(&self, pid: usize, res: &str) -> i32 {
@@ -8846,6 +9692,12 @@ impl Game {
                     weights.production += 1.75;
                     weights.science += 0.60;
                 }
+                Item::Product { product } => {
+                    focus = format!("{product} product");
+                    weights.production += 1.25;
+                    weights.gold += 0.40;
+                    weights.culture += 0.25;
+                }
             }
         }
 
@@ -9647,6 +10499,15 @@ impl Game {
             }
         }
         ys.add(self.regional_wonder_effects(city).0);
+        // Products are economic Great Works: only Products backed by active
+        // Stock Exchange/Seaport slots yield or confer their Industry effect.
+        for product in city.products.iter().take(self.product_capacity(city)) {
+            match product.as_str() {
+                "silk" => ys.culture += 3.0,
+                "wine" | "salt" => ys.food += 3.0,
+                _ => {}
+            }
+        }
         ys.science += 0.5 * city.pop as f64;
         ys.culture += 0.3 * city.pop as f64;
         if self.city_has_palace(city) {
@@ -9994,6 +10855,18 @@ impl Game {
             1.0 + suzerains * self.policy_effect(city.owner, "science_pct_per_suzerain") / 100.0;
         ys.culture *=
             1.0 + suzerains * self.policy_effect(city.owner, "culture_pct_per_suzerain") / 100.0;
+        let mut culture_industry_units = city
+            .products
+            .iter()
+            .take(self.product_capacity(city))
+            .filter(|product| matches!(product.as_str(), "silk" | "wine"))
+            .count() as f64;
+        if let Some((resource, corporation)) = self.city_active_economic_improvement(city) {
+            if matches!(resource.as_str(), "silk" | "wine") {
+                culture_industry_units += if corporation { 2.0 } else { 1.0 };
+            }
+        }
+        ys.culture *= 1.0 + 0.20 * culture_industry_units;
         if self.dedication_active(city.owner, "sky_and_stars")
             && (self.city_has_district_family(city, "aerodrome")
                 || self.city_has_district_family(city, "spaceport"))
@@ -10032,6 +10905,45 @@ impl Game {
         }
     }
 
+    fn can_establish_industry(&self, pid: usize, pos: Pos) -> bool {
+        let Some(tile) = self.map.get(pos) else {
+            return false;
+        };
+        let Some(city_id) = tile.owner_city else {
+            return false;
+        };
+        let city = &self.cities[&city_id];
+        let Some(resource) = tile.resource.as_deref() else {
+            return false;
+        };
+        let Some(spec) = self.rules.resources.get(resource) else {
+            return false;
+        };
+        if city.owner != pid
+            || spec.class != "luxury"
+            || !self.rules.improvements["industry"]
+                .resources
+                .iter()
+                .any(|candidate| candidate == resource)
+            || self.rules.is_water(tile)
+            || !self.players[pid].techs.contains("currency")
+            || tile.improvement.as_deref() != Some(spec.improvement.as_str())
+            || tile.pillaged
+            || tile.flooded
+            || tile.submerged
+            || tile.district.is_some()
+            || tile.wonder.is_some()
+            || self.city_at(pos).is_some()
+            || self.city_economic_improvement(city).is_some()
+            || self.empire_has_economic_improvement(pid, resource)
+        {
+            return false;
+        }
+        // Both qualifying copies must be connected, and the Builder replaces
+        // the existing resource improvement with the Industry.
+        self.controlled_resource_count(pid, resource) >= 2
+    }
+
     pub fn valid_improvements(&self, pid: usize, pos: Pos) -> Vec<String> {
         let t = match self.map.get(pos) {
             Some(t) => t,
@@ -10055,6 +10967,12 @@ impl Game {
         let civ = self.players[pid].civ.as_str();
         let mut out = Vec::new();
         for (name, spec) in &self.rules.improvements {
+            if name == "industry" {
+                if self.can_establish_industry(pid, pos) {
+                    out.push(name.clone());
+                }
+                continue;
+            }
             if spec.unbuildable
                 || !self.unlocked(pid, &spec.tech, &spec.civic)
                 || (name == "national_park" && self.tree_effect(pid, "national_parks") <= 0.0)
@@ -10504,6 +11422,7 @@ impl Game {
                 }
             }
             Item::Project { project } => self.rules.projects[project.as_str()].cost,
+            Item::Product { .. } => 500.0,
         }
     }
 
@@ -10572,6 +11491,7 @@ impl Game {
                 format!("repair:{repair}:{},{}", pos.0, pos.1)
             }
             Item::Project { project } => format!("project:{project}"),
+            Item::Product { product } => format!("product:{product}"),
         }
     }
 
@@ -10987,6 +11907,22 @@ impl Game {
                 }
                 spec.repeatable || !self.players[pid].science_projects.contains(project)
             }
+            Item::Product { product } => {
+                if self.players[pid].is_minor
+                    || self.players[pid].is_barbarian
+                    || self
+                        .rules
+                        .resources
+                        .get(product)
+                        .is_none_or(|resource| resource.class != "luxury")
+                    || self.world_product_count(product) >= 5
+                    || self.product_slot_city(pid, cid).is_none()
+                {
+                    return false;
+                }
+                self.city_active_economic_improvement(city)
+                    .is_some_and(|(resource, corporation)| corporation && resource == *product)
+            }
         }
     }
 
@@ -11061,6 +11997,12 @@ impl Game {
             };
             if self.can_produce(pid, cid, &it) {
                 items.push(it);
+            }
+        }
+        if let Some((resource, true)) = self.city_active_economic_improvement(city) {
+            let product = Item::Product { product: resource };
+            if self.can_produce(pid, cid, &product) {
+                items.push(product);
             }
         }
         for (name, spec) in &self.rules.districts {
@@ -11423,13 +12365,27 @@ impl Game {
                             .any(|chosen| chosen == belief)
                     })
                 };
+                let has_enhancer = p
+                    .religion_beliefs
+                    .iter()
+                    .any(|belief| self.rules.beliefs.enhancer.contains_key(belief));
+                let has_worship = p
+                    .religion_beliefs
+                    .iter()
+                    .any(|belief| self.rules.beliefs.worship.contains_key(belief));
                 for belief in self
                     .rules
                     .beliefs
                     .enhancer
                     .keys()
                     .chain(self.rules.beliefs.worship.keys())
-                    .filter(|belief| !taken(belief))
+                    .filter(|belief| {
+                        !taken(belief)
+                            && ((!has_enhancer
+                                && self.rules.beliefs.enhancer.contains_key(*belief))
+                                || (!has_worship
+                                    && self.rules.beliefs.worship.contains_key(*belief)))
+                    })
                 {
                     acts.push(Action::EvangelizeBelief {
                         unit: uid,
@@ -11449,6 +12405,26 @@ impl Game {
                 })
             {
                 acts.push(Action::ConvertBarbarians { unit: uid });
+            }
+        }
+        for city in self.cities.values().filter(|city| city.owner == pid) {
+            for position in &city.owned_tiles {
+                if self.can_found_corporation(pid, *position) {
+                    acts.push(Action::FoundCorporation { pos: *position });
+                }
+            }
+            for product in &city.products {
+                for target in self.cities.values().filter(|target| {
+                    target.owner == pid
+                        && target.id != city.id
+                        && target.products.len() < self.product_capacity(target)
+                }) {
+                    acts.push(Action::MoveProduct {
+                        from: city.id,
+                        to: target.id,
+                        product: product.clone(),
+                    });
+                }
             }
         }
         let owned_units = self.player_unit_ids(pid);
@@ -12069,6 +13045,10 @@ impl Game {
             Action::Ranged { unit, target } => self.do_ranged(pid, *unit, *target),
             Action::FoundCity { unit } => self.do_found_city(pid, *unit),
             Action::Improve { unit, improvement } => self.do_improve(pid, *unit, improvement),
+            Action::FoundCorporation { pos } => self.do_found_corporation(pid, *pos),
+            Action::MoveProduct { from, to, product } => {
+                self.do_move_product(pid, *from, *to, product)
+            }
             Action::ContributeProject { unit, city } => {
                 self.do_contribute_project(pid, *unit, *city)
             }
@@ -13253,6 +14233,7 @@ impl Game {
             border_culture: 0.0,
             hp: 200,
             buildings: Vec::new(),
+            products: Vec::new(),
             building_eras: BTreeMap::new(),
             pillaged_buildings: BTreeSet::new(),
             districts: Districts::default(),
@@ -13629,6 +14610,10 @@ impl Game {
             return false;
         };
         if city.owner == pid || !self.is_at_war(pid, city.owner) || self.city_at(pos).is_some() {
+            return false;
+        }
+        // Corporations may be pillaged by natural disasters, never by units.
+        if tile.improvement.as_deref() == Some("corporation") {
             return false;
         }
         if tile.improvement.is_some() && !tile.pillaged {
@@ -14998,9 +15983,95 @@ impl Game {
         // every citizen plan and city yield for every candidate contract.
         let city_income = self.player_city_ids(pid).len() as f64 * 4.0;
         let treasury_income = self.players[pid].gold.max(0.0) / 100.0;
-        let units = self.player_unit_ids(pid).len() as f64;
-        let maintenance = (1.0 - self.policy_effect(pid, "unit_maintenance_discount")).max(0.0);
-        (city_income + treasury_income - (units - 3.0).max(0.0) * maintenance).max(0.0)
+        (city_income + treasury_income
+            - self.unit_gold_maintenance(pid)
+            - self.infrastructure_gold_maintenance(pid)
+            - self.nuclear_gold_maintenance(pid))
+        .max(0.0)
+    }
+
+    /// Civ VI charges each unit its own upkeep. Corps/Fleets cost 150% of a
+    /// base unit and Armies/Armadas cost 200%; policy reductions then apply
+    /// once because each formation is a single unit on the map.
+    fn unit_gold_maintenance(&self, pid: usize) -> f64 {
+        let discount = self.policy_effect(pid, "unit_maintenance_discount");
+        self.player_unit_ids(pid)
+            .into_iter()
+            .map(|uid| {
+                let unit = &self.units[&uid];
+                let formation = match unit.formation {
+                    1 => 1.5,
+                    2.. => 2.0,
+                    _ => 1.0,
+                };
+                (self.rules.units[unit.kind.as_str()].maintenance * formation - discount).max(0.0)
+            })
+            .sum()
+    }
+
+    fn building_district_is_active(&self, city: &City, building: &str) -> bool {
+        let Some(family) = self.rules.buildings[building].district.as_deref() else {
+            return true;
+        };
+        family == "city_center"
+            || city.districts.iter().any(|(district, position)| {
+                self.district_is_family(district, family)
+                    && self.district_is_active(city, district, *position)
+            })
+    }
+
+    /// Pillaged districts and buildings are disabled and stop charging upkeep.
+    /// Flood Barriers use their base 1 Gold multiplied by exposed lowlands and
+    /// the current whole-meter sea-level multiplier.
+    fn infrastructure_gold_maintenance(&self, pid: usize) -> f64 {
+        self.cities
+            .values()
+            .filter(|city| city.owner == pid)
+            .map(|city| {
+                let districts = city
+                    .districts
+                    .iter()
+                    .filter(|(district, position)| {
+                        self.district_is_active(city, district, **position)
+                    })
+                    .map(|(district, _)| self.rules.districts[district.as_str()].maintenance)
+                    .sum::<f64>();
+                let buildings = city
+                    .buildings
+                    .iter()
+                    .filter(|building| !city.pillaged_buildings.contains(*building))
+                    .filter(|building| self.building_district_is_active(city, building))
+                    .map(|building| {
+                        let base = self.rules.buildings[building.as_str()].maintenance;
+                        if building == "flood_barrier" {
+                            base * self.coastal_lowland_tiles(city).len() as f64
+                                * (1 + self.climate_phase / 2) as f64
+                        } else {
+                            base
+                        }
+                    })
+                    .sum::<f64>();
+                districts + buildings
+            })
+            .sum()
+    }
+
+    fn nuclear_gold_maintenance(&self, pid: usize) -> f64 {
+        let player = &self.players[pid];
+        let nuclear = player
+            .counters
+            .get("project_effect:nuclear_devices")
+            .copied()
+            .unwrap_or(0)
+            .max(0) as f64;
+        let thermonuclear = player
+            .counters
+            .get("project_effect:thermonuclear_devices")
+            .copied()
+            .unwrap_or(0)
+            .max(0) as f64;
+        (14.0 * nuclear + 16.0 * thermonuclear)
+            * (1.0 - self.policy_effect(pid, "nuclear_maintenance_discount_pct") / 100.0)
     }
 
     fn primary_resource_value(&self, pid: usize, resource: &str) -> f64 {
@@ -16401,7 +17472,8 @@ impl Game {
     /// source separate is necessary because Enlightenment reduces only these
     /// sources and Cristo Redentor cancels exactly that reduction.
     pub fn religious_tourism_per_turn(&self, pid: usize) -> f64 {
-        let global_multiplier = 1.0 + self.tree_effect(pid, "tourism_pct") / 100.0;
+        let global_multiplier =
+            1.0 + (self.tree_effect(pid, "tourism_pct") + self.monopoly_bonuses(pid).1) / 100.0;
         let holy_city_tourism = self
             .players
             .iter()
@@ -16476,6 +17548,7 @@ impl Game {
                 1.0
             };
             tourism += 2.0 * city.wonders.len() as f64;
+            tourism += city.products.len().min(self.product_capacity(city)) as f64;
             if self.tree_effect(pid, "improvement_culture_tourism") > 0.0 {
                 for (district, position) in &city.districts {
                     if !self.district_is_active(city, district, *position) {
@@ -16731,7 +17804,7 @@ impl Game {
             .count() as f64
             * 8.0;
         let base = tourism + holy_city_tourism + 0.15 * culture;
-        base * (1.0 + self.tree_effect(pid, "tourism_pct") / 100.0)
+        base * (1.0 + (self.tree_effect(pid, "tourism_pct") + self.monopoly_bonuses(pid).1) / 100.0)
     }
 
     fn great_work_tourism(&self, pid: usize, kind: &str) -> f64 {
@@ -16988,22 +18061,10 @@ impl Game {
                 cul += (following / 5.0).floor();
             }
         }
-        let n_units = self.player_unit_ids(pid).len() as f64;
-        // Simplified base maintenance is 1 Gold per unit past the first three.
-        let maintenance = (1.0 - self.policy_effect(pid, "unit_maintenance_discount")).max(0.0);
-        gold -= (n_units - 3.0).max(0.0) * maintenance;
-        let nuclear_devices = self.players[pid]
-            .counters
-            .get("project_effect:nuclear_devices")
-            .copied()
-            .unwrap_or(0)
-            + self.players[pid]
-                .counters
-                .get("project_effect:thermonuclear_devices")
-                .copied()
-                .unwrap_or(0);
-        gold -= nuclear_devices as f64
-            * (1.0 - self.policy_effect(pid, "nuclear_maintenance_discount_pct") / 100.0);
+        gold += self.monopoly_bonuses(pid).0;
+        gold -= self.unit_gold_maintenance(pid);
+        gold -= self.infrastructure_gold_maintenance(pid);
+        gold -= self.nuclear_gold_maintenance(pid);
         {
             let p = &mut self.players[pid];
             p.gold = (p.gold + gold).max(0.0);
@@ -17227,6 +18288,20 @@ impl Game {
         }
         if self.players[pid].pantheon.as_deref() == Some("fertility_rites") {
             growth_bonus += 10.0;
+        }
+        growth_bonus += 20.0
+            * self.cities[&cid]
+                .products
+                .iter()
+                .take(self.product_capacity(&self.cities[&cid]))
+                .filter(|product| product.as_str() == "salt")
+                .count() as f64;
+        if let Some((resource, corporation)) =
+            self.city_active_economic_improvement(&self.cities[&cid])
+        {
+            if resource == "salt" {
+                growth_bonus += if corporation { 40.0 } else { 20.0 };
+            }
         }
         {
             let city = self.cities.get_mut(&cid).unwrap();
@@ -17944,6 +19019,24 @@ impl Game {
                 }
                 true
             }
+            Item::Product { product } => {
+                let Some(target) = self.product_slot_city(pid, cid) else {
+                    // A slot can disappear while two cities race the final
+                    // Product. Leave the completed project at cost until a
+                    // Stock Exchange/Seaport slot becomes available again.
+                    return false;
+                };
+                if self.world_product_count(product) >= 5 {
+                    return true;
+                }
+                self.cities
+                    .get_mut(&target)
+                    .unwrap()
+                    .products
+                    .push(product.clone());
+                bump(&mut self.players[pid], "products");
+                true
+            }
         }
     }
 
@@ -18143,6 +19236,33 @@ impl Game {
                 city.wall_hp = 0;
                 city.encampment_wall_hp = 0;
             }
+        }
+        // An empire may have only one Industry for a given luxury. If a
+        // captured city would duplicate one already controlled by its new
+        // owner, the captured Industry is removed (Corporations are globally
+        // unique and therefore cannot collide this way).
+        let duplicate_industry = self.cities[&cid]
+            .owned_tiles
+            .iter()
+            .find_map(|position| {
+                let tile = &self.map.tiles[position];
+                (tile.improvement.as_deref() == Some("industry"))
+                    .then(|| tile.resource.clone().map(|resource| (*position, resource)))
+                    .flatten()
+            })
+            .filter(|(_, resource)| {
+                self.cities.values().any(|other| {
+                    other.id != cid
+                        && other.owner == new_owner
+                        && self
+                            .city_economic_improvement(other)
+                            .is_some_and(|(candidate, _)| candidate == *resource)
+                })
+            });
+        if let Some((position, _)) = duplicate_industry {
+            let tile = self.map.tiles.get_mut(&position).unwrap();
+            tile.improvement = None;
+            tile.pillaged = false;
         }
         let pos = self.cities[&cid].pos;
         for oid in self.units_at(pos) {

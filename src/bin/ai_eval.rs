@@ -33,6 +33,8 @@ struct Metrics {
     settlers: f64,
     builders: f64,
     traders: f64,
+    active_routes: f64,
+    trade_capacity: f64,
     support_units: f64,
     missionaries: f64,
     victories: BTreeMap<String, usize>,
@@ -81,6 +83,8 @@ impl Metrics {
             .iter()
             .filter(|minor| minor.alive && minor.is_minor && g.suzerain_of(minor.id) == Some(pid))
             .count() as f64;
+        self.active_routes += g.active_routes(pid) as f64;
+        self.trade_capacity += g.trade_capacity(pid) as f64;
         for unit in g.units.values().filter(|u| u.owner == pid) {
             match unit.kind.as_str() {
                 "settler" => self.settlers += 1.0,
@@ -235,15 +239,17 @@ fn main() {
             m.queued_cost / n,
         );
     }
-    println!("\nAI          settler builder trader support missionary");
+    println!("\nAI          settler builder trader routes/cap support missionary");
     for name in [a, b] {
         let m = &totals[name];
         let n = m.games as f64;
         println!(
-            "{name:<11} {:>7.2} {:>7.2} {:>6.2} {:>7.2} {:>10.2}",
+            "{name:<11} {:>7.2} {:>7.2} {:>6.2} {:>5.2}/{:<4.2} {:>7.2} {:>10.2}",
             m.settlers / n,
             m.builders / n,
             m.traders / n,
+            m.active_routes / n,
+            m.trade_capacity / n,
             m.support_units / n,
             m.missionaries / n,
         );

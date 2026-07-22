@@ -147,6 +147,9 @@ pub struct ImprovementSpec {
 pub struct UnitSpec {
     pub class: String,
     pub cost: f64,
+    /// Gold paid every turn; formations apply their Civ VI 150%/200% factor.
+    #[serde(default)]
+    pub maintenance: f64,
     pub moves: f64,
     /// False for units which only enter play through a special effect.
     #[serde(default = "default_true")]
@@ -222,6 +225,8 @@ impl UnitSpec {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DistrictSpec {
     pub cost: f64,
+    #[serde(default)]
+    pub maintenance: f64,
     #[serde(default)]
     pub tech: Option<String>,
     #[serde(default)]
@@ -910,7 +915,7 @@ mod tests {
         assert_eq!(rules.buildings.len(), 85);
         assert_eq!(rules.districts.len(), 35);
         assert_eq!(rules.wonders.len(), 53);
-        assert_eq!(rules.improvements.len(), 31);
+        assert_eq!(rules.improvements.len(), 33);
         assert_eq!(rules.resources.len(), 20);
         assert_eq!(rules.projects.len(), 17);
         assert_eq!(rules.policies.len(), 118);
@@ -945,6 +950,10 @@ mod tests {
 
         for (id, spec) in &rules.units {
             check_gate("unit", id, &spec.tech, &spec.civic);
+            assert!(
+                spec.maintenance >= 0.0,
+                "{id} has negative Gold maintenance"
+            );
             if let Some(resource) = &spec.requires_resource {
                 assert!(
                     rules.resources.contains_key(resource),
@@ -989,9 +998,17 @@ mod tests {
         }
         for (id, spec) in &rules.buildings {
             check_gate("building", id, &spec.tech, &spec.civic);
+            assert!(
+                spec.maintenance >= 0.0,
+                "{id} has negative Gold maintenance"
+            );
         }
         for (id, spec) in &rules.districts {
             check_gate("district", id, &spec.tech, &spec.civic);
+            assert!(
+                spec.maintenance >= 0.0,
+                "{id} has negative Gold maintenance"
+            );
         }
         for (id, spec) in &rules.wonders {
             check_gate("wonder", id, &spec.tech, &spec.civic);

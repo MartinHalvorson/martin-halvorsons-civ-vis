@@ -8,6 +8,7 @@
   },
   "campus": {
     "cost": 54,
+    "maintenance": 1,
     "tech": "writing",
     "yields": {},
     "citizen_yields": {"science": 2},
@@ -24,6 +25,7 @@
   },
   "holy_site": {
     "cost": 54,
+    "maintenance": 1,
     "tech": "astrology",
     "yields": {},
     "citizen_yields": {"faith": 2},
@@ -40,6 +42,7 @@
   },
   "encampment": {
     "cost": 54,
+    "maintenance": 1,
     "tech": "bronze_working",
     "yields": {},
     "citizen_yields": {"gold": 2, "production": 1},
@@ -80,6 +83,7 @@
   },
   "theater_square": {
     "cost": 54,
+    "maintenance": 1,
     "civic": "drama_poetry",
     "yields": {},
     "citizen_yields": {"culture": 2},
@@ -96,6 +100,7 @@
   },
   "industrial_zone": {
     "cost": 54,
+    "maintenance": 1,
     "tech": "apprenticeship",
     "yields": {},
     "citizen_yields": {"production": 2},
@@ -115,6 +120,7 @@
   },
   "entertainment_complex": {
     "cost": 54,
+    "maintenance": 1,
     "civic": "games_recreation",
     "yields": {},
     "amenity": 1,
@@ -123,6 +129,7 @@
   },
   "water_park": {
     "cost": 54,
+    "maintenance": 1,
     "civic": "natural_history",
     "water": true,
     "placement": "water_park",
@@ -175,6 +182,7 @@
   },
   "aerodrome": {
     "cost": 54,
+    "maintenance": 1,
     "tech": "flight",
     "placement": "flat_land",
     "yields": {},
@@ -191,6 +199,7 @@
   },
   "government_plaza": {
     "cost": 30,
+    "maintenance": 1,
     "civic": "state_workforce",
     "max_per_empire": 1,
     "yields": {},
@@ -199,6 +208,7 @@
   },
   "diplomatic_quarter": {
     "cost": 30,
+    "maintenance": 1,
     "tech": "mathematics",
     "max_per_empire": 1,
     "yields": {},
@@ -215,6 +225,7 @@
 
   "acropolis": {
     "cost": 27,
+    "maintenance": 1,
     "civic": "drama_poetry",
     "unique_to": "Greece",
     "replaces": "theater_square",
@@ -250,6 +261,7 @@
   },
   "observatory": {
     "cost": 27,
+    "maintenance": 1,
     "tech": "writing",
     "unique_to": "Maya",
     "replaces": "campus",
@@ -266,6 +278,7 @@
   },
   "seowon": {
     "cost": 27,
+    "maintenance": 1,
     "tech": "writing",
     "unique_to": "Korea",
     "replaces": "campus",
@@ -280,6 +293,7 @@
   },
   "lavra": {
     "cost": 27,
+    "maintenance": 1,
     "tech": "astrology",
     "unique_to": "Russia",
     "replaces": "holy_site",
@@ -298,6 +312,7 @@
   },
   "ikanda": {
     "cost": 27,
+    "maintenance": 1,
     "tech": "bronze_working",
     "unique_to": "Zulu",
     "replaces": "encampment",
@@ -316,6 +331,7 @@
   },
   "thanh": {
     "cost": 27,
+    "maintenance": 1,
     "tech": "bronze_working",
     "specialty": false,
     "unique_to": "Vietnam",
@@ -383,6 +399,7 @@
   },
   "hansa": {
     "cost": 27,
+    "maintenance": 1,
     "tech": "apprenticeship",
     "unique_to": "Germany",
     "replaces": "industrial_zone",
@@ -401,6 +418,7 @@
   },
   "oppidum": {
     "cost": 27,
+    "maintenance": 1,
     "tech": "iron_working",
     "unique_to": "Gaul",
     "replaces": "industrial_zone",
@@ -417,6 +435,7 @@
   },
   "street_carnival": {
     "cost": 27,
+    "maintenance": 1,
     "civic": "games_recreation",
     "unique_to": "Brazil",
     "replaces": "entertainment_complex",
@@ -427,6 +446,7 @@
   },
   "hippodrome": {
     "cost": 27,
+    "maintenance": 1,
     "civic": "games_recreation",
     "unique_to": "Byzantium",
     "replaces": "entertainment_complex",
@@ -438,6 +458,7 @@
   },
   "copacabana": {
     "cost": 27,
+    "maintenance": 1,
     "civic": "natural_history",
     "unique_to": "Brazil",
     "replaces": "water_park",

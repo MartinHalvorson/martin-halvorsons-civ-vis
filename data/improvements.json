@@ -133,6 +133,21 @@
     "effects": {"passage": 1}
   },
 
+  "industry": {
+    "tech": "currency",
+    "yields": {"food": 2, "production": 2, "gold": 1},
+    "resources": ["silk", "wine", "salt"],
+    "resource_only": true,
+    "effects": {"great_merchant_points": 1}
+  },
+  "corporation": {
+    "tech": "economics",
+    "yields": {"food": 4, "production": 10, "gold": 3},
+    "resources": ["silk", "wine", "salt"],
+    "resource_only": true,
+    "unbuildable": true
+  },
+
   "sphinx": {
     "civic": "craftsmanship",
     "unique_to": "Egypt",

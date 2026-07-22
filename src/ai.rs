@@ -884,6 +884,7 @@ impl Ai for BasicAi {
         self.resolve_city_dispositions(g, pid, false, false);
         if !self.barb {
             self.research(g, pid);
+            self.corporations(g, pid);
             self.diplomacy(g, pid);
             self.cities(g, pid);
         }
@@ -896,6 +897,16 @@ impl Ai for BasicAi {
 }
 
 impl BasicAi {
+    pub(crate) fn corporations(&self, g: &mut Game, pid: usize) {
+        if let Some(action) = g
+            .legal_actions(pid)
+            .into_iter()
+            .find(|action| matches!(action, Action::FoundCorporation { .. }))
+        {
+            let _ = g.apply(pid, &action);
+        }
+    }
+
     /// Resolve mandatory conquest choices with explicit strategic tradeoffs.
     /// Capitals and developed bridgeheads are retained; diplomacy-oriented
     /// plans restore city-states, friends, and eliminated founders; only an
@@ -1930,6 +1941,13 @@ impl BasicAi {
                         return Some(item);
                     }
                 }
+            }
+            if let Some(product) = g
+                .producible_items(pid, cid)
+                .into_iter()
+                .find(|item| matches!(item, Item::Product { .. }))
+            {
+                return Some(product);
             }
             let mut projects: Vec<Item> = g
                 .rules
