@@ -393,7 +393,10 @@ impl AdvancedAi {
                 value += unlocks as f64 * 8.0;
             }
         }
-        value + 220.0 / spec.cost.max(10.0)
+        // Discount by opportunity cost so a flashy late-era unlock does not
+        // stall several cheaper advances. Square root still lets a genuinely
+        // transformative breakthrough win the comparison.
+        (value + 35.0) / spec.cost.max(10.0).sqrt()
     }
 
     fn civic_value(&self, g: &Game, pid: usize, civic: &str, strategy: GrandStrategy) -> f64 {
@@ -448,7 +451,7 @@ impl AdvancedAi {
         if strategy == GrandStrategy::Culture && civic == "drama_poetry" {
             value += 60.0;
         }
-        value + 200.0 / spec.cost.max(10.0)
+        (value + 32.0) / spec.cost.max(10.0).sqrt()
     }
 
     fn advanced_diplomacy(&self, g: &mut Game, pid: usize, plan: &StrategicPlan) {
@@ -572,13 +575,13 @@ impl AdvancedAi {
         let raw = match item {
             Item::Unit { unit } if unit == "settler" => {
                 let site = self.best_settle_site(g, pid, city.pos, 11);
-                if plan.strategy == GrandStrategy::Expansion
-                    && city_count + counts.settlers < plan.desired_cities
+                if city_count + counts.settlers < plan.desired_cities
                     && counts.settlers == 0
-                    && city.pop >= 3
+                    && city.pop >= 2
+                    && g.turn < 175
                     && site.is_some()
                 {
-                    520.0 + site.map(|(_, v)| v * 4.0).unwrap_or(0.0)
+                    660.0 + site.map(|(_, v)| v * 4.0).unwrap_or(0.0)
                 } else {
                     -10_000.0
                 }
@@ -612,17 +615,21 @@ impl AdvancedAi {
                         return -2_000.0;
                     }
                     let power = spec.strength.max(spec.ranged_attack_strength());
-                    let role_gap = if spec.has_ranged_attack() {
+                    let force_gap = desired_military.saturating_sub(counts.military) as f64;
+                    let role_gap = if force_gap <= 0.0 {
+                        0.0
+                    } else if spec.has_ranged_attack() {
                         (counts.melee > counts.ranged) as i32 as f64 * 55.0
                     } else {
                         (counts.ranged >= counts.melee) as i32 as f64 * 55.0
                     };
-                    let force_gap = desired_military.saturating_sub(counts.military) as f64;
-                    power * 4.0
+                    power * if force_gap > 0.0 { 4.0 } else { 0.65 }
                         + role_gap
                         + force_gap * 58.0
                         + if threatened { 210.0 } else { 0.0 }
-                        + if plan.strategy == GrandStrategy::Conquest {
+                        + if plan.strategy == GrandStrategy::Conquest
+                            && counts.military < desired_military + 2
+                        {
                             120.0
                         } else {
                             0.0
@@ -658,7 +665,7 @@ impl AdvancedAi {
                 } else {
                     let housing_need = (city.pop as f64 + 1.0 - g.city_housing(city)).max(0.0);
                     let amenity_need = (-g.city_amenity_surplus(city)).max(0) as f64;
-                    self.yield_value(spec.yields, plan.strategy) * 32.0
+                    self.yield_value(spec.yields, plan.strategy) * 42.0
                         + spec.housing * (22.0 + housing_need * 18.0)
                         + spec.amenity * (30.0 + amenity_need * 22.0)
                         + if building == "monument" && g.turn < 90 {
@@ -675,7 +682,7 @@ impl AdvancedAi {
             }
             Item::District { district, pos } => {
                 let spec = &g.rules.districts[district];
-                self.yield_value(g.district_yields(district, *pos), plan.strategy) * 42.0
+                self.yield_value(g.district_yields(district, *pos), plan.strategy) * 60.0
                     + spec.defense * if threatened { 5.0 } else { 1.5 }
                     + spec.amenity * 50.0
                     + match (plan.strategy, district.as_str()) {
@@ -759,7 +766,7 @@ impl AdvancedAi {
             {
                 continue;
             }
-            let value = self.settle_value(g, pid, pos) - g.wdist(from, pos) as f64 * 0.28;
+            let value = self.settle_value(g, pid, pos) - g.wdist(from, pos) as f64 * 0.9;
             if best
                 .map(|(bp, bv)| value > bv || (value == bv && pos < bp))
                 .unwrap_or(true)
@@ -782,7 +789,7 @@ impl AdvancedAi {
             g.map.get(*target).is_some() && !g.cities.values().any(|c| g.wdist(c.pos, *target) < 4)
         });
         let target = valid_target.or_else(|| {
-            self.best_settle_site(g, pid, current, 12).map(|(pos, _)| {
+            self.best_settle_site(g, pid, current, 8).map(|(pos, _)| {
                 self.settler_targets.insert(uid, pos);
                 pos
             })

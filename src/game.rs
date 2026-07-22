@@ -929,6 +929,7 @@ impl Game {
         let mu = self.units.get_mut(&uid).unwrap();
         mu.charges -= 1;
         mu.moves_left = 0.0;
+        mu.acted = true;
         if self.units[&uid].charges <= 0 {
             self.remove_unit(uid);
         }
@@ -1780,6 +1781,41 @@ impl Game {
         let Some(a) = self.map.get(from) else { return false };
         let Some(b) = self.map.get(to) else { return false };
         !self.rules.is_water(a) && !self.rules.is_water(b) && a.river != b.river
+    }
+
+    fn sight_height(&self, pos: Pos) -> i32 {
+        let t = &self.map.tiles[&pos];
+        if t.terrain == "mountain" {
+            return 3;
+        }
+        t.hills as i32
+            + matches!(t.feature.as_deref(), Some("forest" | "jungle")) as i32
+    }
+
+    /// Civ VI line of sight for the ranges represented by this ruleset. At
+    /// range 2 either unobstructed hex corridor is enough; hills provide a
+    /// vantage point, while wooded hills and mountains remain taller cover.
+    fn has_line_of_sight(&self, from: Pos, to: Pos, unit_in_district: bool) -> bool {
+        let distance = self.wdist(from, to);
+        if distance <= 1 || distance >= 3 {
+            return true; // adjacent fire is unconditional; range 3+ lobs shots
+        }
+        let mut attacker_height = self.map.tiles[&from].hills as i32;
+        if unit_in_district {
+            let t = &self.map.tiles[&from];
+            if self.city_at(from).is_some()
+                || t.district.as_deref() == Some("encampment")
+            {
+                attacker_height += 1;
+            }
+        }
+        let target_height = self.sight_height(to);
+        self.nbrs(from).into_iter()
+            .filter(|p| self.wdist(*p, to) == 1)
+            .any(|middle| {
+                let blocker = self.sight_height(middle);
+                blocker <= attacker_height || blocker < target_height
+            })
     }
 
     fn unit_max_moves(&self, uid: u32) -> f64 {
@@ -2949,13 +2985,15 @@ impl Game {
                     }
                 }
                 if spec.class == "military" && !embarked {
-                    if spec.has_ranged_attack() && (!spec.siege || !u.acted) {
-                        for pos in self.wdisk(u.pos, spec.range.max(1)) {
-                            if pos == u.pos || !self.map.tiles.contains_key(&pos) {
-                                continue;
-                            }
-                            if self.enemy_target_at(pid, pos) {
-                                acts.push(Action::Ranged { unit: uid, target: pos });
+                    if spec.has_ranged_attack() {
+                        if !spec.siege || !u.acted {
+                            for pos in self.wdisk(u.pos, spec.range.max(1)) {
+                                if pos == u.pos || !self.map.tiles.contains_key(&pos) {
+                                    continue;
+                                }
+                                if self.enemy_target_at(pid, pos) {
+                                    acts.push(Action::Ranged { unit: uid, target: pos });
+                                }
                             }
                         }
                     } else {
@@ -3527,6 +3565,9 @@ impl Game {
         if self.is_embarked(&u) {
             return Err("cannot attack while embarked".into());
         }
+        if spec.siege && u.acted {
+            return Err("siege units cannot move and attack in the same turn".into());
+        }
         if u.moves_left <= 0.0 {
             return Err("no moves left".into());
         }
@@ -3551,16 +3592,14 @@ impl Game {
         if enemy_ids.is_empty() && city_id.is_none() {
             return Err("nothing to attack".into());
         }
-        let att = {
-            let u2 = &self.units[&uid];
-            effective_strength(self.unit_ranged_attack_strength(u2), u2.hp)
-        };
         {
             let mu = self.units.get_mut(&uid).unwrap();
             mu.moves_left = 0.0;
             mu.fortified = false;
+            mu.fortify_turns = 0;
+            mu.acted = true;
         }
-        self.award_xp(uid, 3);
+        self.award_xp(uid, 2);
         let military: Vec<u32> = enemy_ids
             .iter()
             .cloned()
@@ -3577,12 +3616,24 @@ impl Game {
                     ea.partial_cmp(&eb).unwrap()
                 })
                 .unwrap();
-            let downer = self.units[&did].owner;
-            let att = att + self.vs_bonus(pid, downer);
+            let defender = self.units[&did].clone();
+            let downer = defender.owner;
+            let mut att_base = self.unit_ranged_attack_strength(&self.units[&uid])
+                + self.matchup_bonus(uid, &defender)
+                + self.vs_bonus(pid, downer);
+            let defender_spec = &self.rules.units[defender.kind.as_str()];
+            if spec.bombard_strength > 0.0
+                || (spec.ranged_strength > 0.0
+                    && defender_spec.domain.as_deref() == Some("sea"))
+            {
+                att_base -= 17.0;
+            }
+            let att = effective_strength(att_base, self.units[&uid].hp);
             let ds = effective_strength(
-                self.unit_strength(&self.units[&did], true), self.units[&did].hp)
-                + self.tile_defense_bonus(target)
-                + self.vs_bonus(downer, pid);
+                self.unit_strength(&defender, true)
+                    + self.tile_defense_bonus(target)
+                    + self.vs_bonus(downer, pid),
+                defender.hp);
             let dmg = damage(att, ds, &mut self.rng);
             self.units.get_mut(&did).unwrap().hp -= dmg;
             if self.units[&did].hp <= 0 {
@@ -3593,6 +3644,13 @@ impl Game {
             }
         } else if !enemy_ids.is_empty() {
             let did = enemy_ids[0];
+            let defender = self.units[&did].clone();
+            let mut att_base = self.unit_ranged_attack_strength(&self.units[&uid])
+                + self.vs_bonus(pid, defender.owner);
+            if spec.bombard_strength > 0.0 {
+                att_base -= 17.0;
+            }
+            let att = effective_strength(att_base, self.units[&uid].hp);
             let dmg = damage(att, 1.0, &mut self.rng);
             self.units.get_mut(&did).unwrap().hp -= dmg;
             if self.units[&did].hp <= 0 {
@@ -3602,6 +3660,14 @@ impl Game {
                 self.on_unit_lost(downer);
             }
         } else if let Some(cid) = city_id {
+            let mut att_base = self.unit_ranged_attack_strength(&self.units[&uid])
+                + self.vs_bonus(pid, self.cities[&cid].owner);
+            if spec.ranged_strength > 0.0
+                && spec.domain.as_deref() != Some("sea")
+            {
+                att_base -= 17.0;
+            }
+            let att = effective_strength(att_base, self.units[&uid].hp);
             let cs = self.city_strength(cid);
             let dmg = damage(att, cs, &mut self.rng);
             let mult = if spec.siege { 1.0 } else { 0.5 };
@@ -3714,6 +3780,7 @@ impl Game {
         let mu = self.units.get_mut(&uid).unwrap();
         mu.charges -= 1;
         mu.moves_left = 0.0;
+        mu.acted = true;
         bump(&mut self.players[pid], "improvements");
         if self.units[&uid].charges <= 0 {
             self.remove_unit(uid);
