@@ -1314,9 +1314,9 @@ mod tests {
         let classes: BTreeSet<_> = rules
             .units
             .values()
-            // Spies leave the ordinary unit roster when trained and use the
-            // dedicated 17-node agent promotion system in `Game`.
-            .filter(|unit| unit.class != "espionage" && !unit.promotion_class.is_empty())
+            // Spy promotions are resolved by the off-map espionage engine,
+            // not the seven-node map-unit XP trees validated here.
+            .filter(|unit| !unit.promotion_class.is_empty() && unit.promotion_class != "espionage")
             .map(|unit| unit.promotion_class.as_str())
             .collect();
         let promotion_count = |class: &str| match class {
@@ -1328,7 +1328,11 @@ mod tests {
             .iter()
             .map(|class| promotion_count(class))
             .sum::<usize>();
-        assert_eq!(rules.promotions.len(), expected_promotions);
+        assert_eq!(
+            rules.promotions.len(),
+            expected_promotions,
+            "modeled promotion classes: {classes:?}"
+        );
         for class in classes {
             let nodes: Vec<_> = rules
                 .promotions

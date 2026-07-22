@@ -3221,7 +3221,26 @@ impl AdvancedAi {
             .filter(|spy| spy.owner == pid)
             .map(|spy| spy.id)
             .collect();
-        let home_defender = ids.iter().copied().min();
+        let infiltrated_cities: BTreeSet<u32> = g
+            .spies
+            .values()
+            .filter(|spy| spy.owner != pid && spy.captured_by.is_none())
+            .filter_map(|spy| {
+                spy.city
+                    .filter(|city| g.cities.get(city).is_some_and(|city| city.owner == pid))
+            })
+            .collect();
+        let home_defender = ids
+            .iter()
+            .copied()
+            .filter(|spy| {
+                g.spies[spy].city.is_some_and(|city| {
+                    g.cities[&city].owner == pid
+                        && (g.cities[&city].districts.contains_key("spaceport")
+                            || infiltrated_cities.contains(&city))
+                })
+            })
+            .min();
         for spy_id in ids {
             let legal = g.legal_spy_actions(pid, spy_id);
             if legal.is_empty() {
@@ -3286,15 +3305,28 @@ impl AdvancedAi {
                     plan.strategy,
                     GrandStrategy::Science | GrandStrategy::Recovery
                 )
-                && current_city.is_some_and(|city| {
-                    g.cities[&city].owner == pid
-                        && (g.cities[&city].is_capital
-                            || g.cities[&city].districts.contains_key("spaceport"))
-                })
+                && current_city.is_some_and(|city| g.cities[&city].owner == pid)
             {
-                if let Some(action) = legal.iter().find(|action| {
-                    matches!(action, Action::SpyMission { mission, .. } if mission == "counterspy")
-                }) {
+                let spaceport = current_city.and_then(|city| {
+                    g.cities[&city]
+                        .districts
+                        .iter()
+                        .find_map(|(district, position)| {
+                            (g.district_family(district) == "spaceport").then_some(*position)
+                        })
+                });
+                if let Some(action) = legal
+                    .iter()
+                    .filter(|action| {
+                        matches!(action, Action::SpyMission { mission, .. } if mission == "counterspy")
+                    })
+                    .max_by_key(|action| match action {
+                        Action::SpyMission { target, .. } => {
+                            (Some(*target) == spaceport, std::cmp::Reverse(*target))
+                        }
+                        _ => unreachable!(),
+                    })
+                {
                     let _ = g.apply(pid, action);
                     continue;
                 }
@@ -9190,5 +9222,70 @@ mod tests {
         );
         assert!(ai.advanced_military_step(&mut game, 0, warrior, &plan));
         assert_eq!(game.units[&warrior].pos, city_pos);
+    }
+
+    #[test]
+    fn science_strategy_uses_an_established_spy_to_steal_a_rival_technology() {
+        let mut game = Game::new_full(2, 24, 16, 109, 120, 0, false);
+        let cities: Vec<u32> = (0..2)
+            .map(|pid| {
+                let settler = game
+                    .player_unit_ids(pid)
+                    .into_iter()
+                    .find(|unit| game.units[unit].kind == "settler")
+                    .unwrap();
+                game.found_city_for(pid, game.units[&settler].pos, None)
+            })
+            .collect();
+        let target = cities[1];
+        let campus = game.cities[&target]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != game.cities[&target].pos)
+            .unwrap();
+        game.map.tiles.get_mut(&campus).unwrap().district = Some("campus".to_string());
+        game.cities
+            .get_mut(&target)
+            .unwrap()
+            .districts
+            .insert("campus".to_string(), campus);
+        game.players[1].techs.insert("writing".to_string());
+        let spy = game.next_id;
+        game.next_id += 1;
+        game.spies.insert(
+            spy,
+            crate::game::Spy {
+                id: spy,
+                owner: 0,
+                level: 2,
+                promotions: ["technologist".to_string(), "disguise".to_string()]
+                    .into_iter()
+                    .collect(),
+                city: Some(target),
+                ready_turn: game.turn,
+                mission: None,
+                sources_city: Some(target),
+                sources_until: game.turn + 24,
+                captured_by: None,
+            },
+        );
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Science,
+            target_player: Some(1),
+            target_city: Some(target),
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+
+        AdvancedAi::targeting(VictoryTarget::Science).advanced_spies(&mut game, 0, &plan);
+        assert_eq!(
+            game.spies[&spy]
+                .mission
+                .as_ref()
+                .map(|mission| mission.kind.as_str()),
+            Some("steal_tech_boost")
+        );
     }
 }

@@ -56,6 +56,15 @@ City-State Emergency votes additionally price the target's victory pressure,
 Grievances, relative military strength, and the voter's city-state interest.
 Supporting agents accept the mandated coalition war, retarget their campaign
 at the captured objective, and prefer liberation over keeping or razing it.
+Espionage follows the same plan. Advanced agents reserve a home Counterspy for
+Science or recovery when a Capital or Spaceport needs protection; other agents
+establish sources, select mission promotions, and target rival technologies,
+Spaceports, Great Works, city-state Envoys, Governors, production, or Loyalty
+according to victory strategy and campaign target. Operation ordering combines
+mission value with the live success probability after sources, policies,
+buildings, Governors, and defending Spies. The lightweight AI uses the same
+legal mission model but maximizes general expected value, and both agents can
+recover captured operatives through valued bilateral trades.
 District production is family-aware: unique replacements inherit the strategic
 role of their standard district, while candidate sites are compared using
 their actual adjacency, specialist and Great Person yields, housing, amenities,
