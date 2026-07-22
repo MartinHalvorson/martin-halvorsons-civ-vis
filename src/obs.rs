@@ -70,7 +70,11 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
         })
         .map(|u| {
             let mut v = serde_json::to_value(u).unwrap();
-            if u.owner == pid {
+            // Reachable tiles require a full movement search. They drive the
+            // human player's click highlights, but spectator sessions are
+            // read-only and deliberately publish no legal actions. Omitting
+            // them there keeps observation latency independent of army size.
+            if u.owner == pid && !omniscient {
                 v["reachable"] = json!(g
                     .reachable(u.id)
                     .iter()

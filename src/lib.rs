@@ -1568,6 +1568,30 @@ mod tests {
     }
 
     #[test]
+    fn spectator_frames_skip_human_only_reachable_pathfinding() {
+        let g = Game::new(1, 18, 12, 41, 25, 0);
+        let uid = g.player_unit_ids(0)[0];
+
+        let human = crate::obs::observation(&g, 0);
+        let human_unit = human["units"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|unit| unit["id"].as_u64() == Some(uid as u64))
+            .unwrap();
+        assert!(human_unit["reachable"].is_array());
+
+        let spectator = crate::obs::observation_spectator(&g, 0);
+        let spectator_unit = spectator["units"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|unit| unit["id"].as_u64() == Some(uid as u64))
+            .unwrap();
+        assert!(spectator_unit.get("reachable").is_none());
+    }
+
+    #[test]
     fn action_protocol_json() {
         let a: Action =
             serde_json::from_str(r#"{"type": "move", "unit": 3, "to": [1, -2]}"#).unwrap();
