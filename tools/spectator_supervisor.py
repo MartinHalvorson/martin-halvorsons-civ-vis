@@ -448,7 +448,7 @@ def main() -> int:
     checkpointed_progress: tuple[Any, ...] | None = None
     resume_attempts: dict[tuple[Any, ...], int] = {}
 
-    def launch_recovery() -> dict[str, Any]:
+    def launch_recovery(open_browser: bool = False) -> dict[str, Any]:
         nonlocal process, adopted_pid
         stop_server(process, adopted_pid)
         process = None
@@ -467,7 +467,7 @@ def main() -> int:
 
         if not RUNTIME_BINARY.exists():
             prepare_latest(args.build_retry)
-        process = start_server(args.port, settings, False, resume)
+        process = start_server(args.port, settings, open_browser, resume)
         try:
             recovered = wait_for_server(args.port, process)
         except RuntimeError:
@@ -476,7 +476,7 @@ def main() -> int:
             log("checkpoint could not be loaded; quarantining it and starting a fresh game")
             stop_server(process, None)
             quarantine_checkpoint(save_path)
-            process = start_server(args.port, settings, False)
+            process = start_server(args.port, settings, open_browser)
             recovered = wait_for_server(args.port, process)
             marker = None
 
@@ -497,8 +497,7 @@ def main() -> int:
             # are compiled while a completed result screen remains reachable.
             if not RUNTIME_BINARY.exists():
                 prepare_latest(args.build_retry)
-            process = start_server(args.port, settings, not args.no_open)
-            state = wait_for_server(args.port, process)
+            state = launch_recovery(not args.no_open)
         else:
             if not process_alive(None, adopted_pid):
                 log(f"cannot adopt PID {adopted_pid}: it is not running")
