@@ -169,6 +169,10 @@ pub struct Player {
     #[serde(default)]
     pub envoys_free: i64,
     #[serde(default)]
+    pub gpp: BTreeMap<String, f64>, // great person points by type
+    #[serde(default)]
+    pub gp_claimed: BTreeMap<String, i64>,
+    #[serde(default)]
     pub envoys: Vec<(usize, i64)>, // (city-state pid, envoys placed)
     #[serde(default)]
     pub counters: BTreeMap<String, i64>,
@@ -203,6 +207,8 @@ impl Player {
             policies: BTreeSet::new(),
             influence: 0.0,
             envoys_free: 0,
+            gpp: BTreeMap::new(),
+            gp_claimed: BTreeMap::new(),
             envoys: Vec::new(),
             counters: BTreeMap::new(),
             boosted_techs: BTreeSet::new(),
@@ -686,6 +692,165 @@ impl Game {
                 || (r.owner == b && downer == Some(a))
                 || oowner.is_none() || downer.is_none())
         });
+    }
+
+    // -------------------------------------------------- great people
+
+    fn gp_district(d: &str) -> Option<&'static str> {
+        match d {
+            "campus" => Some("scientist"),
+            "holy_site" => Some("prophet"),
+            "commercial_hub" => Some("merchant"),
+            "theater_square" => Some("artist"),
+            "industrial_zone" => Some("engineer"),
+            "encampment" => Some("general"),
+            "harbor" => Some("admiral"),
+            _ => None,
+        }
+    }
+
+    fn gp_building(b: &str) -> Option<&'static str> {
+        match b {
+            "library" | "university" => Some("scientist"),
+            "shrine" => Some("prophet"),
+            "market" | "bank" => Some("merchant"),
+            "amphitheater" => Some("artist"),
+            "workshop" => Some("engineer"),
+            "barracks" | "armory" => Some("general"),
+            "lighthouse" => Some("admiral"),
+            _ => None,
+        }
+    }
+
+    /// Point cost of a player's next great person of a type (doubles per
+    /// claim, Civ 6-style era scaling).
+    pub fn gp_cost(&self, pid: usize, kind: &str) -> f64 {
+        let n = self.players[pid].gp_claimed.get(kind).copied().unwrap_or(0);
+        60.0 * (1u64 << n.min(6) as u64) as f64
+    }
+
+    /// Accrue great person points and auto-claim on reaching the threshold
+    /// (simplified: generic named-less great people with instant effects).
+    fn process_great_people(&mut self, pid: usize) {
+        if self.players[pid].is_minor {
+            return;
+        }
+        let mut earn: BTreeMap<String, f64> = BTreeMap::new();
+        for c in self.cities.values().filter(|c| c.owner == pid) {
+            for d in c.districts.keys() {
+                if let Some(t) = Self::gp_district(d) {
+                    *earn.entry(t.to_string()).or_insert(0.0) += 1.0;
+                }
+            }
+            for b in &c.buildings {
+                if let Some(t) = Self::gp_building(b) {
+                    *earn.entry(t.to_string()).or_insert(0.0) += 1.0;
+                }
+            }
+        }
+        if self.has_policy(pid, "strategos") {
+            *earn.entry("general".to_string()).or_insert(0.0) += 2.0;
+        }
+        if self.has_policy(pid, "inspiration") {
+            *earn.entry("scientist".to_string()).or_insert(0.0) += 2.0;
+        }
+        if self.has_policy(pid, "revelation") {
+            *earn.entry("prophet".to_string()).or_insert(0.0) += 2.0;
+        }
+        let mult = 1.0 + self.gov_effects(pid).great_people_pct / 100.0;
+        for (t, amt) in earn {
+            *self.players[pid].gpp.entry(t).or_insert(0.0) += amt * mult;
+        }
+        let due: Vec<String> = self.players[pid].gpp.iter()
+            .filter(|(t, pts)| **pts >= self.gp_cost(pid, t))
+            .map(|(t, _)| t.clone())
+            .collect();
+        for t in due {
+            let cost = self.gp_cost(pid, &t);
+            let p = &mut self.players[pid];
+            *p.gpp.get_mut(&t).unwrap() -= cost;
+            *p.gp_claimed.entry(t.clone()).or_insert(0) += 1;
+            bump(p, "great_people");
+            self.great_person_effect(pid, &t);
+        }
+    }
+
+    /// Simplified instant retirement effects for a claimed great person.
+    fn great_person_effect(&mut self, pid: usize, kind: &str) {
+        match kind {
+            "scientist" => self.grant_random_boosts(pid, 2, true),
+            "artist" => self.grant_random_boosts(pid, 2, false),
+            "engineer" => {
+                let best = self.cities.values()
+                    .filter(|c| c.owner == pid)
+                    .max_by(|a, b| a.production.partial_cmp(&b.production)
+                        .unwrap().then(a.id.cmp(&b.id)))
+                    .map(|c| c.id);
+                if let Some(cid) = best {
+                    self.cities.get_mut(&cid).unwrap().production += 150.0;
+                }
+            }
+            "merchant" => {
+                self.players[pid].gold += 200.0;
+                self.players[pid].envoys_free += 1;
+            }
+            "prophet" => self.players[pid].faith += 100.0,
+            "general" | "admiral" => {
+                let sea = kind == "admiral";
+                for uid in self.player_unit_ids(pid) {
+                    let spec = &self.rules.units[self.units[&uid].kind.as_str()];
+                    if spec.class == "military"
+                        && (spec.domain.as_deref() == Some("sea")) == sea {
+                        let u = self.units.get_mut(&uid).unwrap();
+                        u.level = (u.level + 1).min(4);
+                    }
+                }
+                if sea {
+                    self.players[pid].gold += 100.0;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Eureka (techs) or Inspiration (civics) boosts on `n` random
+    /// not-yet-boosted entries.
+    fn grant_random_boosts(&mut self, pid: usize, n: usize, techs: bool) {
+        for _ in 0..n {
+            let cands: Vec<(String, f64)> = if techs {
+                self.rules.techs.iter()
+                    .filter(|(name, _)| {
+                        let p = &self.players[pid];
+                        !p.techs.contains(*name) && !p.boosted_techs.contains(*name)
+                    })
+                    .map(|(name, s)| (name.clone(), s.cost))
+                    .collect()
+            } else {
+                self.rules.civics.iter()
+                    .filter(|(name, _)| {
+                        let p = &self.players[pid];
+                        !p.civics.contains(*name) && !p.boosted_civics.contains(*name)
+                    })
+                    .map(|(name, s)| (name.clone(), s.cost))
+                    .collect()
+            };
+            if cands.is_empty() {
+                return;
+            }
+            let (name, cost) = cands[self.rng.below(cands.len())].clone();
+            let p = &mut self.players[pid];
+            if techs {
+                p.boosted_techs.insert(name.clone());
+                if p.research.as_deref() == Some(name.as_str()) {
+                    p.research_progress += 0.4 * cost;
+                }
+            } else {
+                p.boosted_civics.insert(name.clone());
+                if p.civic.as_deref() == Some(name.as_str()) {
+                    p.civic_progress += 0.4 * cost;
+                }
+            }
+        }
     }
 
     // -------------------------------------------------- city-state envoys
@@ -2689,6 +2854,7 @@ impl Game {
     fn begin_turn(&mut self, pid: usize) {
         self.check_boosts(pid);
         self.process_routes(pid);
+        self.process_great_people(pid);
         if !self.players[pid].is_minor {
             // influence points scale with government tier; 100 points = 1 envoy
             let tier = match self.players[pid].government.as_deref() {

@@ -34,7 +34,8 @@
     "civic": "political_philosophy",
     "effects": {
       "amenity": 1,
-      "science_pct": 5
+      "science_pct": 5,
+      "great_people_pct": 15
     },
     "slots": {
       "economic": 2,

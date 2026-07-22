@@ -189,6 +189,7 @@ pub struct GovEffects {
     pub combat_strength: f64,
     pub amenity: f64,
     pub housing: f64,
+    pub great_people_pct: f64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]

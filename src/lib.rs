@@ -364,6 +364,40 @@ mod tests {
     }
 
     #[test]
+    fn great_people() {
+        let mut g = Game::new_full(2, 24, 16, 9, 200, 0, false);
+        let s = g.player_unit_ids(0).into_iter()
+            .find(|id| g.units[id].kind == "settler").unwrap();
+        g.apply(0, &Action::FoundCity { unit: s }).unwrap();
+        let cid = g.player_city_ids(0)[0];
+        let dpos = g.cities[&cid].owned_tiles.iter()
+            .find(|p| **p != g.cities[&cid].pos).cloned().unwrap();
+        g.cities.get_mut(&cid).unwrap().districts
+            .insert("campus".to_string(), dpos);
+        g.cities.get_mut(&cid).unwrap().buildings.push("library".to_string());
+        // campus (+1) + library (+1) scientist points per turn
+        let round = |g: &mut Game| {
+            g.apply(0, &Action::EndTurn).unwrap();
+            while g.current != 0 {
+                let cur = g.current;
+                g.apply(cur, &Action::EndTurn).unwrap();
+            }
+        };
+        round(&mut g);
+        let pts = *g.players[0].gpp.get("scientist").unwrap();
+        assert!((pts - 2.0).abs() < 1e-9, "expected 2 scientist gpp, got {pts}");
+        assert_eq!(g.gp_cost(0, "scientist"), 60.0);
+        // reaching the threshold auto-claims and grants two eurekas
+        g.players[0].gpp.insert("scientist".to_string(), 59.0);
+        let boosts_before = g.players[0].boosted_techs.len();
+        round(&mut g);
+        assert_eq!(g.players[0].gp_claimed.get("scientist"), Some(&1));
+        assert!(g.players[0].boosted_techs.len() >= boosts_before + 1);
+        // next scientist costs double
+        assert_eq!(g.gp_cost(0, "scientist"), 120.0);
+    }
+
+    #[test]
     fn serialization_roundtrip() {
         let mut g = Game::new(2, 18, 12, 4, 25, 1);
         let mut ais = BasicAi::fleet(&g);

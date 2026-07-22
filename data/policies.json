@@ -42,7 +42,7 @@
   "strategos": {
     "slot": "wildcard",
     "civic": "military_tradition",
-    "note": "+2 great general points per turn (reserved: great people pending)"
+    "note": "+2 great general points per turn"
   },
   "colonization": {
     "slot": "economic",
@@ -104,5 +104,15 @@
     "slot": "economic",
     "civic": "foreign_trade",
     "note": "+2 gold from all trade routes"
+  },
+  "inspiration": {
+    "slot": "wildcard",
+    "civic": "drama_poetry",
+    "note": "+2 great scientist points per turn"
+  },
+  "revelation": {
+    "slot": "wildcard",
+    "civic": "drama_poetry",
+    "note": "+2 great prophet points per turn"
   }
 }

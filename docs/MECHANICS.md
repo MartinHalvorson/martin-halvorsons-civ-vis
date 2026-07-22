@@ -4,7 +4,7 @@ Tracked against the [Civilization Wiki](https://civilization.fandom.com/wiki/Civ
 Status: ✅ implemented · 🟡 simplified · ❌ not yet.
 
 > **In progress** (claimed by parallel sessions — check before starting a batch):
-> - Session B: great people (GPP accrual + auto-claim effects). NOT touching web/index.html.
+> - (none currently claimed by session B)
 
 | System | Status | Notes |
 |---|---|---|
@@ -21,7 +21,7 @@ Status: ✅ implemented · 🟡 simplified · ❌ not yet.
 | Embarkation (Shipbuilding) | ✅ | embarked strength 10, cannot attack |
 | Barbarians (camps, raiders, rewards) | ✅ | no scout-alert mechanic |
 | City-states + envoys | ✅ | influence by gov tier (100 pts = envoy); type bonuses at 1/3/6 (capital +2, +2 per matching district); suzerain = 6+ & strict lead; war clears envoys |
-| Great People | ❌ | |
+| Great People | 🟡 | GPP per district/building (+1 each), Classical Republic +15%, Strategos/Inspiration/Revelation wildcards; doubling thresholds (60/120/...); auto-claim generic GPs with instant effects (eurekas, production, gold+envoy, faith, unit levels) — no named individuals/patronage |
 | Religion (pantheons, beliefs, units) | ❌ | faith yield + faith purchases only |
 | Trade routes & roads | ✅ | wiki capacity (Foreign Trade +1/hub-or-harbor city, +2 merchant republic); vanilla per-district yield table; traders lay roads (cost 1, bridge rivers 🟡); 30-turn duration; war/capture cancels |
 | Diplomacy (deals, alliances, grievances) | 🟡 | war/peace only |

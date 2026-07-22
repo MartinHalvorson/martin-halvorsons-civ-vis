@@ -117,6 +117,8 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             "envoys_free": p.envoys_free,
             "envoys": p.envoys,
             "trade_capacity": g.trade_capacity(pid),
+            "gpp": p.gpp,
+            "gp_claimed": p.gp_claimed,
             "routes": g.routes.iter().filter(|r| r.owner == pid)
                 .map(|r| json!({"origin": r.origin, "dest": r.dest, "ends": r.ends}))
                 .collect::<Vec<_>>(),
