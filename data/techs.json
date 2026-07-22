@@ -30,9 +30,9 @@
   "military_engineering": {"cost": 390, "era": 2, "requires": ["construction"]},
 
   "banking": {"cost": 600, "era": 3, "requires": ["education", "stirrups"], "boost": {"trigger": "building:market", "count": 1}},
-  "cartography": {"cost": 600, "era": 3, "requires": ["buttress"]},
+  "cartography": {"cost": 600, "era": 3, "requires": ["buttress", "shipbuilding"]},
   "gunpowder": {"cost": 600, "era": 3, "requires": ["apprenticeship", "stirrups", "military_engineering"], "boost": {"trigger": "building:armory", "count": 1}},
-  "mass_production": {"cost": 600, "era": 3, "requires": ["education", "buttress", "military_tactics"]},
+  "mass_production": {"cost": 600, "era": 3, "requires": ["education", "buttress", "military_tactics", "shipbuilding"]},
   "printing": {"cost": 600, "era": 3, "requires": ["machinery"], "boost": {"trigger": "building:university", "count": 1}},
   "astronomy": {"cost": 730, "era": 3, "requires": ["education"]},
   "metal_casting": {"cost": 730, "era": 3, "requires": ["gunpowder"], "boost": {"trigger": "units_of:swordsman", "count": 2}},

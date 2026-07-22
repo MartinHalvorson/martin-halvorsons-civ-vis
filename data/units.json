@@ -16,6 +16,7 @@
     "cost": 225,
     "maintenance": 4,
     "moves": 1,
+    "sight": 3,
     "civic": "diplomatic_service",
     "promotion_class": "espionage"
   },
@@ -115,8 +116,8 @@
   },
   "pikeman": {
     "class": "military",
-    "cost": 200,
-    "maintenance": 3,
+    "cost": 180,
+    "maintenance": 2,
     "moves": 2,
     "strength": 45,
     "tech": "military_tactics",
@@ -125,8 +126,8 @@
   },
   "knight": {
     "class": "military",
-    "cost": 180,
-    "maintenance": 3,
+    "cost": 220,
+    "maintenance": 4,
     "moves": 4,
     "strength": 50,
     "tech": "stirrups",
@@ -500,7 +501,7 @@
     "bombard_strength": 45, "range": 2, "tech": "military_engineering", "siege": true, "promotion_class": "siege"
   },
   "military_engineer": {
-    "class": "support", "cost": 170, "maintenance": 4, "moves": 2, "charges": 2,
+    "class": "support", "cost": 170, "maintenance": 2, "moves": 2, "charges": 2,
     "tech": "military_engineering", "requires_building": "armory",
     "builds": ["fort", "airstrip", "missile_silo", "mountain_tunnel"]
   },
@@ -595,11 +596,13 @@
   },
   "rocket_artillery": {
     "class": "military", "cost": 680, "maintenance": 8, "moves": 3, "strength": 70,
+    "sight": 3,
     "bombard_strength": 100, "range": 3, "tech": "guidance_systems", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1,
     "siege": true, "promotion_class": "siege"
   },
   "helicopter": {
     "class": "military", "cost": 600, "maintenance": 7, "moves": 4, "strength": 86,
+    "sight": 3,
     "tech": "synthetic_materials", "requires_resource": "aluminum", "resource_cost": 1, "resource_maintenance": 1, "cavalry": true,
     "promotion_class": "light_cavalry", "zone_of_control": true
   },
@@ -623,6 +626,7 @@
   },
   "giant_death_robot": {
     "class": "military", "cost": 1500, "maintenance": 15, "moves": 5, "strength": 130,
+    "sight": 3,
     "ranged_strength": 120, "anti_air_strength": 90, "anti_air_range": 1, "range": 3, "tech": "robotics", "requires_resource": "uranium", "resource_cost": 1, "resource_maintenance": 3,
     "promotion_class": "melee", "zone_of_control": true, "can_melee": true, "can_ranged": true,
     "can_formations": false, "earns_xp": false
@@ -633,6 +637,7 @@
   },
   "naturalist": {
     "class": "civilian", "cost": 600, "moves": 4, "charges": 1, "buildable": false,
+    "sight": 3,
     "civic": "conservation", "builds": ["national_park"]
   },
   "archaeologist": {

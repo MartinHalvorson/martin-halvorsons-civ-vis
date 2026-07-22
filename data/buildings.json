@@ -112,7 +112,7 @@
     "effects": { "rock_concert_tourism": 500 }
   },
   "research_lab": {
-    "cost": 580,
+    "cost": 440,
     "tech": "chemistry",
     "district": "campus",
     "requires": ["university"],
@@ -328,7 +328,7 @@
     "great_person_points": { "merchant": 1 }
   },
   "stock_exchange": {
-    "cost": 390,
+    "cost": 330,
     "tech": "economics",
     "district": "commercial_hub",
     "requires": ["bank"],
@@ -414,7 +414,7 @@
     "effects": { "all_land_unit_xp_pct": 25, "strategic_stockpile": 10 }
   },
   "military_academy": {
-    "cost": 390,
+    "cost": 330,
     "tech": "military_science",
     "district": "encampment",
     "requires": ["armory"],
@@ -482,7 +482,7 @@
     "district": "harbor",
     "requires": ["lighthouse"],
     "yields": { "food": 1 },
-    "maintenance": 2,
+    "maintenance": 1,
     "citizen_slots": 1,
     "great_person_points": { "admiral": 1 },
     "effects": {
@@ -493,7 +493,7 @@
     }
   },
   "seaport": {
-    "cost": 580,
+    "cost": 440,
     "tech": "electricity",
     "district": "harbor",
     "requires": ["shipyard"],
@@ -547,7 +547,7 @@
     "effects": { "rock_concert_tourism": 500 }
   },
   "broadcast_center": {
-    "cost": 580,
+    "cost": 440,
     "tech": "radio",
     "district": "theater_square",
     "requires_any": ["art_museum", "archaeological_museum"],
@@ -560,7 +560,7 @@
     "effects": { "powered_culture": 4, "citizen_culture": 1, "rock_concert_tourism": 750 }
   },
   "film_studio": {
-    "cost": 580,
+    "cost": 440,
     "tech": "radio",
     "district": "theater_square",
     "unique_to": "America",
@@ -603,7 +603,7 @@
     "great_person_points": { "engineer": 1 }
   },
   "factory": {
-    "cost": 390,
+    "cost": 330,
     "tech": "industrialization",
     "district": "industrial_zone",
     "requires": ["workshop"],
@@ -616,7 +616,7 @@
     "effects": { "powered_production": 3 }
   },
   "electronics_factory": {
-    "cost": 390,
+    "cost": 330,
     "tech": "industrialization",
     "district": "industrial_zone",
     "unique_to": "Japan",
@@ -693,7 +693,7 @@
     "effects": { "tourism_after_conservation": 1, "rock_concert_tourism": 250 }
   },
   "zoo": {
-    "cost": 445,
+    "cost": 360,
     "civic": "natural_history",
     "district": "entertainment_complex",
     "requires": ["arena"],
@@ -703,7 +703,7 @@
     "effects": { "rainforest_marsh_science": 1, "rock_concert_tourism": 500 }
   },
   "stadium": {
-    "cost": 660,
+    "cost": 480,
     "civic": "professional_sports",
     "district": "entertainment_complex",
     "requires": ["zoo"],
@@ -753,7 +753,7 @@
     "effects": { "tourism": 2, "rock_concert_tourism": 250 }
   },
   "aquarium": {
-    "cost": 445,
+    "cost": 360,
     "civic": "natural_history",
     "district": "water_park",
     "requires": ["ferris_wheel"],
@@ -778,7 +778,7 @@
     }
   },
   "hangar": {
-    "cost": 465,
+    "cost": 380,
     "tech": "flight",
     "district": "aerodrome",
     "yields": { "production": 2 },
@@ -786,7 +786,7 @@
     "effects": { "air_unit_xp_pct": 25, "air_slots": 2 }
   },
   "airport": {
-    "cost": 600,
+    "cost": 480,
     "tech": "advanced_flight",
     "district": "aerodrome",
     "requires": ["hangar"],
@@ -801,7 +801,7 @@
     }
   },
   "food_market": {
-    "cost": 465,
+    "cost": 380,
     "tech": "replaceable_parts",
     "district": "neighborhood",
     "excludes": ["shopping_mall"],
@@ -811,7 +811,7 @@
     "effects": { "powered_food": 2 }
   },
   "shopping_mall": {
-    "cost": 580,
+    "cost": 440,
     "civic": "capitalism",
     "district": "neighborhood",
     "excludes": ["food_market"],
