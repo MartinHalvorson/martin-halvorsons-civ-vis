@@ -4639,4 +4639,74 @@ mod tests {
         assert_eq!(g.players[0].counters["great_work:artifact"], 1);
         assert_eq!(g.units[&archaeologist].charges, 2);
     }
+
+    #[test]
+    fn basic_ai_establishes_sources_then_runs_its_best_spy_operation() {
+        let mut game = Game::new_full(2, 24, 16, 38, 80, 0, false);
+        let cities: Vec<u32> = (0..2)
+            .map(|pid| {
+                let settler = game
+                    .player_unit_ids(pid)
+                    .into_iter()
+                    .find(|unit| game.units[unit].kind == "settler")
+                    .unwrap();
+                game.found_city_for(pid, game.units[&settler].pos, None)
+            })
+            .collect();
+        let target = cities[1];
+        let commercial = game.cities[&target]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != game.cities[&target].pos)
+            .unwrap();
+        game.map.tiles.get_mut(&commercial).unwrap().district = Some("commercial_hub".to_string());
+        game.cities
+            .get_mut(&target)
+            .unwrap()
+            .districts
+            .insert("commercial_hub".to_string(), commercial);
+        game.players[0].explored.insert(game.cities[&target].pos);
+        let spy = game.next_id;
+        game.next_id += 1;
+        game.spies.insert(
+            spy,
+            crate::game::Spy {
+                id: spy,
+                owner: 0,
+                level: 0,
+                promotions: std::collections::BTreeSet::new(),
+                city: Some(cities[0]),
+                ready_turn: game.turn,
+                mission: None,
+                sources_city: None,
+                sources_until: 0,
+                captured_by: None,
+            },
+        );
+
+        let ai = BasicAi::new();
+        ai.spies(&mut game, 0);
+        assert_eq!(game.spies[&spy].city, Some(target));
+        game.turn = game.spies[&spy].ready_turn;
+        ai.spies(&mut game, 0);
+        assert_eq!(
+            game.spies[&spy]
+                .mission
+                .as_ref()
+                .map(|mission| mission.kind.as_str()),
+            Some("gain_sources")
+        );
+        let ends = game.spies[&spy].mission.as_ref().unwrap().ends;
+        game.turn = ends;
+        game.process_spies(0);
+        ai.spies(&mut game, 0);
+        assert_eq!(
+            game.spies[&spy]
+                .mission
+                .as_ref()
+                .map(|mission| mission.kind.as_str()),
+            Some("siphon_funds")
+        );
+    }
 }

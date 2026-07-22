@@ -2026,6 +2026,7 @@ mod trade_deal_tests {
                 diplomatic_favor: 5.0,
                 resources,
                 great_works: BTreeMap::from([("writing".to_string(), 1)]),
+                captured_spies: Vec::new(),
                 open_borders: true,
             },
             request: DealItems::default(),
@@ -2436,6 +2437,11 @@ mod espionage_runtime_tests {
             .unwrap()
             .districts
             .insert("commercial_hub".to_string(), district);
+        game.cities
+            .get_mut(&target)
+            .unwrap()
+            .buildings
+            .push("market".to_string());
         game.players[0].explored.insert(game.cities[&target].pos);
         (game, cities[0], target, district)
     }
@@ -2558,6 +2564,336 @@ mod espionage_runtime_tests {
         assert!(game.players[1].gold < 200.0);
         assert_eq!(game.spies[&attacker].city, Some(target));
         assert_eq!(game.cities[&home].owner, 0);
+    }
+
+    fn install_spy_district(game: &mut Game, city: u32, district: &str) -> Pos {
+        let center = game.cities[&city].pos;
+        let position = game
+            .wdisk(center, 2)
+            .into_iter()
+            .find(|position| {
+                *position != center
+                    && game.map.get(*position).is_some()
+                    && game.map.tiles[position].district.is_none()
+            })
+            .unwrap();
+        {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.owner_city = Some(city);
+            tile.district = Some(district.to_string());
+            tile.feature = None;
+            tile.improvement = None;
+            tile.pillaged = false;
+        }
+        let city = game.cities.get_mut(&city).unwrap();
+        if !city.owned_tiles.contains(&position) {
+            city.owned_tiles.push(position);
+        }
+        city.districts.insert(district.to_string(), position);
+        position
+    }
+
+    #[test]
+    fn spy_production_purchase_maintenance_and_promotion_rules_execute() {
+        let (mut game, home, _, _) = game_with_spy_cities(774_262);
+        assert_eq!(Game::SPY_PROMOTIONS.len(), 17);
+        assert_eq!(
+            Game::SPY_PROMOTIONS
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+                .len(),
+            17
+        );
+        game.players[0]
+            .civics
+            .insert("diplomatic_service".to_string());
+        let item = Item::Unit {
+            unit: "spy".to_string(),
+        };
+        let base_multiplier = game.item_prod_mult(0, home, Some(&item));
+        game.players[0]
+            .policies
+            .insert("machiavellianism".to_string());
+        assert_eq!(
+            game.item_prod_mult(0, home, Some(&item)),
+            base_multiplier + 0.5
+        );
+        assert!(game.do_buy(0, home, "spy", "gold").is_err());
+        let upkeep_before = game.unit_gold_maintenance(0);
+        assert!(game.complete_item(0, home, &item));
+        let spy_id = *game.spies.keys().next().unwrap();
+        assert_eq!(game.unit_gold_maintenance(0), upkeep_before + 4.0);
+
+        game.spies.get_mut(&spy_id).unwrap().level = 1;
+        let first_offer = game.available_spy_promotions(spy_id);
+        assert_eq!(first_offer.len(), 3);
+        assert!(game.do_promote_spy(0, spy_id, &first_offer[0]).is_ok());
+        game.spies.get_mut(&spy_id).unwrap().level = 2;
+        game.players[0]
+            .policies
+            .insert("future_counter_science".to_string());
+        assert_eq!(game.available_spy_promotions(spy_id).len(), 16);
+    }
+
+    #[test]
+    fn every_targeted_spy_operation_has_an_executable_effect() {
+        let (mut game, _, target, commercial) = game_with_spy_cities(774_263);
+        game.turn = 20;
+        game.world_era = 6;
+        let campus = install_spy_district(&mut game, target, "campus");
+        let theater = install_spy_district(&mut game, target, "theater_square");
+        let industrial = install_spy_district(&mut game, target, "industrial_zone");
+        let neighborhood = install_spy_district(&mut game, target, "neighborhood");
+        let spaceport = install_spy_district(&mut game, target, "spaceport");
+        let dam = install_spy_district(&mut game, target, "dam");
+        let floodplain = game
+            .wdisk(game.cities[&target].pos, 2)
+            .into_iter()
+            .find(|position| {
+                game.map.get(*position).is_some()
+                    && !matches!(*position, p if p == game.cities[&target].pos)
+                    && !game.cities[&target]
+                        .districts
+                        .iter()
+                        .any(|(_, p)| *p == *position)
+            })
+            .unwrap();
+        {
+            let tile = game.map.tiles.get_mut(&floodplain).unwrap();
+            tile.owner_city = Some(target);
+            tile.feature = Some("floodplains".to_string());
+            tile.improvement = Some("farm".to_string());
+            tile.pillaged = false;
+        }
+        game.cities
+            .get_mut(&target)
+            .unwrap()
+            .owned_tiles
+            .push(floodplain);
+        game.cities
+            .get_mut(&target)
+            .unwrap()
+            .buildings
+            .extend(["amphitheater".to_string(), "workshop".to_string()]);
+        game.players[1]
+            .counters
+            .insert("great_work:writing".to_string(), 1);
+        game.players[1].techs.insert("writing".to_string());
+        game.players[1].gold = 500.0;
+        game.players[1].governors.push(target);
+        game.players[1].governor_roster.insert(
+            "pingala".to_string(),
+            GovernorState {
+                city: Some(target),
+                assigned_turn: 0,
+                disabled_until: 0,
+                promotions: BTreeSet::new(),
+            },
+        );
+        let barbarian = game.players.len();
+        let mut barb = Player::new(barbarian, "Barbarians", true);
+        barb.is_barbarian = true;
+        game.players.push(barb);
+        game.barb_pid = Some(barbarian);
+        let spy_id = game.next_id;
+        game.next_id += 1;
+        game.spies.insert(
+            spy_id,
+            Spy {
+                id: spy_id,
+                owner: 0,
+                level: 1,
+                promotions: BTreeSet::new(),
+                city: Some(target),
+                ready_turn: game.turn,
+                mission: None,
+                sources_city: Some(target),
+                sources_until: game.turn + 24,
+                captured_by: None,
+            },
+        );
+        let legal: BTreeSet<String> = game
+            .spy_operation_actions(&game.spies[&spy_id], &game.cities[&target])
+            .into_iter()
+            .filter_map(|action| match action {
+                Action::SpyMission { mission, .. } => Some(mission),
+                _ => None,
+            })
+            .collect();
+        for mission in [
+            "listening_post",
+            "siphon_funds",
+            "steal_tech_boost",
+            "great_work_heist",
+            "sabotage_production",
+            "recruit_partisans",
+            "foment_unrest",
+            "neutralize_governor",
+            "disrupt_rocketry",
+            "breach_dam",
+        ] {
+            assert!(legal.contains(mission), "missing mission {mission}");
+        }
+        let mission_turn = game.turn;
+        let target_center = game.cities[&target].pos;
+        let mission = move |kind: &str, target_position: Pos| SpyMission {
+            kind: kind.to_string(),
+            city: target,
+            target: target_position,
+            started: mission_turn,
+            ends: mission_turn + 8,
+        };
+
+        let attacker_gold = game.players[0].gold;
+        game.apply_spy_mission_effect(spy_id, &mission("siphon_funds", commercial), true);
+        assert!(game.players[0].gold > attacker_gold);
+        game.apply_spy_mission_effect(spy_id, &mission("steal_tech_boost", campus), true);
+        assert!(game.players[0].boosted_techs.contains("writing"));
+        game.apply_spy_mission_effect(spy_id, &mission("great_work_heist", theater), true);
+        assert_eq!(game.players[0].counters["great_work:writing"], 1);
+        game.apply_spy_mission_effect(spy_id, &mission("sabotage_production", industrial), true);
+        assert!(game.cities[&target].pillaged_buildings.contains("workshop"));
+        let partisans_before = game
+            .units
+            .values()
+            .filter(|unit| unit.owner == barbarian)
+            .count();
+        game.apply_spy_mission_effect(spy_id, &mission("recruit_partisans", neighborhood), true);
+        assert!(
+            game.units
+                .values()
+                .filter(|unit| unit.owner == barbarian)
+                .count()
+                > partisans_before
+        );
+        game.apply_spy_mission_effect(spy_id, &mission("foment_unrest", target_center), true);
+        assert_eq!(game.cities[&target].loyalty, 75.0);
+        game.apply_spy_mission_effect(spy_id, &mission("neutralize_governor", target_center), true);
+        assert!(game.players[1].governor_roster["pingala"].disabled_until > game.turn);
+        game.cities.get_mut(&target).unwrap().queue = vec![Item::Project {
+            project: "launch_earth_satellite".to_string(),
+        }];
+        game.cities.get_mut(&target).unwrap().production = 100.0;
+        game.apply_spy_mission_effect(spy_id, &mission("disrupt_rocketry", spaceport), true);
+        assert!(game.map.tiles[&spaceport].pillaged);
+        assert_eq!(game.cities[&target].production, 0.0);
+        game.apply_spy_mission_effect(spy_id, &mission("breach_dam", dam), true);
+        assert!(game.map.tiles[&dam].pillaged);
+        assert!(game.map.tiles[&floodplain].pillaged);
+    }
+
+    #[test]
+    fn listening_posts_and_city_state_scandals_change_diplomatic_information() {
+        let mut game = Game::new_full(2, 24, 16, 774_264, 250, 1, false);
+        let cities: Vec<u32> = (0..2)
+            .map(|pid| {
+                let settler = game
+                    .player_unit_ids(pid)
+                    .into_iter()
+                    .find(|unit| game.units[unit].kind == "settler")
+                    .unwrap();
+                game.found_city_for(pid, game.units[&settler].pos, None)
+            })
+            .collect();
+        let minor = game
+            .players
+            .iter()
+            .find(|player| player.is_minor && !player.is_barbarian)
+            .unwrap()
+            .id;
+        let spy_id = game.next_id;
+        game.next_id += 1;
+        game.spies.insert(
+            spy_id,
+            Spy {
+                id: spy_id,
+                owner: 0,
+                level: 2,
+                promotions: BTreeSet::new(),
+                city: Some(cities[1]),
+                ready_turn: game.turn,
+                mission: Some(SpyMission {
+                    kind: "listening_post".to_string(),
+                    city: cities[1],
+                    target: game.cities[&cities[1]].pos,
+                    started: game.turn,
+                    ends: game.turn + 8,
+                }),
+                sources_city: None,
+                sources_until: 0,
+                captured_by: None,
+            },
+        );
+        assert_eq!(game.diplomatic_visibility(0, 1), 2.0);
+
+        game.players[0].envoys.push((minor, 3));
+        game.players[1].envoys.push((minor, 7));
+        let city_state = game.player_city_ids(minor)[0];
+        let scandal = SpyMission {
+            kind: "fabricate_scandal".to_string(),
+            city: city_state,
+            target: game.cities[&city_state].pos,
+            started: game.turn,
+            ends: game.turn + 16,
+        };
+        game.spies.get_mut(&spy_id).unwrap().city = Some(city_state);
+        game.spies.get_mut(&spy_id).unwrap().mission = None;
+        game.apply_spy_mission_effect(spy_id, &scandal, true);
+        assert_eq!(game.envoys_at(1, minor), 2);
+        assert_eq!(game.envoys_at(0, minor), 3);
+    }
+
+    #[test]
+    fn captured_spies_remain_imprisoned_until_a_release_trade() {
+        let (mut game, home, target, _) = game_with_spy_cities(774_265);
+        let spy_id = game.next_id;
+        game.next_id += 1;
+        game.spies.insert(
+            spy_id,
+            Spy {
+                id: spy_id,
+                owner: 0,
+                level: 2,
+                promotions: ["technologist".to_string(), "ace_driver".to_string()]
+                    .into_iter()
+                    .collect(),
+                city: Some(target),
+                ready_turn: u32::MAX,
+                mission: None,
+                sources_city: None,
+                sources_until: 0,
+                captured_by: Some(1),
+            },
+        );
+
+        game.turn = 120;
+        game.process_spies(0);
+        assert_eq!(game.spies[&spy_id].captured_by, Some(1));
+        assert!(game.legal_spy_actions(0, spy_id).is_empty());
+
+        game.players[0].gold = 500.0;
+        assert!(game.quick_deals(0).iter().any(|deal| {
+            deal.partner == 1
+                && deal.category == "recover_spy"
+                && deal.request.captured_spies == vec![spy_id]
+        }));
+        let offer = DealItems {
+            gold: 220.0,
+            ..DealItems::default()
+        };
+        let request = DealItems {
+            captured_spies: vec![spy_id],
+            ..DealItems::default()
+        };
+        game.do_trade(0, 1, &offer, &request).unwrap();
+        let released = &game.spies[&spy_id];
+        assert_eq!(released.captured_by, None);
+        assert_eq!(released.city, Some(home));
+        assert_eq!(released.ready_turn, game.turn);
+        assert!(game
+            .legal_spy_actions(0, spy_id)
+            .iter()
+            .any(|action| { matches!(action, Action::AssignSpy { spy, .. } if *spy == spy_id) }));
     }
 }
 
@@ -6927,15 +7263,13 @@ impl Game {
     }
 
     fn spy_city_has_stealable_work(&self, owner: usize, cid: u32) -> bool {
-        (self.can_house_additional_great_work(owner, "writing")
-            || self.can_house_additional_great_work(owner, "art")
-            || self.can_house_additional_great_work(owner, "religious_art")
-            || self.can_house_additional_great_work(owner, "artifact")
-            || self.can_house_additional_great_work(owner, "music"))
-            && self
-                .housed_great_works(self.cities[&cid].owner)
-                .get(&cid)
-                .is_some_and(|works| works.values().any(|count| *count > 0))
+        self.housed_great_works(self.cities[&cid].owner)
+            .get(&cid)
+            .is_some_and(|works| {
+                works.iter().any(|(kind, count)| {
+                    *count > 0 && self.can_house_additional_great_work(owner, kind)
+                })
+            })
     }
 
     fn active_spy_target_position(&self, city: &City, family: &str) -> Option<Pos> {
@@ -7286,8 +7620,8 @@ impl Game {
                 !self.players[attacker].techs.contains(*tech)
                     && !self.players[attacker].boosted_techs.contains(*tech)
             })
-            .cloned()
             .take(count)
+            .cloned()
             .collect();
         for tech in candidates {
             let cost = self.rules.techs[tech.as_str()].cost;
@@ -7372,7 +7706,7 @@ impl Game {
             }
             "siphon_funds" => {
                 let amount = (self.city_yields(city.id).gold * 8.0)
-                    .max(25.0)
+                    .max(0.0)
                     .min(self.players[defender].gold.max(0.0));
                 self.players[defender].gold -= amount;
                 self.players[spy.owner].gold += amount;
@@ -7556,7 +7890,7 @@ impl Game {
         }
     }
 
-    fn process_spies(&mut self, pid: usize) {
+    pub(crate) fn process_spies(&mut self, pid: usize) {
         let ids: Vec<u32> = self
             .spies
             .values()
@@ -21878,6 +22212,30 @@ impl Game {
         self.great_work_receive_value(pid, kind) * scarcity
     }
 
+    fn captured_spy_receive_value(&self, pid: usize, spy_id: u32) -> f64 {
+        self.spies.get(&spy_id).map_or(0.0, |spy| {
+            if spy.owner != pid || spy.captured_by.is_none() {
+                0.0
+            } else {
+                // Recovery turns an occupied but unusable capacity slot back
+                // into a productive operative.
+                325.0 + 70.0 * spy.level.max(0) as f64 + 35.0 * spy.promotions.len() as f64
+            }
+        })
+    }
+
+    fn captured_spy_give_cost(&self, captor: usize, spy_id: u32) -> f64 {
+        self.spies.get(&spy_id).map_or(f64::INFINITY, |spy| {
+            if spy.captured_by != Some(captor) {
+                f64::INFINITY
+            } else {
+                // A captive has bargaining value but cannot work for the
+                // captor, so release is substantially cheaper than recovery.
+                90.0 + 30.0 * spy.level.max(0) as f64 + 15.0 * spy.promotions.len() as f64
+            }
+        })
+    }
+
     /// Whether the receiver can house the post-trade inventory. Typed slots
     /// are exclusive except that Art and Religious Art share museum slots;
     /// universal slots absorb only the remaining overflow.
@@ -21929,11 +22287,17 @@ impl Game {
             .iter()
             .map(|(kind, amount)| self.great_work_receive_value(pid, kind) * *amount as f64)
             .sum::<f64>();
+        let captured_spies = items
+            .captured_spies
+            .iter()
+            .map(|spy| self.captured_spy_receive_value(pid, *spy))
+            .sum::<f64>();
         items.gold
             + 25.0 * items.gold_per_turn
             + self.favor_unit_value(pid) * items.diplomatic_favor
             + resources
             + great_works
+            + captured_spies
             + if items.open_borders {
                 self.open_borders_receive_value(pid, other)
             } else {
@@ -21952,11 +22316,17 @@ impl Game {
             .iter()
             .map(|(kind, amount)| self.great_work_give_cost(pid, kind) * *amount as f64)
             .sum::<f64>();
+        let captured_spies = items
+            .captured_spies
+            .iter()
+            .map(|spy| self.captured_spy_give_cost(pid, *spy))
+            .sum::<f64>();
         items.gold
             + 25.0 * items.gold_per_turn
             + self.favor_unit_value(pid) * items.diplomatic_favor
             + resources
             + great_works
+            + captured_spies
             + if items.open_borders {
                 self.open_borders_give_cost(pid, other)
             } else {
@@ -21990,6 +22360,11 @@ impl Game {
         {
             return false;
         }
+        let unique_spies = items
+            .captured_spies
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
         items.resources.iter().all(|(resource, amount)| {
             *amount > 0
                 && self.rules.resources.get(resource).is_some_and(|spec| {
@@ -22002,7 +22377,12 @@ impl Game {
                 && Self::tradable_great_work_kind(kind)
                 && self.great_work_inventory(owner, kind) >= *amount
                 && self.housed_great_work_count(owner, kind) >= *amount
-        })
+        }) && unique_spies.len() == items.captured_spies.len()
+            && items.captured_spies.iter().all(|spy| {
+                self.spies
+                    .get(spy)
+                    .is_some_and(|agent| agent.captured_by == Some(owner))
+            })
     }
 
     fn strategic_receipts_fit(&self, receiver: usize, items: &DealItems) -> bool {
@@ -22035,6 +22415,14 @@ impl Game {
             || (offer.is_empty() && request.is_empty())
             || !self.items_are_valid(from, offer)
             || !self.items_are_valid(to, request)
+            || offer
+                .captured_spies
+                .iter()
+                .any(|spy| self.spies.get(spy).is_none_or(|agent| agent.owner != to))
+            || request
+                .captured_spies
+                .iter()
+                .any(|spy| self.spies.get(spy).is_none_or(|agent| agent.owner != from))
             || !self.strategic_receipts_fit(to, offer)
             || !self.strategic_receipts_fit(from, request)
             || !self.great_work_receipts_fit(to, offer, request)
@@ -22050,6 +22438,10 @@ impl Game {
                 .great_works
                 .keys()
                 .any(|kind| request.great_works.contains_key(kind))
+            || offer
+                .captured_spies
+                .iter()
+                .any(|spy| request.captured_spies.contains(spy))
         {
             return Err("invalid trade terms".into());
         }
@@ -22097,6 +22489,24 @@ impl Game {
         }
     }
 
+    fn transfer_captured_spies(&mut self, captor: usize, owner: usize, items: &DealItems) {
+        let home = self.spy_home_city(owner);
+        for spy_id in &items.captured_spies {
+            let Some(spy) = self.spies.get_mut(spy_id) else {
+                continue;
+            };
+            if spy.captured_by != Some(captor) || spy.owner != owner {
+                continue;
+            }
+            spy.captured_by = None;
+            spy.city = home;
+            spy.ready_turn = self.turn;
+            spy.mission = None;
+            spy.sources_city = None;
+            spy.sources_until = 0;
+        }
+    }
+
     fn do_trade(
         &mut self,
         from: usize,
@@ -22117,17 +22527,21 @@ impl Game {
         self.transfer_strategic_items(to, from, request);
         self.transfer_great_work_items(from, to, offer);
         self.transfer_great_work_items(to, from, request);
+        self.transfer_captured_spies(from, to, offer);
+        self.transfer_captured_spies(to, from, request);
 
         let mut timed_offer = offer.clone();
         timed_offer
             .resources
             .retain(|resource, _| self.rules.resources[resource].class == "luxury");
         timed_offer.great_works.clear();
+        timed_offer.captured_spies.clear();
         let mut timed_request = request.clone();
         timed_request
             .resources
             .retain(|resource, _| self.rules.resources[resource].class == "luxury");
         timed_request.great_works.clear();
+        timed_request.captured_spies.clear();
 
         let timed = timed_offer.gold_per_turn > 0.0
             || timed_request.gold_per_turn > 0.0
@@ -22316,6 +22730,35 @@ impl Game {
                     {
                         deals.push(deal);
                     }
+                }
+            }
+
+            let captive_ids: Vec<u32> = self
+                .spies
+                .values()
+                .filter(|spy| {
+                    (spy.owner == viewer && spy.captured_by == Some(partner))
+                        || (spy.owner == partner && spy.captured_by == Some(viewer))
+                })
+                .map(|spy| spy.id)
+                .collect();
+            for spy_id in captive_ids {
+                let mut asset = DealItems::default();
+                asset.captured_spies.push(spy_id);
+                let (direction, category) = if self.spies[&spy_id].owner == viewer {
+                    ("buy", "recover_spy")
+                } else {
+                    ("sell", "release_spy")
+                };
+                if let Some(deal) = self.quote_asset_trade(
+                    viewer,
+                    partner,
+                    category,
+                    &spy_id.to_string(),
+                    direction,
+                    asset,
+                ) {
+                    deals.push(deal);
                 }
             }
 
