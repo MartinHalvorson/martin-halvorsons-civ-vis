@@ -521,7 +521,7 @@ fn kilwa_scales_total_type_yields_and_matching_production_categories() {
 }
 
 #[test]
-fn sent_envoys_expand_borders_and_suzerain_envoys_strengthen_the_city_state() {
+fn leading_sent_envoys_expand_borders_and_strengthen_the_city_state() {
     let (mut game, major_cities) = game_with_capitals(2, 89_011);
     let minor = add_city_state(&mut game, "Geneva");
     let minor_position = game
@@ -544,14 +544,11 @@ fn sent_envoys_expand_borders_and_suzerain_envoys_strengthen_the_city_state() {
 
     game.players[0].envoys_free = 2;
     game.do_send_envoy(0, minor).unwrap();
-    assert_eq!(
-        game.cities[&minor_city].owned_tiles.len(),
-        initial_tiles + 1
-    );
+    assert_eq!(game.cities[&minor_city].owned_tiles.len(), initial_tiles);
     game.do_send_envoy(0, minor).unwrap();
     assert_eq!(
         game.cities[&minor_city].owned_tiles.len(),
-        initial_tiles + 2
+        initial_tiles + 1
     );
 
     game.players[1].envoys_free = 3;
@@ -559,13 +556,13 @@ fn sent_envoys_expand_borders_and_suzerain_envoys_strengthen_the_city_state() {
     game.do_send_envoy(1, minor).unwrap();
     assert_eq!(
         game.cities[&minor_city].owned_tiles.len(),
-        initial_tiles + 4,
-        "the first placement and a placement that creates a tie both expand borders"
+        initial_tiles + 1,
+        "a first Envoy and a later tie do not expand borders"
     );
     game.do_send_envoy(1, minor).unwrap();
     assert_eq!(
         game.cities[&minor_city].owned_tiles.len(),
-        initial_tiles + 5
+        initial_tiles + 2
     );
     assert_eq!(game.suzerain_of(minor), Some(1));
 

@@ -5819,7 +5819,15 @@ impl AdvancedAi {
             .filter(|unit| enemies.contains(&unit.owner) && g.wdist(unit.pos, objective) <= 6)
             .filter(|unit| g.rules.units[unit.kind.as_str()].class == "military")
             .map(|unit| crate::game::effective_strength(g.unit_strength(unit, true), unit.hp))
-            .sum();
+            .sum::<f64>()
+            + g.city_at(objective)
+                .filter(|city| enemies.contains(&g.cities[city].owner))
+                .map(|city| g.city_strength(city))
+                .unwrap_or(0.0)
+            + g.encampment_at(objective)
+                .filter(|city| enemies.contains(&g.cities[city].owner))
+                .map(|city| g.encampment_strength(city))
+                .unwrap_or(0.0);
         if hostile <= 0.0 {
             3.0
         } else {
@@ -5848,10 +5856,13 @@ impl AdvancedAi {
             .player_unit_ids(pid)
             .into_iter()
             .filter(|uid| {
-                let field_unit = matches!(
-                    g.rules.units[g.units[uid].kind.as_str()].class.as_str(),
-                    "military" | "support"
-                );
+                let spec = &g.rules.units[g.units[uid].kind.as_str()];
+                // Aircraft receive missions from the air-operations evaluator.
+                // Counting them as land units makes a thin ground army appear
+                // assembled and locally superior even though aircraft cannot
+                // occupy its front, screen siege, or capture the objective.
+                let field_unit = matches!(spec.class.as_str(), "military" | "support")
+                    && spec.domain.as_deref() != Some("air");
                 field_unit
                     && !(BasicAi::unit_doctrine(g, *uid) == UnitDoctrine::Recon
                         && self.base.has_exploration_target(g, pid, *uid))
@@ -6265,6 +6276,219 @@ impl AdvancedAi {
         worst_reply
     }
 
+    /// Evaluate an air strike by making it on a cloned position. This captures
+    /// the seeded combat roll, interception damage, wall-vs-city damage, and
+    /// kills in one bounded result score instead of ordering targets by their
+    /// pre-combat HP alone.
+    fn air_strike_value(
+        &self,
+        g: &Game,
+        pid: usize,
+        uid: u32,
+        target: Pos,
+        plan: &StrategicPlan,
+    ) -> f64 {
+        let attacker = &g.units[&uid];
+        let attacker_spec = &g.rules.units[attacker.kind.as_str()];
+        let target_city = g
+            .city_at(target)
+            .filter(|city| g.cities[city].owner != pid && g.is_at_war(pid, g.cities[city].owner));
+        let target_encampment = target_city
+            .is_none()
+            .then(|| g.encampment_at(target))
+            .flatten();
+        let target_unit = (target_city.is_none() && target_encampment.is_none())
+            .then(|| {
+                g.units_at(target).into_iter().find(|other| {
+                    let defender = &g.units[other];
+                    defender.owner != pid
+                        && g.is_at_war(pid, defender.owner)
+                        && g.rules.units[defender.kind.as_str()].class == "military"
+                })
+            })
+            .flatten();
+        let action = Action::AirStrike { unit: uid, target };
+        let mut after = g.clone();
+        if after.apply(pid, &action).is_err() {
+            return f64::NEG_INFINITY;
+        }
+
+        let attacker_loss = match after.units.get(&uid) {
+            Some(survivor) => {
+                (attacker.hp - survivor.hp).max(0) as f64 * (1.4 + attacker_spec.cost / 700.0)
+            }
+            None => 260.0 + attacker_spec.cost * 0.7,
+        };
+        let mut value = -attacker_loss;
+        if let Some(unit) = target_unit {
+            let defender = &g.units[&unit];
+            let spec = &g.rules.units[defender.kind.as_str()];
+            let role_value = if spec.siege { 70.0 } else { 0.0 }
+                + if spec.is_melee_capable() { 30.0 } else { 0.0 }
+                + if spec.domain.as_deref() == Some("air") {
+                    85.0
+                } else {
+                    0.0
+                };
+            value += match after.units.get(&unit) {
+                None => {
+                    190.0 + spec.cost * 0.45 + g.unit_strength(defender, true) * 1.8 + role_value
+                }
+                Some(survivor) => {
+                    (defender.hp - survivor.hp).max(0) as f64
+                        * (1.0 + g.unit_strength(defender, true) / 100.0)
+                        + role_value * 0.25
+                }
+            };
+        } else if let Some(city) = target_city {
+            let before = &g.cities[&city];
+            let after_city = &after.cities[&city];
+            let wall_damage = (before.wall_hp - after_city.wall_hp).max(0) as f64;
+            let city_damage = (before.hp - after_city.hp).max(0) as f64;
+            let progress = wall_damage * 1.35 + city_damage;
+            value += progress;
+            if progress > 0.0 && plan.target_city == Some(city) {
+                value += 45.0;
+            }
+            if before.is_capital && progress > 0.0 && plan.strategy == GrandStrategy::Conquest {
+                value += 25.0;
+            }
+        } else if let Some(city) = target_encampment {
+            let before = &g.cities[&city];
+            let after_city = &after.cities[&city];
+            value += (before.encampment_wall_hp - after_city.encampment_wall_hp).max(0) as f64
+                * 1.35
+                + (before.encampment_hp - after_city.encampment_hp).max(0) as f64;
+        }
+        value
+    }
+
+    /// Choose among exact air-strike results, a useful patrol, and a rebase
+    /// that materially improves reach to the active front. Fighters preserve
+    /// interception coverage when hostile aircraft threaten the theater;
+    /// bombers avoid suicidal missions and reposition when no profitable
+    /// strike is available.
+    fn advanced_air_action(
+        &self,
+        g: &Game,
+        pid: usize,
+        uid: u32,
+        plan: &StrategicPlan,
+    ) -> Option<Action> {
+        let unit = &g.units[&uid];
+        let spec = &g.rules.units[unit.kind.as_str()];
+        let doctrine = BasicAi::unit_doctrine(g, uid);
+        let legal = g.legal_doctrine_actions(pid, uid);
+        let best_strike = legal
+            .iter()
+            .filter_map(|action| match action {
+                Action::AirStrike { unit, target } if *unit == uid => Some((
+                    self.air_strike_value(g, pid, uid, *target, plan),
+                    *target,
+                    action.clone(),
+                )),
+                _ => None,
+            })
+            .max_by(|left, right| {
+                left.0
+                    .total_cmp(&right.0)
+                    .then_with(|| right.1.cmp(&left.1))
+            });
+
+        let objective = match doctrine {
+            UnitDoctrine::AirDefense => plan.threatened_city.or(plan.target_city),
+            _ => plan.target_city.or(plan.threatened_city),
+        }
+        .and_then(|city| g.cities.get(&city).map(|city| city.pos))
+        .or_else(|| {
+            g.units
+                .values()
+                .filter(|other| other.owner != pid && g.is_at_war(pid, other.owner))
+                .min_by_key(|other| (g.wdist(unit.pos, other.pos), other.id))
+                .map(|other| other.pos)
+        });
+        let best_rebase = objective.and_then(|objective| {
+            let current_distance = g.wdist(unit.pos, objective);
+            legal
+                .iter()
+                .filter_map(|action| match action {
+                    Action::AirRebase { unit, to } if *unit == uid => {
+                        let distance = g.wdist(*to, objective);
+                        let improvement = current_distance - distance;
+                        let reaches = (distance <= spec.range.max(1)) as i32;
+                        Some((
+                            improvement as f64 * 18.0 + reaches as f64 * 35.0,
+                            *to,
+                            action.clone(),
+                        ))
+                    }
+                    _ => None,
+                })
+                .filter(|(value, _, _)| *value > 0.0)
+                .max_by(|left, right| {
+                    left.0
+                        .total_cmp(&right.0)
+                        .then_with(|| right.1.cmp(&left.1))
+                })
+        });
+
+        if doctrine == UnitDoctrine::AirStrike {
+            return best_strike
+                .filter(|(value, _, _)| *value > 0.0)
+                .map(|(_, _, action)| action)
+                .or_else(|| best_rebase.map(|(_, _, action)| action));
+        }
+
+        let patrol = legal
+            .iter()
+            .find(|action| matches!(action, Action::AirPatrol { unit } if *unit == uid))
+            .cloned();
+        let hostile_air_threat = g
+            .units
+            .values()
+            .filter(|other| {
+                other.owner != pid
+                    && g.is_at_war(pid, other.owner)
+                    && g.rules.units[other.kind.as_str()].domain.as_deref() == Some("air")
+            })
+            .map(|other| {
+                let distance = g.wdist(unit.pos, other.pos);
+                if distance <= spec.range.max(1) * 2 {
+                    80.0 + g.rules.units[other.kind.as_str()].cost * 0.08
+                } else {
+                    0.0
+                }
+            })
+            .fold(0.0_f64, f64::max);
+        let defended_city = plan.threatened_city.is_some_and(|city| {
+            g.cities
+                .get(&city)
+                .is_some_and(|city| g.wdist(unit.pos, city.pos) <= spec.range.max(1))
+        });
+        let patrol_value = hostile_air_threat
+            + if defended_city { 55.0 } else { 0.0 }
+            + if g
+                .players
+                .iter()
+                .any(|other| other.id != pid && g.is_at_war(pid, other.id))
+            {
+                16.0
+            } else {
+                5.0
+            };
+        if let Some((value, _, action)) = best_strike {
+            if value > patrol_value {
+                return Some(action);
+            }
+        }
+        if let Some((value, _, action)) = best_rebase {
+            if value > patrol_value && hostile_air_threat <= 0.0 {
+                return Some(action);
+            }
+        }
+        patrol
+    }
+
     fn advanced_military_step(
         &mut self,
         g: &mut Game,
@@ -6303,11 +6527,13 @@ impl AdvancedAi {
                 return acted;
             }
         }
+        if matches!(doctrine, UnitDoctrine::AirDefense | UnitDoctrine::AirStrike) {
+            return self
+                .advanced_air_action(g, pid, uid, plan)
+                .is_some_and(|action| g.apply(pid, &action).is_ok());
+        }
         if let Some(action) = self.base.doctrine_action(g, pid, uid) {
             return g.apply(pid, &action).is_ok();
-        }
-        if matches!(doctrine, UnitDoctrine::AirDefense | UnitDoctrine::AirStrike) {
-            return false;
         }
         if let Some(city) = self.occupation_garrison_target(g, pid, uid) {
             if unit.pos != city {
@@ -8935,6 +9161,153 @@ mod tests {
         assert!(
             ai.production_value(&game, 0, city, &defender, &plan, &counts) > 0.0,
             "a Galley cannot satisfy the empire's missing land-defense quota"
+        );
+    }
+
+    #[test]
+    fn force_readiness_excludes_aircraft_from_ground_armies() {
+        let mut game = Game::new_full(2, 24, 16, 71_004, 120, 0, false);
+        game.at_war.insert((0, 1));
+        let staging = game
+            .map
+            .tiles
+            .iter()
+            .find(|(position, tile)| {
+                game.rules.is_passable(tile)
+                    && !game.rules.is_water(tile)
+                    && game.units_at(**position).is_empty()
+            })
+            .map(|(position, _)| *position)
+            .unwrap();
+        let warrior = game.spawn_test_unit("warrior", 0, staging);
+        let bomber = game.spawn_test_unit("bomber", 0, staging);
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Conquest,
+            target_player: Some(1),
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+        let mut ai = AdvancedAi::targeting(VictoryTarget::Domination);
+
+        ai.rebuild_force_groups(&game, 0, &plan);
+
+        let army = ai
+            .force_groups
+            .iter()
+            .find(|group| group.units.contains(&warrior))
+            .expect("the ground unit forms an army order");
+        assert!(!army.units.contains(&bomber));
+        assert!(ai.force_groups.iter().all(|group| {
+            group.units.iter().all(|unit| {
+                game.rules.units[game.units[unit].kind.as_str()]
+                    .domain
+                    .as_deref()
+                    != Some("air")
+            })
+        }));
+    }
+
+    #[test]
+    fn local_superiority_prices_the_objective_city_defense() {
+        let mut game = Game::new_full(2, 24, 16, 71_006, 120, 0, false);
+        game.current = 1;
+        let settler = game
+            .player_unit_ids(1)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(1, &Action::FoundCity { unit: settler }).unwrap();
+        let target_city = game.player_city_ids(1)[0];
+        for unit in game.player_unit_ids(1) {
+            game.remove_unit(unit);
+        }
+        game.players[1]
+            .counters
+            .insert("strongest_unit_built".to_string(), 80);
+        let city_pos = {
+            let city = game.cities.get_mut(&target_city).unwrap();
+            city.buildings.push("walls".to_string());
+            city.wall_hp = 100;
+            city.pos
+        };
+        let staging =
+            game.nbrs(city_pos)
+                .into_iter()
+                .find(|position| {
+                    game.map.get(*position).is_some_and(|tile| {
+                        game.rules.is_passable(tile) && !game.rules.is_water(tile)
+                    }) && game.units_at(*position).is_empty()
+                })
+                .unwrap();
+        let warrior = game.spawn_test_unit("warrior", 0, staging);
+        game.at_war.insert((0, 1));
+        let ai = AdvancedAi::targeting(VictoryTarget::Domination);
+
+        let ratio = ai.local_strength_ratio(&game, &[warrior], &[1], game.cities[&target_city].pos);
+
+        assert!(
+            ratio < 0.72,
+            "one Warrior must not claim superiority over an intact defended city: {ratio}"
+        );
+    }
+
+    #[test]
+    fn bomber_exact_result_search_prefers_a_kill_over_static_strength() {
+        let mut game = Game::new_full(2, 24, 16, 71_005, 120, 0, false);
+        game.at_war.insert((0, 1));
+        for unit in game.player_unit_ids(0) {
+            game.remove_unit(unit);
+        }
+        for unit in game.player_unit_ids(1) {
+            game.remove_unit(unit);
+        }
+        let base = game
+            .map
+            .tiles
+            .iter()
+            .find(|(position, tile)| {
+                game.rules.is_passable(tile)
+                    && !game.rules.is_water(tile)
+                    && game.city_at(**position).is_none()
+            })
+            .map(|(position, _)| *position)
+            .unwrap();
+        let mut targets: Vec<Pos> = game
+            .wdisk(base, game.rules.units["bomber"].range)
+            .into_iter()
+            .filter(|position| {
+                *position != base
+                    && game.map.get(*position).is_some_and(|tile| {
+                        game.rules.is_passable(tile) && !game.rules.is_water(tile)
+                    })
+                    && game.city_at(*position).is_none()
+            })
+            .take(2)
+            .collect();
+        assert_eq!(targets.len(), 2);
+        targets.sort_unstable();
+        let bomber = game.spawn_test_unit("bomber", 0, base);
+        game.spawn_test_unit("modern_armor", 1, targets[0]);
+        let warrior = game.spawn_test_unit("warrior", 1, targets[1]);
+        game.units.get_mut(&warrior).unwrap().hp = 1;
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Conquest,
+            target_player: Some(1),
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+        let ai = AdvancedAi::targeting(VictoryTarget::Domination);
+
+        assert_eq!(
+            ai.advanced_air_action(&game, 0, bomber, &plan),
+            Some(Action::AirStrike {
+                unit: bomber,
+                target: targets[1],
+            })
         );
     }
 

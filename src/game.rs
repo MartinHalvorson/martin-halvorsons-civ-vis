@@ -2322,6 +2322,82 @@ mod trade_deal_tests {
     }
 
     #[test]
+    fn war_cancels_foreign_routes_but_recalls_both_traders() {
+        let mut game = trade_game();
+        for player in 0..2 {
+            game.players[player]
+                .civics
+                .insert("foreign_trade".to_string());
+        }
+        let first_city = game.player_city_ids(0)[0];
+        let second_city = game.player_city_ids(1)[0];
+        assert!(game.wdist(game.cities[&first_city].pos, game.cities[&second_city].pos) <= 15);
+        let first_trader = game.spawn_unit("trader", 0, game.cities[&first_city].pos);
+        let second_trader = game.spawn_unit("trader", 1, game.cities[&second_city].pos);
+        game.do_trade_route(0, first_trader, second_city).unwrap();
+        game.do_trade_route(1, second_trader, first_city).unwrap();
+        assert_eq!(game.routes.len(), 2);
+        assert!(!game.units.contains_key(&first_trader));
+        assert!(!game.units.contains_key(&second_trader));
+
+        game.do_declare_war(0, 1).unwrap();
+
+        assert!(game.routes.is_empty());
+        for owner in 0..2 {
+            assert_eq!(
+                game.units
+                    .values()
+                    .filter(|unit| unit.owner == owner && unit.kind == "trader")
+                    .count(),
+                1,
+                "war must recall player {owner}'s Trader rather than destroy it"
+            );
+        }
+    }
+
+    #[test]
+    fn gathering_storm_merchant_republic_uses_governors_and_district_production() {
+        let mut game = trade_game();
+        let city = game.player_city_ids(0)[0];
+        let site = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != game.cities[&city].pos)
+            .unwrap();
+        let campus = Item::District {
+            district: "campus".to_string(),
+            pos: site,
+        };
+        let baseline_gold = game.city_yields(city).gold;
+        let baseline_district_multiplier = game.item_prod_mult(0, city, Some(&campus));
+        let baseline_capacity = game.trade_capacity(0);
+
+        game.players[0].government = Some("merchant_republic".to_string());
+        assert_eq!(game.trade_capacity(0), baseline_capacity);
+        assert!((game.city_yields(city).gold - baseline_gold).abs() < 1e-9);
+        assert!(
+            (game.item_prod_mult(0, city, Some(&campus)) - baseline_district_multiplier - 0.15)
+                .abs()
+                < 1e-9
+        );
+
+        game.players[0]
+            .civics
+            .insert("political_philosophy".to_string());
+        game.do_appoint_governor(0, "pingala", city).unwrap();
+        assert!(
+            (game.city_yields(city).gold - baseline_gold).abs() < 1e-9,
+            "the Gold bonus waits for the Governor to establish"
+        );
+        game.turn += game.rules.governors["pingala"].establish_turns;
+        assert!(
+            (game.city_yields(city).gold - baseline_gold * 1.1).abs() < 1e-9,
+            "an established Governor activates Merchant Republic's 10% Gold"
+        );
+    }
+
+    #[test]
     fn one_way_open_borders_are_directional_and_gifts_are_rejected() {
         let mut game = trade_game();
         let gift = DealItems {
@@ -7766,6 +7842,13 @@ impl Game {
                 .any(|state| state.city == Some(cid) && self.turn >= state.disabled_until)
     }
 
+    fn city_has_established_governor(&self, pid: usize, cid: u32) -> bool {
+        self.players[pid]
+            .governor_roster
+            .keys()
+            .any(|governor| self.established_governor_city(pid, governor) == Some(cid))
+    }
+
     fn spy_operation_actions(&self, spy: &Spy, city: &City) -> Vec<Action> {
         let mut actions = Vec::new();
         let offensive = city.owner != spy.owner;
@@ -8448,9 +8531,6 @@ impl Game {
             .get("great_person_trade_capacity")
             .copied()
             .unwrap_or(0);
-        if p.government.as_deref() == Some("merchant_republic") {
-            cap += 2;
-        }
         if self.congress_effect_active("trade_policy", "A", &pid.to_string()) {
             cap += 1;
         }
@@ -8467,6 +8547,22 @@ impl Game {
 
     pub fn active_routes(&self, pid: usize) -> i64 {
         self.routes.iter().filter(|r| r.owner == pid).count() as i64
+    }
+
+    /// Standard-speed Gathering Storm route duration. A Trader must complete
+    /// whole round trips and may finish only after the era-scaled minimum end
+    /// turn: 20 turns through Classical, then +10 in Medieval/Renaissance,
+    /// +20 in Industrial through Atomic, and +30 in Information/Future.
+    pub(crate) fn trade_route_duration(one_way_distance: u32, world_era: usize) -> u32 {
+        let minimum_end_turn = 20
+            + match world_era {
+                0 | 1 => 0,
+                2 | 3 => 10,
+                4..=6 => 20,
+                _ => 30,
+            };
+        let round_trip = one_way_distance.max(1).saturating_mul(2);
+        round_trip.saturating_mul(minimum_end_turn / round_trip + 1)
     }
 
     /// Origin-city yields of a route by destination districts (Civ 6 vanilla
@@ -8545,7 +8641,7 @@ impl Game {
         if self
             .routes
             .iter()
-            .any(|r| r.origin == origin && r.dest == dest)
+            .any(|route| route.owner == pid && route.dest == dest)
         {
             return Err("route already active".into());
         }
@@ -8553,7 +8649,10 @@ impl Game {
             return Err("no trading capacity".into());
         }
         self.build_road(self.cities[&origin].pos, self.cities[&dest].pos);
-        let ends = self.turn + 30;
+        let distance = self
+            .wdist(self.cities[&origin].pos, self.cities[&dest].pos)
+            .max(1) as u32;
+        let ends = self.turn + Self::trade_route_duration(distance, self.world_era);
         self.routes.push(TradeRoute {
             origin,
             dest,
@@ -8632,26 +8731,41 @@ impl Game {
             .filter(|r| r.owner == pid && turn >= r.ends)
             .cloned()
             .collect();
-        self.routes.retain(|r| !(r.owner == pid && turn >= r.ends));
-        for r in expired {
-            if let Some(c) = self.cities.get(&r.origin) {
-                if c.owner == pid {
-                    let pos = c.pos;
-                    self.place_new_unit("trader", pid, pos);
-                }
+        self.recall_trade_routes(expired);
+    }
+
+    /// Cancel routes without destroying their Traders. Normal completion,
+    /// war, an embargo, and a city ownership change all return each Trader to
+    /// its origin when possible, or another city still owned by that player.
+    fn recall_trade_routes(&mut self, recalled: Vec<TradeRoute>) {
+        self.routes.retain(|route| !recalled.contains(route));
+        for route in recalled {
+            let city = self
+                .cities
+                .get(&route.origin)
+                .filter(|city| city.owner == route.owner)
+                .map(|city| city.id)
+                .or_else(|| self.player_city_ids(route.owner).first().copied());
+            if let Some(city) = city {
+                self.place_new_unit("trader", route.owner, self.cities[&city].pos);
             }
         }
     }
 
     fn cancel_routes_with(&mut self, a: usize, b: usize) {
-        self.routes.retain(|r| {
-            let downer = self.cities.get(&r.dest).map(|c| c.owner);
-            let oowner = self.cities.get(&r.origin).map(|c| c.owner);
-            !((r.owner == a && downer == Some(b))
-                || (r.owner == b && downer == Some(a))
-                || oowner.is_none()
-                || downer.is_none())
-        });
+        let recalled = self
+            .routes
+            .iter()
+            .filter(|r| {
+                let downer = self.cities.get(&r.dest).map(|c| c.owner);
+                (r.owner == a && downer == Some(b))
+                    || (r.owner == b && downer == Some(a))
+                    || !self.cities.contains_key(&r.origin)
+                    || downer.is_none()
+            })
+            .cloned()
+            .collect();
+        self.recall_trade_routes(recalled);
     }
 
     // -------------------------------------------------- religion
@@ -10408,10 +10522,23 @@ impl Game {
             Some(e) => e.1 += amount,
             None => p.envoys.push((minor, amount)),
         }
-        // The Civilopedia grants one border tile for every Envoy placement;
-        // the first placement and placements that create a tie are included.
-        if let Some(city) = self.player_city_ids(minor).first().copied() {
-            self.expand_borders(city);
+        // Actual final-patch behavior is narrower than the Civilopedia's
+        // summary: the first manually sent Envoy and sends that merely tie the
+        // lead do not grow borders. Policy, quest, Governor, and other free
+        // Envoys also never add extra tiles. A later deliberate send grows one
+        // tile when it leaves this civilization as the unique influence lead.
+        let leads = self.envoys_at(pid, minor)
+            > self
+                .players
+                .iter()
+                .filter(|player| !player.is_minor && !player.is_barbarian && player.id != pid)
+                .map(|player| self.envoys_at(player.id, minor))
+                .max()
+                .unwrap_or(0);
+        if existing > 0 && leads {
+            if let Some(city) = self.player_city_ids(minor).first().copied() {
+                self.expand_borders(city);
+            }
         }
         Ok(())
     }
@@ -10926,6 +11053,7 @@ impl Game {
             }
             Some(Item::District { district, .. }) => {
                 bonus += self.governor_effect(pid, cid, "district_production_pct") / 100.0;
+                bonus += self.gov_effects(pid).district_production_pct / 100.0;
                 if matches!(self.district_family(district), "encampment" | "harbor") {
                     bonus += self.policy_effect(pid, "military_port_production_pct") / 100.0;
                 }
@@ -16547,6 +16675,9 @@ impl Game {
         ys.production *= 1.0 + eff.production_pct / 100.0;
         ys.science *= 1.0 + eff.science_pct / 100.0;
         ys.gold *= 1.0 + eff.gold_pct / 100.0;
+        if self.city_has_established_governor(city.owner, city.id) {
+            ys.gold *= 1.0 + eff.governor_gold_pct / 100.0;
+        }
         ys.science *= 1.0 + self.governor_effect(city.owner, city.id, "science_pct") / 100.0;
         ys.culture *= 1.0 + self.governor_effect(city.owner, city.id, "culture_pct") / 100.0;
         let local_wonder_effect = |effect: &str| {
@@ -25462,16 +25593,22 @@ impl Game {
 
             if resolution.id == "trade_policy" && winning_outcome == "B" {
                 if let Ok(target) = winning_target.parse::<usize>() {
-                    self.routes.retain(|route| {
-                        let Some(origin) = self.cities.get(&route.origin) else {
-                            return false;
-                        };
-                        let Some(destination) = self.cities.get(&route.dest) else {
-                            return false;
-                        };
-                        origin.owner == destination.owner
-                            || (origin.owner != target && destination.owner != target)
-                    });
+                    let recalled = self
+                        .routes
+                        .iter()
+                        .filter(|route| {
+                            let Some(origin) = self.cities.get(&route.origin) else {
+                                return true;
+                            };
+                            let Some(destination) = self.cities.get(&route.dest) else {
+                                return true;
+                            };
+                            origin.owner != destination.owner
+                                && (origin.owner == target || destination.owner == target)
+                        })
+                        .cloned()
+                        .collect();
+                    self.recall_trade_routes(recalled);
                 }
             }
             let world_ideology_target =
@@ -28548,7 +28685,13 @@ impl Game {
         for p in self.players.iter_mut() {
             p.governors.retain(|g| *g != cid);
         }
-        self.routes.retain(|r| r.origin != cid && r.dest != cid);
+        let recalled = self
+            .routes
+            .iter()
+            .filter(|route| route.origin == cid || route.dest == cid)
+            .cloned()
+            .collect();
+        self.recall_trade_routes(recalled);
         if !conquest {
             self.players[new_owner].alive = true;
             self.check_elimination(old);
@@ -28721,10 +28864,20 @@ impl Game {
             .or_insert(1);
         self.add_era_score(pid, if restored_to_game { 4 } else { 2 });
         if self.players[original_owner].is_minor {
+            let liberation_envoys = match self.world_era {
+                0..=2 => 3,
+                3 | 4 => 6,
+                _ => 9,
+            };
             for player in &mut self.players {
                 player.envoys.retain(|(minor, _)| *minor != original_owner);
             }
-            self.players[pid].envoys.push((original_owner, 3));
+            self.players[pid]
+                .envoys
+                .push((original_owner, liberation_envoys));
+            for _ in 0..liberation_envoys {
+                self.expand_borders(cid);
+            }
         }
         self.check_elimination(defeated);
         self.check_domination();
@@ -31354,6 +31507,34 @@ mod victory_conditions {
         assert_eq!(g.players[1].diplomatic_favor, 100.0);
         assert_eq!(g.envoys_at(1, minor), 3);
         assert_eq!(g.suzerain_of(minor), Some(1));
+    }
+
+    #[test]
+    fn city_state_liberation_envoys_and_border_growth_scale_by_world_era() {
+        for (era, expected) in [(0, 3), (1, 3), (2, 3), (3, 6), (4, 6), (5, 9), (8, 9)] {
+            let mut game = Game::new_full(2, 26, 16, 42_500 + era as u64, 300, 1, false);
+            let minor = game
+                .players
+                .iter()
+                .find(|player| player.is_minor && !player.is_barbarian)
+                .unwrap()
+                .id;
+            let city = game.player_city_ids(minor)[0];
+            game.capture_city(city, 0);
+            game.do_keep_city(0, city).unwrap();
+            game.capture_city(city, 1);
+            game.world_era = era;
+            let tiles = game.cities[&city].owned_tiles.len();
+
+            game.do_liberate_city(1, city).unwrap();
+
+            assert_eq!(game.envoys_at(1, minor), expected, "world era {era}");
+            assert_eq!(
+                game.cities[&city].owned_tiles.len(),
+                tiles + expected as usize,
+                "liberation Envoys expand borders in world era {era}"
+            );
+        }
     }
 
     #[test]

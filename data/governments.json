@@ -25,7 +25,7 @@
   },
   "merchant_republic": {
     "civic": "exploration",
-    "effects": {"gold_pct": 10},
+    "effects": {"governor_gold_pct": 10, "district_production_pct": 15},
     "slots": {"military": 1, "economic": 2, "diplomatic": 2, "wildcard": 1}
   },
   "theocracy": {

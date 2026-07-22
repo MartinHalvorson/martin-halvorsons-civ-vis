@@ -526,6 +526,8 @@ pub struct GovEffects {
     pub production_pct: f64,
     pub science_pct: f64,
     pub gold_pct: f64,
+    pub governor_gold_pct: f64,
+    pub district_production_pct: f64,
     pub combat_strength: f64,
     pub amenity: f64,
     pub housing: f64,

@@ -841,6 +841,14 @@ mod tests {
 
     #[test]
     fn trade_routes_and_envoys() {
+        assert_eq!(Game::trade_route_duration(4, 0), 24);
+        assert_eq!(Game::trade_route_duration(5, 1), 30);
+        assert_eq!(Game::trade_route_duration(10, 0), 40);
+        assert_eq!(Game::trade_route_duration(11, 1), 22);
+        assert_eq!(Game::trade_route_duration(8, 2), 32);
+        assert_eq!(Game::trade_route_duration(21, 6), 42);
+        assert_eq!(Game::trade_route_duration(26, 8), 52);
+
         let mut g = Game::new_full(2, 26, 16, 3, 200, 2, false);
         let s = g
             .player_unit_ids(0)
@@ -882,6 +890,11 @@ mod tests {
             },
         )
         .unwrap();
+        let one_way = g.wdist(g.cities[&cap].pos, g.cities[&second].pos) as u32;
+        assert_eq!(
+            g.routes[0].ends - g.turn,
+            Game::trade_route_duration(one_way, g.world_era)
+        );
         assert_eq!(g.active_routes(0), 1);
         assert!(!g.units.contains_key(&trader)); // trader is on the road
         let after = g.city_yields(cap);
@@ -902,6 +915,56 @@ mod tests {
                     unit: t2,
                     city: second
                 }
+            )
+            .is_err());
+        // Increasing capacity must not permit a second route to the same
+        // destination, even when it starts in a different owned city.
+        let third_spot = g3
+            .map
+            .tiles
+            .values()
+            .find(|tile| {
+                !g3.rules.is_water(tile)
+                    && g3.rules.is_passable(tile)
+                    && g3.units_at(tile.pos).is_empty()
+                    && g3
+                        .cities
+                        .values()
+                        .all(|city| g3.wdist(tile.pos, city.pos) >= 4)
+                    && g3.wdist(tile.pos, g3.cities[&second].pos) <= 15
+            })
+            .map(|tile| tile.pos)
+            .expect("third settle spot");
+        let (g4, third_settler) = conjure(&g3, "settler", third_spot);
+        let mut g4 = g4;
+        g4.apply(
+            0,
+            &Action::FoundCity {
+                unit: third_settler,
+            },
+        )
+        .unwrap();
+        let third = *g4
+            .player_city_ids(0)
+            .iter()
+            .find(|city| **city != cap && **city != second)
+            .unwrap();
+        let gathering_storm_capacity = g4.trade_capacity(0);
+        g4.players[0].government = Some("merchant_republic".to_string());
+        assert_eq!(g4.trade_capacity(0), gathering_storm_capacity);
+        g4.players[0]
+            .counters
+            .insert("great_person_trade_capacity".to_string(), 1);
+        assert!(g4.trade_capacity(0) > g4.active_routes(0));
+        let third_pos = g4.cities[&third].pos;
+        let (mut g4, third_trader) = conjure(&g4, "trader", third_pos);
+        assert!(g4
+            .apply(
+                0,
+                &Action::TradeRoute {
+                    unit: third_trader,
+                    city: second,
+                },
             )
             .is_err());
         // a road was laid toward the destination
