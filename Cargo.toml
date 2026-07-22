@@ -2,6 +2,7 @@
 name = "civvis"
 version = "0.6.0"
 edition = "2021"
+default-run = "civvis"
 description = "Martin Halvorson's Civilization VIS - Rust performance core (headless Civ 6-style engine)"
 license = "MIT"
 

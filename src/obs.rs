@@ -71,6 +71,7 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             "religion": g.city_religion(c),
         });
         if c.owner == pid {
+            let citizens = g.city_citizen_plan(c.id);
             let ys = g.city_yields(c.id);
             empire[0] += ys.food;
             empire[1] += ys.production;
@@ -92,6 +93,13 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
                 "can_strike": g.city_can_strike(c),
                 "loyalty": round1(c.loyalty),
                 "governor": g.players[c.owner].governors.contains(&c.id),
+                "citizens": {
+                    "focus": citizens.strategy.focus,
+                    "weights": yields_json(&citizens.strategy.weights),
+                    "food_target": round1(citizens.strategy.food_target),
+                    "worked_tiles": citizens.worked_tiles.iter()
+                        .map(|t| json!([t.0, t.1])).collect::<Vec<_>>(),
+                },
             });
             merge(&mut d, ext);
         }

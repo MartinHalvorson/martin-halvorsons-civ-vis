@@ -46,8 +46,7 @@
   "monarchy": {
     "civic": "civil_service",
     "effects": {
-      "housing": 1,
-      "combat_strength": 5
+      "housing": 1
     },
     "slots": {
       "military": 2,

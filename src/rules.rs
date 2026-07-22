@@ -85,6 +85,8 @@ pub struct ImprovementSpec {
     #[serde(default)]
     pub yields: Yields,
     #[serde(default)]
+    pub housing: f64,
+    #[serde(default)]
     pub terrain: Vec<String>,
     #[serde(default)]
     pub removes_feature: bool,
@@ -104,6 +106,8 @@ pub struct UnitSpec {
     #[serde(default)]
     pub ranged_strength: f64, // 0 = no ranged attack
     #[serde(default)]
+    pub bombard_strength: f64, // 0 = no anti-district bombard attack
+    #[serde(default)]
     pub range: i32,
     #[serde(default)]
     pub charges: i32,
@@ -122,9 +126,27 @@ pub struct UnitSpec {
     #[serde(default)]
     pub replaces: Option<String>, // base unit this unique replaces
     #[serde(default)]
-    pub cavalry: bool, // ignores zone of control
+    pub promotion_class: String,
+    #[serde(default)]
+    pub zone_of_control: bool,
+    #[serde(default)]
+    pub cavalry: bool, // light, heavy, and ranged cavalry ignore enemy ZOC
     #[serde(default)]
     pub siege: bool, // full damage vs city walls
+}
+
+impl UnitSpec {
+    pub fn ranged_attack_strength(&self) -> f64 {
+        self.ranged_strength.max(self.bombard_strength)
+    }
+
+    pub fn has_ranged_attack(&self) -> bool {
+        self.ranged_attack_strength() > 0.0
+    }
+
+    pub fn is_melee_capable(&self) -> bool {
+        self.class == "military" && !self.has_ranged_attack()
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]

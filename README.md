@@ -35,7 +35,14 @@ cargo build --release
 
 GUI: click/right-click to select and order units, drag to pan, wheel to zoom,
 **1** next action, **2** settler lens, **3** map tacks, Enter ends turn; tech
-and civics tree maps, production/buy panels, city strikes, fog of war.
+and civics tree maps, production/buy panels, city strikes, fog of war. Enable
+**Show yields per tile** in View & controls (or press **Y**); gold-outlined yield
+chips identify tiles currently worked by the automatic citizen governor.
+
+Each city's citizen governor protects its food requirement, then optimizes the
+remaining population for the city's current build/specialty and its
+civilization ability. The active focus and worked tiles are included in city
+observations under `citizens` and shown in the city panel.
 
 ## Headless AI
 

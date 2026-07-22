@@ -1,9 +1,9 @@
 {
   "farm": {
-    "tech": "agriculture",
     "yields": {
       "food": 1
     },
+    "housing": 0.5,
     "terrain": [
       "grassland",
       "plains"
@@ -20,25 +20,29 @@
     "tech": "animal_husbandry",
     "yields": {
       "production": 1
-    }
+    },
+    "housing": 0.5
   },
   "plantation": {
     "tech": "irrigation",
     "yields": {
-      "gold": 1
-    }
+      "gold": 2
+    },
+    "housing": 0.5
   },
   "camp": {
     "tech": "animal_husbandry",
     "yields": {
-      "gold": 1
-    }
+      "gold": 2
+    },
+    "housing": 0.5
   },
   "fishing_boats": {
     "tech": "sailing",
     "yields": {
       "food": 1
     },
+    "housing": 0.5,
     "water": true
   },
   "barbarian_camp": {
