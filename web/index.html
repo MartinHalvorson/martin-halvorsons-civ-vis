@@ -356,6 +356,80 @@ function shade(hex, f) {
   return "rgb(" + r + "," + g + "," + b + ")";
 }
 
+function tri(ax, ay, bx, by, ccx, ccy) {
+  cx.beginPath(); cx.moveTo(ax, ay); cx.lineTo(bx, by); cx.lineTo(ccx, ccy);
+  cx.closePath(); cx.fill();
+}
+
+// Civ 6-style warm rocky ranges: jagged multi-peak ridges that visually
+// connect to neighboring mountain tiles, snow only on the tallest crests.
+function drawMountainRange(t, x, y) {
+  const base = y + 10;
+  const mE = (nbrTile(t.pos, [1, 0]) || {}).terrain === "mountain";
+  const mW = (nbrTile(t.pos, [-1, 0]) || {}).terrain === "mountain";
+  const L = mW ? -S * 0.95 : -16, R = mE ? S * 0.95 : 16;
+  const peaks = [];
+  for (let i = 0; i < 4; i++) {
+    const fx = L + (i + 0.5) / 4 * (R - L) + (hash2(t.pos[0] * 3 + i, t.pos[1]) - 0.5) * 7;
+    const h = 11 + hash2(t.pos[0], t.pos[1] * 5 + i) * 13 + ((i === 1 || i === 2) ? 7 : 0);
+    peaks.push([fx, h]);
+  }
+  // hazy back ridge
+  cx.fillStyle = "#8a7d68";
+  cx.beginPath(); cx.moveTo(x + L + 4, base - 3);
+  for (const [fx, h] of peaks) cx.lineTo(x + fx * 0.9 + 3, base - 3 - h * 0.7);
+  cx.lineTo(x + R - 4, base - 3); cx.closePath(); cx.fill();
+  // main crests: lit west faces, shadowed east faces
+  for (const [fx, h] of peaks) {
+    const px = x + fx, pw = 8 + h * 0.6;
+    cx.fillStyle = "#a8916a";
+    tri(px - pw, base, px, base - h, px, base);
+    cx.fillStyle = "#5f5039";
+    tri(px, base - h, px + pw * 0.85, base, px, base);
+    if (h > 21) {
+      const s = h * 0.32;
+      cx.fillStyle = "#eef2f6";
+      tri(px - pw * s / h, base - h + s, px, base - h,
+          px + pw * 0.85 * s / h, base - h + s);
+    }
+  }
+  // rock-fall shadow at the foot
+  cx.fillStyle = "#00000024";
+  cx.beginPath(); cx.ellipse(x, base + 2, (R - L) * 0.42, 3.5, 0, 0, 7); cx.fill();
+}
+
+function drawConifer(tx, ty, s, hv) {
+  const th = 11 * s, tw = 4.6 * s;
+  cx.fillStyle = "#00000028";
+  cx.beginPath(); cx.ellipse(tx + 1, ty + 1, tw, 1.6 * s, 0, 0, 7); cx.fill();
+  cx.fillStyle = "#3d2c1e";
+  cx.fillRect(tx - 0.8 * s, ty - 2 * s, 1.6 * s, 3 * s);
+  const g = ["#1d4423", "#25552b", "#2e6634"][Math.floor(hv * 2.99)];
+  const lit = shade(g, 1.4);
+  for (const [yo, w, hh] of [[0, tw, th * 0.62], [-th * 0.42, tw * 0.72, th * 0.55]]) {
+    cx.fillStyle = lit;
+    tri(tx - w, ty + yo, tx, ty + yo - hh, tx, ty + yo);
+    cx.fillStyle = g;
+    tri(tx, ty + yo - hh, tx + w, ty + yo, tx, ty + yo);
+  }
+}
+
+function drawJungleTree(tx, ty, s, hv) {
+  const g = ["#17603a", "#1d7044", "#14522f"][Math.floor(hv * 2.99)];
+  cx.fillStyle = "#00000028";
+  cx.beginPath(); cx.ellipse(tx + 1, ty + 2, 6 * s, 2 * s, 0, 0, 7); cx.fill();
+  cx.fillStyle = "#3d2c1e";
+  cx.fillRect(tx - 0.9 * s, ty - 3 * s, 1.8 * s, 4 * s);
+  cx.fillStyle = g;
+  cx.beginPath();
+  cx.arc(tx - 3 * s, ty - 5 * s, 3.6 * s, 0, 7);
+  cx.arc(tx + 2.5 * s, ty - 6 * s, 4.2 * s, 0, 7);
+  cx.arc(tx, ty - 3.5 * s, 3.4 * s, 0, 7);
+  cx.fill();
+  cx.fillStyle = shade(g, 1.32);
+  cx.beginPath(); cx.arc(tx + 1.5 * s, ty - 7 * s, 2.6 * s, 0, 7); cx.fill();
+}
+
 function draw() {
   if (!state) return;
   const beau0 = VIEW === "beautiful";
@@ -488,23 +562,13 @@ function draw() {
     const y = yy - elev(t);
     const k = key(t.pos);
     if (t.terrain === "mountain") {
-      // duotone 3D massif: lit left faces, shadowed right faces, snowcaps
-      const peaks = [[-9, 9, 16, 11], [1, 10, 22, 14], [10, 9, 12, 8]];
-      for (const [px, base, h, hw] of peaks) {
-        const ax = x + px, ay = y + base;
-        cx.fillStyle = beau ? "#a89f8d" : "#6f747c";        // lit face
-        cx.beginPath(); cx.moveTo(ax - hw, ay); cx.lineTo(ax, ay - h);
-        cx.lineTo(ax, ay); cx.closePath(); cx.fill();
-        cx.fillStyle = beau ? "#4e4a42" : "#555a61";        // shadow face
-        cx.beginPath(); cx.moveTo(ax, ay - h); cx.lineTo(ax + hw * 0.85, ay);
-        cx.lineTo(ax, ay); cx.closePath(); cx.fill();
-        if (beau && h >= 14) {                               // snowcap
-          const s = h * 0.34;
-          cx.fillStyle = "#f4f8fb";
-          cx.beginPath(); cx.moveTo(ax - hw * s / h, ay - h + s);
-          cx.lineTo(ax, ay - h); cx.lineTo(ax + hw * 0.85 * s / h, ay - h + s);
-          cx.closePath(); cx.fill();
-        }
+      if (beau) {
+        drawMountainRange(t, x, y);
+      } else {
+        cx.fillStyle = "#6f747c";
+        tri(x - 13, y + 9, x - 3, y - 11, x + 5, y + 9);
+        cx.fillStyle = "#555a61";
+        tri(x - 1, y + 9, x + 7, y - 5, x + 14, y + 9);
       }
       continue;
     }
@@ -514,18 +578,19 @@ function draw() {
       continue;
     }
     if (t.hills && beau) {
-      // 3D mounds with lit/shadow halves
+      // soft rolling rises in the terrain's own color (Civ 6 style)
       const base = TERRAIN[t.terrain] || "#888";
-      for (const [hx, hy, hr] of [[-6, -5, 6.5], [6, -3, 5.5]]) {
-        cx.fillStyle = shade(base, 1.22);
-        cx.beginPath(); cx.arc(x + hx, y + hy, hr, Math.PI, Math.PI * 1.55);
-        cx.arc(x + hx, y + hy, hr, Math.PI * 1.55, 0);
-        cx.closePath(); cx.fill();
-        cx.fillStyle = shade(base, 1.08);
-        cx.beginPath(); cx.arc(x + hx, y + hy, hr, Math.PI * 1.5, 0);
-        cx.lineTo(x + hx - hr, y + hy); cx.closePath(); cx.fill();
-        cx.strokeStyle = "#00000030"; cx.lineWidth = 1;
-        cx.beginPath(); cx.arc(x + hx, y + hy, hr, Math.PI, 0); cx.stroke();
+      for (const [hx, hy, hw2, hh2] of [[-7, -3, 9.5, 5.5], [5, -6, 8.5, 5], [1, 3, 10.5, 6]]) {
+        cx.fillStyle = shade(base, 0.86);
+        cx.beginPath(); cx.ellipse(x + hx, y + hy + 1.6, hw2, hh2, 0, Math.PI, 0);
+        cx.fill();
+        cx.fillStyle = shade(base, 1.16);
+        cx.beginPath(); cx.ellipse(x + hx, y + hy, hw2, hh2, 0, Math.PI, 0);
+        cx.fill();
+        cx.fillStyle = shade(base, 1.34);
+        cx.beginPath(); cx.ellipse(x + hx - 1.5, y + hy - 0.8, hw2 * 0.5, hh2 * 0.45,
+                                   0, Math.PI, 0);
+        cx.fill();
       }
     } else if (t.hills) {
       cx.strokeStyle = "#00000055"; cx.lineWidth = 1.8;
@@ -546,26 +611,28 @@ function draw() {
     }
     if (t.feature === "forest" || t.feature === "jungle") {
       const jungle = t.feature === "jungle";
-      for (let i = 0; i < (beau ? 4 : 3); i++) {
-        const hsh = hash2(t.pos[0] * 3 + i, t.pos[1] + i * 7);
-        const ang = hsh * 6.28;
-        const tx = x + Math.cos(ang) * 9, ty = y + Math.sin(ang) * 6 + 5;
-        const th = 10 + hsh * 4, tw = jungle ? 6.5 : 5;
-        if (beau) { // trunk + duotone canopy + shadow
-          cx.fillStyle = "#00000028";
-          cx.beginPath(); cx.ellipse(tx, ty + 1, tw * 0.9, 1.8, 0, 0, 7); cx.fill();
-          cx.fillStyle = "#4a3524";
-          cx.fillRect(tx - 1, ty - 3, 2, 4);
-          cx.fillStyle = jungle ? "#2f8a4c" : "#39774a";       // lit half
-          cx.beginPath(); cx.moveTo(tx - tw, ty - 2); cx.lineTo(tx, ty - th - 2);
-          cx.lineTo(tx, ty - 2); cx.closePath(); cx.fill();
-          cx.fillStyle = jungle ? "#175f31" : "#1e4d2b";       // shadow half
-          cx.beginPath(); cx.moveTo(tx, ty - th - 2); cx.lineTo(tx + tw, ty - 2);
-          cx.lineTo(tx, ty - 2); cx.closePath(); cx.fill();
-        } else {
+      if (beau) {
+        // dense cluster of small individual trees (Civ 6 woods)
+        const trees = [];
+        for (let i = 0; i < 7; i++) {
+          const h1 = hash2(t.pos[0] * 5 + i * 3, t.pos[1] * 7 + i);
+          const h2 = hash2(t.pos[0] + i * 11, t.pos[1] * 3 + i * 5);
+          trees.push([x + (h1 - 0.5) * S * 1.25,
+                      y + (h2 - 0.5) * S * 0.8 + 4,
+                      0.7 + h1 * 0.55, h2]);
+        }
+        trees.sort((a, b) => a[1] - b[1]);
+        for (const [tx, ty, sc, hv] of trees) {
+          if (jungle) drawJungleTree(tx, ty, sc, hv);
+          else drawConifer(tx, ty, sc, hv);
+        }
+      } else {
+        for (let i = 0; i < 3; i++) {
+          const hsh = hash2(t.pos[0] * 3 + i, t.pos[1] + i * 7);
+          const ang = hsh * 6.28;
+          const tx = x + Math.cos(ang) * 9, ty = y + Math.sin(ang) * 6 + 5;
           cx.fillStyle = jungle ? "#1d5c33" : "#1e4d24";
-          cx.beginPath(); cx.moveTo(tx - 5, ty); cx.lineTo(tx, ty - 11);
-          cx.lineTo(tx + 5, ty); cx.closePath(); cx.fill();
+          tri(tx - 5, ty, tx, ty - 11, tx + 5, ty);
         }
       }
     } else if (t.feature === "marsh") {
@@ -589,9 +656,10 @@ function draw() {
       cx.fillStyle = "#5a4632"; cx.fillRect(x - 4, y + 5, 8, 5);
     }
     if (t.resource) {
-      cx.fillStyle = "#10151dcc";
+      // Civ 6-style white-ringed resource badge
+      cx.fillStyle = "#1d2418c8";
       cx.beginPath(); cx.arc(x + 10, y + 9, 7.5, 0, 7); cx.fill();
-      cx.strokeStyle = "#f0c67466"; cx.lineWidth = 1; cx.stroke();
+      cx.strokeStyle = "#f6f2e4d8"; cx.lineWidth = 1.6; cx.stroke();
       cx.font = "9.5px sans-serif";
       cx.fillText(RES_ICON[t.resource] || "●", x + 10, y + 9.5);
     }
