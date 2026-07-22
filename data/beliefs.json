@@ -1,25 +1,25 @@
 {
   "pantheon": {
-    "fertility_rites": {"note":"city growth +10%","effects":{"growth_pct":10}},
+    "fertility_rites": {"note":"receive a free Builder in the capital; city growth +10%","effects":{"growth_pct":10,"free_builder":1}},
     "god_of_the_forge": {"note":"+25% production toward ancient/classical military units","effects":{"early_military_production_pct":25}},
-    "religious_settlements": {"note":"border expansion 15% faster","effects":{"border_growth_pct":15}},
+    "religious_settlements": {"note":"receive a free Settler in the capital; border expansion 15% faster","effects":{"border_growth_pct":15,"free_settler":1}},
     "god_of_the_open_sky": {"note":"+1 culture per pasture","effects":{"pasture_culture":1}},
     "god_of_the_sea": {"note":"+1 production per fishing boats","effects":{"fishing_boats_production":1}},
-    "divine_spark": {"note":"+1 Great Scientist point from Campuses with a Library, +1 Great Prophet point from Holy Sites with a Shrine, and +1 Great Writer point from Theater Squares with an Amphitheater","effects":{"district_gpp":1}}
+    "divine_spark": {"note":"+1 Great Scientist point from Campuses with a Library, +1 Great Prophet point from Holy Sites, and +1 Great Writer point from Theater Squares with an Amphitheater","effects":{"district_gpp":1}}
   },
   "founder": {
-    "tithe": {"note":"+1 gold per 4 followers","effects":{"gold_per_followers":0.25}},
-    "world_church": {"note":"+1 culture per 5 followers","effects":{"culture_per_followers":0.2}},
+    "tithe": {"note":"+3 Gold for each city following this religion","effects":{"gold_per_city":3}},
+    "world_church": {"note":"+1 Culture per 4 followers","effects":{"culture_per_followers":0.25}},
     "church_property": {"note":"+2 Gold for each city following this religion","effects":{"gold_per_city":2}},
-    "pilgrimage": {"note":"+2 Faith for each foreign city following this religion","effects":{"faith_per_foreign_city":2}},
+    "pilgrimage": {"note":"+2 Faith for each city following this religion","effects":{"faith_per_city":2}},
     "religious_unity": {"note":"first conversion of a city-state grants an Envoy","effects":{"envoy_first_city_state_conversion":1}}
   },
   "follower": {
     "choral_music": {"note":"Shrines and Temples provide Culture equal to Faith","effects":{"holy_building_culture":1}},
     "work_ethic": {"note":"Holy Site adjacency also provides Production","effects":{"holy_site_production_from_adjacency":1}},
-    "feed_the_world": {"note":"Shrines and Temples provide Food and Housing","effects":{"shrine_food":2,"temple_food":4,"shrine_housing":2,"temple_housing":2}},
+    "feed_the_world": {"note":"Shrines and Temples each provide +3 Food and +2 Housing","effects":{"shrine_food":3,"temple_food":3,"shrine_housing":2,"temple_housing":2}},
     "jesuit_education": {"note":"Campus and Theater buildings may be purchased with Faith","effects":{"faith_purchase_science_culture_buildings":1}},
-    "religious_community": {"note":"international routes gain Gold from Holy Site buildings","effects":{"trade_gold_per_holy_building":1}},
+    "religious_community": {"note":"international routes gain +2 Gold from the origin Holy Site and each of its buildings","effects":{"trade_gold_per_holy_building":2}},
     "zen_meditation": {"note":"+1 Amenity in cities with two specialty districts","effects":{"amenity_two_specialty":1}}
   },
   "enhancer": {

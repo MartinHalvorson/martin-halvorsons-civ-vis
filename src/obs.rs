@@ -315,6 +315,7 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             .filter(|deal| deal.from == pid || deal.to == pid)
             .collect::<Vec<_>>(),
         "congress": g.congress,
+        "active_congress_effects": g.active_congress_effects,
         "barbarian_alerts": g.barb_alerted_until.iter()
             .filter(|(camp, _)| explored.contains(camp))
             .map(|(camp, until)| json!({
