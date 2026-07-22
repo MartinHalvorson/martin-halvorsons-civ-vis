@@ -24,6 +24,8 @@ Firaxis or 2K; no assets, art, text, or code from Civilization VI are used.
 - Units with **XP/levels and fortify**, per-unit sight; melee/ranged/bombard
   combat and **zone of control** with Civ 6 math; city sieges, capture, and
   **city and Encampment ranged strikes**
+- The full standard **naval roster** from Galleys through Nuclear Submarines,
+  with naval melee/ranged/raider/carrier classes and staged sea access
 - Data-driven **class promotion trees**, **Corps/Armies**, and linked escorts
 - **Theological combat** with Missionaries, Apostles, Gurus, Inquisitors,
   religious pressure, healing, inquisition, heresy removal, and condemnation
