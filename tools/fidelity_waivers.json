@@ -1,0 +1,118 @@
+{
+  "_comment": [
+    "Divergences from the shipped Civilization VI database that CIVVIS accepts",
+    "on purpose. Every entry needs a reason; anything not listed here counts",
+    "against the ratchet in tools/civ6_fidelity.py. Use '*' to waive a field",
+    "across a whole table. Shrinking this file is the fidelity roadmap."
+  ],
+  "waivers": [
+    {
+      "table": "Technologies",
+      "entry": "advanced_ai",
+      "field": "requires",
+      "reason": "Future-era techs carry RandomPrereqs in Gathering Storm: the game draws prerequisites per game rather than storing them. CIVVIS models a fixed chain instead."
+    },
+    {
+      "table": "Technologies",
+      "entry": "advanced_power_cells",
+      "field": "requires",
+      "reason": "Future-era RandomPrereqs; see advanced_ai."
+    },
+    {
+      "table": "Technologies",
+      "entry": "cybernetics",
+      "field": "requires",
+      "reason": "Future-era RandomPrereqs; see advanced_ai."
+    },
+    {
+      "table": "Technologies",
+      "entry": "offworld_mission",
+      "field": "requires",
+      "reason": "Future-era RandomPrereqs; see advanced_ai."
+    },
+    {
+      "table": "Technologies",
+      "entry": "predictive_systems",
+      "field": "requires",
+      "reason": "Future-era RandomPrereqs; see advanced_ai."
+    },
+    {
+      "table": "Technologies",
+      "entry": "seasteads",
+      "field": "requires",
+      "reason": "Future-era RandomPrereqs; see advanced_ai."
+    },
+    {
+      "table": "Technologies",
+      "entry": "smart_materials",
+      "field": "requires",
+      "reason": "Future-era RandomPrereqs; see advanced_ai."
+    },
+    {
+      "table": "Technologies",
+      "entry": "future_tech",
+      "field": "requires",
+      "reason": "Gated behind the randomized Future-era techs, so its prerequisite set is drawn per game like theirs."
+    },
+    {
+      "table": "Civics",
+      "entry": "cultural_hegemony",
+      "field": "requires",
+      "reason": "Future-era civics use the same RandomPrereqs draw as Future-era techs."
+    },
+    {
+      "table": "Civics",
+      "entry": "exodus_imperative",
+      "field": "requires",
+      "reason": "Future-era RandomPrereqs; see cultural_hegemony."
+    },
+    {
+      "table": "Civics",
+      "entry": "global_warming_mitigation",
+      "field": "requires",
+      "reason": "Future-era RandomPrereqs; see cultural_hegemony."
+    },
+    {
+      "table": "Civics",
+      "entry": "information_warfare",
+      "field": "requires",
+      "reason": "Future-era RandomPrereqs; see cultural_hegemony."
+    },
+    {
+      "table": "Civics",
+      "entry": "smart_power_doctrine",
+      "field": "requires",
+      "reason": "Future-era RandomPrereqs; see cultural_hegemony."
+    },
+    {
+      "table": "Civics",
+      "entry": "future_civic",
+      "field": "requires",
+      "reason": "Gated behind the randomized Future-era civics; prerequisite set is drawn per game."
+    },
+    {
+      "table": "Units",
+      "entry": "mobile_sam",
+      "field": "range",
+      "reason": "The Mobile SAM's game Range column is its interception radius; CIVVIS stores that as anti_air_range and keeps range for units that can strike ground targets."
+    },
+    {
+      "table": "Units",
+      "entry": "archaeologist",
+      "field": "charges",
+      "reason": "The game drives Archaeologist excavations from a unit operation rather than a charge column, so the Units table reports none. CIVVIS models the same three uses as charges."
+    },
+    {
+      "table": "Units",
+      "entry": "naturalist",
+      "field": "charges",
+      "reason": "National Park creation is a unit operation in the game database; CIVVIS models the single use as a charge."
+    },
+    {
+      "table": "Districts",
+      "entry": "city_center",
+      "field": "cost",
+      "reason": "The City Center is never produced in CIVVIS - founding a city places it - so it carries no production cost."
+    }
+  ]
+}

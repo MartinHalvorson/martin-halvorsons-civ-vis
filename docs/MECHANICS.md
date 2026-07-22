@@ -5,6 +5,12 @@ with secondary references used only where the in-game documentation omits a
 numeric rule.
 Status: ✅ implemented · 🟡 intentionally scoped relative to the full commercial ruleset.
 
+*Numbers* are now tracked against a stronger authority than either: the rules
+database the game itself ships. `python tools/civ6_fidelity.py` diffs
+`data/*.json` against it and currently reports zero unwaived divergences across
+units, technologies, civics, buildings and districts. Run it after any data
+change, and see [FIDELITY.md](FIDELITY.md) for what the audit covers next.
+
 > **In progress** (claimed by parallel sessions — check before starting a batch):
 > - session F: religious-victory balance batch — faith-purchased religious units adopt city majority religion (Civilopedia rule), cross-strategy religious defense in AdvancedAi, re-baseline soak/ai_eval
 
