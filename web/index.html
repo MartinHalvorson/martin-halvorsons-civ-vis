@@ -2126,8 +2126,11 @@ function dealTerms(items, kind) {
   if (+items.gold > 0) terms.push(`<span class="term ${kind}">🪙 ${compactStat(items.gold)} Gold</span>`);
   if (+items.gold_per_turn > 0) terms.push(`<span class="term ${kind}">🪙 ${compactStat(items.gold_per_turn)} / turn ×30</span>`);
   if (+items.diplomatic_favor > 0) terms.push(`<span class="term ${kind}">⚜ ${compactStat(items.diplomatic_favor)} Favor</span>`);
-  for (const [resource, amount] of Object.entries(items.resources || {}))
-    terms.push(`<span class="term ${kind}">${tradeItemIcon(resource)} ${amount} ${titleCase(resource)} ×30</span>`);
+  for (const [resource, amount] of Object.entries(items.resources || {})) {
+    const resourceClass = (state?.me?.resources || []).find(entry => entry.id === resource)?.class;
+    const duration = resourceClass === "strategic" ? "" : " ×30";
+    terms.push(`<span class="term ${kind}">${tradeItemIcon(resource)} ${amount} ${titleCase(resource)}${duration}</span>`);
+  }
   if (items.open_borders) terms.push(`<span class="term ${kind}">🗺 Open Borders ×30</span>`);
   return terms;
 }

@@ -25,7 +25,7 @@ Status: ✅ implemented · 🟡 intentionally scoped relative to the full commer
 | Great People | ✅ | 27 named Great People across all nine classes, era-aware market progression, district/building/policy GPP, escalating recruitment thresholds, Gold/Faith patronage, retirement tracking, Great Works, and individual data-driven effects |
 | Religion | ✅ | 33 beliefs across all five belief classes; pantheons and map-scaled religion caps; Prophet founding, Holy Cities, Missionaries, Apostles, Gurus, Inquisitors and Warrior Monks; nine Apostle promotions; evangelization, inquisition, heathen conversion, health-scaled spreads, theological combat/ZOC, Guru healing, heresy removal, condemnation, relics and pressure changes |
 | Trade routes & roads | ✅ | Foreign Trade grants the base route; Markets/Lighthouses and their unique replacements add capacity; Merchant Republic adds +2; unique districts inherit the vanilla per-district yield table; Traders lay roads, Military Engineering bridges roaded river crossings, routes last 30 turns, and war/capture cancels them |
-| Diplomacy (deals, alliances, grievances) | 🟡 | bilateral Quick Deals support lump Gold, GPT, Diplomatic Favor, temporary luxury/strategic access, and directional Open Borders with mutual valuation, expiry, and war cancellation. Denouncements unlock formal wars after five turns; casus belli, capture/occupation grievances and decay, friendship, defensive-pact joins, five unique Alliance types with level thresholds/bonuses, Favor income, World Congress ballots, and keep/raze/liberate city decisions are active. City/Great Work trading and bespoke leader agendas remain outside this ruleset's content scope |
+| Diplomacy (deals, alliances, grievances) | 🟡 | bilateral Quick Deals support lump Gold, GPT, Diplomatic Favor, immediate strategic-stockpile quantities, temporary Luxury access, and directional Open Borders with mutual valuation, expiry, and war cancellation. Denouncements unlock formal wars after five turns; casus belli, capture/occupation grievances and decay, friendship, defensive-pact joins, five unique Alliance types with level thresholds/bonuses, Favor income, World Congress ballots, and keep/raze/liberate city decisions are active. City/Great Work trading and bespoke leader agendas remain outside this ruleset's content scope |
 | Loyalty + governors (R&F) | ✅ | population pressure ±9 tiles, cultural-alliance suppression, capitals immune, and defection at zero Loyalty; all seven named Governors have appointment/assignment state, title costs, +8 Loyalty, complete five-promotion trees, and active city/empire effects |
 | Natural wonders + goody huts | ✅ | map-scaled 2–7 unique Natural Wonders use their connected one-to-four-tile footprints, terrain/feature placement rules, passability, tile yields, and per-wonder discovery era score; huts use map-scaled placement and gold/faith/eureka/inspiration rewards |
 | Zone of control | ✅ | innate from turn 1 for the modeled roster; explicit per-unit capability, native domains, river blocking, defensible districts, religious ZOC, cavalry immunity, and class-specific stop behavior |
@@ -48,13 +48,14 @@ both civilizations' positive equivalent-Gold gain; accepting revalidates the
 same terms atomically, so a stale treasury, resource export, or declaration of
 war cannot force a deal through.
 
-Lump Gold and Diplomatic Favor transfer immediately. Gold per turn pays for
-30 turns; resources temporarily move usable access (including Luxury Amenity
-allocation and strategic unit prerequisites); Open Borders are directional.
-War terminates the agreement and restores exported resource access. The
-engine rejects gifts and any custom economic exchange for which either side's
-modeled gain is not positive. AI civilizations periodically choose at most one
-of those same mutually favorable offers.
+Lump Gold, Diplomatic Favor, and strategic-resource stockpile quantities
+transfer immediately. Gold per turn, usable Luxury access (including Amenity
+allocation), and directional Open Borders last 30 turns. War terminates those
+ongoing agreements and restores exported Luxury access, but does not reverse
+an already completed strategic transfer. The engine rejects gifts and any
+custom economic exchange for which either side's modeled gain is not positive.
+AI civilizations periodically choose at most one of those same mutually
+favorable offers.
 
 Reference basis: the in-game [Trade, Demand, and Discuss Civilopedia entry](https://www.civilopedia.net/en-US/standard-rules/concepts/diplo_7/),
 the directional [Open Borders Civilopedia entry](https://www.civilopedia.net/en-US/gathering-storm/concepts/diplo_9/),
