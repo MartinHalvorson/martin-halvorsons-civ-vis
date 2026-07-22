@@ -1,102 +1,411 @@
 {
+  "city_center": {
+    "cost": 0,
+    "specialty": false,
+    "buildable": false,
+    "effects": {
+      "minimum_food": 2,
+      "minimum_production": 1,
+      "fresh_water_housing": 5,
+      "coastal_housing": 3,
+      "default_housing": 2
+    }
+  },
   "campus": {
-    "cost": 60,
+    "cost": 54,
     "tech": "writing",
-    "yields": {
-      "science": 2
-    },
     "adjacency": {
-      "mountain": {
-        "science": 1
-      },
-      "district": {
-        "science": 0.5
-      }
+      "mountain": { "science": 1 },
+      "reef": { "science": 2 },
+      "geothermal_fissure": { "science": 2 },
+      "rainforest": { "science": 0.5 },
+      "district": { "science": 0.5 },
+      "government_plaza": { "science": 1 }
     }
   },
   "holy_site": {
-    "cost": 60,
+    "cost": 54,
     "tech": "astrology",
-    "yields": {
-      "faith": 2
-    },
     "adjacency": {
-      "mountain": {
-        "faith": 1
-      },
-      "forest": {
-        "faith": 0.5
-      }
+      "natural_wonder": { "faith": 2 },
+      "mountain": { "faith": 1 },
+      "forest": { "faith": 0.5 },
+      "district": { "faith": 0.5 },
+      "government_plaza": { "faith": 1 }
     }
   },
   "commercial_hub": {
-    "cost": 60,
+    "cost": 54,
     "tech": "currency",
-    "yields": {
-      "gold": 4
-    },
     "adjacency": {
-      "district": {
-        "gold": 1
-      },
-      "river": {
-        "gold": 2
-      }
+      "river": { "gold": 2 },
+      "harbor": { "gold": 2 },
+      "district": { "gold": 0.5 },
+      "government_plaza": { "gold": 1 }
     }
   },
   "harbor": {
-    "cost": 60,
+    "cost": 54,
     "tech": "celestial_navigation",
     "water": true,
-    "yields": {
-      "gold": 2,
-      "food": 1
-    }
+    "placement": "coast",
+    "adjacency": {
+      "city_center": { "gold": 2 },
+      "coast_resource": { "gold": 1 },
+      "district": { "gold": 0.5 },
+      "government_plaza": { "gold": 1 }
+    },
+    "trade_route_capacity": 1
   },
   "encampment": {
-    "cost": 60,
+    "cost": 54,
     "tech": "bronze_working",
-    "yields": {
-      "production": 1
-    },
+    "placement": "not_adjacent_city",
     "defense": 10
   },
   "theater_square": {
-    "cost": 60,
+    "cost": 54,
     "civic": "drama_poetry",
-    "yields": {
-      "culture": 2
-    },
     "adjacency": {
-      "district": {
-        "culture": 0.5
-      }
+      "wonder": { "culture": 2 },
+      "entertainment_complex": { "culture": 2 },
+      "water_park": { "culture": 2 },
+      "district": { "culture": 0.5 },
+      "government_plaza": { "culture": 1 }
     }
   },
   "industrial_zone": {
-    "cost": 90,
+    "cost": 54,
     "tech": "apprenticeship",
-    "yields": {
-      "production": 2
-    },
     "adjacency": {
-      "district": {
-        "production": 0.5
-      }
+      "quarry": { "production": 1 },
+      "strategic_resource": { "production": 1 },
+      "mine": { "production": 0.5 },
+      "lumber_mill": { "production": 0.5 },
+      "district": { "production": 0.5 },
+      "aqueduct": { "production": 2 },
+      "canal": { "production": 2 },
+      "dam": { "production": 2 },
+      "government_plaza": { "production": 1 }
     }
   },
   "entertainment_complex": {
-    "cost": 90,
+    "cost": 54,
     "civic": "games_recreation",
-    "yields": {
-      "culture": 1
-    },
-    "amenity": 1
+    "amenity": 1,
+    "excludes": ["water_park"]
+  },
+  "water_park": {
+    "cost": 54,
+    "civic": "natural_history",
+    "water": true,
+    "placement": "water_park",
+    "amenity": 1,
+    "excludes": ["entertainment_complex"]
+  },
+  "aqueduct": {
+    "cost": 36,
+    "tech": "engineering",
+    "specialty": false,
+    "placement": "aqueduct",
+    "effects": {
+      "fresh_water_housing": 2,
+      "minimum_housing": 6
+    }
+  },
+  "neighborhood": {
+    "cost": 54,
+    "civic": "urbanization",
+    "specialty": false,
+    "max_per_city": null,
+    "effects": {
+      "minimum_housing": 2,
+      "maximum_housing": 6,
+      "housing_per_appeal": 1
+    }
+  },
+  "canal": {
+    "cost": 81,
+    "tech": "steam_power",
+    "specialty": false,
+    "max_per_city": null,
+    "placement": "canal",
+    "effects": { "naval_passage": 1 }
+  },
+  "dam": {
+    "cost": 81,
+    "tech": "buttress",
+    "specialty": false,
+    "placement": "dam",
+    "housing": 3,
+    "amenity": 1,
+    "effects": {
+      "flood_damage_reduction_pct": 100,
+      "fertility_loss_reduction_pct": 50
+    }
+  },
+  "aerodrome": {
+    "cost": 54,
+    "tech": "flight",
+    "placement": "flat_land",
+    "air_slots": 2
   },
   "spaceport": {
     "cost": 1800,
     "tech": "rocketry",
     "specialty": false,
-    "yields": {}
+    "placement": "flat_land"
+  },
+  "government_plaza": {
+    "cost": 30,
+    "civic": "state_workforce",
+    "specialty": false,
+    "max_per_empire": 1,
+    "loyalty": 8,
+    "effects": {
+      "governor_titles": 1,
+      "adjacent_district_bonus": 1
+    }
+  },
+  "diplomatic_quarter": {
+    "cost": 30,
+    "civic": "diplomatic_service",
+    "specialty": false,
+    "max_per_empire": 1,
+    "effects": {
+      "spy_level_reduction": 2,
+      "envoy_if_adjacent_city_center": 1
+    }
+  },
+  "preserve": {
+    "cost": 54,
+    "civic": "mysticism",
+    "placement": "not_adjacent_city",
+    "housing": 1,
+    "appeal": 1,
+    "effects": { "culture_bomb_adjacent_unowned": 1 }
+  },
+  "observatory": {
+    "cost": 27,
+    "tech": "writing",
+    "unique_to": "Maya",
+    "replaces": "campus",
+    "adjacency": {
+      "plantation": { "science": 2 },
+      "farm": { "science": 0.5 },
+      "district": { "science": 0.5 },
+      "government_plaza": { "science": 1 }
+    }
+  },
+  "seowon": {
+    "cost": 27,
+    "tech": "writing",
+    "unique_to": "Korea",
+    "replaces": "campus",
+    "placement": "hills",
+    "yields": { "science": 4 },
+    "adjacency": { "district": { "science": -1 } }
+  },
+  "acropolis": {
+    "cost": 27,
+    "civic": "drama_poetry",
+    "unique_to": "Greece",
+    "replaces": "theater_square",
+    "placement": "hills_adjacent_city",
+    "adjacency": {
+      "wonder": { "culture": 2 },
+      "entertainment_complex": { "culture": 2 },
+      "water_park": { "culture": 2 },
+      "district": { "culture": 1 },
+      "city_center": { "culture": 1 },
+      "government_plaza": { "culture": 1 }
+    },
+    "effects": { "envoy_on_completion": 1 }
+  },
+  "lavra": {
+    "cost": 27,
+    "tech": "astrology",
+    "unique_to": "Russia",
+    "replaces": "holy_site",
+    "adjacency": {
+      "natural_wonder": { "faith": 2 },
+      "mountain": { "faith": 1 },
+      "forest": { "faith": 0.5 },
+      "district": { "faith": 0.5 },
+      "government_plaza": { "faith": 1 }
+    },
+    "effects": {
+      "great_writer_points": 1,
+      "great_artist_points": 1,
+      "great_musician_points": 1,
+      "border_tiles_on_great_person": 1
+    }
+  },
+  "ikanda": {
+    "cost": 27,
+    "tech": "bronze_working",
+    "unique_to": "Zulu",
+    "replaces": "encampment",
+    "placement": "not_adjacent_city",
+    "defense": 10,
+    "housing": 1,
+    "effects": {
+      "corps_army_production_pct": 25,
+      "early_corps_armies": 1
+    }
+  },
+  "thanh": {
+    "cost": 27,
+    "tech": "bronze_working",
+    "unique_to": "Vietnam",
+    "replaces": "encampment",
+    "placement": "vietnam_feature",
+    "specialty": false,
+    "defense": 10,
+    "adjacency": { "district": { "culture": 2 } },
+    "effects": { "culture_as_tourism_after_flight": 1 }
+  },
+  "suguba": {
+    "cost": 27,
+    "tech": "currency",
+    "unique_to": "Mali",
+    "replaces": "commercial_hub",
+    "adjacency": {
+      "river": { "gold": 2 },
+      "holy_site": { "gold": 2 },
+      "district": { "gold": 0.5 },
+      "government_plaza": { "gold": 1 }
+    },
+    "effects": {
+      "gold_purchase_discount_pct": 20,
+      "faith_purchase_discount_pct": 20
+    }
+  },
+  "cothon": {
+    "cost": 27,
+    "tech": "celestial_navigation",
+    "unique_to": "Phoenicia",
+    "replaces": "harbor",
+    "water": true,
+    "placement": "coast",
+    "adjacency": {
+      "city_center": { "gold": 2 },
+      "coast_resource": { "gold": 1 },
+      "district": { "gold": 0.5 },
+      "government_plaza": { "gold": 1 }
+    },
+    "trade_route_capacity": 1,
+    "effects": {
+      "naval_unit_production_pct": 50,
+      "settler_production_pct": 50,
+      "naval_healing_per_turn": 100
+    }
+  },
+  "royal_navy_dockyard": {
+    "cost": 27,
+    "tech": "celestial_navigation",
+    "unique_to": "England",
+    "replaces": "harbor",
+    "water": true,
+    "placement": "coast",
+    "adjacency": {
+      "city_center": { "gold": 2 },
+      "coast_resource": { "gold": 1 },
+      "district": { "gold": 0.5 },
+      "government_plaza": { "gold": 1 }
+    },
+    "trade_route_capacity": 1,
+    "effects": {
+      "foreign_continent_gold": 2,
+      "movement_for_units_built_here": 1,
+      "free_naval_unit": 1,
+      "strategic_resource_stockpile": 10
+    }
+  },
+  "hansa": {
+    "cost": 27,
+    "tech": "apprenticeship",
+    "unique_to": "Germany",
+    "replaces": "industrial_zone",
+    "adjacency": {
+      "commercial_hub": { "production": 2 },
+      "resource": { "production": 1 },
+      "district": { "production": 0.5 },
+      "aqueduct": { "production": 2 },
+      "canal": { "production": 2 },
+      "dam": { "production": 2 },
+      "government_plaza": { "production": 1 }
+    }
+  },
+  "oppidum": {
+    "cost": 27,
+    "tech": "iron_working",
+    "unique_to": "Gaul",
+    "replaces": "industrial_zone",
+    "defense": 10,
+    "adjacency": {
+      "quarry": { "production": 2 },
+      "strategic_resource": { "production": 2 },
+      "mine": { "production": 0.5 },
+      "government_plaza": { "production": 1 }
+    },
+    "effects": {
+      "ranged_strike": 1,
+      "apprenticeship_eureka": 1
+    }
+  },
+  "street_carnival": {
+    "cost": 27,
+    "civic": "games_recreation",
+    "unique_to": "Brazil",
+    "replaces": "entertainment_complex",
+    "amenity": 2,
+    "excludes": ["water_park"],
+    "effects": { "carnival_project": 1 }
+  },
+  "hippodrome": {
+    "cost": 27,
+    "civic": "games_recreation",
+    "unique_to": "Byzantium",
+    "replaces": "entertainment_complex",
+    "amenity": 3,
+    "excludes": ["water_park"],
+    "effects": { "free_heavy_cavalry_per_building": 1 }
+  },
+  "copacabana": {
+    "cost": 27,
+    "civic": "natural_history",
+    "unique_to": "Brazil",
+    "replaces": "water_park",
+    "water": true,
+    "placement": "water_park",
+    "amenity": 2,
+    "excludes": ["entertainment_complex"],
+    "effects": { "carnival_project": 1 }
+  },
+  "bath": {
+    "cost": 18,
+    "tech": "engineering",
+    "unique_to": "Rome",
+    "replaces": "aqueduct",
+    "specialty": false,
+    "placement": "aqueduct",
+    "housing": 2,
+    "amenity": 1,
+    "effects": {
+      "fresh_water_housing": 2,
+      "minimum_housing": 6
+    }
+  },
+  "mbanza": {
+    "cost": 27,
+    "civic": "guilds",
+    "unique_to": "Kongo",
+    "replaces": "neighborhood",
+    "specialty": false,
+    "max_per_city": null,
+    "placement": "forest",
+    "yields": { "food": 2, "gold": 4 },
+    "housing": 5
   }
 }

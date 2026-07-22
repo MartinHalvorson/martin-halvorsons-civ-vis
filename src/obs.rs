@@ -24,7 +24,7 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
     } else {
         for uid in g.player_unit_ids(pid) {
             let u = &g.units[&uid];
-            let sight = g.rules.units[u.kind.as_str()].sight;
+            let sight = g.unit_sight(uid);
             vis.extend(g.wdisk(u.pos, sight));
         }
         for cid in g.player_city_ids(pid) {
@@ -34,26 +34,38 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
         }
     }
     let explored: &BTreeSet<Pos> = if omniscient { &vis } else { &p.explored };
-    let tiles: Vec<Value> = explored.iter().filter_map(|pos| {
-        let t = g.map.get(*pos)?;
-        let owner = t.owner_city
-            .and_then(|oc| g.cities.get(&oc))
-            .map(|c| c.owner);
-        Some(json!({
-            "pos": [pos.0, pos.1], "terrain": t.terrain, "feature": t.feature,
-            "hills": t.hills, "resource": t.resource,
-            "improvement": t.improvement, "district": t.district,
-            "owner": owner, "river": t.river, "road": t.road,
-            "continent": t.continent,
-        }))
-    }).collect();
-    let units: Vec<Value> = g.units.values()
-        .filter(|u| u.owner == pid || vis.contains(&u.pos))
+    let tiles: Vec<Value> = explored
+        .iter()
+        .filter_map(|pos| {
+            let t = g.map.get(*pos)?;
+            let owner = t
+                .owner_city
+                .and_then(|oc| g.cities.get(&oc))
+                .map(|c| c.owner);
+            Some(json!({
+                "pos": [pos.0, pos.1], "terrain": t.terrain, "feature": t.feature,
+                "hills": t.hills, "resource": t.resource,
+                "improvement": t.improvement, "district": t.district,
+                "owner": owner, "river": t.has_river(),
+                "river_edges": t.river_edges, "road": t.road,
+                "continent": t.continent,
+            }))
+        })
+        .collect();
+    let units: Vec<Value> = g
+        .units
+        .values()
+        .filter(|u| {
+            (u.owner == pid || vis.contains(&u.pos)) && (omniscient || g.unit_visible_to(u.id, pid))
+        })
         .map(|u| {
             let mut v = serde_json::to_value(u).unwrap();
             if u.owner == pid {
-                v["reachable"] = json!(g.reachable(u.id).iter()
-                    .map(|p| json!([p.0, p.1])).collect::<Vec<_>>());
+                v["reachable"] = json!(g
+                    .reachable(u.id)
+                    .iter()
+                    .map(|p| json!([p.0, p.1]))
+                    .collect::<Vec<_>>());
             }
             v
         })
@@ -69,6 +81,9 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             "pos": [c.pos.0, c.pos.1], "pop": c.pop, "hp": c.hp,
             "is_capital": c.is_capital,
             "wall_hp": c.wall_hp, "wall_max": g.city_max_wall_hp(c),
+            "encampment_hp": c.encampment_hp,
+            "encampment_wall_hp": c.encampment_wall_hp,
+            "encampment_pillaged": c.encampment_pillaged,
             "religion": g.city_religion(c),
         });
         if c.owner == pid {
@@ -90,7 +105,7 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
                 "housing": g.city_housing(c),
                 "amenity_surplus": g.city_amenity_surplus(c),
                 "growth_need": growth_threshold(c.pop),
-                "queue_cost": c.queue.first().map(|it| g.item_cost(it)),
+                "queue_cost": c.queue.first().map(|it| g.item_cost_for(c.owner, it)),
                 "can_strike": g.city_can_strike(c),
                 "loyalty": round1(c.loyalty),
                 "governor": g.players[c.owner].governors.contains(&c.id),

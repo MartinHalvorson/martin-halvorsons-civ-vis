@@ -5,6 +5,7 @@
   "tundra": {"yields": {"food": 1}},
   "snow": {"yields": {}},
   "coast": {"yields": {"food": 1, "gold": 1}, "water": true},
+  "lake": {"yields": {"food": 1, "gold": 1}, "water": true},
   "ocean": {"yields": {"food": 1}, "water": true},
   "mountain": {"yields": {}, "passable": false}
 }

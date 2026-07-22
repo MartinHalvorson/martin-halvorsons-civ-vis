@@ -16,6 +16,7 @@
   "walls": {
     "cost": 80,
     "tech": "masonry",
+    "outer_defense": 100,
     "yields": {}
   },
   "shrine": {
@@ -24,6 +25,15 @@
     "district": "holy_site",
     "yields": {
       "faith": 2
+    }
+  },
+  "temple": {
+    "cost": 120,
+    "civic": "theology",
+    "district": "holy_site",
+    "requires": ["shrine"],
+    "yields": {
+      "faith": 4
     }
   },
   "library": {
@@ -96,6 +106,7 @@
     "cost": 195,
     "tech": "military_tactics",
     "district": "encampment",
+    "requires": ["barracks"],
     "yields": {
       "production": 2
     }
@@ -103,12 +114,14 @@
   "medieval_walls": {
     "cost": 220,
     "tech": "castles",
+    "outer_defense": 100,
     "yields": {}
   },
   "bank": {
     "cost": 220,
     "tech": "banking",
     "district": "commercial_hub",
+    "requires": ["market"],
     "yields": {
       "gold": 4
     }
@@ -117,6 +130,7 @@
     "cost": 250,
     "tech": "education",
     "district": "campus",
+    "requires": ["library"],
     "yields": {
       "science": 4
     },

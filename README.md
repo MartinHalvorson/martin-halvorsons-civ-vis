@@ -18,12 +18,15 @@ Firaxis or 2K; no assets, art, text, or code from Civilization VI are used.
   wonders, continents, and religion caps)
 - Cities: Civ 6 growth curve, border expansion, **housing & amenities**
 - **Districts with adjacency bonuses**, buildings, improvements, builder charges
-- Tech tree **and civics tree** (28 early-game techs plus 5 space-race techs,
-  and 14 civics)
+- Complete Gathering Storm-style **technology and civics trees** (77
+  technologies and 61 civics spanning Ancient through Future)
   with **Eureka/Inspiration boosts** (data-driven triggers)
 - Units with **XP/levels and fortify**, per-unit sight; melee/ranged/bombard
   combat and **zone of control** with Civ 6 math; city sieges, capture, and
-  **city ranged strikes**
+  **city and Encampment ranged strikes**
+- Data-driven **class promotion trees**, **Corps/Armies**, and linked escorts
+- **Theological combat** with Missionaries, Apostles, Gurus, Inquisitors,
+  religious pressure, healing, inquisition, heresy removal, and condemnation
 - **Barbarians** (camps, era-scaled raiders), **city-states**, **governments**
 - War/peace; all six Civ VI victory paths: **domination, science, culture,
   religious, diplomatic, and score**
@@ -62,7 +65,16 @@ observations under `citizens` and shown in the city panel.
 ./target/release/civvis benchmark --games 100            # turns/sec
 ./target/release/civvis tournament --ais advanced,basic --games 40 # Elo ratings
 cargo run --release --bin ai_eval -- advanced basic --pairs 100   # paired seats
+./target/release/civvis evolve --generations 100 --pop 24 --games 12 \
+  --threads 8 --dir evolved                              # evolve full strategy + doctrine
 ```
+
+`AdvancedAi` coordinates nearby units into domain-specific armies and fleets
+with shared muster, advance, focus-fire, hold, and recovery orders that replan
+between battlefield actions. The genetic runner evolves those group-combat
+doctrine parameters together with expansion, production, diplomacy, and
+tactical exchange weights; archived champions and a fixed-seed validation gate
+keep the `evolved` agent from promoting narrow or regressive strategies.
 
 In-process Rust agents implement one trait:
 

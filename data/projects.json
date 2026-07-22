@@ -3,6 +3,11 @@
     "cost": 1,
     "repeatable": true
   },
+  "repair_encampment": {
+    "cost": 60,
+    "district": "encampment",
+    "repeatable": true
+  },
   "launch_earth_satellite": {
     "cost": 900,
     "tech": "rocketry",

@@ -136,6 +136,127 @@
     "promotion_class": "naval_melee",
     "zone_of_control": true
   },
+  "quadrireme": {
+    "class": "military",
+    "cost": 120,
+    "moves": 3,
+    "strength": 20,
+    "ranged_strength": 25,
+    "range": 1,
+    "domain": "sea",
+    "tech": "shipbuilding",
+    "promotion_class": "naval_ranged"
+  },
+  "caravel": {
+    "class": "military",
+    "cost": 240,
+    "moves": 4,
+    "strength": 55,
+    "sight": 3,
+    "domain": "sea",
+    "tech": "cartography",
+    "promotion_class": "naval_melee",
+    "zone_of_control": true
+  },
+  "frigate": {
+    "class": "military",
+    "cost": 280,
+    "moves": 4,
+    "strength": 45,
+    "ranged_strength": 55,
+    "range": 2,
+    "domain": "sea",
+    "tech": "square_rigging",
+    "promotion_class": "naval_ranged"
+  },
+  "privateer": {
+    "class": "military",
+    "cost": 280,
+    "moves": 4,
+    "strength": 40,
+    "ranged_strength": 50,
+    "range": 2,
+    "domain": "sea",
+    "civic": "mercantilism",
+    "promotion_class": "naval_raider"
+  },
+  "ironclad": {
+    "class": "military",
+    "cost": 380,
+    "moves": 5,
+    "strength": 70,
+    "sight": 3,
+    "domain": "sea",
+    "tech": "steam_power",
+    "promotion_class": "naval_melee",
+    "zone_of_control": true
+  },
+  "battleship": {
+    "class": "military",
+    "cost": 430,
+    "moves": 5,
+    "strength": 60,
+    "ranged_strength": 70,
+    "range": 3,
+    "domain": "sea",
+    "tech": "refining",
+    "promotion_class": "naval_ranged"
+  },
+  "submarine": {
+    "class": "military",
+    "cost": 480,
+    "moves": 3,
+    "strength": 65,
+    "ranged_strength": 75,
+    "range": 2,
+    "domain": "sea",
+    "tech": "electricity",
+    "promotion_class": "naval_raider"
+  },
+  "destroyer": {
+    "class": "military",
+    "cost": 540,
+    "moves": 4,
+    "strength": 85,
+    "sight": 3,
+    "domain": "sea",
+    "tech": "combined_arms",
+    "promotion_class": "naval_melee",
+    "zone_of_control": true
+  },
+  "aircraft_carrier": {
+    "class": "military",
+    "cost": 540,
+    "moves": 3,
+    "strength": 65,
+    "domain": "sea",
+    "tech": "combined_arms",
+    "promotion_class": "naval_carrier",
+    "zone_of_control": true
+  },
+  "missile_cruiser": {
+    "class": "military",
+    "cost": 680,
+    "moves": 5,
+    "strength": 75,
+    "ranged_strength": 90,
+    "range": 3,
+    "sight": 3,
+    "domain": "sea",
+    "tech": "lasers",
+    "promotion_class": "naval_ranged"
+  },
+  "nuclear_submarine": {
+    "class": "military",
+    "cost": 680,
+    "moves": 4,
+    "strength": 80,
+    "ranged_strength": 85,
+    "range": 2,
+    "domain": "sea",
+    "tech": "telecommunications",
+    "promotion_class": "naval_raider"
+  },
   "trader": {
     "class": "civilian",
     "cost": 40,
@@ -148,7 +269,39 @@
     "cost": 100,
     "moves": 4,
     "tech": "astrology",
-    "charges": 3
+    "charges": 3,
+    "religious_strength": 100,
+    "religious_spread": 200,
+    "requires_building": "shrine"
+  },
+  "apostle": {
+    "class": "religious",
+    "cost": 200,
+    "moves": 4,
+    "civic": "theology",
+    "charges": 3,
+    "religious_strength": 110,
+    "religious_spread": 220,
+    "requires_building": "temple"
+  },
+  "guru": {
+    "class": "religious",
+    "cost": 120,
+    "moves": 4,
+    "civic": "theology",
+    "charges": 3,
+    "religious_strength": 90,
+    "requires_building": "temple"
+  },
+  "inquisitor": {
+    "class": "religious",
+    "cost": 75,
+    "moves": 4,
+    "civic": "theology",
+    "charges": 3,
+    "religious_strength": 75,
+    "religious_spread": 0,
+    "requires_building": "temple"
   },
   "battering_ram": {
     "class": "support",

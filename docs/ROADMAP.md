@@ -6,7 +6,9 @@ Python reference implementation removed (2026-07-21); the Rust crate is now
 the single engine at full v0.5 rules parity, moved to the repo root, with the
 GUI server, observation builder, and Elo harness all in Rust (serde-only
 deps). External agents use the HTTP JSON protocol; in-process agents use the
-`Ai` trait.
+`Ai` trait. This release also adds class-specific promotion trees, Corps/
+Armies and linked escorts, theological combat and its religious-unit roster,
+and independent Encampment defenses and ranged strikes.
 
 ## v0.1 (shipped)
 
@@ -43,9 +45,10 @@ batch-port these systems next.
 
 ## Later rules depth
 
-- Class-specific promotion trees and promotion effects
-- Independent Encampment health, defenses, and ranged strikes
-- Corps, armies, and linked unit formations
+- Pillaging/coastal raids, terrain cliffs, and aircraft transport/combat
+  (including their promotion modifiers)
+- Religious beliefs and Apostle promotions beyond the current combat roster
+- Deeper diplomacy (deals, denouncements, negotiated peace)
 
 ## v0.3 — systems breadth
 

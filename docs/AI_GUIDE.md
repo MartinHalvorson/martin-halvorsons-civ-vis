@@ -32,6 +32,60 @@ remains the frozen deterministic control and the lightweight agent for
 city-states/barbarians. Both read full state (cheat on fog); fair-play agents
 should restrict themselves to `civvis::obs::observation(&game, pid)`.
 
+## Coordinated forces
+
+During a war, `AdvancedAi` partitions military and support units by movement
+domain and command distance. Each resulting `ForceGroup` is an inspectable army
+or fleet order with a common anchor, campaign objective, focus-fire target,
+readiness, local strength ratio, and one of five postures: muster, advance,
+engage, hold, or recover. Movement then scores the order as a whole: melee
+screens ranged and siege units, roles keep useful engagement depth, weak local
+odds discourage unsupported advances, and stragglers rejoin their group.
+Orders are recomputed before every combat-unit step, so a kill, retreat, newly
+opened line, or local-power swing immediately changes the remaining force's
+focus and movement instead of waiting for the next turn.
+Positional ties favor taking at least one useful step each turn; remaining in
+place is reserved for recovery, attacks, explicit defensive/muster positions,
+or cases where every legal move is materially worse. At peace, troops that
+have finished exploring rotate among persistent frontier patrol posts instead
+of accumulating indefinitely at the capital.
+
+```rust
+for force in ai.force_groups() {
+    println!("{:?} {:?}: {:?}", force.domain, force.posture, force.units);
+}
+```
+
+The planner is domain-generic: fleets intercept hostile naval units and choose
+reachable coastal approaches to land objectives. New domains can use the same
+group/order pipeline instead of adding another independent-unit AI.
+
+## Genetic strategy evolution
+
+`Weights` is a complete genome for the advanced agent. Alongside economy,
+diplomacy, production, and exchange evaluation, it includes command radius,
+muster radius/readiness, cohesion, focus fire, screening, role spacing,
+objective pressure, local-superiority caution, and withdraw/rejoin thresholds.
+
+```bash
+cargo run --release -- evolve --generations 100 --pop 24 --games 12 \
+  --players 4 --threads 8 --dir evolved
+civvis tournament --ais evolved,advanced,advanced_v1,basic --games 80
+```
+
+Every genome plays the real `AdvancedAi` against the reigning champion on
+shared map seeds and rotating seats. Multiplayer training tables also draw from
+`archive.json`, a hall of fame of prior champions, to reduce cyclic strategies
+and catastrophic forgetting. Fitness combines final score share with a smaller
+kill/capture signal so battlefield doctrine can learn before it decides a whole
+game. Elites survive; fitter genomes are crossed and mutated within per-gene
+bounds. A candidate only replaces `best.json` after a sequential match confirms
+a higher win rate and it does not regress on a generation-independent,
+fixed-seed holdout benchmark. `population.json` resumes the run, `history.csv`
+records training and holdout progress, and `dataset.csv` feeds value training.
+Old checkpoints load with defaults for newly introduced genes and validation
+metadata.
+
 ## Elo tournaments
 
 ```bash

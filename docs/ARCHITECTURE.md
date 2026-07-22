@@ -65,6 +65,25 @@ captured by melee. Ordinary ranged attacks floor city HP at 1; Bombard attacks
 may deplete it to 0 but cannot capture it. Melee capture converts the city (pop
 -1, walls razed), destroys the garrison, and captures eligible civilians.
 
+### Combat AI hierarchy
+
+`AdvancedAi` translates its empire-level campaign target into `ForceGroup`
+orders before moving any combat unit. Nearby units are clustered separately by
+domain, so an army and a fleet can support the same campaign through reachable
+objectives. Each group publishes an anchor, readiness, local strength ratio,
+posture, and shared focus target. Unit execution consumes that order with
+role-aware formation scoring rather than independently chasing the nearest
+enemy. The order graph is refreshed between unit actions, allowing the force
+to retarget and change posture as casualties and positions change.
+
+The parameters controlling clustering, muster thresholds, cohesion, screening,
+engagement depth, focus fire, caution, and recovery are part of the serialized
+`Weights` genome. `evolve` evaluates full `AdvancedAi` self-play, retains elites,
+crosses and mutates fitter parents, checkpoints every generation, and promotes
+a champion only after a sequential win-rate test plus a fixed-seed holdout
+non-regression gate. Prior champions remain in an opponent archive so training
+continues to test old strategies rather than forgetting them.
+
 ## Determinism & serialization
 
 One serialized `Rng` drives map generation and combat; scripted AIs use their
@@ -73,7 +92,9 @@ saves round-trip the complete state including RNG.
 
 ## Fidelity notes
 
-The combat curve, ZOC, embarkation, XP/levels, fortification, and early-game
-siege support follow Civ VI rules. Class-specific promotion choices/effects,
-linked formations/corps/armies, and independent Encampment combat remain
-unmodeled. See ROADMAP.md.
+The combat curve, ZOC, embarkation, XP/promotions, fortification, siege
+support, linked formations, Corps/Armies, theological combat, and independent
+Encampment defenses use the same deterministic action/state model as ordinary
+unit combat. Promotion nodes are rules data in `data/promotions.json`; only
+effects whose underlying systems are absent (currently cliffs, pillaging/
+coastal raids, and aircraft transport/combat) remain dormant. See ROADMAP.md.
