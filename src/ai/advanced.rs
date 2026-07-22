@@ -2375,38 +2375,65 @@ impl AdvancedAi {
         }
     }
 
-    fn religious_spending(&self, g: &mut Game, pid: usize) {
-        if g.players[pid].religion.is_none() {
+    fn religious_spending(&self, g: &mut Game, pid: usize, emergency: bool) {
+        let Some(religion) = g.players[pid].religion.clone() else {
             return;
-        }
+        };
         let count = |kind: &str| {
             g.units
                 .values()
                 .filter(|unit| unit.owner == pid && unit.kind == kind)
                 .count()
         };
-        let priorities = if count("apostle") < 2 {
-            ["apostle", "missionary", "guru"]
+        let core_lost = g
+            .player_city_ids(pid)
+            .iter()
+            .any(|city| g.city_religion(&g.cities[city]) != Some(religion.as_str()));
+        let inquisition = g.players[pid]
+            .counters
+            .get("inquisition")
+            .copied()
+            .unwrap_or(0)
+            > 0;
+        let priorities: &[&str] = if emergency && core_lost && inquisition {
+            &["inquisitor", "missionary", "apostle", "guru"]
+        } else if emergency && core_lost {
+            // An Apostle can launch the inquisition; if it is unaffordable,
+            // immediately fall through to the cheaper reconversion unit.
+            &["apostle", "missionary", "guru", "inquisitor"]
+        } else if emergency {
+            &["missionary", "apostle", "guru", "inquisitor"]
+        } else if count("apostle") < 2 {
+            &["apostle", "missionary", "guru"]
         } else if count("guru") < 1 {
-            ["guru", "apostle", "missionary"]
+            &["guru", "apostle", "missionary"]
         } else {
-            ["missionary", "apostle", "guru"]
+            &["missionary", "apostle", "guru"]
         };
         for unit in priorities {
-            let Some(spec) = g.rules.units.get(unit) else {
+            if *unit == "inquisitor" && !inquisition {
+                continue;
+            }
+            let Some(spec) = g.rules.units.get(*unit) else {
                 continue;
             };
             let price = spec.cost * 2.0;
-            if g.players[pid].faith < price + 80.0 {
+            if !emergency && g.players[pid].faith < price + 80.0 {
                 continue;
             }
             let cities = g.player_city_ids(pid);
             for cid in cities {
+                // Religious units inherit the purchase city's majority.  A
+                // converted Holy Site must never make the defender spend its
+                // Faith strengthening the runaway rival religion.
+                if g.city_religion(&g.cities[&cid]) != Some(religion.as_str()) {
+                    continue;
+                }
                 if g.apply(
                     pid,
                     &Action::Buy {
                         city: cid,
-                        unit: unit.to_string(),
+                        unit: (*unit).to_string(),
                         currency: "faith".to_string(),
                     },
                 )
@@ -3573,6 +3600,38 @@ impl AdvancedAi {
             .or_else(|| g.players[pid].religion.clone());
         let legal = g.legal_actions(pid);
 
+        // A lost core city is more urgent than another enhancer or worship
+        // belief. Preserve this Apostle until it reaches the Holy City, then
+        // launch the inquisition before the rival can close out the match.
+        let needs_inquisition = unit.kind == "apostle"
+            && unit.religion == g.players[pid].religion
+            && g.players[pid]
+                .counters
+                .get("inquisition")
+                .copied()
+                .unwrap_or(0)
+                == 0
+            && religion.as_ref().is_some_and(|faith| {
+                g.player_city_ids(pid)
+                    .iter()
+                    .any(|city| g.city_religion(&g.cities[city]) != Some(faith.as_str()))
+            });
+        if needs_inquisition {
+            if let Some(action) = legal
+                .iter()
+                .find(|action| matches!(action, Action::LaunchInquisition { unit } if *unit == uid))
+                .cloned()
+            {
+                return g.apply(pid, &action).is_ok();
+            }
+            if let Some(target) = g.players[pid]
+                .holy_city
+                .and_then(|city| g.cities.get(&city).map(|city| city.pos))
+            {
+                return self.base.step_toward(g, pid, uid, target);
+            }
+        }
+
         if unit.kind == "apostle" && g.players[pid].religion_beliefs.len() < 4 {
             let objective = self
                 .victory_target
@@ -3646,22 +3705,6 @@ impl AdvancedAi {
             .max_by_key(|(score, target, _)| (*score, std::cmp::Reverse(*target)));
         if let Some((score, _, action)) = theological {
             if unit.hp >= 55 || score >= 45 {
-                return g.apply(pid, &action).is_ok();
-            }
-        }
-
-        if unit.kind == "apostle"
-            && religion.as_ref().is_some_and(|faith| {
-                g.player_city_ids(pid)
-                    .iter()
-                    .any(|cid| g.city_religion(&g.cities[cid]) != Some(faith.as_str()))
-            })
-        {
-            if let Some(action) = legal
-                .iter()
-                .find(|action| matches!(action, Action::LaunchInquisition { unit } if *unit == uid))
-                .cloned()
-            {
                 return g.apply(pid, &action).is_ok();
             }
         }
@@ -5059,7 +5102,10 @@ impl Ai for AdvancedAi {
             // policy in paired evaluation.
             if self.victory_planning && plan.strategy == GrandStrategy::Religion {
                 self.religious_production(g, pid);
-                self.religious_spending(g, pid);
+                let emergency = self
+                    .victory_denial(g, pid)
+                    .is_some_and(|(_, counter)| counter == GrandStrategy::Religion);
+                self.religious_spending(g, pid, emergency);
             }
             if self.victory_planning && plan.strategy == GrandStrategy::Science {
                 self.science_production(g, pid);
@@ -5104,6 +5150,55 @@ impl Ai for AdvancedAi {
 mod tests {
     use super::*;
     use crate::ai::run_game;
+
+    fn found_test_city(game: &mut Game, pid: usize) -> u32 {
+        let position = game
+            .map
+            .tiles
+            .values()
+            .filter(|tile| {
+                game.rules.is_passable(tile)
+                    && !game.rules.is_water(tile)
+                    && tile.district.is_none()
+                    && tile.wonder.is_none()
+                    && tile.owner_city.is_none()
+                    && game.city_at(tile.pos).is_none()
+                    && game.units_at(tile.pos).is_empty()
+                    && game
+                        .cities
+                        .values()
+                        .all(|city| game.wdist(city.pos, tile.pos) >= 4)
+            })
+            .map(|tile| tile.pos)
+            .next()
+            .expect("test map needs another legal city site");
+        let settler = game.spawn_test_unit("settler", pid, position);
+        game.current = pid;
+        game.apply(pid, &Action::FoundCity { unit: settler })
+            .unwrap();
+        game.city_at(position).unwrap()
+    }
+
+    fn install_test_holy_site(game: &mut Game, city: u32) {
+        let position = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| {
+                *position != game.cities[&city].pos
+                    && game.map.tiles[position].district.is_none()
+                    && game.map.tiles[position].wonder.is_none()
+            })
+            .expect("test city needs a Holy Site tile");
+        game.map.tiles.get_mut(&position).unwrap().district = Some("holy_site".to_string());
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert("holy_site".to_string(), position);
+        game.cities.get_mut(&city).unwrap().buildings =
+            vec!["shrine".to_string(), "temple".to_string()];
+    }
 
     fn island_colony_game() -> (Game, Pos, Pos) {
         let mut g = Game::new_full(1, 18, 10, 92, 120, 0, false);
@@ -5884,6 +5979,111 @@ mod tests {
             Some((3, GrandStrategy::Religion)),
             "a founder should defend its cities with its own religion"
         );
+    }
+
+    #[test]
+    fn religious_match_point_spends_the_reserve_only_in_own_faith_cities() {
+        let mut game = Game::new_full(4, 42, 24, 7_622, 300, 0, false);
+        for pid in 0..4 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.current = pid;
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        let converted_capital = game.player_city_ids(0)[0];
+        let faithful_city = found_test_city(&mut game, 0);
+        install_test_holy_site(&mut game, converted_capital);
+        install_test_holy_site(&mut game, faithful_city);
+        game.current = 0;
+        game.turn = 150;
+        game.players[0].religion = Some("Home Faith".to_string());
+        game.players[0].holy_city = Some(converted_capital);
+        game.players[0].techs.insert("astrology".to_string());
+        game.players[0].faith = 200.0;
+        game.players[3].religion = Some("Runaway Faith".to_string());
+        game.cities
+            .get_mut(&converted_capital)
+            .unwrap()
+            .pressure
+            .insert("Runaway Faith".to_string(), 1_000.0);
+        game.cities
+            .get_mut(&faithful_city)
+            .unwrap()
+            .pressure
+            .insert("Home Faith".to_string(), 1_000.0);
+        for owner in 1..4 {
+            let city = game.player_city_ids(owner)[0];
+            game.cities
+                .get_mut(&city)
+                .unwrap()
+                .pressure
+                .insert("Runaway Faith".to_string(), 1_000.0);
+        }
+
+        let ai = AdvancedAi::new();
+        let emergency = ai
+            .victory_denial(&game, 0)
+            .is_some_and(|(_, counter)| counter == GrandStrategy::Religion);
+        assert!(emergency);
+        ai.religious_spending(&mut game, 0, emergency);
+
+        let missionary = game
+            .units
+            .values()
+            .find(|unit| unit.owner == 0 && unit.kind == "missionary")
+            .expect("match-point defense should spend the ordinary Faith reserve");
+        assert_eq!(missionary.religion.as_deref(), Some("Home Faith"));
+        assert_eq!(missionary.pos, game.cities[&faithful_city].pos);
+        assert!(game.players[0].faith < 1.0);
+    }
+
+    #[test]
+    fn apostle_launches_inquisition_before_evangelizing_when_core_is_lost() {
+        let mut game = Game::new_full(2, 30, 18, 7_623, 200, 0, false);
+        for pid in 0..2 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.current = pid;
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        let holy_city = game.player_city_ids(0)[0];
+        let converted_city = found_test_city(&mut game, 0);
+        game.current = 0;
+        game.players[0].religion = Some("Home Faith".to_string());
+        game.players[0].holy_city = Some(holy_city);
+        game.players[0].religion_beliefs = vec!["work_ethic".to_string(), "tithe".to_string()];
+        game.cities
+            .get_mut(&holy_city)
+            .unwrap()
+            .pressure
+            .insert("Home Faith".to_string(), 1_000.0);
+        game.cities
+            .get_mut(&converted_city)
+            .unwrap()
+            .pressure
+            .insert("Rival Faith".to_string(), 1_000.0);
+        let apostle = game.spawn_test_unit("apostle", 0, game.cities[&holy_city].pos);
+        game.units.get_mut(&apostle).unwrap().religion = Some("Home Faith".to_string());
+
+        assert!(AdvancedAi::new().advanced_religious_step(&mut game, 0, apostle));
+        assert!(!game.units.contains_key(&apostle));
+        assert_eq!(
+            game.players[0]
+                .counters
+                .get("inquisition")
+                .copied()
+                .unwrap_or(0),
+            1
+        );
+        assert_eq!(game.players[0].religion_beliefs.len(), 2);
     }
 
     #[test]
