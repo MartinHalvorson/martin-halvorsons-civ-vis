@@ -45,7 +45,7 @@ impl NeuralAi {
     }
 
     fn consider_war(&mut self, g: &mut Game, pid: usize) {
-        if g.turn % self.every != 0 || g.player_city_ids(pid).len() < 2 {
+        if !g.turn.is_multiple_of(self.every) || g.player_city_ids(pid).len() < 2 {
             return;
         }
         let others: Vec<usize> = g

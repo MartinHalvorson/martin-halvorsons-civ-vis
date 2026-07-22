@@ -531,11 +531,9 @@ impl AdvancedAi {
             .values()
             .filter(|city| city.is_capital && city.original_owner != pid && city.owner == pid)
             .count();
-        let domination = if foreign_capitals == 0 {
-            0
-        } else {
-            (100 * controlled_capitals / foreign_capitals) as i32
-        };
+        let domination = (100 * controlled_capitals)
+            .checked_div(foreign_capitals)
+            .unwrap_or(0) as i32;
 
         let score = if g.max_turns > 0
             && g.turn.saturating_mul(4) >= g.max_turns.saturating_mul(3)
@@ -944,14 +942,18 @@ impl AdvancedAi {
     /// Replace generic early cards with the late-game cards that directly
     /// advance an explicitly selected victory. Typed cards preferentially
     /// replace cards of their own type so wildcard capacity remains useful.
-    fn strategic_policies(&self, g: &mut Game, pid: usize) {
-        let desired: &[&str] = match self.victory_target {
-            Some(VictoryTarget::Culture) => &[
+    fn strategic_policies(&self, g: &mut Game, pid: usize, strategy: GrandStrategy) {
+        let objective = self
+            .victory_target
+            .map(VictoryTarget::strategy)
+            .unwrap_or(strategy);
+        let desired: &[&str] = match objective {
+            GrandStrategy::Culture => &[
                 "heritage_tourism",
                 "satellite_broadcasts",
                 "online_communities",
             ],
-            Some(VictoryTarget::Science) => &["integrated_space_cell"],
+            GrandStrategy::Science => &["integrated_space_cell"],
             _ => return,
         };
         for card in desired {
@@ -1251,14 +1253,13 @@ impl AdvancedAi {
                     continue;
                 }
                 // In an explicit victory evaluation every major shares the
-                // same objective. Letting non-diplomatic targets repeatedly
-                // nominate themselves for scored Congress resolutions can
-                // end an otherwise healthy science or culture race with an
-                // accidental diplomatic victory. They may still vote on
-                // unscored resolutions such as International Aid.
+                // same objective. Civ VI awards a Diplomatic Victory Point for
+                // predicting any winning resolution, including International
+                // Aid, so repeated participation can end a healthy science or
+                // culture race with the wrong victory. Explicit non-diplomatic
+                // targets abstain; adaptive agents still participate normally.
                 if self.victory_target.is_some()
                     && self.victory_target != Some(VictoryTarget::Diplomacy)
-                    && matches!(resolution.id.as_str(), "world_leader" | "world_fair")
                 {
                     continue;
                 }
@@ -1282,7 +1283,10 @@ impl AdvancedAi {
                 }
             }
         }
-        self.base.bilateral_trade(g, pid);
+        let denied_partner = plan.target_player.filter(|target| {
+            g.is_at_war(pid, *target) || self.rival_victory_pressure(g, *target).progress >= 78
+        });
+        self.base.bilateral_trade_excluding(g, pid, denied_partner);
         let my_power = g.military_power(pid);
         let rivals: Vec<usize> = g
             .players
@@ -1351,7 +1355,13 @@ impl AdvancedAi {
         }
     }
 
-    fn advanced_envoys(&self, g: &mut Game, pid: usize, strategy: GrandStrategy) {
+    fn advanced_envoys(
+        &self,
+        g: &mut Game,
+        pid: usize,
+        strategy: GrandStrategy,
+        denied_rival: Option<usize>,
+    ) {
         while g.players[pid].envoys_free > 0 {
             let target = g
                 .players
@@ -1384,7 +1394,11 @@ impl AdvancedAi {
                         _ => 2,
                     };
                     let already_secure = g.suzerain_of(minor.id) == Some(pid) && mine > rival + 1;
-                    let score = alignment * 10 - needed * 7 - already_secure as i64 * 80;
+                    let denial = denied_rival
+                        .is_some_and(|leader| g.suzerain_of(minor.id) == Some(leader))
+                        as i64
+                        * 140;
+                    let score = alignment * 10 + denial - needed * 7 - already_secure as i64 * 80;
                     (
                         score,
                         std::cmp::Reverse(needed),
@@ -1724,7 +1738,7 @@ impl AdvancedAi {
         let city = &g.cities[&cid];
         let city_count = g.player_city_ids(pid).len();
         let production = g.city_yields(cid).production.max(1.0);
-        let turns = g.item_cost_for(pid, item) / production;
+        let turns = g.item_cost_for_city(pid, cid, item) / production;
         let remaining_turns = g.max_turns.saturating_sub(g.turn).max(1) as f64;
         let threatened = plan.threatened_city == Some(cid)
             || (city.last_attacked > 0 && g.turn.saturating_sub(city.last_attacked) <= 4);
@@ -2081,7 +2095,6 @@ impl AdvancedAi {
                 }
             }
             Item::Project { project } => {
-                let spec = &g.rules.projects[project];
                 let space_race = matches!(
                     project.as_str(),
                     "launch_earth_satellite"
@@ -2091,27 +2104,87 @@ impl AdvancedAi {
                         | "lagrange_laser_station"
                         | "terrestrial_laser_station"
                 );
-                if space_race
+                if (space_race
                     && self.victory_target.is_some()
-                    && self.victory_target != Some(VictoryTarget::Science)
+                    && self.victory_target != Some(VictoryTarget::Science))
+                    || turns > remaining_turns * 0.8
                 {
-                    -10_000.0
-                } else if turns > remaining_turns * 0.8 {
                     -10_000.0
                 } else {
                     let completed = g.players[pid].science_projects.len() as f64;
-                    1_500.0
-                        + completed * 220.0
-                        + if space_race { 1_800.0 } else { 0.0 }
-                        + if plan.strategy == GrandStrategy::Science {
-                            650.0
-                        } else {
-                            0.0
+                    match project.as_str() {
+                        "recommission_reactor" => {
+                            if city.reactor_age <= 12 {
+                                -10_000.0
+                            } else {
+                                // Maintenance becomes urgent as the reactor's
+                                // per-turn accident risk compounds. A fresh
+                                // plant must never monopolize production just
+                                // because this is a repeatable project.
+                                500.0 + (city.reactor_age - 10) as f64 * 75.0
+                            }
                         }
-                        + if spec.repeatable { 900.0 } else { 0.0 }
+                        "convert_reactor_to_coal"
+                        | "convert_reactor_to_oil"
+                        | "convert_reactor_to_uranium" => {
+                            let (resource, stock_value, clean_value) = match project.as_str() {
+                                "convert_reactor_to_coal" => ("coal", 18.0, -110.0),
+                                "convert_reactor_to_oil" => ("oil", 20.0, -55.0),
+                                _ => ("uranium", 55.0, 130.0),
+                            };
+                            450.0
+                                + g.strategic_stockpile(pid, resource).min(50.0) * stock_value
+                                + g.climate_phase as f64 * clean_value
+                        }
+                        "carbon_recapture" => {
+                            if g.global_co2_emissions() <= f64::EPSILON
+                                && plan.strategy != GrandStrategy::Diplomacy
+                            {
+                                -10_000.0
+                            } else {
+                                450.0
+                                    + g.climate_phase as f64 * 260.0
+                                    + (g.players[pid].co2_emissions.max(0.0) / 500.0).min(800.0)
+                                    + if plan.strategy == GrandStrategy::Diplomacy {
+                                        900.0
+                                    } else {
+                                        0.0
+                                    }
+                            }
+                        }
+                        "manhattan_project" | "operation_ivy" => {
+                            if plan.strategy == GrandStrategy::Conquest {
+                                2_200.0
+                            } else {
+                                350.0
+                            }
+                        }
+                        "build_nuclear_device" | "build_thermonuclear_device" => {
+                            if plan.strategy == GrandStrategy::Conquest {
+                                2_600.0
+                            } else if plan.target_player.is_some() {
+                                850.0
+                            } else {
+                                250.0
+                            }
+                        }
+                        _ if space_race => {
+                            3_300.0
+                                + completed * 220.0
+                                + if plan.strategy == GrandStrategy::Science {
+                                    650.0
+                                } else {
+                                    0.0
+                                }
+                        }
+                        _ => 700.0,
+                    }
                 }
             }
         };
+        if raw <= -9_999.0 {
+            return raw;
+        }
         if turns > remaining_turns + 1.0 {
             return -1_500.0;
         }
@@ -2478,7 +2551,12 @@ impl AdvancedAi {
                     .fold(0.0_f64, f64::max);
                 let swing = (rival_pressure - own_pressure).clamp(0.0, 500.0) as i32;
                 let foreign = (city.owner != pid) as i32;
-                let score = foreign * 90 + city.pop * 12 + city.is_capital as i32 * 18 + swing / 10
+                let defensive_conversion = (city.owner == pid) as i32 * 170;
+                let score = defensive_conversion
+                    + foreign * 90
+                    + city.pop * 12
+                    + city.is_capital as i32 * 18
+                    + swing / 10
                     - g.wdist(current, city.pos) * 4;
                 (score, std::cmp::Reverse(city.id))
             })
@@ -3912,13 +3990,16 @@ impl Ai for AdvancedAi {
         let plan = self.plan.clone().unwrap();
         self.advanced_research(g, pid, &plan);
         if self.victory_planning {
-            self.advanced_envoys(g, pid, plan.strategy);
+            let denied_rival = plan
+                .target_player
+                .filter(|target| self.rival_victory_pressure(g, *target).progress >= 78);
+            self.advanced_envoys(g, pid, plan.strategy, denied_rival);
             self.advanced_secret_society(g, pid, plan.strategy);
         }
         // Keep the mature ancillary systems: governments, policies, beliefs,
         // governors, religions, and envoys. Research is already selected.
         self.base.research(g, pid);
-        self.strategic_policies(g, pid);
+        self.strategic_policies(g, pid, plan.strategy);
         self.advanced_diplomacy(g, pid, &plan);
 
         // Preserve the proven four-build opening before switching every city
@@ -4161,7 +4242,7 @@ mod tests {
         );
         let science_resolutions = &science_game.congress.as_ref().unwrap().resolutions;
         assert!(!science_resolutions[0].ballots.contains_key(&0));
-        assert!(science_resolutions[1].ballots.contains_key(&0));
+        assert!(!science_resolutions[1].ballots.contains_key(&0));
 
         let mut diplomacy_game = Game::new(2, 24, 16, 78, 80, 0);
         diplomacy_game.congress = Some(session());
@@ -4274,6 +4355,48 @@ mod tests {
     }
 
     #[test]
+    fn religious_strategy_reconverts_its_core_before_chasing_foreign_cities() {
+        let mut game = Game::new_full(2, 30, 18, 763, 200, 0, false);
+        for pid in 0..2 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.current = pid;
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        game.current = 0;
+        game.players[0].religion = Some("Our Faith".to_string());
+        let home = game.player_city_ids(0)[0];
+        let foreign = game.player_city_ids(1)[0];
+        game.cities
+            .get_mut(&home)
+            .unwrap()
+            .pressure
+            .insert("Rival Faith".to_string(), 1_000.0);
+        game.cities
+            .get_mut(&foreign)
+            .unwrap()
+            .pressure
+            .insert("Rival Faith".to_string(), 1_000.0);
+        let missionary = game.spawn_test_unit("missionary", 0, game.cities[&home].pos);
+        game.units.get_mut(&missionary).unwrap().religion = Some("Our Faith".to_string());
+
+        assert!(AdvancedAi::new().advanced_missionary_step(&mut game, 0, missionary));
+        assert!(
+            game.cities[&home]
+                .pressure
+                .get("Our Faith")
+                .copied()
+                .unwrap_or(0.0)
+                > 0.0
+        );
+        assert_eq!(game.units[&missionary].pos, game.cities[&home].pos);
+    }
+
+    #[test]
     fn science_target_reserves_a_spaceport_then_queues_the_project_chain() {
         let mut g = Game::new(2, 24, 16, 71, 200, 0);
         let settler = g
@@ -4318,6 +4441,57 @@ mod tests {
     }
 
     #[test]
+    fn project_search_maintains_aged_reactors_and_avoids_dirty_conversion_churn() {
+        let mut game = Game::new(2, 24, 16, 7_101, 200, 0);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = game.player_city_ids(0)[0];
+        game.cities.get_mut(&city).unwrap().buildings =
+            vec!["factory".to_string(), "nuclear_power_plant".to_string()];
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Expansion,
+            target_player: None,
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+        let counts = EmpireCounts::default();
+        let ai = AdvancedAi::new();
+        let recommission = Item::Project {
+            project: "recommission_reactor".to_string(),
+        };
+
+        assert!(ai.production_value(&game, 0, city, &recommission, &plan, &counts) < -9_000.0);
+        game.cities.get_mut(&city).unwrap().reactor_age = 30;
+        assert!(ai.production_value(&game, 0, city, &recommission, &plan, &counts) > 0.0);
+
+        game.cities.get_mut(&city).unwrap().buildings =
+            vec!["factory".to_string(), "oil_power_plant".to_string()];
+        game.climate_phase = 6;
+        game.players[0]
+            .strategic_resources
+            .insert("coal".to_string(), 10.0);
+        game.players[0]
+            .strategic_resources
+            .insert("uranium".to_string(), 10.0);
+        let coal = Item::Project {
+            project: "convert_reactor_to_coal".to_string(),
+        };
+        let nuclear = Item::Project {
+            project: "convert_reactor_to_uranium".to_string(),
+        };
+        assert!(
+            ai.production_value(&game, 0, city, &nuclear, &plan, &counts)
+                > ai.production_value(&game, 0, city, &coal, &plan, &counts)
+        );
+    }
+
+    #[test]
     fn explicit_targets_replace_early_cards_with_victory_policies() {
         let mut culture = Game::new(2, 24, 16, 78, 200, 0);
         culture.players[0].government = Some("chiefdom".to_string());
@@ -4327,7 +4501,11 @@ mod tests {
         culture.players[0]
             .policies
             .extend(["discipline".to_string(), "urban_planning".to_string()]);
-        AdvancedAi::targeting(VictoryTarget::Culture).strategic_policies(&mut culture, 0);
+        AdvancedAi::targeting(VictoryTarget::Culture).strategic_policies(
+            &mut culture,
+            0,
+            GrandStrategy::Expansion,
+        );
         assert!(culture.players[0].policies.contains("heritage_tourism"));
         assert!(culture.players[0].policies.contains("discipline"));
         assert!(!culture.players[0].policies.contains("urban_planning"));
@@ -4338,12 +4516,24 @@ mod tests {
         science.players[0]
             .policies
             .extend(["discipline".to_string(), "urban_planning".to_string()]);
-        AdvancedAi::targeting(VictoryTarget::Science).strategic_policies(&mut science, 0);
+        AdvancedAi::targeting(VictoryTarget::Science).strategic_policies(
+            &mut science,
+            0,
+            GrandStrategy::Expansion,
+        );
         assert!(science.players[0]
             .policies
             .contains("integrated_space_cell"));
         assert!(science.players[0].policies.contains("urban_planning"));
         assert!(!science.players[0].policies.contains("discipline"));
+
+        let mut reactive = culture.clone();
+        reactive.players[0].policies.clear();
+        reactive.players[0]
+            .policies
+            .extend(["discipline".to_string(), "urban_planning".to_string()]);
+        AdvancedAi::new().strategic_policies(&mut reactive, 0, GrandStrategy::Culture);
+        assert!(reactive.players[0].policies.contains("heritage_tourism"));
     }
 
     #[test]
@@ -4382,7 +4572,7 @@ mod tests {
     fn diplomatic_strategy_concentrates_envoys_into_a_suzerainty() {
         let mut g = Game::new(2, 24, 16, 77, 80, 2);
         g.players[0].envoys_free = 3;
-        AdvancedAi::new().advanced_envoys(&mut g, 0, GrandStrategy::Diplomacy);
+        AdvancedAi::new().advanced_envoys(&mut g, 0, GrandStrategy::Diplomacy, None);
         assert_eq!(g.players[0].envoys_free, 0);
         assert!(g.players[0].envoys.iter().any(|(_, count)| *count >= 3));
     }

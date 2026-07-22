@@ -1115,7 +1115,7 @@ mod tests {
         let boosts_before = g.players[0].boosted_techs.len();
         round(&mut g);
         assert_eq!(g.players[0].gp_claimed.get("scientist"), Some(&1));
-        assert!(g.players[0].boosted_techs.len() >= boosts_before + 1);
+        assert!(g.players[0].boosted_techs.len() > boosts_before);
         // The global market advances to the next named Scientist rather than
         // fabricating a generic doubled threshold.
         assert_eq!(

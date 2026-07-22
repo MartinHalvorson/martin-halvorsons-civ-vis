@@ -56,6 +56,9 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
                 "river_edges": t.river_edges, "road": t.road,
                 "cliff_edges": t.cliff_edges,
                 "continent": t.continent,
+                "coastal_lowland": t.coastal_lowland,
+                "flooded": t.flooded,
+                "submerged": t.submerged,
             }))
         })
         .collect();
@@ -117,8 +120,10 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
                 "power_demand": g.city_power_demand(c),
                 "power_supply": g.city_power_supply(c),
                 "powered": g.city_is_powered(c),
+                "reactor_age": c.reactor_age,
+                "reactor_accident_risk": round1(100.0 * g.reactor_accident_risk(c.id)),
                 "growth_need": growth_threshold(c.pop),
-                "queue_cost": c.queue.first().map(|it| g.item_cost_for(c.owner, it)),
+                "queue_cost": c.queue.first().map(|it| g.item_cost_for_city(c.owner, c.id, it)),
                 "can_strike": g.city_can_strike(c),
                 "loyalty": round1(c.loyalty),
                 "governor": g.players[c.owner].governors.contains(&c.id),
@@ -139,6 +144,8 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
         "turn": g.turn,
         "seed": g.seed,
         "world_era": g.world_era,
+        "climate_phase": g.climate_phase,
+        "climate_points": g.climate_points(),
         "player": pid,
         "current": g.current,
         "map": {
@@ -174,7 +181,7 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             "diplomatic_favor": round1(p.diplomatic_favor),
             "power_fuel_consumed": p.power_fuel_consumed,
             "co2_emissions": round1(p.co2_emissions),
-            "global_co2": round1(g.players.iter().map(|player| player.co2_emissions).sum()),
+            "global_co2": round1(g.global_co2_emissions()),
             "trade_capacity": g.trade_capacity(pid),
             "gpp": p.gpp,
             "gp_claimed": p.gp_claimed,

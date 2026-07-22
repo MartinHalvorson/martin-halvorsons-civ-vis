@@ -619,8 +619,10 @@ mod tests {
     #[test]
     fn duel_tables_face_the_champion_and_larger_tables_keep_an_anchor() {
         let candidate = Weights::default();
-        let mut champion = Weights::default();
-        champion.focus_fire = 7.25;
+        let champion = Weights {
+            focus_fire: 7.25,
+            ..Weights::default()
+        };
 
         let duel = Game::new_full(2, 20, 14, 92, 20, 0, false);
         let duel_table = make_table(&duel, &candidate, std::slice::from_ref(&champion), 0);
@@ -660,10 +662,9 @@ mod tests {
         );
 
         let archive: Vec<Weights> = (0..12)
-            .map(|index| {
-                let mut weights = Weights::default();
-                weights.focus_fire = index as f64 / 2.0;
-                weights
+            .map(|index| Weights {
+                focus_fire: index as f64 / 2.0,
+                ..Weights::default()
             })
             .collect();
         let pool = opponent_pool(&archive[11], &archive);

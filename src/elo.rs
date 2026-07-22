@@ -74,7 +74,7 @@ pub fn builtin_ai(name: &str, seed: u64) -> Box<dyn Ai> {
         "evolved" => Box::new(
             crate::evolve::load_champion("evolved")
                 .map(AdvancedAi::with_weights)
-                .unwrap_or_else(AdvancedAi::new),
+                .unwrap_or_default(),
         ),
         "neural" => {
             let w = crate::evolve::load_champion("evolved").unwrap_or_default();

@@ -1366,15 +1366,28 @@ impl BasicAi {
     /// revalidates the contract atomically, so the AI never relies on gifts,
     /// exploits stale quotes, or trades when either empire would lose value.
     pub(crate) fn bilateral_trade(&self, g: &mut Game, pid: usize) {
+        self.bilateral_trade_excluding(g, pid, None);
+    }
+
+    pub(crate) fn bilateral_trade_excluding(
+        &self,
+        g: &mut Game,
+        pid: usize,
+        excluded_partner: Option<usize>,
+    ) {
         if self.minor || self.barb || g.turn % 6 != (pid as u32 % 6) {
             return;
         }
-        let best = g.quick_deals(pid).into_iter().max_by(|left, right| {
-            left.my_value
-                .min(left.partner_value)
-                .partial_cmp(&right.my_value.min(right.partner_value))
-                .unwrap()
-        });
+        let best = g
+            .quick_deals(pid)
+            .into_iter()
+            .filter(|deal| Some(deal.partner) != excluded_partner)
+            .max_by(|left, right| {
+                left.my_value
+                    .min(left.partner_value)
+                    .partial_cmp(&right.my_value.min(right.partner_value))
+                    .unwrap()
+            });
         let Some(deal) = best.filter(|deal| deal.my_value >= 2.0 && deal.partner_value >= 2.0)
         else {
             return;
@@ -1959,20 +1972,19 @@ impl BasicAi {
                 unit: "builder".to_string(),
             });
         }
-        if !self.minor {
-            if g.active_routes(pid) + (traders as i64) < g.trade_capacity(pid)
-                && g.can_produce(
-                    pid,
-                    cid,
-                    &Item::Unit {
-                        unit: "trader".to_string(),
-                    },
-                )
-            {
-                return Some(Item::Unit {
+        if !self.minor
+            && g.active_routes(pid) + (traders as i64) < g.trade_capacity(pid)
+            && g.can_produce(
+                pid,
+                cid,
+                &Item::Unit {
                     unit: "trader".to_string(),
-                });
-            }
+                },
+            )
+        {
+            return Some(Item::Unit {
+                unit: "trader".to_string(),
+            });
         }
         if !g.cities[&cid].buildings.iter().any(|b| b == "monument") {
             return Some(Item::Building {

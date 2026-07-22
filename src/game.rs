@@ -900,6 +900,120 @@ mod power_tests {
         game.players[1].co2_emissions = 0.0;
         assert_eq!(game.carbon_favor_penalty(0), 20.0);
     }
+
+    #[test]
+    fn climate_phases_are_map_scaled_irreversible_and_save_stable() {
+        let (mut game, _) = power_game();
+        assert!(game
+            .map
+            .tiles
+            .values()
+            .any(|tile| (1..=3).contains(&tile.coastal_lowland)));
+        assert!(game
+            .map
+            .tiles
+            .values()
+            .all(|tile| tile.coastal_lowland <= 3));
+
+        game.players[0].co2_emissions = 750_000.0;
+        assert_eq!(game.co2_per_climate_point(), 250_000.0);
+        assert_eq!(game.climate_points(), 3);
+        game.process_climate();
+        assert_eq!(game.climate_phase, 2);
+
+        game.players[0].co2_emissions = -100_000.0;
+        game.process_climate();
+        assert_eq!(game.climate_phase, 2, "climate phases never reverse");
+
+        let saved = serde_json::to_string(&game).unwrap();
+        let restored: Game = serde_json::from_str(&saved).unwrap();
+        assert_eq!(restored.climate_phase, 2);
+        assert_eq!(restored.climate_points(), 0);
+        assert!(restored
+            .map
+            .tiles
+            .values()
+            .any(|tile| tile.coastal_lowland > 0 || tile.submerged));
+    }
+
+    #[test]
+    fn lowland_bands_flood_then_submerge_while_barriers_restore_and_protect() {
+        let (mut game, city) = power_game();
+        for tile in game.map.tiles.values_mut() {
+            tile.coastal_lowland = 0;
+            tile.flooded = false;
+            tile.submerged = false;
+        }
+        let positions: Vec<Pos> = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .filter(|position| *position != game.cities[&city].pos)
+            .take(3)
+            .collect();
+        assert_eq!(positions.len(), 3);
+        for (index, position) in positions.iter().copied().enumerate() {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.hills = false;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.pillaged = false;
+            tile.district = None;
+            tile.wonder = None;
+            tile.coastal_lowland = index as u8 + 1;
+        }
+        game.cities.get_mut(&city).unwrap().pop = 10;
+        assert!(game
+            .valid_improvements(0, positions[0])
+            .contains(&"farm".to_string()));
+        assert!(game.district_sites(city, "campus").contains(&positions[0]));
+        game.map.tiles.get_mut(&positions[0]).unwrap().improvement = Some("farm".to_string());
+
+        game.apply_climate_phase(2);
+        assert!(game.map.tiles[&positions[0]].flooded);
+        assert!(game.map.tiles[&positions[0]].pillaged);
+        assert!(game.valid_improvements(0, positions[0]).is_empty());
+        assert!(!game.district_sites(city, "campus").contains(&positions[0]));
+        assert_eq!(
+            game.player_tile_yields(0, positions[0], &game.map.tiles[&positions[0]]),
+            Yields::default()
+        );
+        assert!(!game.map.tiles[&positions[1]].flooded);
+
+        game.climate_phase = 2;
+        game.players[0].techs.insert("computers".to_string());
+        let barrier = Item::Building {
+            building: "flood_barrier".to_string(),
+        };
+        assert_eq!(game.item_cost_for_city(0, city, &barrier), 480.0);
+        assert!(game.complete_item(0, city, &barrier));
+        assert!(!game.map.tiles[&positions[0]].flooded);
+        assert!(!game.map.tiles[&positions[0]].pillaged);
+        game.map.tiles.get_mut(&positions[0]).unwrap().improvement = None;
+        assert!(game
+            .valid_improvements(0, positions[0])
+            .contains(&"farm".to_string()));
+
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .retain(|building| building != "flood_barrier");
+        game.apply_climate_phase(4);
+        assert!(game.map.tiles[&positions[0]].submerged);
+        assert_eq!(game.map.tiles[&positions[0]].terrain, "coast");
+        assert!(game.map.tiles[&positions[0]].improvement.is_none());
+
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("flood_barrier".to_string());
+        game.apply_climate_phase(6);
+        assert!(!game.map.tiles[&positions[1]].submerged);
+    }
 }
 
 #[cfg(test)]
@@ -1122,6 +1236,9 @@ mod district_building_wonder_runtime_tests {
         assert!(game.map.tiles[&right].road);
 
         game.players[0].techs.remove("shipbuilding");
+        for technology in ["mathematics", "square_rigging", "steam_power", "combustion"] {
+            game.players[0].techs.insert(technology.to_string());
+        }
         let warrior = game.spawn_unit("warrior", 0, left);
         assert!(game.unit_can_traverse(warrior, bridge));
         assert_eq!(game.unit_step_cost(warrior, left, bridge), 0.5);
@@ -1143,6 +1260,11 @@ mod district_building_wonder_runtime_tests {
         .unwrap();
         assert!(!game.is_embarked(&game.units[&warrior]));
         assert_eq!(game.unit_strength(&game.units[&warrior], true), 20.0);
+        assert_eq!(
+            game.unit_base_max_moves(warrior),
+            game.rules.units["warrior"].moves,
+            "a land unit on the bridge must not receive naval or embarked movement bonuses"
+        );
         assert_eq!(game.unit_step_cost(warrior, bridge, right), 0.5);
         game.apply(
             0,
@@ -1366,10 +1488,28 @@ mod district_building_wonder_runtime_tests {
     #[test]
     fn aqueducts_dams_and_flood_barriers_execute_disaster_protection() {
         let (mut game, city, position) = one_city(774_408);
-        game.map.tiles.get_mut(&position).unwrap().improvement = Some("farm".to_string());
+        let farm = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|tile| *tile != position && *tile != game.cities[&city].pos)
+            .unwrap();
+        game.map.tiles.get_mut(&farm).unwrap().improvement = Some("farm".to_string());
+        let food_before = game
+            .player_tile_yields(0, farm, &game.map.tiles[&farm])
+            .food;
         install_district(&mut game, city, position, "aqueduct");
-        game.resolve_drought(&[position]);
-        assert!(!game.map.tiles[&position].pillaged);
+        let unit = game.spawn_unit("warrior", 0, farm);
+        game.resolve_drought(&[farm]);
+        assert!(game.map.tiles[&farm].pillaged);
+        assert!(game.map.tiles[&farm].drought);
+        assert_eq!(game.units[&unit].hp, 100);
+        assert_eq!(
+            game.player_tile_yields(0, farm, &game.map.tiles[&farm])
+                .food,
+            food_before,
+            "Aqueducts prevent the drought Food loss, not improvement pillaging"
+        );
 
         game.cities
             .get_mut(&city)
@@ -1378,20 +1518,44 @@ mod district_building_wonder_runtime_tests {
             .0
             .remove("aqueduct");
         game.map.tiles.get_mut(&position).unwrap().district = None;
-        game.resolve_drought(&[position]);
-        assert!(game.map.tiles[&position].pillaged);
+        game.map.tiles.get_mut(&farm).unwrap().pillaged = false;
+        game.resolve_drought(&[farm]);
+        assert!(game.map.tiles[&farm].pillaged);
+        assert_eq!(
+            game.player_tile_yields(0, farm, &game.map.tiles[&farm])
+                .food,
+            food_before - 1.0
+        );
+        game.clear_drought(&[farm]);
+        assert!(!game.map.tiles[&farm].drought);
+        assert_eq!(
+            game.player_tile_yields(0, farm, &game.map.tiles[&farm])
+                .food,
+            food_before
+        );
 
         let coast = game.nbrs(position)[0];
         game.map.tiles.get_mut(&coast).unwrap().terrain = "coast".to_string();
         let tile = game.map.tiles.get_mut(&position).unwrap();
         tile.terrain = "plains".to_string();
         tile.hills = false;
-        tile.pillaged = false;
-        game.cities
-            .get_mut(&city)
-            .unwrap()
-            .buildings
-            .push("flood_barrier".to_string());
+        tile.feature = None;
+        tile.coastal_lowland = 1;
+        tile.improvement = Some("farm".to_string());
+        tile.pillaged = true;
+        let barrier = Item::Building {
+            building: "flood_barrier".to_string(),
+        };
+        let lowlands = game.coastal_lowland_tiles(&game.cities[&city]).len();
+        assert!(lowlands > 0);
+        game.players[0].techs.insert("computers".to_string());
+        assert!(game.can_produce(0, city, &barrier));
+        assert_eq!(
+            game.item_cost_for_city(0, city, &barrier),
+            80.0 * lowlands as f64
+        );
+        assert!(game.complete_item(0, city, &barrier));
+        assert!(!game.map.tiles[&position].pillaged);
         game.resolve_coastal_flooding();
         assert!(!game.map.tiles[&position].pillaged);
 
@@ -1402,6 +1566,108 @@ mod district_building_wonder_runtime_tests {
             .retain(|building| building != "flood_barrier");
         game.resolve_coastal_flooding();
         assert!(game.map.tiles[&position].pillaged);
+    }
+
+    #[test]
+    fn nuclear_plants_age_recommission_and_resolve_all_accident_state() {
+        let (mut game, city, position) = one_city(774_409);
+        install_district(&mut game, city, position, "industrial_zone");
+        game.cities.get_mut(&city).unwrap().buildings =
+            vec!["factory".to_string(), "nuclear_power_plant".to_string()];
+        game.cities.get_mut(&city).unwrap().reactor_age = 10;
+        game.process_reactors(0);
+        assert_eq!(game.cities[&city].reactor_age, 11);
+        assert_eq!(game.reactor_accident_risk(city), 0.0005);
+
+        let recommission = Item::Project {
+            project: "recommission_reactor".to_string(),
+        };
+        assert!(game.complete_item(0, city, &recommission));
+        assert_eq!(game.cities[&city].reactor_age, 0);
+        assert_eq!(game.reactor_accident_risk(city), 0.0);
+
+        game.cities.get_mut(&city).unwrap().pop = 5;
+        let worker = game.spawn_unit("builder", 0, position);
+        let fallout_tile = game
+            .nbrs(position)
+            .into_iter()
+            .find(|candidate| game.map.tiles[candidate].owner_city == Some(city))
+            .unwrap();
+        let restored_yields =
+            game.player_tile_yields(0, fallout_tile, &game.map.tiles[&fallout_tile]);
+        game.resolve_reactor_accident(city, 2);
+        assert!(game.cities[&city]
+            .pillaged_buildings
+            .contains("nuclear_power_plant"));
+        assert_eq!(game.cities[&city].pop, 4);
+        assert!(game.map.tiles[&position].fallout_until >= game.turn + 20);
+        assert_eq!(
+            game.player_tile_yields(0, fallout_tile, &game.map.tiles[&fallout_tile]),
+            Yields::default()
+        );
+        game.turn = game.map.tiles[&fallout_tile].fallout_until;
+        assert_eq!(
+            game.player_tile_yields(0, fallout_tile, &game.map.tiles[&fallout_tile]),
+            restored_yields
+        );
+        assert_eq!(game.units[&worker].hp, 60);
+        assert_eq!(game.players[0].counters["reactor_accident:2"], 1);
+    }
+
+    #[test]
+    fn power_conversion_projects_replace_exactly_one_existing_plant() {
+        let (mut game, city, position) = one_city(774_410);
+        install_district(&mut game, city, position, "industrial_zone");
+        game.players[0].techs.extend([
+            "industrialization".to_string(),
+            "electricity".to_string(),
+            "nuclear_fission".to_string(),
+        ]);
+        game.cities.get_mut(&city).unwrap().buildings =
+            vec!["factory".to_string(), "coal_power_plant".to_string()];
+
+        let coal = Item::Project {
+            project: "convert_reactor_to_coal".to_string(),
+        };
+        let oil = Item::Project {
+            project: "convert_reactor_to_oil".to_string(),
+        };
+        let nuclear = Item::Project {
+            project: "convert_reactor_to_uranium".to_string(),
+        };
+        assert!(!game.can_produce(0, city, &coal));
+        assert!(game.can_produce(0, city, &oil));
+        assert!(game.complete_item(0, city, &oil));
+        assert!(game.cities[&city]
+            .buildings
+            .contains(&"oil_power_plant".to_string()));
+        assert!(!game.cities[&city]
+            .buildings
+            .contains(&"coal_power_plant".to_string()));
+        assert!(!game.can_produce(0, city, &oil));
+
+        game.cities.get_mut(&city).unwrap().reactor_age = 27;
+        assert!(game.can_produce(0, city, &nuclear));
+        assert!(game.complete_item(0, city, &nuclear));
+        assert_eq!(
+            game.cities[&city]
+                .buildings
+                .iter()
+                .filter(|building| matches!(
+                    building.as_str(),
+                    "coal_power_plant" | "oil_power_plant" | "nuclear_power_plant"
+                ))
+                .count(),
+            1
+        );
+        assert!(game.cities[&city]
+            .buildings
+            .contains(&"nuclear_power_plant".to_string()));
+        assert_eq!(
+            game.cities[&city].building_eras["nuclear_power_plant"],
+            game.world_era
+        );
+        assert_eq!(game.cities[&city].reactor_age, 0);
     }
 }
 
@@ -1434,7 +1700,11 @@ impl Game {
     /// custom maps fall back to the profile for their major-player count.
     pub fn map_size(&self) -> &'static MapSize {
         MapSize::from_dimensions(self.map.width, self.map.height).unwrap_or_else(|| {
-            let majors = self.players.iter().filter(|p| !p.is_minor).count();
+            let majors = self
+                .players
+                .iter()
+                .filter(|player| !player.is_minor && !player.is_barbarian)
+                .count();
             MapSize::for_players(majors)
         })
     }
@@ -1778,6 +2048,10 @@ pub struct City {
     /// liberate the city before taking another action.
     #[serde(default)]
     pub captured_from: Option<usize>,
+    /// Turns elapsed since this city's active Nuclear Power Plant was built or
+    /// last recommissioned.
+    #[serde(default)]
+    pub reactor_age: u32,
 }
 
 /// The priorities used by a city's automatic citizen governor.  These are
@@ -2381,6 +2655,8 @@ pub struct Game {
     pub barb_alerted_until: BTreeMap<Pos, u32>,
     pub routes: Vec<TradeRoute>,
     pub world_era: usize,
+    /// Irreversible Gathering Storm climate phase, from 0 (pre-warming) to 7.
+    pub climate_phase: u8,
     /// Retired named Great People leave the global market permanently.
     pub retired_great_people: BTreeSet<String>,
     pub pending_deals: Vec<DiplomaticDeal>,
@@ -2431,6 +2707,8 @@ struct GameSer {
     #[serde(default)]
     world_era: usize,
     #[serde(default)]
+    climate_phase: u8,
+    #[serde(default)]
     retired_great_people: BTreeSet<String>,
     #[serde(default)]
     pending_deals: Vec<DiplomaticDeal>,
@@ -2471,6 +2749,7 @@ impl From<GameSer> for Game {
             barb_alerted_until: s.barb_alerted_until.into_iter().collect(),
             routes: s.routes,
             world_era: s.world_era,
+            climate_phase: s.climate_phase,
             retired_great_people: s.retired_great_people,
             pending_deals: s.pending_deals,
             active_trade_deals: s.active_trade_deals,
@@ -2575,6 +2854,7 @@ impl From<Game> for GameSer {
             barb_alerted_until: g.barb_alerted_until.into_iter().collect(),
             routes: g.routes,
             world_era: g.world_era,
+            climate_phase: g.climate_phase,
             retired_great_people: g.retired_great_people,
             pending_deals: g.pending_deals,
             active_trade_deals: g.active_trade_deals,
@@ -2654,6 +2934,7 @@ impl Game {
             barb_alerted_until: BTreeMap::new(),
             routes: Vec::new(),
             world_era: 0,
+            climate_phase: 0,
             retired_great_people: BTreeSet::new(),
             pending_deals: Vec::new(),
             active_trade_deals: Vec::new(),
@@ -2807,7 +3088,7 @@ impl Game {
             .retain(|camp, _| self.barb_camps.contains_key(camp));
         self.barbarian_scout_phase(bpid);
         let n_majors = self.players.iter().filter(|p| !p.is_minor).count();
-        if self.turn % 10 == 0 && self.barb_camps.len() < n_majors + 1 {
+        if self.turn.is_multiple_of(10) && self.barb_camps.len() < n_majors + 1 {
             self.spawn_camp();
         }
         let alerted = self.barb_alerted_until.len();
@@ -5011,10 +5292,11 @@ impl Game {
                     && self.has_ability(pid, "ta_seti")
                 {
                     bonus += 0.5; // Nubia: Ta-Seti
-                } else if spec.class == "military" && !spec.siege {
-                    if self.has_pantheon_belief(pid, "god_of_the_forge") {
-                        bonus += 0.25;
-                    }
+                } else if spec.class == "military"
+                    && !spec.siege
+                    && self.has_pantheon_belief(pid, "god_of_the_forge")
+                {
+                    bonus += 0.25;
                 }
                 if matches!(item, Some(Item::Formation { .. })) {
                     let effect = if spec.domain.as_deref() == Some("sea") {
@@ -5811,19 +6093,41 @@ impl Game {
         }
     }
 
-    /// Resolve drought damage. An active Aqueduct or Dam, or Liang's
-    /// Reinforced Materials promotion, protects every supplied tile in that
-    /// city from improvement pillaging and unit damage.
+    /// Start drought effects on the supplied tiles. Aqueducts, Baths, and Dams
+    /// prevent the -1 Food loss, but Civ VI still allows drought to pillage
+    /// vulnerable improvements; Liang's Reinforced Materials prevents that
+    /// environmental pillaging as well.
     pub fn resolve_drought(&mut self, positions: &[Pos]) {
         for position in positions.iter().copied() {
-            let protected = self
+            let immune = self
                 .map
                 .get(position)
                 .and_then(|tile| tile.owner_city)
                 .and_then(|city_id| self.cities.get(&city_id))
-                .is_some_and(|city| self.city_disaster_protected(city, "drought_protection"));
-            if !protected {
-                self.damage_disaster_tile(position, 10);
+                .is_some_and(|city| {
+                    self.governor_effect(city.owner, city.id, "disaster_immunity") > 0.0
+                });
+            let Some(tile) = self.map.tiles.get_mut(&position) else {
+                continue;
+            };
+            tile.drought = true;
+            if !immune
+                && matches!(
+                    tile.improvement.as_deref(),
+                    Some("farm" | "camp" | "plantation" | "pasture")
+                )
+            {
+                tile.pillaged = true;
+            }
+        }
+    }
+
+    /// End a drought and restore its temporary Food modifier. Pillaged
+    /// improvements remain pillaged until repaired.
+    pub fn clear_drought(&mut self, positions: &[Pos]) {
+        for position in positions {
+            if let Some(tile) = self.map.tiles.get_mut(position) {
+                tile.drought = false;
             }
         }
     }
@@ -5834,12 +6138,7 @@ impl Game {
             .copied()
             .filter(|position| {
                 let tile = &self.map.tiles[position];
-                !tile.hills
-                    && self.rules.is_passable(tile)
-                    && !self.rules.is_water(tile)
-                    && self.nbrs(*position).iter().any(|neighbor| {
-                        matches!(self.map.tiles[neighbor].terrain.as_str(), "coast" | "ocean")
-                    })
+                tile.coastal_lowland > 0 && !tile.submerged
             })
             .collect()
     }
@@ -5858,7 +6157,231 @@ impl Game {
                 continue;
             }
             for position in self.coastal_lowland_tiles(&self.cities[&city_id]) {
+                self.map.tiles.get_mut(&position).unwrap().flooded = true;
                 self.damage_disaster_tile(position, 20);
+            }
+        }
+    }
+
+    pub fn global_co2_emissions(&self) -> f64 {
+        self.players
+            .iter()
+            .map(|player| player.co2_emissions)
+            .sum::<f64>()
+            .max(0.0)
+    }
+
+    fn co2_per_climate_point(&self) -> f64 {
+        match self.map_size().id {
+            "duel" => 250_000.0,
+            "tiny" => 500_000.0,
+            "small" => 750_000.0,
+            "standard" => 1_000_000.0,
+            "large" => 1_250_000.0,
+            "huge" => 1_500_000.0,
+            _ => 1_000_000.0,
+        }
+    }
+
+    pub fn climate_points(&self) -> u8 {
+        (self.global_co2_emissions() / self.co2_per_climate_point())
+            .floor()
+            .clamp(0.0, 8.0) as u8
+    }
+
+    fn lowland_has_barrier(&self, position: Pos) -> bool {
+        self.map
+            .get(position)
+            .and_then(|tile| tile.owner_city)
+            .and_then(|city| self.cities.get(&city))
+            .is_some_and(|city| self.city_building_effect(city, "protect_coastal_lowlands") > 0.0)
+    }
+
+    fn flood_lowland_band(&mut self, band: u8) {
+        let positions: Vec<Pos> = self
+            .map
+            .tiles
+            .iter()
+            .filter(|(_, tile)| tile.coastal_lowland == band && !tile.submerged)
+            .map(|(position, _)| *position)
+            .collect();
+        for position in positions {
+            if self.lowland_has_barrier(position) {
+                continue;
+            }
+            self.map.tiles.get_mut(&position).unwrap().flooded = true;
+            self.damage_disaster_tile(position, 20);
+            if let Some(city) = self.city_at(position) {
+                self.cities.get_mut(&city).unwrap().pop = (self.cities[&city].pop - 1).max(1);
+            }
+        }
+    }
+
+    fn submerge_lowland_band(&mut self, band: u8) {
+        let positions: Vec<Pos> = self
+            .map
+            .tiles
+            .iter()
+            .filter(|(position, tile)| {
+                tile.coastal_lowland == band
+                    && !tile.submerged
+                    && self.city_at(**position).is_none()
+            })
+            .map(|(position, _)| *position)
+            .collect();
+        for position in positions {
+            if self.lowland_has_barrier(position) {
+                continue;
+            }
+            for unit in self.units_at(position) {
+                self.remove_unit(unit);
+            }
+            let owner_city = self.map.tiles[&position].owner_city;
+            let district = self.map.tiles[&position].district.clone();
+            let wonder = self.map.tiles[&position].wonder.clone();
+            if let Some(city_id) = owner_city {
+                if let Some(district) = district.as_deref() {
+                    let removed_buildings: Vec<String> = self.cities[&city_id]
+                        .buildings
+                        .iter()
+                        .filter(|building| {
+                            self.rules.buildings[building.as_str()]
+                                .district
+                                .as_deref()
+                                .is_some_and(|family| self.district_is_family(district, family))
+                        })
+                        .cloned()
+                        .collect();
+                    let city = self.cities.get_mut(&city_id).unwrap();
+                    if let Some(placements) = city.districts.0.get_mut(district) {
+                        placements.retain(|candidate| *candidate != position);
+                        if placements.is_empty() {
+                            city.districts.0.remove(district);
+                        }
+                    }
+                    city.buildings
+                        .retain(|building| !removed_buildings.contains(building));
+                    city.pillaged_buildings
+                        .retain(|building| !removed_buildings.contains(building));
+                }
+                if let Some(wonder) = wonder {
+                    self.cities
+                        .get_mut(&city_id)
+                        .unwrap()
+                        .wonders
+                        .remove(&wonder);
+                }
+            }
+            let tile = self.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "coast".to_string();
+            tile.feature = None;
+            tile.hills = false;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.pillaged = false;
+            tile.district = None;
+            tile.wonder = None;
+            tile.road = false;
+            tile.continent = None;
+            tile.coastal_lowland = 0;
+            tile.flooded = false;
+            tile.submerged = true;
+        }
+    }
+
+    fn apply_climate_phase(&mut self, phase: u8) {
+        match phase {
+            2 => self.flood_lowland_band(1),
+            3 => self.flood_lowland_band(2),
+            4 => self.submerge_lowland_band(1),
+            5 => self.flood_lowland_band(3),
+            6 => self.submerge_lowland_band(2),
+            7 => self.submerge_lowland_band(3),
+            _ => {}
+        }
+    }
+
+    fn process_climate(&mut self) {
+        let points = self.climate_points();
+        let target_phase = if points >= 2 { points - 1 } else { 0 }.min(7);
+        while self.climate_phase < target_phase {
+            self.climate_phase += 1;
+            self.apply_climate_phase(self.climate_phase);
+        }
+    }
+
+    /// Per-turn accident probability for an active Nuclear Power Plant. The
+    /// first ten turns are safe; risk then rises with reactor age until the
+    /// city recommissions the plant.
+    pub fn reactor_accident_risk(&self, city_id: u32) -> f64 {
+        let Some(city) = self.cities.get(&city_id) else {
+            return 0.0;
+        };
+        if self.city_building_effect(city, "reactor_accident_risk") <= 0.0 || city.reactor_age <= 10
+        {
+            return 0.0;
+        }
+        ((city.reactor_age - 10) as f64 * 0.0005).min(0.05)
+    }
+
+    /// Resolve one of Gathering Storm's three reactor-accident severities.
+    /// The plant is pillaged, nearby tiles receive fallout and disaster
+    /// damage, and the owning city can lose population at higher severity.
+    pub fn resolve_reactor_accident(&mut self, city_id: u32, severity: u8) {
+        let Some(city) = self.cities.get(&city_id) else {
+            return;
+        };
+        if !city
+            .buildings
+            .iter()
+            .any(|building| building == "nuclear_power_plant")
+        {
+            return;
+        }
+        let severity = severity.clamp(1, 3);
+        let owner = city.owner;
+        let center = self
+            .city_district_family_position(city, "industrial_zone")
+            .unwrap_or(city.pos);
+        for position in self.wdisk(center, severity as i32 - 1) {
+            if let Some(tile) = self.map.tiles.get_mut(&position) {
+                tile.fallout_until = tile
+                    .fallout_until
+                    .max(self.turn.saturating_add(10 * severity as u32));
+            }
+            self.damage_disaster_tile(position, 20 * severity as i32);
+        }
+        let city = self.cities.get_mut(&city_id).unwrap();
+        city.pillaged_buildings
+            .insert("nuclear_power_plant".to_string());
+        city.pop = (city.pop - severity.saturating_sub(1) as i32).max(1);
+        *self.players[owner]
+            .counters
+            .entry(format!("reactor_accident:{severity}"))
+            .or_insert(0) += 1;
+    }
+
+    fn process_reactors(&mut self, pid: usize) {
+        let reactors: Vec<u32> = self
+            .player_city_ids(pid)
+            .into_iter()
+            .filter(|city_id| {
+                self.city_building_effect(&self.cities[city_id], "reactor_accident_risk") > 0.0
+            })
+            .collect();
+        for city_id in reactors {
+            self.cities.get_mut(&city_id).unwrap().reactor_age += 1;
+            let risk = self.reactor_accident_risk(city_id);
+            if risk > 0.0 && self.rng.chance(risk) {
+                let age = self.cities[&city_id].reactor_age;
+                let severity = if age >= 50 {
+                    3
+                } else if age >= 30 {
+                    2
+                } else {
+                    1
+                };
+                self.resolve_reactor_accident(city_id, severity);
             }
         }
     }
@@ -6851,11 +7374,10 @@ impl Game {
             spec.moves
         } + self.promotion_effect(u, "movement")
             + u.bonus_moves;
-        if self.rules.is_water(tile) {
+        if spec.domain.as_deref() == Some("sea") {
             moves += self.tree_effect(u.owner, "naval_movement");
-            if spec.domain.as_deref() != Some("sea") {
-                moves += self.tree_effect(u.owner, "embarked_movement");
-            }
+        } else if self.is_embarked(u) {
+            moves += self.tree_effect(u.owner, "embarked_movement");
         }
         if spec.domain.as_deref() == Some("sea") {
             moves += self.empire_wonder_effect(u.owner, "naval_movement");
@@ -8687,8 +9209,18 @@ impl Game {
     }
 
     fn player_tile_yields(&self, pid: usize, pos: Pos, tile: &crate::world::Tile) -> Yields {
+        if tile.flooded || tile.fallout_until > self.turn {
+            return Yields::default();
+        }
         let mut yields = self.rules.tile_yields(tile);
         yields.faith += tile.disaster_faith;
+        let drought_food_protected = tile
+            .owner_city
+            .and_then(|city| self.cities.get(&city))
+            .is_some_and(|city| self.city_disaster_protected(city, "drought_protection"));
+        if tile.drought && !drought_food_protected {
+            yields.food = (yields.food - 1.0).max(0.0);
+        }
         match tile.improvement.as_deref() {
             Some("mine") => yields.production += self.tree_effect(pid, "mine_production"),
             Some("pasture") => {
@@ -9505,7 +10037,7 @@ impl Game {
             Some(t) => t,
             None => return vec![],
         };
-        if t.district.is_some() || t.wonder.is_some() || self.city_at(pos).is_some() {
+        if t.flooded || t.district.is_some() || t.wonder.is_some() || self.city_at(pos).is_some() {
             return vec![];
         }
         let oc = match t.owner_city {
@@ -9622,7 +10154,8 @@ impl Game {
                 continue;
             }
             let t = &self.map.tiles[pos];
-            if t.district.is_some() || t.wonder.is_some() || !self.rules.is_passable(t) {
+            if t.flooded || t.district.is_some() || t.wonder.is_some() || !self.rules.is_passable(t)
+            {
                 continue;
             }
             if t.feature.as_ref().is_some_and(|feature| {
@@ -9793,7 +10326,8 @@ impl Game {
                 continue;
             }
             let tile = &self.map.tiles[pos];
-            if tile.district.is_some()
+            if tile.flooded
+                || tile.district.is_some()
                 || tile.wonder.is_some()
                 || (!self.rules.is_passable(tile) && spec.placement != "mountain")
                 || tile
@@ -9993,6 +10527,35 @@ impl Game {
                         .unwrap_or(0) as f64
             }
             _ => base,
+        }
+    }
+
+    /// City-sensitive production cost. Flood Barriers scale with the number
+    /// of Coastal Lowland tiles they must protect; all other items retain the
+    /// civilization-wide cost rules above.
+    pub fn item_cost_for_city(&self, pid: usize, cid: u32, item: &Item) -> f64 {
+        if let Item::Building { building } = item {
+            let spec = &self.rules.buildings[building.as_str()];
+            let per_lowland = spec
+                .effects
+                .get("cost_per_coastal_lowland")
+                .copied()
+                .unwrap_or(0.0);
+            if per_lowland > 0.0 {
+                let count = self.coastal_lowland_tiles(&self.cities[&cid]).len().max(1);
+                let flood_level = (self.climate_phase / 2) as f64;
+                return per_lowland * count as f64 * (1.0 + flood_level);
+            }
+        }
+        self.item_cost_for(pid, item)
+    }
+
+    fn converted_power_plant(project: &str) -> Option<&'static str> {
+        match project {
+            "convert_reactor_to_coal" => Some("coal_power_plant"),
+            "convert_reactor_to_oil" => Some("oil_power_plant"),
+            "convert_reactor_to_uranium" => Some("nuclear_power_plant"),
+            _ => None,
         }
     }
 
@@ -10242,6 +10805,16 @@ impl Game {
                 {
                     return false;
                 }
+                if spec
+                    .effects
+                    .get("protect_coastal_lowlands")
+                    .copied()
+                    .unwrap_or(0.0)
+                    > 0.0
+                    && self.coastal_lowland_tiles(city).is_empty()
+                {
+                    return false;
+                }
                 if spec.wonder && self.wonder_built(building) {
                     return false; // one per world
                 }
@@ -10400,6 +10973,17 @@ impl Game {
                     .all(|building| self.city_has_building_family(city, building))
                 {
                     return false;
+                }
+                if let Some(target) = Self::converted_power_plant(project) {
+                    let current = city.buildings.iter().find(|building| {
+                        matches!(
+                            building.as_str(),
+                            "coal_power_plant" | "oil_power_plant" | "nuclear_power_plant"
+                        )
+                    });
+                    if current.is_none_or(|plant| plant == target) {
+                        return false;
+                    }
                 }
                 spec.repeatable || !self.players[pid].science_projects.contains(project)
             }
@@ -12287,11 +12871,9 @@ impl Game {
             self.units.get_mut(&uid).unwrap().hp -= dmg_in;
             let d_dead = self.units[&did].hp <= 0;
             let downer = self.units[&did].owner;
-            if d_dead {
-                if self.has_ability(pid, "killer_of_cyrus") {
-                    if let Some(mu) = self.units.get_mut(&uid) {
-                        mu.hp = (mu.hp + 30).min(100); // Tomyris
-                    }
+            if d_dead && self.has_ability(pid, "killer_of_cyrus") {
+                if let Some(mu) = self.units.get_mut(&uid) {
+                    mu.hp = (mu.hp + 30).min(100); // Tomyris
                 }
             }
             let attacker_dead = self.units[&uid].hp <= 0;
@@ -12690,6 +13272,7 @@ impl Game {
             pressure: BTreeMap::new(),
             loyalty: 100.0,
             captured_from: None,
+            reactor_age: 0,
         };
         if !is_minor
             && self.dedication_active(pid, "hic_sunt_dracones")
@@ -12887,9 +13470,7 @@ impl Game {
     /// this city's current project. Keeping the target query separate lets AI
     /// players route Builders there without enumerating the global action set.
     pub(crate) fn project_contribution_target(&self, pid: usize, cid: u32) -> Option<Pos> {
-        let Some(city) = self.cities.get(&cid) else {
-            return None;
-        };
+        let city = self.cities.get(&cid)?;
         if city.owner != pid
             || self.empire_building_sum(pid, |building| {
                 building
@@ -12911,9 +13492,7 @@ impl Game {
         if project.starts_with("repair_") {
             return None;
         }
-        let Some(district) = self.rules.projects[project.as_str()].district.as_deref() else {
-            return None;
-        };
+        let district = self.rules.projects[project.as_str()].district.as_deref()?;
         self.city_district_family_position(city, district)
             .filter(|position| self.district_is_active(city, district, *position))
     }
@@ -14839,8 +15418,10 @@ impl Game {
                 }
             }
 
-            let mut favor = DealItems::default();
-            favor.diplomatic_favor = 10.0;
+            let favor = DealItems {
+                diplomatic_favor: 10.0,
+                ..DealItems::default()
+            };
             if self.players[viewer].diplomatic_favor >= 20.0 {
                 if let Some(deal) = self.quote_asset_trade(
                     viewer,
@@ -15588,7 +16169,7 @@ impl Game {
         {
             self.resolve_congress();
         }
-        if self.world_era >= 2 && self.turn % 30 == 0 && self.congress.is_none() {
+        if self.world_era >= 2 && self.turn.is_multiple_of(30) && self.congress.is_none() {
             self.convene_congress();
         }
     }
@@ -15858,7 +16439,7 @@ impl Game {
                     .copied()
                     .unwrap_or(0)
                     .max(0) as usize;
-                slots.extend(std::iter::repeat(8.0 * city_multiplier).take(count));
+                slots.extend(std::iter::repeat_n(8.0 * city_multiplier, count));
             }
             for building in city
                 .buildings
@@ -15871,7 +16452,7 @@ impl Game {
                     .copied()
                     .unwrap_or(0)
                     .max(0) as usize;
-                slots.extend(std::iter::repeat(8.0 * city_multiplier).take(count));
+                slots.extend(std::iter::repeat_n(8.0 * city_multiplier, count));
             }
         }
         slots.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
@@ -15925,7 +16506,7 @@ impl Game {
                                 / 100.0;
                     }
                     value *= modern_tourism_multiplier;
-                    work_slots.extend(std::iter::repeat(value).take((*count).max(0) as usize));
+                    work_slots.extend(std::iter::repeat_n(value, (*count).max(0) as usize));
                 }
             }
             for building in city
@@ -16052,7 +16633,7 @@ impl Game {
                                 / 100.0;
                     }
                     value *= modern_tourism_multiplier;
-                    work_slots.extend(std::iter::repeat(value).take((*count).max(0) as usize));
+                    work_slots.extend(std::iter::repeat_n(value, (*count).max(0) as usize));
                 }
             }
             for pos in &city.owned_tiles {
@@ -16215,6 +16796,7 @@ impl Game {
         self.current = nxt;
         if wrapped {
             self.turn += 1;
+            self.process_climate();
             self.barbarian_phase();
             self.process_eras();
             self.process_congress();
@@ -16277,6 +16859,7 @@ impl Game {
         self.check_boosts(pid);
         self.process_trade_deals(pid);
         self.process_strategic_resources(pid);
+        self.process_reactors(pid);
         self.process_diplomacy(pid);
         self.process_routes(pid);
         self.process_great_people(pid);
@@ -16692,7 +17275,7 @@ impl Game {
             if matches!(&item, Item::Project { project } if project == "repair_outer_defenses") {
                 // Repair applies Production directly to wall HP above.
             } else {
-                let cost = self.item_cost_for(pid, &item);
+                let cost = self.item_cost_for_city(pid, cid, &item);
                 let stalled = matches!(&item, Item::Unit { unit } if unit == "settler")
                     && self.cities[&cid].pop < 2;
                 if !stalled && self.cities[&cid].production >= cost {
@@ -17077,6 +17660,15 @@ impl Game {
                 city.buildings.push(building.clone());
                 city.building_eras.insert(building.clone(), self.world_era);
                 if spec
+                    .effects
+                    .get("reactor_accident_risk")
+                    .copied()
+                    .unwrap_or(0.0)
+                    > 0.0
+                {
+                    city.reactor_age = 0;
+                }
+                if spec
                     .district
                     .as_deref()
                     .is_some_and(|district| self.district_is_family(district, "government_plaza"))
@@ -17113,6 +17705,43 @@ impl Game {
                 }) && self.city_district_effect(&self.cities[&cid], "free_heavy_cavalry") > 0.0
                 {
                     self.grant_heavy_cavalry(pid, cid);
+                }
+                if spec
+                    .effects
+                    .get("protect_coastal_lowlands")
+                    .copied()
+                    .unwrap_or(0.0)
+                    > 0.0
+                {
+                    let lowlands = self.coastal_lowland_tiles(&self.cities[&cid]);
+                    let mut repaired_buildings = BTreeSet::new();
+                    for position in lowlands {
+                        let district = self.map.tiles[&position].district.clone();
+                        let tile = self.map.tiles.get_mut(&position).unwrap();
+                        tile.flooded = false;
+                        tile.pillaged = false;
+                        if let Some(district) = district {
+                            repaired_buildings.extend(
+                                self.cities[&cid]
+                                    .buildings
+                                    .iter()
+                                    .filter(|candidate| {
+                                        self.rules.buildings[candidate.as_str()]
+                                            .district
+                                            .as_deref()
+                                            .is_some_and(|family| {
+                                                self.district_is_family(&district, family)
+                                            })
+                                    })
+                                    .cloned(),
+                            );
+                        }
+                    }
+                    self.cities
+                        .get_mut(&cid)
+                        .unwrap()
+                        .pillaged_buildings
+                        .retain(|candidate| !repaired_buildings.contains(candidate));
                 }
                 true
             }
@@ -17266,6 +17895,29 @@ impl Game {
                         1_000.0 * spec.effects.get("co2_recaptured").copied().unwrap_or(0.0);
                     self.players[pid].diplomatic_favor +=
                         spec.effects.get("diplomatic_favor").copied().unwrap_or(0.0);
+                }
+                if spec
+                    .effects
+                    .get("reactor_age_reset")
+                    .copied()
+                    .unwrap_or(0.0)
+                    > 0.0
+                {
+                    self.cities.get_mut(&cid).unwrap().reactor_age = 0;
+                }
+                if let Some(target) = Self::converted_power_plant(project) {
+                    let plants = ["coal_power_plant", "oil_power_plant", "nuclear_power_plant"];
+                    let city = self.cities.get_mut(&cid).unwrap();
+                    city.buildings
+                        .retain(|building| !plants.contains(&building.as_str()));
+                    city.pillaged_buildings
+                        .retain(|building| !plants.contains(&building.as_str()));
+                    city.building_eras
+                        .retain(|building, _| !plants.contains(&building.as_str()));
+                    city.buildings.push(target.to_string());
+                    city.building_eras
+                        .insert(target.to_string(), self.world_era);
+                    city.reactor_age = 0;
                 }
                 if project == "launch_earth_satellite" {
                     self.players[pid]
@@ -19461,7 +20113,7 @@ mod combat_scenarios {
         assert_eq!(builders.len(), builders_before + 1);
         assert!(builders
             .iter()
-            .any(|builder| builder.charges >= g.rules.units["builder"].charges + 1));
+            .any(|builder| builder.charges > g.rules.units["builder"].charges));
     }
 
     #[test]
@@ -20029,7 +20681,7 @@ mod victory_conditions {
 
     #[test]
     fn cristo_only_cancels_enlightenments_religious_tourism_reduction() {
-        let mut g = game_with_capitals(2, 404_1, 300);
+        let mut g = game_with_capitals(2, 4_041, 300);
         let holy_city = g.player_city_ids(0)[0];
         g.players[0].holy_city = Some(holy_city);
         g.players[0]

@@ -6,6 +6,7 @@ use crate::rules::Rules;
 use crate::world::WorldMap;
 use crate::{hex, Pos};
 
+#[allow(clippy::too_many_arguments)]
 pub fn generate(
     rules: &Rules,
     width: i32,
@@ -372,6 +373,46 @@ pub fn generate(
     }
 
     assign_continents(&mut wm, &land, width, num_continents, rng);
+
+    // Gathering Storm marks only a subset of flat coastal land as vulnerable
+    // 1 m, 2 m, or 3 m Coastal Lowland. The stock generator derives these
+    // bands from its elevation field; this deterministic coordinate hash is
+    // the equivalent for CIVVIS's biome generator and does not perturb the
+    // seeded gameplay RNG stream.
+    let coastal_candidates: Vec<Pos> = wm
+        .tiles
+        .iter()
+        .filter(|(_, tile)| {
+            !tile.hills
+                && rules.is_passable(tile)
+                && !rules.is_water(tile)
+                && tile
+                    .feature
+                    .as_ref()
+                    .and_then(|feature| rules.features.get(feature))
+                    .is_none_or(|feature| !feature.natural_wonder)
+        })
+        .filter(|(position, _)| {
+            hex::neighbors(**position)
+                .into_iter()
+                .map(|neighbor| hex::canon(neighbor, width))
+                .any(|neighbor| {
+                    wm.tiles
+                        .get(&neighbor)
+                        .is_some_and(|tile| rules.is_water(tile))
+                })
+        })
+        .map(|(position, _)| *position)
+        .collect();
+    for position in coastal_candidates {
+        let hash = (position.0 as i64)
+            .wrapping_mul(73_856_093)
+            .wrapping_add((position.1 as i64).wrapping_mul(19_349_663))
+            .unsigned_abs();
+        if !hash.is_multiple_of(5) {
+            wm.tiles.get_mut(&position).unwrap().coastal_lowland = (hash % 3 + 1) as u8;
+        }
+    }
 
     // --- spawns on the largest connected passable landmass
     let passable: BTreeSet<Pos> = land

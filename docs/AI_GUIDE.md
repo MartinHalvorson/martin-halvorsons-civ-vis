@@ -25,12 +25,14 @@ run_game(&mut g, &mut ais);
 ```
 
 `AdvancedAi` is the default major-civilization agent. It maintains persistent
-grand strategy, campaign and threat state; coordinates research, diplomacy,
-recovery production, settlement, improvements, trade, and military focus; and
-falls back to the stable city governor for routine production. `BasicAi`
-remains the frozen deterministic control and the lightweight agent for
-city-states/barbarians. Both read full state (cheat on fog); fair-play agents
-should restrict themselves to `civvis::obs::observation(&game, pid)`.
+grand strategy, victory, campaign, force-group, settlement, builder, and threat
+state; coordinates research, civics, policies, governments, Secret Societies,
+diplomacy, production, spending, religion, trade, and unit orders; and falls
+back to the stable city governor for routine production. `advanced_v1`
+preserves the pre-upgrade agent as a frozen regression control. `BasicAi` is
+the deterministic lightweight agent used by city-states and barbarians. All
+three read full state (cheat on fog); fair-play agents should restrict
+themselves to `civvis::obs::observation(&game, pid)`.
 
 Default strategic planning also reads the public victory-race information for
 every rival. An imminent science or score win becomes a military-denial target,
@@ -46,6 +48,17 @@ Every major can be assigned an explicit victory objective. Targeted agents
 coordinate research, civics, policy cards, production, diplomacy, spending,
 and unit orders around that objective; city-states and barbarians continue to
 use the lightweight agent.
+
+The six pipelines are concrete rather than score labels. Science reserves a
+Spaceport and completes the launch chain; Culture builds a Theater Square
+network, recruits cultural Great People, reaches the Conservation/Professional
+Sports tourism unlocks, and improves tourism tiles; Religion founds, enhances,
+defends, and spreads its faith while reconverting its own core first;
+Diplomacy prioritizes Favor, envoys, alliances, city-state liberation, and
+World Congress; Domination coordinates production and force objectives; Score
+balances expansion and near-term empire value. Society choice supports the
+same goal: Hermetic Order for Science, Voidsingers for Culture/Religion, and
+Owls of Minerva for economic, diplomatic, and conquest plans.
 
 ```rust
 use civvis::ai::{run_game, AdvancedAi, VictoryTarget};
@@ -70,6 +83,19 @@ cargo run --release --bin victory_eval -- --target all --games 3 \
 `domination`, `score`, a comma-separated subset, or `all`. Per-condition turn
 limits reflect the length of each race; `--turns` overrides them for bounded
 diagnostics. Map dimensions can be overridden with `--width` and `--height`.
+
+### Validated regression baseline (2026-07-22)
+
+The current engine passes exact, unassisted full-game victories for every
+target on two independent seeds. On seeds 20000 and 20001 respectively, the
+winning turns were Science 1021/940, Culture 559/586, Religion 79/177,
+Diplomacy 305/335, Domination 82/136, and Score 301/301.
+
+Against the frozen `advanced_v1` control on mirrored current-engine maps,
+Advanced v2 won 61–39 across 100 four-player games and 26–24 across 50
+eight-player games: 87–63 combined (58.0%). Use these as regression baselines,
+not universal strength claims; repeat them when rules or evaluation settings
+change.
 
 ## Coordinated forces
 
@@ -183,8 +209,11 @@ Multiplayer games score as pairwise Elo results by final placement
 
 Actions are plain JSON dicts identical to what `legal_actions` returns —
 feed them straight into LLM tool-calling or an RL policy. One process per
-concurrent game; the engine itself runs ~27k turns/sec single-core, so
-in-process Rust agents are the fast path for self-play at scale.
+concurrent game; in-process Rust agents remain the fast path for self-play at
+scale. On an Apple M5 Max, the current release Advanced-v2 workload measured
+1,173 turns/sec for `benchmark --games 100 --turns 100` (two players, 20×14).
+Throughput varies materially with map size, era, player count, and agent; older
+tens-of-thousands figures describe a much smaller historical rules workload.
 
 ## Evaluation tips
 

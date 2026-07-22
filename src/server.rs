@@ -355,6 +355,7 @@ fn handle(stream: &mut TcpStream, session: &mut Session) {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{new_game_params, Params, Session, EMBEDDED_INDEX};
     use serde_json::json;
@@ -489,10 +490,8 @@ pub fn serve_with_game(port: u16, open_browser: bool, params: Params, game: Opti
     if open_browser {
         open_url(&url);
     }
-    for stream in listener.incoming() {
-        if let Ok(mut s) = stream {
-            handle(&mut s, &mut session);
-        }
+    for mut stream in listener.incoming().flatten() {
+        handle(&mut stream, &mut session);
     }
 }
 

@@ -37,6 +37,22 @@ pub struct Tile {
     /// Permanent Faith added by Great Bath flood mitigation.
     #[serde(default)]
     pub disaster_faith: f64,
+    /// Whether this tile is currently suffering a drought's -1 Food effect.
+    #[serde(default)]
+    pub drought: bool,
+    /// Gathering Storm coastal-lowland elevation band (1–3 meters). Zero
+    /// means this tile is not vulnerable to sea-level rise.
+    #[serde(default)]
+    pub coastal_lowland: u8,
+    /// A flooded lowland is unusable until its city completes a Flood Barrier.
+    #[serde(default)]
+    pub flooded: bool,
+    /// Submerged lowlands are permanently converted to Coast.
+    #[serde(default)]
+    pub submerged: bool,
+    /// Turn through which a nuclear accident's fallout makes the tile yieldless.
+    #[serde(default)]
+    pub fallout_until: u32,
 }
 
 impl Tile {
@@ -57,6 +73,11 @@ impl Tile {
             road: false,
             continent: None,
             disaster_faith: 0.0,
+            drought: false,
+            coastal_lowland: 0,
+            flooded: false,
+            submerged: false,
+            fallout_until: 0,
         }
     }
 }
