@@ -149,6 +149,23 @@ def runtime_matches(snapshot: str) -> bool:
     return metadata.get("source_snapshot") == snapshot
 
 
+def promoted_runtime_id() -> str | None:
+    """Return the immutable source identity of the currently promoted binary."""
+    try:
+        metadata = json.loads(RUNTIME_METADATA.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    identity = metadata.get("source_snapshot")
+    return identity if isinstance(identity, str) and identity else None
+
+
+def runtime_replacement_pending(
+    running_runtime_id: str | None, promoted_runtime: str | None
+) -> bool:
+    """Whether a running process predates the latest verified promotion."""
+    return promoted_runtime is not None and running_runtime_id != promoted_runtime
+
+
 def build_latest(max_attempts: int = 3) -> bool:
     """Build a stable snapshot; never promote an already-obsolete build."""
     for attempt in range(1, max_attempts + 1):
@@ -458,6 +475,9 @@ def main() -> int:
     }
     process: subprocess.Popen[str] | None = None
     adopted_pid = args.adopt_pid
+    # An adopted binary cannot be proven current, so replace it at the first
+    # natural victory boundary after a verified runtime is available.
+    running_runtime_id: str | None = None
     save_path = checkpoint_path(args.port)
     unavailable_since: float | None = None
     last_progress: tuple[Any, ...] | None = None
@@ -470,7 +490,7 @@ def main() -> int:
     update_retry_at = 0.0
 
     def launch_recovery(open_browser: bool = False) -> dict[str, Any]:
-        nonlocal process, adopted_pid
+        nonlocal process, adopted_pid, running_runtime_id
         stop_server(process, adopted_pid)
         process = None
         adopted_pid = None
@@ -488,7 +508,9 @@ def main() -> int:
 
         if not RUNTIME_BINARY.exists():
             prepare_latest(args.build_retry)
+        launch_runtime_id = promoted_runtime_id()
         process = start_server(args.port, settings, open_browser, resume)
+        running_runtime_id = launch_runtime_id
         try:
             recovered = wait_for_server(args.port, process)
         except RuntimeError:
@@ -497,7 +519,9 @@ def main() -> int:
             log("checkpoint could not be loaded; quarantining it and starting a fresh game")
             stop_server(process, None)
             quarantine_checkpoint(save_path)
+            launch_runtime_id = promoted_runtime_id()
             process = start_server(args.port, settings, open_browser)
+            running_runtime_id = launch_runtime_id
             recovered = wait_for_server(args.port, process)
             marker = None
 
@@ -608,16 +632,32 @@ def main() -> int:
                 time.sleep(args.poll)
                 continue
 
+            promoted_runtime = promoted_runtime_id()
+            replacement_pending = runtime_replacement_pending(
+                running_runtime_id, promoted_runtime
+            )
+
             # The page also has a result countdown. If it already created a
-            # successor while compilation ran, never interrupt that live game.
+            # successor while compilation ran, leave it alone only when it is
+            # already executing the promoted runtime. An in-process successor
+            # retains the old executable and must be replaced for updates to
+            # reach the watched game.
             latest_state = read_state(args.port)
-            if successor_started(latest_state, finished_instance, finished_seed):
+            if (
+                successor_started(latest_state, finished_instance, finished_seed)
+                and not replacement_pending
+            ):
                 log("the browser already began another game; leaving that live match uninterrupted")
                 state = latest_state
                 last_progress = progress_marker(state)
                 progress_at = time.monotonic()
                 finished_key = None
                 continue
+            if successor_started(latest_state, finished_instance, finished_seed):
+                log(
+                    "the server began another game on the previous runtime; "
+                    "deploying the promoted build"
+                )
 
             remaining = args.cooldown - (time.monotonic() - finished_seen_at)
             if remaining > 0:
@@ -626,7 +666,10 @@ def main() -> int:
             # Recheck after sleeping so the supervisor does not kill that
             # brand-new match in a race at the shared cooldown boundary.
             latest_state = read_state(args.port)
-            if successor_started(latest_state, finished_instance, finished_seed):
+            if (
+                successor_started(latest_state, finished_instance, finished_seed)
+                and not replacement_pending
+            ):
                 log("the server began another game during cooldown; leaving it uninterrupted")
                 state = latest_state
                 last_progress = progress_marker(state)
@@ -640,7 +683,9 @@ def main() -> int:
                 save_path.unlink()
             except FileNotFoundError:
                 pass
+            launch_runtime_id = promoted_runtime_id()
             process = start_server(args.port, settings, False)
+            running_runtime_id = launch_runtime_id
             state = wait_for_server(args.port, process)
             last_progress = progress_marker(state)
             progress_at = time.monotonic()

@@ -114,6 +114,12 @@ class SourceSnapshotTests(unittest.TestCase):
         sync.assert_called_once_with()
         build.assert_called_once_with(max_attempts=1)
 
+    def test_runtime_replacement_distinguishes_in_process_restart_from_deployment(self):
+        self.assertFalse(supervisor.runtime_replacement_pending("current", "current"))
+        self.assertTrue(supervisor.runtime_replacement_pending("previous", "current"))
+        self.assertTrue(supervisor.runtime_replacement_pending(None, "current"))
+        self.assertFalse(supervisor.runtime_replacement_pending("previous", None))
+
 
 class RecoveryTests(unittest.TestCase):
     def test_successor_detection_closes_the_cooldown_restart_race(self):
