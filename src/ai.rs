@@ -437,6 +437,9 @@ impl BasicAi {
                 UnitDoctrine::AirDefense
             };
         }
+        if spec.class == "military" && !spec.is_melee_capable() && !spec.has_ranged_attack() {
+            return UnitDoctrine::Support;
+        }
         if spec.siege {
             return UnitDoctrine::Siege;
         }
@@ -1899,10 +1902,12 @@ impl BasicAi {
             if spec.class != "military" || spec.domain.as_deref() == Some("sea") {
                 continue;
             }
-            if want_ranged
-                .map(|want| want != spec.has_ranged_attack())
-                .unwrap_or(false)
-            {
+            let matches_role = match want_ranged {
+                Some(true) => spec.has_ranged_attack(),
+                Some(false) => spec.is_melee_capable(),
+                None => spec.has_ranged_attack() || spec.is_melee_capable(),
+            };
+            if !matches_role {
                 continue;
             }
             if !g.can_produce(pid, cid, &Item::Unit { unit: name.clone() }) {
@@ -2035,9 +2040,14 @@ impl BasicAi {
             let mut best: Option<(f64, f64, String, u32)> = None;
             for cid in city_ids {
                 for (name, spec) in &g.rules.units {
+                    let matches_role = match role {
+                        Some(true) => spec.has_ranged_attack(),
+                        Some(false) => spec.is_melee_capable(),
+                        None => spec.has_ranged_attack() || spec.is_melee_capable(),
+                    };
                     if spec.class != "military"
                         || spec.domain.as_deref() == Some("sea")
-                        || role.map(|r| r != spec.has_ranged_attack()).unwrap_or(false)
+                        || !matches_role
                     {
                         continue;
                     }
@@ -3496,9 +3506,12 @@ impl BasicAi {
             // Pick the best role-adjusted exchange among all attackable tiles.
             // A scout needs a clear opportunity; an assault unit presses a
             // thinner edge, and siege spends its attacks on districts.
-            let ranged = spec.has_ranged_attack();
-            let radius = if ranged { g.unit_attack_range(uid) } else { 1 };
-            let mut best: Option<(f64, Pos)> = None;
+            let radius = if spec.has_ranged_attack() {
+                g.unit_attack_range(uid).max(1)
+            } else {
+                1
+            };
+            let mut best: Option<(f64, Pos, Action)> = None;
             for pos in g.wdisk(upos, radius) {
                 if pos == upos
                     || g.map.get(pos).is_none()
@@ -3506,29 +3519,46 @@ impl BasicAi {
                 {
                     continue;
                 }
-                let utility =
-                    self.exchange_score(g, uid, pos, ranged) - self.attack_threshold(g, uid, pos);
-                if best
-                    .map(|(old, old_pos)| (utility, pos) > (old, old_pos))
-                    .unwrap_or(true)
-                {
-                    best = Some((utility, pos));
-                }
-            }
-            if let Some((utility, pos)) = best {
-                if utility > 0.0 {
-                    let act = if ranged {
+                let distance = g.wdist(upos, pos);
+                let mut modes = Vec::with_capacity(2);
+                if spec.has_ranged_attack() && distance <= g.unit_attack_range(uid) {
+                    modes.push((
+                        true,
                         Action::Ranged {
                             unit: uid,
                             target: pos,
-                        }
-                    } else {
+                        },
+                    ));
+                }
+                if spec.is_melee_capable() && distance == 1 {
+                    modes.push((
+                        false,
                         Action::Attack {
                             unit: uid,
                             target: pos,
-                        }
-                    };
-                    if g.apply(pid, &act).is_ok() {
+                        },
+                    ));
+                }
+                for (ranged, action) in modes {
+                    let capture =
+                        !ranged && g.city_at(pos).is_some_and(|cid| g.cities[&cid].hp <= 0);
+                    let utility = self.exchange_score(g, uid, pos, ranged)
+                        - self.attack_threshold(g, uid, pos)
+                        + if capture { 500.0 } else { 0.0 };
+                    if best
+                        .as_ref()
+                        .map(|(old, old_pos, _)| {
+                            utility > *old || (utility == *old && pos < *old_pos)
+                        })
+                        .unwrap_or(true)
+                    {
+                        best = Some((utility, pos, action));
+                    }
+                }
+            }
+            if let Some((utility, _, action)) = best {
+                if utility > 0.0 {
+                    if g.apply(pid, &action).is_ok() {
                         return true;
                     }
                 }

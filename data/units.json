@@ -562,7 +562,8 @@
   },
   "anti_air_gun": {
     "class": "military", "cost": 455, "maintenance": 2, "moves": 2, "strength": 65,
-    "ranged_strength": 80, "range": 1, "tech": "advanced_ballistics", "promotion_class": "anti_cavalry"
+    "ranged_strength": 80, "range": 1, "tech": "advanced_ballistics", "promotion_class": "anti_cavalry",
+    "can_melee": false, "can_ranged": false
   },
   "machine_gun": {
     "class": "military", "cost": 540, "maintenance": 6, "moves": 2, "strength": 70,
@@ -584,7 +585,8 @@
   },
   "mobile_sam": {
     "class": "military", "cost": 590, "maintenance": 4, "moves": 3, "strength": 80,
-    "ranged_strength": 100, "range": 1, "tech": "guidance_systems", "promotion_class": "anti_cavalry"
+    "ranged_strength": 100, "range": 1, "tech": "guidance_systems", "promotion_class": "anti_cavalry",
+    "can_melee": false, "can_ranged": false
   },
   "rocket_artillery": {
     "class": "military", "cost": 680, "maintenance": 8, "moves": 3, "strength": 70,
@@ -617,7 +619,7 @@
   "giant_death_robot": {
     "class": "military", "cost": 1500, "maintenance": 15, "moves": 5, "strength": 130,
     "ranged_strength": 120, "range": 3, "tech": "robotics", "requires_resource": "uranium", "resource_cost": 1, "resource_maintenance": 3,
-    "promotion_class": "melee", "zone_of_control": true
+    "promotion_class": "melee", "zone_of_control": true, "can_melee": true, "can_ranged": true
   },
   "warrior_monk": {
     "class": "military", "cost": 200, "maintenance": 2, "moves": 3, "strength": 40,

@@ -4533,6 +4533,150 @@ mod government_runtime_tests {
         assert_eq!(game.war_weariness_multiplier(0, false), 0.85);
         assert_eq!(game.war_weariness_multiplier(0, true), 0.85);
     }
+
+    #[test]
+    fn corporate_libertarianism_gates_production_and_rewards_improved_resources() {
+        let (mut game, city) = one_city(774_509);
+        game.players[0].government = Some("corporate_libertarianism".to_string());
+        let baseline = without_government(&game);
+        assert_eq!(
+            game.city_yields(city).production,
+            baseline.city_yields(city).production
+        );
+        assert!(
+            (game.city_yields(city).science - baseline.city_yields(city).science * 0.90).abs()
+                < 1e-9
+        );
+
+        let commercial_hub = install_test_district(&mut game, city, "commercial_hub");
+        let baseline = without_government(&game);
+        assert!(
+            (game.city_yields(city).production - baseline.city_yields(city).production * 1.10)
+                .abs()
+                < 1e-9
+        );
+        install_test_district(&mut game, city, "encampment");
+        let baseline = without_government(&game);
+        assert!(
+            (game.city_yields(city).production - baseline.city_yields(city).production * 1.10)
+                .abs()
+                < 1e-9,
+            "the two eligible districts grant one city modifier, not two"
+        );
+        game.map.tiles.get_mut(&commercial_hub).unwrap().pillaged = true;
+        let encampment = game.cities[&city]
+            .districts
+            .iter()
+            .find_map(|(district, position)| {
+                game.district_is_family(district, "encampment")
+                    .then_some(*position)
+            })
+            .unwrap();
+        game.map.tiles.get_mut(&encampment).unwrap().pillaged = true;
+        let baseline = without_government(&game);
+        assert_eq!(
+            game.city_yields(city).production,
+            baseline.city_yields(city).production
+        );
+
+        game.players[0].techs.insert("bronze_working".to_string());
+        let center = game.cities[&city].pos;
+        game.map.tiles.get_mut(&center).unwrap().resource = Some("iron".to_string());
+        let resource_tile = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != center && game.map.tiles[position].district.is_none())
+            .unwrap();
+        let tile = game.map.tiles.get_mut(&resource_tile).unwrap();
+        tile.resource = Some("iron".to_string());
+        tile.improvement = Some("mine".to_string());
+        tile.pillaged = false;
+        let baseline = without_government(&game);
+        assert_eq!(
+            game.strategic_resource_rate(0, "iron"),
+            baseline.strategic_resource_rate(0, "iron") + 1.0,
+            "the improved source receives +1; the city-center source does not"
+        );
+        game.map.tiles.get_mut(&resource_tile).unwrap().pillaged = true;
+        let baseline = without_government(&game);
+        assert_eq!(
+            game.strategic_resource_rate(0, "iron"),
+            baseline.strategic_resource_rate(0, "iron")
+        );
+    }
+
+    #[test]
+    fn digital_democracy_applies_city_bonuses_and_unit_penalty() {
+        let (mut game, city) = one_city(774_510);
+        game.players[0].government = Some("digital_democracy".to_string());
+        let baseline = without_government(&game);
+        assert_eq!(
+            game.city_local_amenities(&game.cities[&city]),
+            baseline.city_local_amenities(&baseline.cities[&city]) + 2
+        );
+        assert_eq!(
+            game.city_yields(city).culture,
+            baseline.city_yields(city).culture
+        );
+        let warrior = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "warrior")
+            .unwrap();
+        assert!(
+            (game.unit_strength(&game.units[&warrior], false)
+                - baseline.unit_strength(&baseline.units[&warrior], false)
+                + 3.0)
+                .abs()
+                < 1e-9
+        );
+
+        install_test_district(&mut game, city, "campus");
+        let baseline = without_government(&game);
+        assert_eq!(
+            game.city_yields(city).culture,
+            baseline.city_yields(city).culture + 2.0
+        );
+    }
+
+    #[test]
+    fn synthetic_technocracy_powers_cities_boosts_projects_and_reduces_tourism() {
+        let (mut game, city) = one_city(774_511);
+        game.players[0].government = Some("synthetic_technocracy".to_string());
+        install_test_district(&mut game, city, "campus");
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("research_lab".to_string());
+        let baseline = without_government(&game);
+        assert_eq!(game.city_power_demand(&game.cities[&city]), 3.0);
+        assert_eq!(game.city_power_supply(&game.cities[&city]), 3.0);
+        assert_eq!(baseline.city_power_supply(&baseline.cities[&city]), 0.0);
+        assert!(game.city_is_powered(&game.cities[&city]));
+        assert!(!baseline.city_is_powered(&baseline.cities[&city]));
+
+        let project = Item::Project {
+            project: "campus_research_grants".to_string(),
+        };
+        assert!(
+            (game.item_prod_mult(0, city, Some(&project))
+                - baseline.item_prod_mult(0, city, Some(&project))
+                - 0.30)
+                .abs()
+                < 1e-9
+        );
+
+        let city_position = game.cities[&city].pos;
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .wonders
+            .insert("pyramids".to_string(), city_position);
+        let baseline = without_government(&game);
+        assert!((game.tourism_per_turn(0) - baseline.tourism_per_turn(0) * 0.90).abs() < 1e-9);
+    }
 }
 
 #[cfg(test)]
@@ -12019,7 +12163,7 @@ impl Game {
             renewable += self.governor_effect(city.owner, city.id, "renewable_power_bonus");
         }
         renewable *= 1.0 + self.empire_wonder_effect(city.owner, "renewable_power_pct") / 100.0;
-        renewable
+        renewable + self.gov_effects(city.owner).power_per_city
     }
 
     pub fn city_power_supply(&self, city: &City) -> f64 {
@@ -13172,6 +13316,7 @@ impl Game {
         }
         let expected_improvement = self.rules.resources[res].improvement.as_str();
         let mut improved = 0.0;
+        let mut government_improved = 0.0;
         let mut governor_accumulation = 0.0;
         for c in self.cities.values().filter(|c| c.owner == pid) {
             for pos in &c.owned_tiles {
@@ -13181,6 +13326,9 @@ impl Game {
                     && (*pos == c.pos || tile.improvement.as_deref() == Some(expected_improvement))
                 {
                     improved += 1.0;
+                    if tile.improvement.as_deref() == Some(expected_improvement) {
+                        government_improved += 1.0;
+                    }
                     governor_accumulation +=
                         self.governor_effect(pid, c.id, "strategic_resource_accumulation");
                 }
@@ -13268,6 +13416,7 @@ impl Game {
             0.0
         };
         improved * (base + extra)
+            + government_improved * self.gov_effects(pid).improved_strategic_resource_rate
             + governor_accumulation
             + spaceport
             + wonder
@@ -16973,7 +17122,15 @@ impl Game {
         for _ in 0..government_buildings {
             ys.add(eff.government_building_yields);
         }
-        ys.production *= 1.0 + eff.production_pct / 100.0;
+        let district_production_pct = if self
+            .city_has_active_district_family(city, "commercial_hub")
+            || self.city_has_active_district_family(city, "encampment")
+        {
+            eff.commercial_encampment_production_pct
+        } else {
+            0.0
+        };
+        ys.production *= 1.0 + (eff.production_pct + district_production_pct) / 100.0;
         ys.science *= 1.0 + eff.science_pct / 100.0;
         ys.gold *= 1.0 + eff.gold_pct / 100.0;
         if self.city_has_established_governor(city.owner, city.id) {
@@ -18941,7 +19098,8 @@ impl Game {
                                 }
                             }
                         }
-                    } else if u.attacks_left > 0 {
+                    }
+                    if spec.is_melee_capable() && u.attacks_left > 0 {
                         for pos in self.nbrs(u.pos) {
                             if self.map.tiles.contains_key(&pos)
                                 && self.enemy_combat_target_at(pid, pos)
@@ -26917,8 +27075,11 @@ impl Game {
     /// source separate is necessary because Enlightenment reduces only these
     /// sources and Cristo Redentor cancels exactly that reduction.
     fn religious_tourism_components_per_turn(&self, pid: usize) -> (f64, f64) {
-        let global_multiplier =
-            1.0 + (self.tree_effect(pid, "tourism_pct") + self.monopoly_bonuses(pid).1) / 100.0;
+        let global_multiplier = 1.0
+            + (self.tree_effect(pid, "tourism_pct")
+                + self.monopoly_bonuses(pid).1
+                + self.gov_effects(pid).tourism_pct)
+                / 100.0;
         let mut holy_city_tourism = 0.0;
         let mut film_studio_bonus = 0.0;
         for city_id in self
@@ -27226,8 +27387,11 @@ impl Game {
                 * self.city_building_effect(&self.cities[&city_id], "modern_civ_tourism_pct")
                 / 100.0;
         }
-        let global_multiplier =
-            1.0 + (self.tree_effect(pid, "tourism_pct") + self.monopoly_bonuses(pid).1) / 100.0;
+        let global_multiplier = 1.0
+            + (self.tree_effect(pid, "tourism_pct")
+                + self.monopoly_bonuses(pid).1
+                + self.gov_effects(pid).tourism_pct)
+                / 100.0;
         (
             (tourism + holy_city_tourism + 0.15 * culture) * global_multiplier,
             film_studio_bonus * global_multiplier,
@@ -29552,6 +29716,77 @@ mod combat_scenarios {
         assert!(legal_attack(&g));
         g.apply(0, &attack).unwrap();
         assert_eq!(g.units[&attacker].moves_left, 0.0);
+    }
+
+    #[test]
+    fn hybrid_and_interception_only_units_offer_exact_attack_modes() {
+        let (mut game, target, ring) = controlled_game(3051);
+        let robot = game.spawn_unit("giant_death_robot", 0, ring[0]);
+        game.spawn_unit("warrior", 1, target);
+        let actions = game.legal_actions(0);
+        assert!(actions.iter().any(|action| {
+            matches!(action, Action::Attack { unit, target: position }
+                if *unit == robot && *position == target)
+        }));
+        assert!(actions.iter().any(|action| {
+            matches!(action, Action::Ranged { unit, target: position }
+                if *unit == robot && *position == target)
+        }));
+        let mut melee = game.clone();
+        melee
+            .apply(
+                0,
+                &Action::Attack {
+                    unit: robot,
+                    target,
+                },
+            )
+            .unwrap();
+        game.apply(
+            0,
+            &Action::Ranged {
+                unit: robot,
+                target,
+            },
+        )
+        .unwrap();
+
+        for (seed, kind) in [(3052, "anti_air_gun"), (3053, "mobile_sam")] {
+            let (mut defense, target, ring) = controlled_game(seed);
+            let anti_air = defense.spawn_unit(kind, 0, ring[0]);
+            defense.spawn_unit("warrior", 1, target);
+            assert!(!defense.rules.units[kind].is_melee_capable());
+            assert!(!defense.rules.units[kind].has_ranged_attack());
+            assert!(!defense.legal_actions(0).iter().any(|action| {
+                matches!(action,
+                    Action::Attack { unit, .. } | Action::Ranged { unit, .. }
+                    if *unit == anti_air)
+            }));
+            assert_eq!(
+                defense
+                    .apply(
+                        0,
+                        &Action::Attack {
+                            unit: anti_air,
+                            target,
+                        },
+                    )
+                    .unwrap_err(),
+                "unit cannot melee attack"
+            );
+            assert_eq!(
+                defense
+                    .apply(
+                        0,
+                        &Action::Ranged {
+                            unit: anti_air,
+                            target,
+                        },
+                    )
+                    .unwrap_err(),
+                "unit has no ranged attack"
+            );
+        }
     }
 
     #[test]

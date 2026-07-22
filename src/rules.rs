@@ -160,6 +160,14 @@ pub struct UnitSpec {
     pub ranged_strength: f64, // 0 = no ranged attack
     #[serde(default)]
     pub bombard_strength: f64, // 0 = no anti-district bombard attack
+    /// Explicit overrides for hybrid and interception-only units. Most units
+    /// infer these capabilities from their strength profile; the Giant Death
+    /// Robot can use both attacks, while AA Guns and Mobile SAMs use their
+    /// ranged stat only for automatic interception.
+    #[serde(default)]
+    pub can_melee: Option<bool>,
+    #[serde(default)]
+    pub can_ranged: Option<bool>,
     #[serde(default)]
     pub range: i32,
     #[serde(default)]
@@ -219,11 +227,16 @@ impl UnitSpec {
     }
 
     pub fn has_ranged_attack(&self) -> bool {
-        self.ranged_attack_strength() > 0.0
+        self.can_ranged
+            .unwrap_or_else(|| self.ranged_attack_strength() > 0.0)
     }
 
     pub fn is_melee_capable(&self) -> bool {
-        self.class == "military" && !self.has_ranged_attack()
+        self.can_melee.unwrap_or_else(|| {
+            self.class == "military"
+                && self.domain.as_deref() != Some("air")
+                && !self.has_ranged_attack()
+        })
     }
 }
 
@@ -539,6 +552,10 @@ pub struct GovEffects {
     pub wonder_production_pct: f64,
     pub unit_production_pct: f64,
     pub war_weariness_reduction_pct: f64,
+    pub commercial_encampment_production_pct: f64,
+    pub improved_strategic_resource_rate: f64,
+    pub power_per_city: f64,
+    pub tourism_pct: f64,
     pub combat_strength: f64,
     pub amenity: f64,
     pub housing: f64,
