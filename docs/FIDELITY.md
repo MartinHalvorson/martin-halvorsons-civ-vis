@@ -102,12 +102,26 @@ terrain per hills variant, so each `_HILLS` terrain is checked against its flat
 parent plus that modifier. All five agree, which is what licenses the
 simplification.
 
+### Building yields, governments and adjacency (shipped)
+
+`Building_YieldChanges` against `buildings.json`, `Governments` plus
+`Government_SlotCounts` against `governments.json`, and
+`District_Adjacencies` joined to `Adjacency_YieldChanges` against each
+district's per-source `adjacency` map, dividing every rule's yield by its
+`TilesRequired`. All three came back clean apart from one Industrial Zone
+Mine rule.
+
+The adjacency projection is the case that justifies the whole approach.
+Reading the XML by hand said Wonder adjacency was +1 Culture, because the base
+row says `YieldChange="1"` and Rise and Fall raises it to 2 through a separate
+`<Update>` element. The loader applies overlays; eyes skimming a dump do not.
+
 ### Next inside phase 1
 
-The tables still unprojected are where the remaining divergence lives:
-`Building_YieldChanges`, `District_Adjacencies`, `UnitPromotions`,
-`Governments`, `Policies`, `Beliefs`. Each is a mechanical extension of the
-same projection pattern.
+The tables still unprojected: `UnitPromotions`, `Policies`, `Beliefs`,
+`District_CitizenYieldChanges`, `District_GreatPersonPoints`,
+`Building_GreatPersonPoints`. Each is a mechanical extension of the same
+pattern.
 
 The "Only in Civ VI" column on the yield tables is a content backlog with one
 entry that is not scope: **Ziggurat**, Sumeria's unique improvement — CIVVIS
