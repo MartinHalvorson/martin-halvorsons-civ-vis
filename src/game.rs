@@ -2895,6 +2895,77 @@ mod espionage_runtime_tests {
             .iter()
             .any(|action| { matches!(action, Action::AssignSpy { spy, .. } if *spy == spy_id) }));
     }
+
+    #[test]
+    fn espionage_pact_uses_its_stock_era_window_and_operation_effects() {
+        let (mut game, _, target, commercial) = game_with_spy_cities(774_266);
+        game.world_era = 3;
+        assert!(!game
+            .regular_congress_candidates()
+            .iter()
+            .any(|resolution| resolution.id == "espionage_pact"));
+        game.world_era = 4;
+        let pact = game
+            .regular_congress_candidates()
+            .into_iter()
+            .find(|resolution| resolution.id == "espionage_pact")
+            .unwrap();
+        assert!(pact.choices.contains(&"A:siphon_funds".to_string()));
+        assert!(pact.choices.contains(&"B:siphon_funds".to_string()));
+        game.world_era = 7;
+        assert!(!game
+            .regular_congress_candidates()
+            .iter()
+            .any(|resolution| resolution.id == "espionage_pact"));
+
+        let spy_id = game.next_id;
+        game.next_id += 1;
+        game.spies.insert(
+            spy_id,
+            Spy {
+                id: spy_id,
+                owner: 0,
+                level: 0,
+                promotions: BTreeSet::new(),
+                city: Some(target),
+                ready_turn: game.turn,
+                mission: None,
+                sources_city: None,
+                sources_until: 0,
+                captured_by: None,
+            },
+        );
+        let mission = SpyMission {
+            kind: "siphon_funds".to_string(),
+            city: target,
+            target: commercial,
+            started: game.turn,
+            ends: game.turn + 8,
+        };
+        let baseline = game.spy_effective_level(spy_id, &mission);
+        game.active_congress_effects.push(CongressEffect {
+            resolution: "espionage_pact".to_string(),
+            outcome: "A".to_string(),
+            target: "siphon_funds".to_string(),
+            expires: game.turn + 30,
+        });
+        assert_eq!(game.spy_effective_level(spy_id, &mission), baseline + 2);
+
+        game.active_congress_effects.clear();
+        game.active_congress_effects.push(CongressEffect {
+            resolution: "espionage_pact".to_string(),
+            outcome: "B".to_string(),
+            target: "siphon_funds".to_string(),
+            expires: game.turn + 30,
+        });
+        let operations = game.spy_operation_actions(&game.spies[&spy_id], &game.cities[&target]);
+        assert!(!operations.iter().any(
+            |action| matches!(action, Action::SpyMission { mission, .. } if mission == "siphon_funds")
+        ));
+        assert!(operations.iter().any(
+            |action| matches!(action, Action::SpyMission { mission, .. } if mission == "foment_unrest")
+        ));
+    }
 }
 
 #[cfg(test)]
@@ -7302,7 +7373,9 @@ impl Game {
         let mut actions = Vec::new();
         let offensive = city.owner != spy.owner;
         let mut add = |mission: &str, target: Pos| {
-            if !self.spy_mission_already_running(spy.owner, city.id, mission) {
+            if !self.congress_effect_active("espionage_pact", "B", mission)
+                && !self.spy_mission_already_running(spy.owner, city.id, mission)
+            {
                 actions.push(Action::SpyMission {
                     spy: spy.id,
                     mission: mission.to_string(),
@@ -7450,6 +7523,9 @@ impl Game {
         if Self::spy_mission_promotion(&mission.kind)
             .is_some_and(|promotion| spy.promotions.contains(promotion))
         {
+            level += 2;
+        }
+        if self.congress_effect_active("espionage_pact", "A", &mission.kind) {
             level += 2;
         }
         if self.spies.values().any(|other| {
@@ -8670,8 +8746,16 @@ impl Game {
             .ok_or_else(|| "no opposing religious unit".to_string())?;
         let defender = self.units[&defender_id].clone();
         let defender_religion = defender.religion.clone().unwrap();
-        let att = effective_strength(self.theological_strength(&attacker), attacker.hp);
-        let def = effective_strength(self.theological_strength(&defender), defender.hp);
+        let att = effective_strength(
+            self.theological_strength(&attacker)
+                + self.religious_alliance_combat_bonus(attacker.owner, &defender_religion),
+            attacker.hp,
+        );
+        let def = effective_strength(
+            self.theological_strength(&defender)
+                + self.religious_alliance_combat_bonus(defender.owner, &attacker_religion),
+            defender.hp,
+        );
         let dealt = damage(att, def, &mut self.rng);
         let received = damage(def, att, &mut self.rng);
         self.units.get_mut(&defender_id).unwrap().hp -= dealt;
@@ -8953,6 +9037,7 @@ impl Game {
                 if *spos != cpos
                     && self.wdist(*spos, cpos) <= *range
                     && !self.city_ignores_foreign_religion(&self.cities[&cid], r)
+                    && !self.religious_alliance_blocks_pressure(&self.cities[&cid], r)
                 {
                     *self
                         .cities
@@ -8991,6 +9076,9 @@ impl Game {
                 .collect();
             for (religion, amount) in route_religions {
                 if self.city_ignores_foreign_religion(&self.cities[&cid], &religion) {
+                    continue;
+                }
+                if self.religious_alliance_blocks_pressure(&self.cities[&cid], &religion) {
                     continue;
                 }
                 *self
@@ -9149,6 +9237,18 @@ impl Game {
                 }
                 for (kind, points) in &self.rules.districts[d.as_str()].great_person_points {
                     *city_earn.entry(kind.clone()).or_insert(0.0) += *points;
+                    let cultural_alliance_route = self.routes.iter().any(|route| {
+                        route.origin == c.id
+                            && self.cities.get(&route.dest).is_some_and(|destination| {
+                                self.alliance_with(pid, destination.owner)
+                                    .is_some_and(|alliance| {
+                                        alliance.kind == "cultural" && alliance.level >= 2
+                                    })
+                            })
+                    });
+                    if cultural_alliance_route {
+                        *city_earn.entry(kind.clone()).or_insert(0.0) += 1.0;
+                    }
                     if c.wonders.contains_key("oracle") {
                         *city_earn.entry(kind.clone()).or_insert(0.0) += self.rules.wonders
                             ["oracle"]
@@ -10099,6 +10199,7 @@ impl Game {
             .any(|(ally, alliance)| {
                 alliance.ends > self.turn
                     && alliance.kind == "military"
+                    && alliance.level >= 1
                     && self.is_at_war(*ally, opponent)
             })
         {
@@ -10116,6 +10217,15 @@ impl Game {
         match item {
             Some(Item::Unit { unit }) | Some(Item::Formation { unit, .. }) => {
                 let spec = &self.rules.units[unit.as_str()];
+                if spec.class == "military"
+                    && self
+                        .alliance_partner(pid, "military", 2)
+                        .is_some_and(|partner| {
+                            self.at_war_with_any_major(pid) || self.at_war_with_any_major(partner)
+                        })
+                {
+                    bonus += 0.15;
+                }
                 if spec.class == "military" && self.dedication_active(pid, "to_arms") {
                     bonus += 0.15;
                 }
@@ -12573,6 +12683,12 @@ impl Game {
             // Apostles and Rock Bands choose one promotion immediately after
             // purchase instead of first earning combat experience.
             u.xp = Self::promotion_threshold(1);
+        }
+        if spec.class == "military"
+            && !spec.promotion_class.is_empty()
+            && self.alliance_partner(owner, "military", 3).is_some()
+        {
+            u.xp = u.xp.max(Self::promotion_threshold(u.level));
         }
         if kind == "apostle" && self.empire_wonder_effect(owner, "apostles_gain_martyr") > 0.0 {
             u.promotions.insert("martyr".to_string());
@@ -15474,13 +15590,11 @@ impl Game {
                     rys.gold += 3.0;
                 }
                 if let Some(alliance) = self.alliance_with(city.owner, dc.owner) {
-                    let level = alliance.level.max(1) as f64;
                     match alliance.kind.as_str() {
-                        "research" => rys.science += level,
-                        "cultural" => rys.culture += level,
-                        "economic" => rys.gold += 2.0 * level,
-                        "military" => rys.production += level,
-                        "religious" => rys.faith += level,
+                        "research" => rys.science += 2.0,
+                        "cultural" => rys.culture += 2.0,
+                        "economic" => rys.gold += 4.0,
+                        "religious" => rys.faith += 2.0,
                         _ => {}
                     }
                 }
@@ -15576,6 +15690,17 @@ impl Game {
             .iter()
             .filter(|route| route.dest == cid && route.owner != city.owner)
             .count() as f64;
+        for route in self.routes.iter().filter(|route| route.dest == cid) {
+            if let Some(alliance) = self.alliance_with(city.owner, route.owner) {
+                match alliance.kind.as_str() {
+                    "research" => ys.science += 1.0,
+                    "cultural" => ys.culture += 1.0,
+                    "economic" => ys.gold += 2.0,
+                    "religious" => ys.faith += 1.0,
+                    _ => {}
+                }
+            }
+        }
         ys.gold += incoming_foreign_routes
             * self.governor_effect(city.owner, city.id, "incoming_foreign_trade_gold");
         if incoming_routes > 0.0 && city.wonders.contains_key("university_of_sankore") {
@@ -15619,6 +15744,11 @@ impl Game {
                     .map(|(district, position)| self.district_yields(district, *position).faith)
                     .sum::<f64>()
                     * work_ethic;
+            }
+        }
+        if let Some(partner) = self.alliance_partner(city.owner, "religious", 3) {
+            if let Some(religion) = self.players[partner].religion.as_deref() {
+                ys.faith += self.religious_followers_in_city(city, religion);
             }
         }
         if self.has_ability(city.owner, "platos_republic") {
@@ -15838,6 +15968,9 @@ impl Game {
         ys.science *= m;
         ys.culture *= m;
         ys.faith *= m;
+        if self.research_alliance_science_bonus(city.owner) {
+            ys.science *= 1.10;
+        }
         ys
     }
 
@@ -16549,6 +16682,44 @@ impl Game {
                 .chain(project.alternate_districts.iter().map(String::as_str))
                 .any(|family| self.city_has_active_district_family(city, family))
         })
+    }
+
+    /// Exact completion awards for a district project in this city. Keeping
+    /// this calculation shared lets AI search value the same whole-percent
+    /// progression, Governor, government, and Congress modifiers that the
+    /// authoritative completion path will eventually apply.
+    pub(crate) fn project_completion_gpp_awards(
+        &self,
+        pid: usize,
+        cid: u32,
+        project: &str,
+    ) -> BTreeMap<String, f64> {
+        let Some(spec) = self.rules.projects.get(project) else {
+            return BTreeMap::new();
+        };
+        let progress = self.game_progress_ratio(pid);
+        let city_multiplier = 1.0 + self.governor_effect(pid, cid, "great_people_pct") / 100.0;
+        let empire_multiplier = 1.0 + self.gov_effects(pid).great_people_pct / 100.0;
+        spec.completion_gpp
+            .iter()
+            .map(|(kind, base_points)| {
+                // PointProgressionParam1=800: interpolate from the base
+                // award to eight times that award, then floor before local
+                // and empire modifiers.
+                let points = (base_points * (1.0 + 7.0 * progress)).floor();
+                let congress_multiplier = if self.congress_effect_active("patronage", "A", kind) {
+                    2.0
+                } else if self.congress_effect_active("patronage", "B", kind) {
+                    0.0
+                } else {
+                    1.0
+                };
+                (
+                    kind.clone(),
+                    points * city_multiplier * empire_multiplier * congress_multiplier,
+                )
+            })
+            .collect()
     }
 
     fn city_active_project_effect(&self, city: &City, effect: &str) -> f64 {
@@ -21629,6 +21800,104 @@ impl Game {
             .filter(|alliance| alliance.ends > self.turn)
     }
 
+    fn alliance_partner(&self, pid: usize, kind: &str, minimum_level: i32) -> Option<usize> {
+        self.players[pid]
+            .alliances
+            .iter()
+            .find(|(_, alliance)| {
+                alliance.ends > self.turn
+                    && alliance.kind == kind
+                    && alliance.level >= minimum_level
+            })
+            .map(|(partner, _)| *partner)
+    }
+
+    fn alliance_points_key(partner: usize, kind: &str) -> String {
+        format!("alliance_points:{partner}:{kind}")
+    }
+
+    fn research_alliance_boost_candidate(&self, recipient: usize, source: usize) -> Option<String> {
+        self.players[source]
+            .techs
+            .iter()
+            .chain(self.players[source].boosted_techs.iter())
+            .filter(|tech| {
+                !self.players[recipient].techs.contains(*tech)
+                    && !self.players[recipient].boosted_techs.contains(*tech)
+            })
+            .min_by(|left, right| {
+                let left_spec = &self.rules.techs[*left];
+                let right_spec = &self.rules.techs[*right];
+                left_spec
+                    .era
+                    .cmp(&right_spec.era)
+                    .then_with(|| left_spec.cost.partial_cmp(&right_spec.cost).unwrap())
+                    .then_with(|| left.cmp(right))
+            })
+            .cloned()
+    }
+
+    fn share_research_alliance_boosts(&mut self, first: usize, second: usize) {
+        let first_boost = self.research_alliance_boost_candidate(first, second);
+        let second_boost = self.research_alliance_boost_candidate(second, first);
+        if let Some(technology) = first_boost {
+            self.players[first].boosted_techs.insert(technology);
+        }
+        if let Some(technology) = second_boost {
+            self.players[second].boosted_techs.insert(technology);
+        }
+    }
+
+    fn at_war_with_any_major(&self, pid: usize) -> bool {
+        self.players.iter().any(|other| {
+            other.alive && !other.is_minor && !other.is_barbarian && self.is_at_war(pid, other.id)
+        })
+    }
+
+    fn research_alliance_science_bonus(&self, pid: usize) -> bool {
+        let Some(partner) = self.alliance_partner(pid, "research", 3) else {
+            return false;
+        };
+        match (
+            self.players[pid].research.as_deref(),
+            self.players[partner].research.as_deref(),
+        ) {
+            (Some(own), Some(theirs)) if own == theirs => true,
+            (Some(own), _) => self.players[partner].techs.contains(own),
+            (_, Some(theirs)) => self.players[pid].techs.contains(theirs),
+            _ => false,
+        }
+    }
+
+    fn religious_alliance_blocks_pressure(&self, city: &City, incoming: &str) -> bool {
+        let Some(dominant) = self.city_religion(city) else {
+            return false;
+        };
+        let Some(dominant_founder) = self.religion_founder(dominant) else {
+            return false;
+        };
+        let Some(incoming_founder) = self.religion_founder(incoming) else {
+            return false;
+        };
+        dominant_founder != incoming_founder
+            && self
+                .alliance_with(dominant_founder, incoming_founder)
+                .is_some_and(|alliance| alliance.kind == "religious")
+    }
+
+    fn religious_alliance_combat_bonus(&self, pid: usize, opposing_religion: &str) -> f64 {
+        let Some(partner) = self.alliance_partner(pid, "religious", 2) else {
+            return 0.0;
+        };
+        let own = self.players[pid].religion.as_deref();
+        let allied = self.players[partner].religion.as_deref();
+        if Some(opposing_religion) != own && Some(opposing_religion) != allied {
+            10.0
+        } else {
+            0.0
+        }
+    }
+
     fn add_grievances(&mut self, aggrieved: usize, offender: usize, amount: f64) {
         let target = |player: usize| player.to_string();
         let touches_target = |outcome| {
@@ -21885,10 +22154,31 @@ impl Game {
             self.players[deal.to].friends_until.insert(deal.from, until);
         }
         if let Some(kind) = deal.alliance {
+            let from_key = Self::alliance_points_key(deal.to, &kind);
+            let to_key = Self::alliance_points_key(deal.from, &kind);
+            let stored_quarter_points = self.players[deal.from]
+                .counters
+                .get(&from_key)
+                .copied()
+                .unwrap_or(0)
+                .max(
+                    self.players[deal.to]
+                        .counters
+                        .get(&to_key)
+                        .copied()
+                        .unwrap_or(0),
+                );
+            let points = stored_quarter_points as f64 / 4.0;
             let state = AllianceState {
                 kind,
-                points: 0.0,
-                level: 1,
+                points,
+                level: if points >= 240.0 {
+                    3
+                } else if points >= 80.0 {
+                    2
+                } else {
+                    1
+                },
                 ends: self.turn + STANDARD_DEAL_TURNS,
             };
             self.players[deal.from]
@@ -22953,25 +23243,53 @@ impl Game {
 
         let partners: Vec<usize> = self.players[pid]
             .alliances
-            .keys()
-            .copied()
+            .iter()
+            .filter(|(_, alliance)| alliance.ends > turn)
+            .map(|(partner, _)| *partner)
             .filter(|partner| pid < *partner)
             .collect();
         for partner in partners {
-            let routes = self
-                .routes
-                .iter()
-                .filter(|route| {
-                    let destination = self.cities.get(&route.dest).map(|city| city.owner);
-                    (route.owner == pid && destination == Some(partner))
-                        || (route.owner == partner && destination == Some(pid))
-                })
-                .count() as f64;
+            let outgoing_route = self.routes.iter().any(|route| {
+                route.ends > turn
+                    && route.owner == pid
+                    && self.cities.get(&route.dest).map(|city| city.owner) == Some(partner)
+            });
+            let incoming_route = self.routes.iter().any(|route| {
+                route.ends > turn
+                    && route.owner == partner
+                    && self.cities.get(&route.dest).map(|city| city.owner) == Some(pid)
+            });
             let Some(mut alliance) = self.players[pid].alliances.get(&partner).cloned() else {
                 continue;
             };
-            alliance.points += 1.0 + routes;
-            alliance.level = if alliance.points >= 160.0 {
+            let partnership_bonus = |member: usize| {
+                if self.players[member].government.as_deref() == Some("democracy")
+                    || self.has_policy(member, "wisselbanken")
+                {
+                    0.25
+                } else {
+                    0.0
+                }
+            };
+            let same_society = self.players[pid].secret_society.is_some()
+                && self.players[pid].secret_society == self.players[partner].secret_society;
+            let common_enemy = self.players.iter().any(|other| {
+                other.alive
+                    && !other.is_minor
+                    && !other.is_barbarian
+                    && self.is_at_war(pid, other.id)
+                    && self.is_at_war(partner, other.id)
+            });
+            let sumerian_joint_war = common_enemy
+                && (self.players[pid].civ == "Sumeria" || self.players[partner].civ == "Sumeria");
+            alliance.points += 1.0
+                + if outgoing_route { 0.25 } else { 0.0 }
+                + if incoming_route { 0.25 } else { 0.0 }
+                + partnership_bonus(pid)
+                + partnership_bonus(partner)
+                + if same_society { 0.5 } else { 0.0 }
+                + if sumerian_joint_war { 0.5 } else { 0.0 };
+            alliance.level = if alliance.points >= 240.0 {
                 3
             } else if alliance.points >= 80.0 {
                 2
@@ -22981,7 +23299,28 @@ impl Game {
             self.players[pid]
                 .alliances
                 .insert(partner, alliance.clone());
-            self.players[partner].alliances.insert(pid, alliance);
+            self.players[partner]
+                .alliances
+                .insert(pid, alliance.clone());
+            let first_key = Self::alliance_points_key(partner, &alliance.kind);
+            let second_key = Self::alliance_points_key(pid, &alliance.kind);
+            let stored_points = (alliance.points * 4.0).round() as i64;
+            self.players[pid].counters.insert(first_key, stored_points);
+            self.players[partner]
+                .counters
+                .insert(second_key, stored_points);
+            if alliance.kind == "research" && alliance.level >= 2 && turn > 0 && turn % 30 == 0 {
+                self.share_research_alliance_boosts(pid, partner);
+            }
+            if alliance.kind == "military" && alliance.level >= 2 {
+                let shared = self.players[pid]
+                    .explored
+                    .union(&self.players[partner].explored)
+                    .copied()
+                    .collect::<BTreeSet<_>>();
+                self.players[pid].explored.extend(shared.iter().copied());
+                self.players[partner].explored.extend(shared);
+            }
         }
 
         if self.players[pid].is_minor || self.players[pid].is_barbarian {
@@ -23004,7 +23343,7 @@ impl Game {
             .alliances
             .values()
             .filter(|alliance| alliance.ends > turn)
-            .map(|alliance| 0.5 * alliance.level as f64)
+            .map(|alliance| alliance.level as f64)
             .sum::<f64>();
         let suzerain_multiplier =
             1.0 + self.empire_wonder_effect(pid, "suzerain_diplomatic_favor_pct") / 100.0;
@@ -23696,6 +24035,25 @@ impl Game {
                 "public_relations",
                 "Public Relations",
                 player_targets(),
+            ));
+        }
+        if (4..=6).contains(&self.world_era) {
+            push(Self::congress_resolution(
+                "espionage_pact",
+                "Espionage Pact",
+                [
+                    "siphon_funds",
+                    "steal_tech_boost",
+                    "great_work_heist",
+                    "sabotage_production",
+                    "recruit_partisans",
+                    "foment_unrest",
+                    "neutralize_governor",
+                    "disrupt_rocketry",
+                    "breach_dam",
+                    "fabricate_scandal",
+                ]
+                .map(str::to_string),
             ));
         }
         if self.world_era >= 4 {
@@ -25417,22 +25775,6 @@ impl Game {
         if self.winner.is_some() {
             return;
         }
-        if self.tree_effect(pid, "research_agreements") > 0.0 {
-            let partners: Vec<usize> = self.players[pid]
-                .alliances
-                .iter()
-                .filter(|(_, alliance)| alliance.kind == "research" && alliance.ends > self.turn)
-                .map(|(partner, _)| *partner)
-                .filter(|partner| self.tree_effect(*partner, "research_agreements") > 0.0)
-                .collect();
-            let bonus = partners
-                .into_iter()
-                .flat_map(|partner| self.player_city_ids(partner))
-                .map(|city| self.city_yields(city).science)
-                .sum::<f64>()
-                * 0.05;
-            self.players[pid].research_overflow += bonus;
-        }
         self.check_boosts(pid);
         self.process_trade_deals(pid);
         self.process_strategic_resources(pid);
@@ -25461,8 +25803,19 @@ impl Game {
                     .map(|city| self.city_building_effect(city, effect))
                     .sum::<f64>()
             };
+            let economic_alliance_influence = self
+                .alliance_partner(pid, "economic", 2)
+                .map(|partner| {
+                    self.players
+                        .iter()
+                        .filter(|minor| minor.alive && minor.is_minor && !minor.is_barbarian)
+                        .filter(|minor| self.suzerain_of(minor.id) == Some(partner))
+                        .count() as f64
+                })
+                .unwrap_or(0.0);
             let influence = 1.0
                 + tier
+                + economic_alliance_influence
                 + self.policy_effect(pid, "influence_per_turn")
                 + building_effect("influence_points");
             let p = &mut self.players[pid];
@@ -25542,8 +25895,20 @@ impl Game {
         cul += founder_yields.culture;
         gold += founder_yields.gold;
         faith += founder_yields.faith;
+        let cultural_alliance_partner = self.alliance_partner(pid, "cultural", 3);
+        if let Some(partner) = cultural_alliance_partner {
+            cul += self
+                .player_city_ids(partner)
+                .into_iter()
+                .map(|city| self.city_yields(city).culture)
+                .sum::<f64>()
+                * 0.10;
+        }
         if !self.players[pid].is_minor {
-            let (tourism, film_studio_tourism) = self.tourism_components_per_turn(pid);
+            let (mut tourism, film_studio_tourism) = self.tourism_components_per_turn(pid);
+            if let Some(partner) = cultural_alliance_partner {
+                tourism += self.tourism_components_per_turn(partner).0 * 0.20;
+            }
             let (religious_tourism, film_studio_religious) =
                 self.religious_tourism_components_per_turn(pid);
             self.players[pid].culture_lifetime += cul;
@@ -26518,26 +26883,9 @@ impl Game {
                 } else {
                     self.players[pid].science_projects.insert(project.clone());
                 }
-                if !spec.completion_gpp.is_empty() {
-                    let progress = self.game_progress_ratio(pid);
-                    let city_multiplier =
-                        1.0 + self.governor_effect(pid, cid, "great_people_pct") / 100.0;
-                    let empire_multiplier = 1.0 + self.gov_effects(pid).great_people_pct / 100.0;
-                    for (kind, base_points) in &spec.completion_gpp {
-                        // PointProgressionParam1=800: interpolate from the
-                        // base award to eight times that award, then floor.
-                        let points = (base_points * (1.0 + 7.0 * progress)).floor();
-                        let congress_multiplier =
-                            if self.congress_effect_active("patronage", "A", kind) {
-                                2.0
-                            } else if self.congress_effect_active("patronage", "B", kind) {
-                                0.0
-                            } else {
-                                1.0
-                            };
-                        *self.players[pid].gpp.entry(kind.clone()).or_insert(0.0) +=
-                            points * city_multiplier * empire_multiplier * congress_multiplier;
-                    }
+                for (kind, points) in self.project_completion_gpp_awards(pid, cid, project.as_str())
+                {
+                    *self.players[pid].gpp.entry(kind).or_insert(0.0) += points;
                 }
                 for (effect, amount) in &spec.effects {
                     *self.players[pid]
@@ -31091,6 +31439,26 @@ mod district_mechanics {
         game
     }
 
+    fn install_alliance(
+        game: &mut Game,
+        first: usize,
+        second: usize,
+        kind: &str,
+        level: i32,
+        points: f64,
+    ) {
+        let alliance = AllianceState {
+            kind: kind.to_string(),
+            points,
+            level,
+            ends: game.turn + 60,
+        };
+        game.players[first]
+            .alliances
+            .insert(second, alliance.clone());
+        game.players[second].alliances.insert(first, alliance);
+    }
+
     fn controlled_game() -> (Game, u32, Pos, Vec<Pos>) {
         let mut game = Game::new_full(1, 20, 14, 5150, 300, 0, false);
         let settler = game
@@ -32101,6 +32469,205 @@ mod district_mechanics {
         assert_eq!(
             game.unit_base_max_moves(builder),
             game.rules.units["builder"].moves + 2.0
+        );
+    }
+
+    #[test]
+    fn alliance_routes_progression_and_favor_match_gathering_storm() {
+        let game = emergency_game_with_capitals(2, 88_102, 300);
+        let first = game.player_city_ids(0)[0];
+        let second = game.player_city_ids(1)[0];
+        let mut routed = game.clone();
+        routed.routes.push(TradeRoute {
+            origin: first,
+            dest: second,
+            owner: 0,
+            ends: routed.turn + 30,
+        });
+        let base_origin = routed.city_yields(first);
+        let base_destination = routed.city_yields(second);
+        for (kind, outbound, inbound) in [
+            ("research", 2.0, 1.0),
+            ("cultural", 2.0, 1.0),
+            ("economic", 4.0, 2.0),
+            ("religious", 2.0, 1.0),
+        ] {
+            let mut allied = routed.clone();
+            install_alliance(&mut allied, 0, 1, kind, 1, 0.0);
+            let origin = allied.city_yields(first);
+            let destination = allied.city_yields(second);
+            let origin_difference = match kind {
+                "research" => origin.science - base_origin.science,
+                "cultural" => origin.culture - base_origin.culture,
+                "economic" => origin.gold - base_origin.gold,
+                "religious" => origin.faith - base_origin.faith,
+                _ => unreachable!(),
+            };
+            let destination_difference = match kind {
+                "research" => destination.science - base_destination.science,
+                "cultural" => destination.culture - base_destination.culture,
+                "economic" => destination.gold - base_destination.gold,
+                "religious" => destination.faith - base_destination.faith,
+                _ => unreachable!(),
+            };
+            assert!((origin_difference - outbound).abs() < 1e-9, "{kind}");
+            assert!((destination_difference - inbound).abs() < 1e-9, "{kind}");
+        }
+
+        install_alliance(&mut routed, 0, 1, "economic", 1, 79.0);
+        let favor_before = routed.players[0].diplomatic_favor;
+        routed.process_diplomacy(0);
+        assert_eq!(routed.players[0].alliances[&1].points, 80.25);
+        assert_eq!(routed.players[0].alliances[&1].level, 2);
+        assert_eq!(
+            routed.players[0].diplomatic_favor - favor_before,
+            3.0,
+            "base Favor plus two Favor from a Level 2 alliance"
+        );
+        routed.routes.clear();
+        routed.players[0].alliances.get_mut(&1).unwrap().points = 239.0;
+        routed.players[1].alliances.get_mut(&0).unwrap().points = 239.0;
+        routed.process_diplomacy(0);
+        assert_eq!(routed.players[0].alliances[&1].points, 240.0);
+        assert_eq!(routed.players[0].alliances[&1].level, 3);
+    }
+
+    #[test]
+    fn research_alliance_shares_eurekas_and_level_three_science() {
+        let mut game = emergency_game_with_capitals(2, 88_103, 300);
+        let city = game.player_city_ids(0)[0];
+        game.turn = 30;
+        game.players[1].techs.insert("writing".to_string());
+        install_alliance(&mut game, 0, 1, "research", 2, 80.0);
+        game.process_diplomacy(0);
+        assert!(game.players[0].boosted_techs.contains("writing"));
+
+        game.players[0].research = Some("writing".to_string());
+        game.players[1].research = Some("writing".to_string());
+        let mut baseline = game.clone();
+        baseline.players[0].alliances.clear();
+        baseline.players[1].alliances.clear();
+        let base_science = baseline.city_yields(city).science;
+        game.players[0].alliances.get_mut(&1).unwrap().level = 3;
+        game.players[1].alliances.get_mut(&0).unwrap().level = 3;
+        assert!((game.city_yields(city).science - base_science * 1.10).abs() < 1e-9);
+    }
+
+    #[test]
+    fn military_alliance_shares_war_production_vision_and_promotions() {
+        let mut game = emergency_game_with_capitals(3, 88_104, 300);
+        let city = game.player_city_ids(0)[0];
+        let position = game.cities[&city].pos;
+        let item = Item::Unit {
+            unit: "warrior".to_string(),
+        };
+        let baseline = game.item_prod_mult(0, city, Some(&item));
+        install_alliance(&mut game, 0, 1, "military", 2, 80.0);
+        game.at_war.insert(pair(1, 2));
+        assert_eq!(game.item_prod_mult(0, city, Some(&item)), baseline + 0.15);
+        assert_eq!(game.vs_bonus(0, 2), 5.0);
+
+        let first_sight = *game.map.tiles.keys().next().unwrap();
+        let last_sight = *game.map.tiles.keys().next_back().unwrap();
+        game.players[0].explored = [first_sight].into_iter().collect();
+        game.players[1].explored = [last_sight].into_iter().collect();
+        game.process_diplomacy(0);
+        assert!(game.players[0].explored.contains(&last_sight));
+        assert!(game.players[1].explored.contains(&first_sight));
+
+        game.players[0].alliances.get_mut(&1).unwrap().level = 3;
+        game.players[1].alliances.get_mut(&0).unwrap().level = 3;
+        let warrior = game.spawn_unit("warrior", 0, position);
+        assert_eq!(
+            game.units[&warrior].xp,
+            Game::promotion_threshold(game.units[&warrior].level)
+        );
+    }
+
+    #[test]
+    fn cultural_religious_and_economic_alliance_levels_execute() {
+        let mut cultural = emergency_game_with_capitals(2, 88_105, 300);
+        let origin = cultural.player_city_ids(0)[0];
+        let destination = cultural.player_city_ids(1)[0];
+        let district_position = cultural.cities[&origin]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != cultural.cities[&origin].pos)
+            .unwrap();
+        cultural
+            .cities
+            .get_mut(&origin)
+            .unwrap()
+            .districts
+            .insert("campus".to_string(), district_position);
+        cultural
+            .map
+            .tiles
+            .get_mut(&district_position)
+            .unwrap()
+            .district = Some("campus".to_string());
+        cultural.routes.push(TradeRoute {
+            origin,
+            dest: destination,
+            owner: 0,
+            ends: cultural.turn + 30,
+        });
+        let mut cultural_baseline = cultural.clone();
+        install_alliance(&mut cultural, 0, 1, "cultural", 2, 80.0);
+        cultural.process_great_people(0);
+        cultural_baseline.process_great_people(0);
+        assert_eq!(
+            cultural.players[0].gpp["scientist"] - cultural_baseline.players[0].gpp["scientist"],
+            1.0
+        );
+
+        let mut religion = emergency_game_with_capitals(3, 88_106, 300);
+        let own_city = religion.player_city_ids(0)[0];
+        let allied_city = religion.player_city_ids(1)[0];
+        religion.players[0].religion = Some("Own".to_string());
+        religion.players[1].religion = Some("Allied".to_string());
+        religion.players[2].religion = Some("Third".to_string());
+        religion.cities.get_mut(&own_city).unwrap().pop = 10;
+        religion.cities.get_mut(&own_city).unwrap().pressure =
+            BTreeMap::from([("Own".to_string(), 60.0), ("Allied".to_string(), 40.0)]);
+        religion.cities.get_mut(&allied_city).unwrap().pressure =
+            BTreeMap::from([("Allied".to_string(), 100.0)]);
+        install_alliance(&mut religion, 0, 1, "religious", 3, 240.0);
+        let mut religious_baseline = religion.clone();
+        religious_baseline.players[0].alliances.clear();
+        religious_baseline.players[1].alliances.clear();
+        assert_eq!(
+            religion.city_yields(own_city).faith - religious_baseline.city_yields(own_city).faith,
+            4.0
+        );
+        religion.routes.push(TradeRoute {
+            origin: own_city,
+            dest: allied_city,
+            owner: 0,
+            ends: religion.turn + 30,
+        });
+        let pressure_before = religion.cities[&own_city].pressure["Allied"];
+        religion.process_pressure(0);
+        assert_eq!(
+            religion.cities[&own_city].pressure["Allied"],
+            pressure_before
+        );
+        assert_eq!(religion.religious_alliance_combat_bonus(0, "Third"), 10.0);
+        assert_eq!(religion.religious_alliance_combat_bonus(0, "Allied"), 0.0);
+
+        let mut economic = emergency_game_with_capitals(3, 88_107, 300);
+        economic.players[2].is_minor = true;
+        economic.players[1].envoys.push((2, 3));
+        install_alliance(&mut economic, 0, 1, "economic", 2, 80.0);
+        let mut economic_baseline = economic.clone();
+        economic_baseline.players[0].alliances.clear();
+        economic_baseline.players[1].alliances.clear();
+        economic.begin_turn(0);
+        economic_baseline.begin_turn(0);
+        assert_eq!(
+            economic.players[0].influence - economic_baseline.players[0].influence,
+            1.0
         );
     }
 
