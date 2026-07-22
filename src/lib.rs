@@ -3,6 +3,7 @@
 //! reference engine (`civvis/`); deterministic per seed within this engine.
 #![recursion_limit = "256"]
 
+pub mod action_space;
 pub mod ai;
 pub mod elo;
 pub mod evolve;

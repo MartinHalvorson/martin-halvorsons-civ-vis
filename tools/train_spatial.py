@@ -105,9 +105,18 @@ def main():
     meta, planes, globals_, labels = load(args.dir)
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
-    order = rng.permutation(len(planes))
-    cut = max(1, len(order) // 10)
-    val_idx, train_idx = order[:cut], order[cut:]
+    # Split BY GAME. Snapshots from one game share its outcome label and are
+    # near-duplicates late on, so a per-sample split leaks the answer into
+    # validation and reports an accuracy the model has not earned.
+    games = labels[:, 2].astype(int)
+    unique = np.unique(games)
+    rng.shuffle(unique)
+    held = set(unique[: max(1, len(unique) // 5)].tolist())
+    val_mask = np.array([g in held for g in games])
+    val_idx = np.nonzero(val_mask)[0]
+    train_idx = np.nonzero(~val_mask)[0]
+    print(f"{len(unique)} games -> {len(held)} held out "
+          f"({len(train_idx)} train / {len(val_idx)} val samples)")
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     net = build(meta, args.channels, args.blocks).to(dev)
@@ -147,10 +156,30 @@ def main():
             if patience >= 8:
                 break
 
+    # Always report the majority-class baseline. On a 4-player export only
+    # one seat per game wins, so 75% accuracy is what a constant predictor
+    # scores; a net that does not clearly beat this has learned nothing and
+    # the run needs more games, not more epochs.
+    base_rate = float(labels[train_idx, 0].mean())
+    vy_np = labels[val_idx, 0]
+    baseline_acc = float(max(vy_np.mean(), 1 - vy_np.mean()))
+    eps = 1e-7
+    p_hat = min(max(base_rate, eps), 1 - eps)
+    baseline_bce = float(
+        -(vy_np * np.log(p_hat) + (1 - vy_np) * np.log(1 - p_hat)).mean()
+    )
+    beat = best < baseline_bce - 1e-4 and best_acc > baseline_acc + 1e-4
+    print(
+        f"baseline (constant p={base_rate:.3f}): BCE {baseline_bce:.4f} "
+        f"acc {baseline_acc:.3f}  ->  model {'BEATS' if beat else 'DOES NOT BEAT'} baseline"
+    )
+
     out = os.path.join(args.dir, "spatial_value.pt")
     torch.save({"state_dict": best_state, "meta": meta,
                 "channels": args.channels, "blocks": args.blocks}, out)
     report = {"val_bce": best, "val_acc": best_acc, "device": dev,
+              "baseline_bce": baseline_bce, "baseline_acc": baseline_acc,
+              "beats_baseline": bool(beat),
               "samples": int(len(planes)), "train": int(len(train_idx)),
               "val": int(len(val_idx))}
     json.dump(report, open(os.path.join(args.dir, "train_report.json"), "w"), indent=2)

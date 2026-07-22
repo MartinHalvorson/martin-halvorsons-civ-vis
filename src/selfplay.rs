@@ -10,7 +10,9 @@
 //! - `meta.json` — shapes, plane/global names, sample count, config
 //! - `planes.f32` — `samples × planes × height × width` little-endian f32
 //! - `globals.f32` — `samples × globals` little-endian f32
-//! - `labels.f32` — `samples × 2`: win label (1/0) and turn fraction
+//! - `labels.f32` — `samples × 3`: win label (1/0), turn fraction, and
+//!   the source game index (split train/val BY GAME, never by sample:
+//!   snapshots from one game are highly correlated)
 //!
 //! Read in Python with
 //! `np.fromfile(...).reshape(meta["planes_shape"])`.
@@ -115,6 +117,7 @@ pub fn export(cfg: &SelfPlayCfg) -> std::io::Result<SelfPlayStats> {
             }
             labels_out.write_all(&won.to_le_bytes())?;
             labels_out.write_all(&fraction.to_le_bytes())?;
+            labels_out.write_all(&(game_index as f32).to_le_bytes())?;
             samples += 1;
         }
         println!(
@@ -136,8 +139,8 @@ pub fn export(cfg: &SelfPlayCfg) -> std::io::Result<SelfPlayStats> {
         "decisive_games": decisive,
         "planes_shape": [samples, PLANES.len(), cfg.height, cfg.width],
         "globals_shape": [samples, globals_len],
-        "labels_shape": [samples, 2],
-        "labels": ["won", "turn_fraction"],
+        "labels_shape": [samples, 3],
+        "labels": ["won", "turn_fraction", "game"],
         "plane_names": PLANES,
         "global_names": global_names,
         "dtype": "<f4",
@@ -195,7 +198,7 @@ mod tests {
         let globals_bytes = std::fs::metadata(dir.join("globals.f32")).unwrap().len() as usize;
         assert_eq!(globals_bytes, samples * globals * 4);
         let labels_bytes = std::fs::metadata(dir.join("labels.f32")).unwrap().len() as usize;
-        assert_eq!(labels_bytes, samples * 2 * 4);
+        assert_eq!(labels_bytes, samples * 3 * 4);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
