@@ -4340,6 +4340,33 @@ mod government_runtime_tests {
         (game, city)
     }
 
+    fn two_cities(seed: u64) -> (Game, u32, u32) {
+        let mut game = Game::new_full(2, 26, 16, seed, 120, 0, false);
+        let mut cities = Vec::new();
+        for player in 0..2 {
+            let settler = game
+                .player_unit_ids(player)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            cities.push(game.found_city_for(player, game.units[&settler].pos, None));
+        }
+        (game, cities[0], cities[1])
+    }
+
+    fn install_alliance(game: &mut Game, first: usize, second: usize) {
+        let alliance = AllianceState {
+            kind: "economic".to_string(),
+            points: 0.0,
+            level: 1,
+            ends: game.turn + 60,
+        };
+        game.players[first]
+            .alliances
+            .insert(second, alliance.clone());
+        game.players[second].alliances.insert(first, alliance);
+    }
+
     fn without_government(game: &Game) -> Game {
         let mut baseline = game.clone();
         baseline.players[0].government = None;
@@ -4510,6 +4537,165 @@ mod government_runtime_tests {
             game.city_yields(city).faith,
             baseline.city_yields(city).faith + 1.0
         );
+    }
+
+    #[test]
+    fn communism_gates_population_production_but_multiplies_science_empire_wide() {
+        let (mut game, city) = one_city(774_505);
+        game.cities.get_mut(&city).unwrap().pop = 2;
+        game.players[0].government = Some("communism".to_string());
+        let baseline = without_government(&game);
+        assert_eq!(
+            game.city_yields(city).production,
+            baseline.city_yields(city).production
+        );
+        assert!(
+            (game.city_yields(city).science - baseline.city_yields(city).science * 1.10).abs()
+                < 1e-9
+        );
+
+        game.players[0]
+            .civics
+            .insert("political_philosophy".to_string());
+        game.do_appoint_governor(0, "pingala", city).unwrap();
+        let baseline = without_government(&game);
+        assert!(
+            (game.city_yields(city).production - baseline.city_yields(city).production - 1.2).abs()
+                < 1e-9
+        );
+    }
+
+    #[test]
+    fn democracy_trade_bonus_requires_an_ally_or_suzerained_city_state() {
+        let (mut game, origin, destination) = two_cities(774_506);
+        game.players[0].government = Some("democracy".to_string());
+        game.routes.push(TradeRoute {
+            origin,
+            dest: destination,
+            owner: 0,
+            ends: game.turn + 30,
+        });
+        let baseline = without_government(&game);
+        assert_eq!(game.city_yields(origin), baseline.city_yields(origin));
+        assert_eq!(
+            game.city_yields(destination),
+            baseline.city_yields(destination)
+        );
+
+        install_alliance(&mut game, 0, 1);
+        let baseline = without_government(&game);
+        let origin_yields = game.city_yields(origin);
+        let origin_baseline = baseline.city_yields(origin);
+        let destination_yields = game.city_yields(destination);
+        let destination_baseline = baseline.city_yields(destination);
+        assert_eq!(origin_yields.food, origin_baseline.food + 4.0);
+        assert_eq!(origin_yields.production, origin_baseline.production + 4.0);
+        assert_eq!(destination_yields.food, destination_baseline.food + 4.0);
+        assert_eq!(
+            destination_yields.production,
+            destination_baseline.production + 4.0
+        );
+
+        game.players[0].alliances.clear();
+        game.players[1].alliances.clear();
+        game.players[1].is_minor = true;
+        game.players[0].envoys.push((1, 3));
+        let baseline = without_government(&game);
+        assert_eq!(
+            game.city_yields(origin).production,
+            baseline.city_yields(origin).production + 4.0
+        );
+        assert_eq!(
+            game.city_yields(destination).production,
+            baseline.city_yields(destination).production + 4.0
+        );
+
+        game.players[1].is_minor = false;
+        install_alliance(&mut game, 0, 1);
+        game.routes.clear();
+        game.process_diplomacy(0);
+        assert_eq!(game.players[0].alliances[&1].points, 1.25);
+    }
+
+    #[test]
+    fn democracy_discounts_gold_unit_building_and_district_purchases() {
+        let (mut game, city) = one_city(774_507);
+        game.players[0].government = Some("democracy".to_string());
+        game.players[0].gold = 100_000.0;
+        game.players[0].techs.insert("pottery".to_string());
+        game.players[0].techs.insert("writing".to_string());
+
+        let baseline = without_government(&game);
+        assert!(
+            (game
+                .building_gold_purchase_cost(0, city, "granary")
+                .unwrap()
+                - baseline
+                    .building_gold_purchase_cost(0, city, "granary")
+                    .unwrap()
+                    * 0.85)
+                .abs()
+                < 1e-9
+        );
+
+        let warrior = Item::Unit {
+            unit: "warrior".to_string(),
+        };
+        let unit_cost = game.item_cost_for(0, &warrior) * 4.0 * 0.85;
+        let gold_before = game.players[0].gold;
+        game.do_buy(0, city, "warrior", "gold").unwrap();
+        assert!((gold_before - game.players[0].gold - unit_cost).abs() < 1e-9);
+
+        game.turn = 10;
+        game.players[0].governor_roster.insert(
+            "reyna".to_string(),
+            GovernorState {
+                city: Some(city),
+                assigned_turn: 0,
+                disabled_until: 0,
+                promotions: BTreeSet::from(["contractor".to_string()]),
+            },
+        );
+        game.sync_governor_cities(0);
+        let district_site = game.district_sites(city, "campus")[0];
+        let district_cost = game.district_cost_for_placement(0, "campus", true) * 4.0 * 0.85;
+        let gold_before = game.players[0].gold;
+        game.do_buy_district(0, city, "campus", district_site, "gold")
+            .unwrap();
+        assert!((gold_before - game.players[0].gold - district_cost).abs() < 1e-9);
+    }
+
+    #[test]
+    fn fascism_applies_combat_production_and_weariness_bonuses() {
+        let (mut game, city) = one_city(774_508);
+        game.players[0].government = Some("fascism".to_string());
+        let baseline = without_government(&game);
+        for unit in ["warrior", "builder"] {
+            let item = Item::Unit {
+                unit: unit.to_string(),
+            };
+            assert!(
+                (game.item_prod_mult(0, city, Some(&item))
+                    - baseline.item_prod_mult(0, city, Some(&item))
+                    - 0.50)
+                    .abs()
+                    < 1e-9
+            );
+        }
+        let warrior = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "warrior")
+            .unwrap();
+        assert!(
+            (game.unit_strength(&game.units[&warrior], false)
+                - baseline.unit_strength(&baseline.units[&warrior], false)
+                - 5.0)
+                .abs()
+                < 1e-9
+        );
+        assert_eq!(game.war_weariness_multiplier(0, false), 0.85);
+        assert_eq!(game.war_weariness_multiplier(0, true), 0.85);
     }
 }
 
@@ -7788,6 +7974,7 @@ impl Game {
 
     pub fn war_weariness_multiplier(&self, pid: usize, home_territory: bool) -> f64 {
         let reduction = self.policy_effect(pid, "war_weariness_reduction_pct")
+            + self.gov_effects(pid).war_weariness_reduction_pct
             + if home_territory {
                 self.policy_effect(pid, "home_war_weariness_reduction_pct")
             } else {
@@ -8804,15 +8991,17 @@ impl Game {
         ys
     }
 
-    fn do_trade_route(&mut self, pid: usize, uid: u32, dest: u32) -> Result<(), String> {
-        let u = self.own_unit(pid, uid)?;
-        if u.kind != "trader" {
-            return Err("only traders run routes".into());
-        }
-        let origin = self
-            .city_at(u.pos)
-            .filter(|cid| self.cities[cid].owner == pid)
-            .ok_or_else(|| "trader must be in one of your cities".to_string())?;
+    fn validate_trade_route_destination(
+        &self,
+        pid: usize,
+        origin: u32,
+        dest: u32,
+    ) -> Result<(), String> {
+        let origin_city = self
+            .cities
+            .get(&origin)
+            .filter(|city| city.owner == pid)
+            .ok_or_else(|| "route must originate in one of your cities".to_string())?;
         let dc = self
             .cities
             .get(&dest)
@@ -8823,13 +9012,13 @@ impl Game {
         if self.is_at_war(pid, dc.owner) {
             return Err("cannot trade with an enemy".into());
         }
-        if !self.cities[&origin].owner.eq(&dc.owner)
+        if origin_city.owner != dc.owner
             && (self.congress_effect_active("trade_policy", "B", &pid.to_string())
                 || self.congress_effect_active("trade_policy", "B", &dc.owner.to_string()))
         {
             return Err("World Congress embargoes that trade route".into());
         }
-        if self.wdist(self.cities[&origin].pos, dc.pos) > 15 {
+        if self.wdist(origin_city.pos, dc.pos) > 15 {
             return Err("destination out of range".into());
         }
         if self
@@ -8839,6 +9028,28 @@ impl Game {
         {
             return Err("route already active".into());
         }
+        Ok(())
+    }
+
+    /// Whether this empire could legally assign an available Trader from the
+    /// given origin to the destination. Capacity and the unit itself are
+    /// intentionally excluded so AI planning can count concrete route
+    /// opportunities before deciding how many Traders to build.
+    pub(crate) fn can_establish_trade_route(&self, pid: usize, origin: u32, dest: u32) -> bool {
+        self.validate_trade_route_destination(pid, origin, dest)
+            .is_ok()
+    }
+
+    fn do_trade_route(&mut self, pid: usize, uid: u32, dest: u32) -> Result<(), String> {
+        let u = self.own_unit(pid, uid)?;
+        if u.kind != "trader" {
+            return Err("only traders run routes".into());
+        }
+        let origin = self
+            .city_at(u.pos)
+            .filter(|cid| self.cities[cid].owner == pid)
+            .ok_or_else(|| "trader must be in one of your cities".to_string())?;
+        self.validate_trade_route_destination(pid, origin, dest)?;
         if self.active_routes(pid) >= self.trade_capacity(pid) {
             return Err("no trading capacity".into());
         }
@@ -11124,6 +11335,7 @@ impl Game {
         match item {
             Some(Item::Unit { unit }) | Some(Item::Formation { unit, .. }) => {
                 let spec = &self.rules.units[unit.as_str()];
+                bonus += self.gov_effects(pid).unit_production_pct / 100.0;
                 if spec.class == "military"
                     && self
                         .alliance_partner(pid, "military", 2)
@@ -16757,6 +16969,10 @@ impl Game {
                 let government = self.gov_effects(city.owner);
                 rys.food += government.trade_food;
                 rys.production += government.trade_production;
+                if self.government_trade_partner(city.owner, dc.owner) {
+                    rys.food += government.allied_suzerain_trade_food;
+                    rys.production += government.allied_suzerain_trade_production;
+                }
                 ys.add(rys);
             }
         }
@@ -16767,6 +16983,11 @@ impl Game {
             .filter(|route| route.dest == cid && route.owner != city.owner)
             .count() as f64;
         for route in self.routes.iter().filter(|route| route.dest == cid) {
+            let government = self.gov_effects(route.owner);
+            if self.government_trade_partner(route.owner, city.owner) {
+                ys.food += government.allied_suzerain_trade_food;
+                ys.production += government.allied_suzerain_trade_production;
+            }
             if let Some(alliance) = self.alliance_with(city.owner, route.owner) {
                 match alliance.kind.as_str() {
                     "research" => ys.science += 1.0,
@@ -16881,6 +17102,9 @@ impl Game {
         }
         let eff = self.gov_effects(city.owner);
         ys.production += eff.production_per_pop * city.pop as f64;
+        if self.city_governor_active(city.owner, city.id) {
+            ys.production += eff.governor_production_per_pop * city.pop as f64;
+        }
         ys.faith += eff.faith_per_pop * city.pop as f64;
         if self.city_governor_active(city.owner, city.id) {
             ys.faith += eff.governor_faith_per_pop * city.pop as f64;
@@ -22386,6 +22610,9 @@ impl Game {
         };
         let mut purchase_discount =
             self.city_district_effect(&self.cities[&cid], "gold_faith_purchase_discount_pct");
+        if currency == "gold" {
+            purchase_discount += self.gov_effects(pid).gold_purchase_discount_pct;
+        }
         if religious && currency == "faith" {
             if let Some(religion) = self.city_religion(&self.cities[&cid]) {
                 purchase_discount +=
@@ -22645,8 +22872,9 @@ impl Game {
         {
             return None;
         }
-        let discount = self
+        let discount = (self
             .city_district_effect(&self.cities[&cid], "gold_faith_purchase_discount_pct")
+            + self.gov_effects(pid).gold_purchase_discount_pct)
             .clamp(0.0, 100.0);
         Some(
             self.item_cost_for_city(
@@ -22700,7 +22928,14 @@ impl Game {
         if self.map.tiles[&pos].district_foundation.is_some() {
             return Err("a placed district must be completed with production".into());
         }
-        let cost = self.district_cost_for_placement(pid, district, true) * 4.0;
+        let discount = if currency == "gold" {
+            self.gov_effects(pid).gold_purchase_discount_pct
+        } else {
+            0.0
+        };
+        let cost = self.district_cost_for_placement(pid, district, true)
+            * 4.0
+            * (1.0 - discount / 100.0).max(0.0);
         let bank = if currency == "faith" {
             self.players[pid].faith
         } else {
@@ -23147,6 +23382,18 @@ impl Game {
             .alliances
             .get(&second)
             .filter(|alliance| alliance.ends > self.turn)
+    }
+
+    /// Democracy's route package is limited to allied civilizations and
+    /// city-states whose Suzerain owns the route. Both endpoint cities use
+    /// this same predicate so their yields cannot drift apart.
+    fn government_trade_partner(&self, route_owner: usize, destination_owner: usize) -> bool {
+        self.alliance_with(route_owner, destination_owner).is_some()
+            || self.players.get(destination_owner).is_some_and(|player| {
+                player.is_minor
+                    && !player.is_barbarian
+                    && self.suzerain_of(destination_owner) == Some(route_owner)
+            })
     }
 
     fn alliance_partner(&self, pid: usize, kind: &str, minimum_level: i32) -> Option<usize> {

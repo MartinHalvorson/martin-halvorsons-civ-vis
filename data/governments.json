@@ -38,17 +38,17 @@
   },
   "communism": {
     "civic": "class_struggle",
-    "effects": {"production_per_pop": 0.6},
+    "effects": {"governor_production_per_pop": 0.6, "science_pct": 10},
     "slots": {"military": 3, "economic": 3, "diplomatic": 1, "wildcard": 1}
   },
   "democracy": {
     "civic": "suffrage",
-    "effects": {"trade_food": 4, "trade_production": 4},
+    "effects": {"allied_suzerain_trade_food": 4, "allied_suzerain_trade_production": 4, "gold_purchase_discount_pct": 15},
     "slots": {"military": 1, "economic": 3, "diplomatic": 2, "wildcard": 2}
   },
   "fascism": {
     "civic": "totalitarianism",
-    "effects": {"combat_strength": 5},
+    "effects": {"combat_strength": 5, "unit_production_pct": 50, "war_weariness_reduction_pct": 15},
     "slots": {"military": 4, "economic": 1, "diplomatic": 1, "wildcard": 2}
   },
   "corporate_libertarianism": {

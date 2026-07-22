@@ -4284,8 +4284,19 @@ impl AdvancedAi {
                 }
             }
             Item::Unit { unit } if unit == "trader" => {
-                if g.active_routes(pid) + (counts.traders as i64) < g.trade_capacity(pid) {
-                    255.0
+                let open_capacity = g
+                    .trade_capacity(pid)
+                    .saturating_sub(g.active_routes(pid))
+                    .max(0) as usize;
+                let usable_capacity = open_capacity.min(self.trade_route_opportunity_count(g, pid));
+                if counts.traders < usable_capacity {
+                    let opportunity = self
+                        .best_trade_route_origin(g, pid, city.pos, plan.strategy)
+                        .map(|(value, _)| value)
+                        .unwrap_or(0.0);
+                    280.0
+                        + opportunity.max(0.0) * 18.0
+                        + usable_capacity.saturating_sub(counts.traders) as f64 * 45.0
                 } else {
                     -10_000.0
                 }
@@ -5461,31 +5472,81 @@ impl AdvancedAi {
     ) -> bool {
         let current = g.units[&uid].pos;
         if let Some(origin) = g.city_at(current).filter(|cid| g.cities[cid].owner == pid) {
-            let target = g
-                .cities
-                .values()
-                .filter(|c| {
-                    c.id != origin
-                        && !g.is_at_war(pid, c.owner)
-                        && g.wdist(g.cities[&origin].pos, c.pos) <= 15
-                        && !g
-                            .routes
-                            .iter()
-                            .any(|r| r.origin == origin && r.dest == c.id)
-                })
-                .max_by(|a, b| {
-                    let av = self.trade_route_destination_value(g, pid, a, strategy);
-                    let bv = self.trade_route_destination_value(g, pid, b, strategy);
-                    av.partial_cmp(&bv).unwrap().then_with(|| b.id.cmp(&a.id))
-                })
-                .map(|c| c.id);
-            if let Some(city) = target {
+            if let Some((_, city)) = self.best_trade_route_destination(g, pid, origin, strategy) {
                 return g
                     .apply(pid, &Action::TradeRoute { unit: uid, city })
                     .is_ok();
             }
         }
-        self.base.trader_step(g, pid, uid)
+        let Some((_, origin)) = self.best_trade_route_origin(g, pid, current, strategy) else {
+            return false;
+        };
+        self.base.step_toward(g, pid, uid, g.cities[&origin].pos)
+    }
+
+    fn best_trade_route_destination(
+        &self,
+        g: &Game,
+        pid: usize,
+        origin: u32,
+        strategy: GrandStrategy,
+    ) -> Option<(f64, u32)> {
+        g.cities
+            .values()
+            .filter(|city| g.can_establish_trade_route(pid, origin, city.id))
+            .map(|city| {
+                (
+                    self.trade_route_destination_value(g, pid, city, strategy),
+                    city.id,
+                )
+            })
+            .max_by(|left, right| {
+                left.0
+                    .total_cmp(&right.0)
+                    .then_with(|| right.1.cmp(&left.1))
+            })
+    }
+
+    /// Count destinations, not origin/destination pairs: final-patch Civ VI
+    /// permits only one active route to a destination per empire.
+    fn trade_route_opportunity_count(&self, g: &Game, pid: usize) -> usize {
+        let origins = g.player_city_ids(pid);
+        g.cities
+            .values()
+            .filter(|destination| {
+                origins
+                    .iter()
+                    .any(|origin| g.can_establish_trade_route(pid, *origin, destination.id))
+            })
+            .count()
+    }
+
+    /// Best city in which an idle or newly completed Trader can begin a
+    /// legal route. Travel time prevents a slightly richer distant route from
+    /// delaying economic output indefinitely.
+    fn best_trade_route_origin(
+        &self,
+        g: &Game,
+        pid: usize,
+        from: Pos,
+        strategy: GrandStrategy,
+    ) -> Option<(f64, u32)> {
+        g.player_city_ids(pid)
+            .into_iter()
+            .filter_map(|origin| {
+                self.best_trade_route_destination(g, pid, origin, strategy)
+                    .map(|(value, _)| {
+                        (
+                            value - g.wdist(from, g.cities[&origin].pos) as f64 * 1.5,
+                            origin,
+                        )
+                    })
+            })
+            .max_by(|left, right| {
+                left.0
+                    .total_cmp(&right.0)
+                    .then_with(|| right.1.cmp(&left.1))
+            })
     }
 
     fn trade_route_destination_value(
@@ -6104,12 +6165,33 @@ impl AdvancedAi {
             let local_strength_ratio = self.local_strength_ratio(g, &units, &enemies, objective);
             let average_hp = units.iter().map(|uid| g.units[uid].hp).sum::<i32>() as f64
                 / units.len().max(1) as f64;
+            let forcing_focus = focus_target.is_some_and(|target| {
+                let low_hp_unit = g
+                    .units_at(target)
+                    .into_iter()
+                    .any(|unit| enemies.contains(&g.units[&unit].owner) && g.units[&unit].hp <= 35);
+                let capturable_city = g.city_at(target).is_some_and(|city| {
+                    enemies.contains(&g.cities[&city].owner)
+                        && g.cities[&city].hp <= 40
+                        && g.cities[&city].wall_hp <= 0
+                        && units.iter().any(|unit| {
+                            g.rules.units[g.units[unit].kind.as_str()].is_melee_capable()
+                                && g.wdist(g.units[unit].pos, target) <= 1
+                        })
+                });
+                low_hp_unit || capturable_city
+            });
             let posture = if average_hp <= self.base.w.withdraw_hp + 10.0 {
                 ForcePosture::Recover
             } else if focus_target.is_some()
+                && (local_strength_ratio >= 0.72 || plan.threatened_city.is_some() || forcing_focus)
                 || units.iter().any(|uid| {
                     g.units.values().any(|enemy| {
-                        enemies.contains(&enemy.owner) && g.wdist(g.units[uid].pos, enemy.pos) <= 2
+                        enemies.contains(&enemy.owner)
+                            && g.wdist(g.units[uid].pos, enemy.pos) <= 2
+                            && (local_strength_ratio >= 0.72
+                                || plan.threatened_city.is_some()
+                                || enemy.hp <= 35)
                     })
                 })
             {
@@ -6149,9 +6231,9 @@ impl AdvancedAi {
         let role = Self::force_role(g, uid);
         let spec = &g.rules.units[unit.kind.as_str()];
         let target = match group.posture {
-            ForcePosture::Muster | ForcePosture::Recover => group.anchor,
+            ForcePosture::Muster | ForcePosture::Hold | ForcePosture::Recover => group.anchor,
             ForcePosture::Engage => group.focus_target.unwrap_or(group.objective),
-            _ => group.objective,
+            ForcePosture::Advance => group.objective,
         };
         let preferred_depth = match role {
             ForceRole::Recon => spec.range.max(2),
@@ -6418,6 +6500,120 @@ impl AdvancedAi {
                 immediate + self.forcing_reply_line(&branch, enemy, victim, depth - 1)
             })
             .fold(0.0_f64, f64::max)
+    }
+
+    /// Make a candidate battlefield action on a clone and value the exact
+    /// result before extending opponent replies. This is the principal-search
+    /// half of the tactical evaluator: static exchange remains useful for
+    /// cheap move ordering, while the final decision sees the seeded damage
+    /// roll, kills, attacker survival, wall damage, district pillage, and an
+    /// actual city transfer.
+    fn tactical_attack_value(
+        &self,
+        g: &Game,
+        pid: usize,
+        uid: u32,
+        action: &Action,
+        plan: &StrategicPlan,
+    ) -> f64 {
+        let target = match action {
+            Action::Attack { unit, target } | Action::Ranged { unit, target }
+                if *unit == uid =>
+            {
+                *target
+            }
+            _ => return f64::NEG_INFINITY,
+        };
+        let attacker = &g.units[&uid];
+        let attacker_spec = &g.rules.units[attacker.kind.as_str()];
+        let defenders: Vec<(u32, i32, f64, f64, bool, bool)> = g
+            .units_at(target)
+            .into_iter()
+            .filter_map(|unit| {
+                let defender = &g.units[&unit];
+                let spec = &g.rules.units[defender.kind.as_str()];
+                (defender.owner != pid
+                    && g.is_at_war(pid, defender.owner)
+                    && spec.class == "military")
+                    .then_some((
+                        unit,
+                        defender.hp,
+                        g.unit_strength(defender, true),
+                        spec.cost,
+                        spec.siege,
+                        spec.is_melee_capable(),
+                    ))
+            })
+            .collect();
+        let target_city = g.city_at(target).filter(|city| {
+            g.cities[city].owner != pid && g.is_at_war(pid, g.cities[city].owner)
+        });
+        let target_encampment = target_city.is_none().then(|| g.encampment_at(target)).flatten();
+        let mut after = g.clone();
+        if after.apply(pid, action).is_err() {
+            return f64::NEG_INFINITY;
+        }
+
+        let attacker_loss = match after.units.get(&uid) {
+            Some(survivor) => {
+                (attacker.hp - survivor.hp).max(0) as f64
+                    * (1.25 + attacker_spec.cost / 800.0)
+            }
+            None => 230.0 + attacker_spec.cost * 0.65,
+        };
+        let mut value = -attacker_loss;
+        for (unit, hp, strength, cost, siege, captures) in defenders {
+            value += match after.units.get(&unit) {
+                None => {
+                    190.0
+                        + cost * 0.45
+                        + strength * 1.8
+                        + if siege { 65.0 } else { 0.0 }
+                        + if captures { 30.0 } else { 0.0 }
+                }
+                Some(survivor) => {
+                    (hp - survivor.hp).max(0) as f64 * (1.0 + strength / 100.0)
+                        + if siege { 18.0 } else { 0.0 }
+                        + if captures { 6.0 } else { 0.0 }
+                }
+            };
+        }
+        if let Some(city) = target_city {
+            let before = &g.cities[&city];
+            let captured = after.cities.get(&city).is_some_and(|city| city.owner == pid);
+            if captured {
+                value += 520.0
+                    + before.pop.max(1) as f64 * 14.0
+                    + before.districts.len() as f64 * 24.0
+                    + before.wonders.len() as f64 * 45.0
+                    + if before.is_capital { 180.0 } else { 0.0 }
+                    + if plan.target_city == Some(city) {
+                        100.0
+                    } else {
+                        0.0
+                    };
+            } else if let Some(after_city) = after.cities.get(&city) {
+                let wall_damage = (before.wall_hp - after_city.wall_hp).max(0) as f64;
+                let city_damage = (before.hp - after_city.hp).max(0) as f64;
+                let progress = wall_damage * 1.35 + city_damage;
+                value += progress
+                    + if progress > 0.0 && plan.target_city == Some(city) {
+                        35.0
+                    } else {
+                        0.0
+                    };
+            }
+        } else if let Some(city) = target_encampment {
+            let before = &g.cities[&city];
+            let after_city = &after.cities[&city];
+            value += (before.encampment_wall_hp - after_city.encampment_wall_hp).max(0) as f64
+                * 1.35
+                + (before.encampment_hp - after_city.encampment_hp).max(0) as f64;
+            if !before.encampment_pillaged && after_city.encampment_pillaged {
+                value += 180.0;
+            }
+        }
+        value
     }
 
     /// Bounded quiescence-style reply search for a proposed attack. The
@@ -6792,7 +6988,18 @@ impl AdvancedAi {
             if unusable_settler && g.city_at(pos).is_none() {
                 continue;
             }
-            let mut score = self.base.exchange_score(g, uid, pos, ranged)
+            let action = if ranged {
+                Action::Ranged {
+                    unit: uid,
+                    target: pos,
+                }
+            } else {
+                Action::Attack {
+                    unit: uid,
+                    target: pos,
+                }
+            };
+            let mut score = self.tactical_attack_value(g, pid, uid, &action, plan)
                 - self.base.attack_threshold(g, uid, pos);
             if plan
                 .target_city
@@ -6810,17 +7017,6 @@ impl AdvancedAi {
                 score -=
                     self.base.w.local_superiority * (1.0 - orders.local_strength_ratio).max(0.0);
             }
-            let action = if ranged {
-                Action::Ranged {
-                    unit: uid,
-                    target: pos,
-                }
-            } else {
-                Action::Attack {
-                    unit: uid,
-                    target: pos,
-                }
-            };
             score -= self.base.w.trade_caution * self.forcing_reply_penalty(g, pid, uid, &action);
             if best
                 .map(|(old, bp)| score > old || (score == old && pos < bp))
@@ -7665,6 +7861,28 @@ mod tests {
         install_ai_test_district(game, city, "holy_site");
         game.cities.get_mut(&city).unwrap().buildings =
             vec!["shrine".to_string(), "temple".to_string()];
+    }
+
+    fn found_nearby_test_city(game: &mut Game, owner: usize, anchor: Pos) -> u32 {
+        let position = game
+            .map
+            .tiles
+            .iter()
+            .filter(|(_, tile)| {
+                tile.owner_city.is_none()
+                    && game.rules.is_passable(tile)
+                    && !game.rules.is_water(tile)
+            })
+            .map(|(position, _)| *position)
+            .find(|position| {
+                (4..=10).contains(&game.wdist(anchor, *position))
+                    && game
+                        .cities
+                        .values()
+                        .all(|city| game.wdist(city.pos, *position) >= 4)
+            })
+            .expect("test map has a nearby city site");
+        game.found_city_for(owner, position, None)
     }
 
     fn island_colony_game() -> (Game, Pos, Pos) {
@@ -9521,13 +9739,50 @@ mod tests {
                 .unwrap();
         let warrior = game.spawn_test_unit("warrior", 0, staging);
         game.at_war.insert((0, 1));
-        let ai = AdvancedAi::targeting(VictoryTarget::Domination);
+        let mut ai = AdvancedAi::targeting(VictoryTarget::Domination);
 
         let ratio = ai.local_strength_ratio(&game, &[warrior], &[1], game.cities[&target_city].pos);
 
         assert!(
             ratio < 0.72,
             "one Warrior must not claim superiority over an intact defended city: {ratio}"
+        );
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Conquest,
+            target_player: Some(1),
+            target_city: Some(target_city),
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+        ai.rebuild_force_groups(&game, 0, &plan);
+        let order = ai
+            .force_groups
+            .iter()
+            .find(|group| group.units.contains(&warrior))
+            .unwrap();
+        assert_eq!(order.posture, ForcePosture::Hold);
+        assert_eq!(
+            match order.posture {
+                ForcePosture::Muster | ForcePosture::Hold | ForcePosture::Recover => order.anchor,
+                ForcePosture::Engage => order.focus_target.unwrap_or(order.objective),
+                ForcePosture::Advance => order.objective,
+            },
+            order.anchor,
+            "an inferior force must hold its formation rather than target the city"
+        );
+
+        game.cities.get_mut(&target_city).unwrap().wall_hp = 0;
+        game.cities.get_mut(&target_city).unwrap().hp = 1;
+        ai.rebuild_force_groups(&game, 0, &plan);
+        assert_eq!(
+            ai.force_groups
+                .iter()
+                .find(|group| group.units.contains(&warrior))
+                .unwrap()
+                .posture,
+            ForcePosture::Engage,
+            "a forcing city capture must override the otherwise inferior local ratio"
         );
     }
 
@@ -10138,6 +10393,118 @@ mod tests {
             unconnected_value - science_unconnected > connected_value - science_connected,
             "only the Culture objective should add the missing-rival pressure bonus"
         );
+    }
+
+    #[test]
+    fn advanced_trader_uses_an_unreserved_destination_empire_wide() {
+        let mut game = Game::new_full(1, 30, 18, 79_002, 200, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let first = game.player_city_ids(0)[0];
+        let first_pos = game.cities[&first].pos;
+        let second = found_nearby_test_city(&mut game, 0, first_pos);
+        let third = found_nearby_test_city(&mut game, 0, first_pos);
+        game.players[0].civics.insert("foreign_trade".to_string());
+        game.players[0]
+            .counters
+            .insert("great_person_trade_capacity".to_string(), 1);
+        game.routes.push(crate::game::TradeRoute {
+            origin: second,
+            dest: first,
+            owner: 0,
+            ends: game.turn + 30,
+        });
+        let trader = game.spawn_test_unit("trader", 0, game.cities[&third].pos);
+
+        assert!(AdvancedAi::new().advanced_trader_step(
+            &mut game,
+            0,
+            trader,
+            GrandStrategy::Expansion,
+        ));
+        assert!(!game.units.contains_key(&trader));
+        assert!(game
+            .routes
+            .iter()
+            .any(|route| route.origin == third && route.dest == second));
+    }
+
+    #[test]
+    fn advanced_trader_relocates_to_a_city_with_a_legal_route() {
+        let mut game = Game::new_full(1, 30, 18, 79_003, 200, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let destination = game.player_city_ids(0)[0];
+        let destination_pos = game.cities[&destination].pos;
+        let current_city = found_nearby_test_city(&mut game, 0, destination_pos);
+        game.players[0].civics.insert("foreign_trade".to_string());
+        game.players[0]
+            .counters
+            .insert("great_person_trade_capacity".to_string(), 1);
+        game.routes.push(crate::game::TradeRoute {
+            origin: current_city,
+            dest: destination,
+            owner: 0,
+            ends: game.turn + 30,
+        });
+        let start = game.cities[&current_city].pos;
+        let target = game.cities[&destination].pos;
+        let trader = game.spawn_test_unit("trader", 0, start);
+        let before = game.wdist(start, target);
+
+        assert!(AdvancedAi::new().advanced_trader_step(
+            &mut game,
+            0,
+            trader,
+            GrandStrategy::Expansion,
+        ));
+        assert!(game.units.contains_key(&trader));
+        assert!(game.wdist(game.units[&trader].pos, target) < before);
+    }
+
+    #[test]
+    fn trader_production_requires_an_open_route_and_respects_idle_supply() {
+        let mut game = Game::new_full(1, 30, 18, 79_004, 200, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        game.players[0].civics.insert("foreign_trade".to_string());
+        let city = game.player_city_ids(0)[0];
+        let item = Item::Unit {
+            unit: "trader".to_string(),
+        };
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Expansion,
+            target_player: None,
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 2,
+            assessed_turn: game.turn,
+        };
+        let ai = AdvancedAi::new();
+
+        let counts = ai.counts(&game, 0);
+        assert!(ai.production_value(&game, 0, city, &item, &plan, &counts) < -9_000.0);
+
+        let city_pos = game.cities[&city].pos;
+        found_nearby_test_city(&mut game, 0, city_pos);
+        let counts = ai.counts(&game, 0);
+        assert!(ai.production_value(&game, 0, city, &item, &plan, &counts) > 0.0);
+
+        game.spawn_test_unit("trader", 0, game.cities[&city].pos);
+        let counts = ai.counts(&game, 0);
+        assert!(ai.production_value(&game, 0, city, &item, &plan, &counts) < -9_000.0);
     }
 
     #[test]
