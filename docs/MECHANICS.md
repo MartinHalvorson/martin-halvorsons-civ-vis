@@ -6,7 +6,7 @@ numeric rule.
 Status: ✅ implemented · 🟡 intentionally scoped relative to the full commercial ruleset.
 
 > **In progress** (claimed by parallel sessions — check before starting a batch):
-> - (none currently claimed)
+> - session F: religious-victory balance batch — faith-purchased religious units adopt city majority religion (Civilopedia rule), cross-strategy religious defense in AdvancedAi, re-baseline soak/ai_eval
 
 | System | Status | Notes |
 |---|---|---|
