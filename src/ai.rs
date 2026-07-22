@@ -111,6 +111,10 @@ pub struct Weights {
     pub open1: f64,
     pub open2: f64,
     pub open3: f64,
+    // 1-ply tactical movement: candidate tiles scored by progress toward the
+    // target plus these positional terms
+    pub mv_support: f64, // bonus per adjacent friendly military unit
+    pub mv_threat: f64,  // penalty per point of expected incoming damage
 }
 
 pub const OPENING_MENU: [&str; 6] = ["scout", "warrior", "builder", "settler",
@@ -127,6 +131,7 @@ impl Default for Weights {
             min_city_dist: 4.0, wonder_min_bld: 3.0, faith_builder: 120.0,
             d_campus: 4.0, d_commercial: 3.0, d_holy: 2.0, d_theater: 1.0,
             open0: 1.0, open1: 3.0, open2: 2.0, open3: 5.0, // warrior settler builder monument
+            mv_support: 2.0, mv_threat: 0.5,
         }
     }
 }
@@ -141,7 +146,8 @@ impl Weights {
              self.settle_gold, self.settle_dist, self.min_city_dist,
              self.wonder_min_bld, self.faith_builder,
              self.d_campus, self.d_commercial, self.d_holy, self.d_theater,
-             self.open0, self.open1, self.open2, self.open3]
+             self.open0, self.open1, self.open2, self.open3,
+             self.mv_support, self.mv_threat]
     }
 
     pub fn from_vec(v: &[f64]) -> Weights {
@@ -155,18 +161,20 @@ impl Weights {
             wonder_min_bld: v[17], faith_builder: v[18],
             d_campus: v[19], d_commercial: v[20], d_holy: v[21], d_theater: v[22],
             open0: v[23], open1: v[24], open2: v[25], open3: v[26],
+            mv_support: v[27], mv_threat: v[28],
         }
     }
 
     /// (lo, hi) clamp per gene, same order as to_vec.
-    pub fn bounds() -> [(f64, f64); 27] {
+    pub fn bounds() -> [(f64, f64); 29] {
         [(2.0, 12.0), (1.0, 5.0), (60.0, 400.0), (0.3, 4.0), (0.2, 2.0),
          (0.8, 5.0), (-20.0, 80.0), (0.2, 1.2), (10.0, 200.0),
          (-25.0, 25.0), (0.0, 80.0), (0.2, 3.0),
          (0.2, 3.0), (0.2, 3.0), (0.0, 2.0), (0.0, 2.0), (3.0, 7.0),
          (0.0, 8.0), (40.0, 400.0),
          (0.0, 8.0), (0.0, 8.0), (0.0, 8.0), (0.0, 8.0),
-         (0.0, 6.99), (0.0, 6.99), (0.0, 6.99), (0.0, 6.99)]
+         (0.0, 6.99), (0.0, 6.99), (0.0, 6.99), (0.0, 6.99),
+         (0.0, 10.0), (0.0, 3.0)]
     }
 }
 
@@ -580,6 +588,51 @@ impl BasicAi {
         }
     }
 
+    /// 1-ply positional search for wartime marching: score each candidate
+    /// tile (stay put or any legal neighbor) by progress toward the target,
+    /// adjacent friendly support, and expected incoming damage; take the best.
+    fn tactical_step(&self, g: &mut Game, pid: usize, uid: u32, target: Pos,
+                     enemy_ids: &[usize]) -> bool {
+        let upos = g.units[&uid].pos;
+        let u = &g.units[&uid];
+        let my_def = effective_strength(g.unit_strength(u, true), u.hp);
+        let score = |g: &Game, tile: Pos| -> f64 {
+            let mut s = -2.0 * g.wdist(tile, target) as f64;
+            for n in g.nbrs(tile) {
+                for oid in g.units_at(n) {
+                    let o = &g.units[&oid];
+                    if g.rules.units[o.kind.as_str()].class != "military" {
+                        continue;
+                    }
+                    if o.owner == pid && oid != uid {
+                        s += self.w.mv_support;
+                    } else if enemy_ids.contains(&o.owner) {
+                        let att = effective_strength(g.unit_strength(o, false), o.hp);
+                        s -= self.w.mv_threat * 30.0 * ((att - my_def) / 25.0).exp();
+                    }
+                }
+            }
+            s
+        };
+        let stay = score(g, upos);
+        let mut best: Option<(f64, Pos)> = None;
+        for n in g.nbrs(upos) {
+            if !g.can_move(uid, n) {
+                continue;
+            }
+            let sc = score(g, n);
+            if best.map(|(b, bp)| (sc, n) > (b, bp)).unwrap_or(true) {
+                best = Some((sc, n));
+            }
+        }
+        match best {
+            Some((sc, n)) if sc > stay => {
+                g.apply(pid, &Action::Move { unit: uid, to: n }).is_ok()
+            }
+            _ => false,
+        }
+    }
+
     fn step_toward(&self, g: &mut Game, pid: usize, uid: u32, target: Pos) -> bool {
         let cur = g.units[&uid].pos;
         let mut opts: Vec<Pos> = g.nbrs(cur)
@@ -887,7 +940,7 @@ impl BasicAi {
                 }
             }
             return match self.nearest_enemy(g, pid, upos, &enemy_ids) {
-                Some(t) => self.step_toward(g, pid, uid, t),
+                Some(t) => self.tactical_step(g, pid, uid, t, &enemy_ids),
                 None => self.fortify_or_stop(g, pid, uid),
             };
         }
