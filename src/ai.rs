@@ -5119,7 +5119,7 @@ mod tests {
     }
 
     #[test]
-    fn a_queued_building_cannot_be_bought_as_a_duplicate() {
+    fn buying_a_queued_building_finishes_it_without_a_duplicate() {
         let mut g = Game::new_full(1, 20, 14, 322, 30, 0, false);
         let settler = g
             .player_unit_ids(0)
@@ -5145,24 +5145,31 @@ mod tests {
         .unwrap();
         g.players[0].gold = 1_000.0;
 
-        assert_eq!(g.building_purchase_cost(0, cid, "monument", "gold"), None);
-        assert!(!g.legal_actions(0).iter().any(|action| matches!(
+        let purchase = Action::BuyBuilding {
+            city: cid,
+            building: "monument".to_string(),
+            currency: "gold".to_string(),
+        };
+        let cost = g
+            .building_gold_purchase_cost(0, cid, "monument")
+            .expect("a queued ordinary building remains purchasable");
+        assert!(g.legal_actions(0).iter().any(|action| matches!(
             action,
             Action::BuyBuilding { city, building, .. }
                 if *city == cid && building == "monument"
         )));
-        assert!(g
-            .apply(
-                0,
-                &Action::BuyBuilding {
-                    city: cid,
-                    building: "monument".to_string(),
-                    currency: "gold".to_string(),
-                },
-            )
-            .is_err());
-        assert_eq!(g.cities[&cid].queue.len(), 1);
-        assert!(!g.cities[&cid].buildings.iter().any(|b| b == "monument"));
+        g.apply(0, &purchase).unwrap();
+        assert_eq!(g.players[0].gold, 1_000.0 - cost);
+        assert!(g.cities[&cid].queue.is_empty());
+        assert_eq!(
+            g.cities[&cid]
+                .buildings
+                .iter()
+                .filter(|building| building.as_str() == "monument")
+                .count(),
+            1
+        );
+        assert!(g.apply(0, &purchase).is_err());
     }
 
     #[test]

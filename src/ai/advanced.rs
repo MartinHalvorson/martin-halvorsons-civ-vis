@@ -2872,6 +2872,89 @@ impl AdvancedAi {
         }
     }
 
+    /// Convert a deep treasury into one immediate tempo gain. Candidate
+    /// units, buildings, and Governor-enabled districts reuse the strategic
+    /// production evaluator, but are scored at their undiscounted positional
+    /// value because a purchase completes now. A strategy-sensitive reserve
+    /// protects Great Person patronage, Great Work deals, upgrades, and
+    /// emergency reinforcement instead of treating all affordable actions as
+    /// equally spendable.
+    fn advanced_gold_spending(&self, g: &mut Game, pid: usize, plan: &StrategicPlan) -> bool {
+        let city_count = g.player_city_ids(pid).len() as f64;
+        let reserve = match plan.strategy {
+            GrandStrategy::Diplomacy | GrandStrategy::Culture => 300.0 + 75.0 * city_count,
+            GrandStrategy::Expansion => 250.0 + 75.0 * city_count,
+            GrandStrategy::Science => 250.0 + 50.0 * city_count,
+            GrandStrategy::Religion => 150.0 + 50.0 * city_count,
+            GrandStrategy::Conquest | GrandStrategy::Recovery => 75.0 + 25.0 * city_count,
+        };
+        let bank = g.players[pid].gold;
+        let counts = self.counts(g, pid);
+        let mut candidates = Vec::new();
+        for action in g.legal_actions(pid) {
+            let (city, item, currency) = match &action {
+                Action::Buy {
+                    city,
+                    unit,
+                    currency,
+                } => (*city, Item::Unit { unit: unit.clone() }, currency.as_str()),
+                Action::BuyBuilding {
+                    city,
+                    building,
+                    currency,
+                } => (
+                    *city,
+                    Item::Building {
+                        building: building.clone(),
+                    },
+                    currency.as_str(),
+                ),
+                Action::BuyDistrict {
+                    city,
+                    district,
+                    pos,
+                    currency,
+                } => (
+                    *city,
+                    Item::District {
+                        district: district.clone(),
+                        pos: *pos,
+                    },
+                    currency.as_str(),
+                ),
+                _ => continue,
+            };
+            if currency != "gold" {
+                continue;
+            }
+            let production = g.city_yields(city).production.max(1.0);
+            let turns = g.item_remaining_cost_for_city(pid, city, &item) / production;
+            let production_score = self.production_value(g, pid, city, &item, plan, &counts);
+            if production_score <= -1_000.0 {
+                continue;
+            }
+            let mut after = g.clone();
+            if after.apply(pid, &action).is_err() {
+                continue;
+            }
+            let cost = (bank - after.players[pid].gold).max(0.0);
+            if after.players[pid].gold + f64::EPSILON < reserve {
+                continue;
+            }
+            let positional = production_score * (7.0 + turns.max(1.0));
+            let score = positional + turns.clamp(0.0, 20.0) * 6.0 - cost * 0.30;
+            if score >= 120.0 {
+                candidates.push((score, std::cmp::Reverse(format!("{action:?}")), action));
+            }
+        }
+        let best = candidates.into_iter().max_by(|left, right| {
+            left.0
+                .total_cmp(&right.0)
+                .then_with(|| left.1.cmp(&right.1))
+        });
+        best.is_some_and(|(_, _, action)| g.apply(pid, &action).is_ok())
+    }
+
     fn counts(&self, g: &Game, pid: usize) -> EmpireCounts {
         let mut counts = EmpireCounts::default();
         for uid in g.player_unit_ids(pid) {
@@ -6500,7 +6583,75 @@ impl AdvancedAi {
         }
     }
 
+    /// Fire every available city-center strike, choosing each target from an
+    /// exact cloned result. Explicit-victory agents do not run the Basic city
+    /// governor after the opening, so this command phase is the authoritative
+    /// path for walls (including Victor's extra strike).
+    fn advanced_city_strikes(&self, g: &mut Game, pid: usize) {
+        loop {
+            let candidates: Vec<Action> = g
+                .legal_actions(pid)
+                .into_iter()
+                .filter(|action| matches!(action, Action::CityStrike { .. }))
+                .collect();
+            let best = candidates.into_iter().max_by(|left, right| {
+                let score = |action: &Action| -> f64 {
+                    let Action::CityStrike { target, .. } = action else {
+                        return f64::NEG_INFINITY;
+                    };
+                    let defenders: Vec<(u32, i32, f64, f64, bool)> = g
+                        .units_at(*target)
+                        .into_iter()
+                        .filter_map(|unit| {
+                            let defender = &g.units[&unit];
+                            let spec = &g.rules.units[defender.kind.as_str()];
+                            (defender.owner != pid
+                                && g.is_at_war(pid, defender.owner)
+                                && spec.class == "military")
+                                .then_some((
+                                    unit,
+                                    defender.hp,
+                                    g.unit_strength(defender, true),
+                                    spec.cost,
+                                    spec.siege,
+                                ))
+                        })
+                        .collect();
+                    let mut after = g.clone();
+                    if after.apply(pid, action).is_err() {
+                        return f64::NEG_INFINITY;
+                    }
+                    defenders
+                        .into_iter()
+                        .map(
+                            |(unit, hp, strength, cost, siege)| match after.units.get(&unit) {
+                                None => {
+                                    180.0
+                                        + cost * 0.45
+                                        + strength * 2.0
+                                        + if siege { 70.0 } else { 0.0 }
+                                }
+                                Some(defender) => {
+                                    (hp - defender.hp).max(0) as f64 * (1.0 + strength / 100.0)
+                                        + if siege { 25.0 } else { 0.0 }
+                                }
+                            },
+                        )
+                        .sum()
+                };
+                score(left)
+                    .total_cmp(&score(right))
+                    .then_with(|| format!("{right:?}").cmp(&format!("{left:?}")))
+            });
+            let Some(action) = best else { break };
+            if g.apply(pid, &action).is_err() {
+                break;
+            }
+        }
+    }
+
     fn advanced_command_actions(&self, g: &mut Game, pid: usize, plan: &StrategicPlan) {
+        self.advanced_city_strikes(g, pid);
         self.advanced_encampment_strikes(g, pid);
         self.advanced_promotions(g, pid, plan.strategy);
         self.advanced_formations(g, pid);
@@ -6849,6 +7000,9 @@ impl Ai for AdvancedAi {
         self.advanced_products(g, pid, plan.strategy);
         self.advanced_great_people(g, pid, plan.strategy);
         self.faith_building_spending(g, pid, plan.strategy);
+        if self.victory_target.is_some() {
+            self.advanced_gold_spending(g, pid, &plan);
+        }
         self.strategic_policies(g, pid, plan.strategy);
         self.advanced_diplomacy(g, pid, &plan);
         self.advanced_spies(g, pid, &plan);
@@ -8834,6 +8988,59 @@ mod tests {
     }
 
     #[test]
+    fn strategic_gold_purchase_buys_science_tempo_but_preserves_the_reserve() {
+        let mut game = Game::new_full(1, 20, 14, 7_106, 160, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = game.player_city_ids(0)[0];
+        let campus = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != game.cities[&city].pos)
+            .unwrap();
+        game.map.tiles.get_mut(&campus).unwrap().district = Some("campus".to_string());
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert("campus".to_string(), campus);
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .extend(["monument".to_string(), "granary".to_string()]);
+        game.players[0].techs.insert("writing".to_string());
+        game.spawn_test_unit("builder", 0, game.cities[&city].pos);
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Science,
+            target_player: None,
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 1,
+            assessed_turn: game.turn,
+        };
+        let ai = AdvancedAi::targeting(VictoryTarget::Science);
+
+        game.players[0].gold = 500.0;
+        assert!(!ai.advanced_gold_spending(&mut game, 0, &plan));
+        assert!(!game.cities[&city]
+            .buildings
+            .contains(&"library".to_string()));
+
+        game.players[0].gold = 1_000.0;
+        assert!(ai.advanced_gold_spending(&mut game, 0, &plan));
+        assert!(game.cities[&city]
+            .buildings
+            .contains(&"library".to_string()));
+        assert!(game.players[0].gold >= 300.0);
+    }
+
+    #[test]
     fn explicit_targets_replace_early_cards_with_victory_policies() {
         let mut culture = Game::new(2, 24, 16, 78, 200, 0);
         culture.players[0].government = Some("chiefdom".to_string());
@@ -9671,6 +9878,48 @@ mod tests {
         assert!(
             mobile_counter > quiet + 5.0,
             "a ranged unit one step outside range must still count as a forcing reply: {mobile_counter} <= {quiet}"
+        );
+    }
+
+    #[test]
+    fn explicit_victory_command_phase_fires_city_center_strikes() {
+        let mut game = Game::new_full(2, 20, 14, 8_119, 80, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = game.player_city_ids(0)[0];
+        let center = game.cities[&city].pos;
+        for position in game.wdisk(center, 2) {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.hills = false;
+        }
+        let target = game
+            .nbrs(center)
+            .into_iter()
+            .find(|position| {
+                game.units_at(*position).is_empty()
+                    && game.city_at(*position).is_none()
+                    && game.encampment_at(*position).is_none()
+            })
+            .unwrap();
+        game.at_war.insert((0, 1));
+        game.cities.get_mut(&city).unwrap().wall_hp = 100;
+        let enemy = game.spawn_test_unit("warrior", 1, target);
+        let before = game.units[&enemy].hp;
+
+        AdvancedAi::targeting(VictoryTarget::Domination).advanced_city_strikes(&mut game, 0);
+
+        assert!(game.cities[&city].struck);
+        assert!(
+            game.units
+                .get(&enemy)
+                .is_none_or(|defender| defender.hp < before),
+            "the explicit victory command phase must spend an available wall strike"
         );
     }
 

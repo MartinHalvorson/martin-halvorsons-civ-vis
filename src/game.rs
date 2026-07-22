@@ -43,6 +43,161 @@ fn city_names(civ: &str) -> &'static [&'static str] {
 }
 
 #[cfg(test)]
+mod city_state_unique_tests;
+
+#[cfg(test)]
+mod gold_building_purchase_tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_buildings_cost_four_times_production_and_finish_immediately() {
+        let mut game = Game::new_full(1, 20, 14, 88_201, 120, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.found_city_for(0, game.units[&settler].pos, None);
+        let city = game.player_city_ids(0)[0];
+        game.players[0].techs.insert("pottery".to_string());
+        game.players[0].gold = 1_000.0;
+        let granary = Item::Building {
+            building: "granary".to_string(),
+        };
+        game.cities.get_mut(&city).unwrap().queue = vec![granary.clone()];
+        game.cities.get_mut(&city).unwrap().production = 20.0;
+
+        assert_eq!(
+            game.building_gold_purchase_cost(0, city, "granary"),
+            Some(260.0)
+        );
+        let purchase = Action::BuyBuilding {
+            city,
+            building: "granary".to_string(),
+            currency: "gold".to_string(),
+        };
+        assert_eq!(
+            game.legal_actions(0)
+                .iter()
+                .filter(|action| **action == purchase)
+                .count(),
+            1,
+            "the purchase action should not be duplicated"
+        );
+        game.apply(0, &purchase).unwrap();
+
+        assert_eq!(game.players[0].gold, 740.0);
+        assert!(game.cities[&city]
+            .buildings
+            .contains(&"granary".to_string()));
+        assert!(game.cities[&city].queue.is_empty());
+        assert_eq!(game.cities[&city].production, 0.0);
+    }
+
+    #[test]
+    fn defenses_and_government_plaza_buildings_remain_production_only() {
+        let mut game = Game::new_full(1, 20, 14, 88_202, 120, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.found_city_for(0, game.units[&settler].pos, None);
+        let city = game.player_city_ids(0)[0];
+        game.players[0].techs.insert("masonry".to_string());
+        game.players[0].gold = 10_000.0;
+        assert!(game.can_produce(
+            0,
+            city,
+            &Item::Building {
+                building: "walls".to_string(),
+            }
+        ));
+        assert_eq!(game.building_gold_purchase_cost(0, city, "walls"), None);
+        assert!(game
+            .apply(
+                0,
+                &Action::BuyBuilding {
+                    city,
+                    building: "walls".to_string(),
+                    currency: "gold".to_string(),
+                },
+            )
+            .is_err());
+
+        let plaza = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != game.cities[&city].pos)
+            .unwrap();
+        game.map.tiles.get_mut(&plaza).unwrap().district = Some("government_plaza".to_string());
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert("government_plaza".to_string(), plaza);
+        assert!(game.can_produce(
+            0,
+            city,
+            &Item::Building {
+                building: "ancestral_hall".to_string(),
+            }
+        ));
+        assert_eq!(
+            game.building_gold_purchase_cost(0, city, "ancestral_hall"),
+            None
+        );
+    }
+
+    #[test]
+    fn pillage_and_enemy_occupation_block_district_buildings_and_repairs() {
+        let mut game = Game::new_full(2, 20, 14, 88_203, 120, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.found_city_for(0, game.units[&settler].pos, None);
+        let city = game.player_city_ids(0)[0];
+        let campus = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != game.cities[&city].pos)
+            .unwrap();
+        game.map.tiles.get_mut(&campus).unwrap().district = Some("campus".to_string());
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert("campus".to_string(), campus);
+        game.players[0].techs.insert("writing".to_string());
+        let library = Item::Building {
+            building: "library".to_string(),
+        };
+        assert!(game.can_produce(0, city, &library));
+
+        game.map.tiles.get_mut(&campus).unwrap().pillaged = true;
+        assert!(!game.can_produce(0, city, &library));
+        assert_eq!(game.building_gold_purchase_cost(0, city, "library"), None);
+
+        game.at_war.insert(pair(0, 1));
+        game.spawn_test_unit("warrior", 1, campus);
+        assert!(!game.can_produce(
+            0,
+            city,
+            &Item::Repair {
+                repair: "district".to_string(),
+                pos: campus,
+            }
+        ));
+        game.map.tiles.get_mut(&campus).unwrap().pillaged = false;
+        assert!(!game.can_produce(0, city, &library));
+    }
+}
+
+#[cfg(test)]
 mod corporation_tests {
     use super::*;
 
@@ -8057,6 +8212,14 @@ impl Game {
         if self.congress_effect_active("trade_policy", "A", &pid.to_string()) {
             cap += 1;
         }
+        if self.grants_city_state_unique_bonus(pid, "Carthage") {
+            cap += self
+                .cities
+                .values()
+                .filter(|city| city.owner == pid)
+                .filter(|city| self.city_has_active_district_family(city, "encampment"))
+                .count() as i64;
+        }
         cap
     }
 
@@ -9258,6 +9421,30 @@ impl Game {
                             .unwrap_or(0.0);
                     }
                 }
+                if self.grants_city_state_unique_bonus(pid, "Stockholm")
+                    && c.buildings.iter().any(|building| {
+                        !c.pillaged_buildings.contains(building)
+                            && self.rules.buildings.get(building).is_some_and(|spec| {
+                                spec.district
+                                    .as_deref()
+                                    .is_some_and(|family| self.district_is_family(d, family))
+                            })
+                    })
+                {
+                    let kinds: &[&str] = match self.district_family(d) {
+                        "encampment" => &["general"],
+                        "harbor" => &["admiral"],
+                        "campus" => &["scientist"],
+                        "holy_site" => &["prophet"],
+                        "theater_square" => &["writer", "artist", "musician"],
+                        "industrial_zone" => &["engineer"],
+                        "commercial_hub" => &["merchant"],
+                        _ => &[],
+                    };
+                    for kind in kinds {
+                        *city_earn.entry((*kind).to_string()).or_insert(0.0) += 1.0;
+                    }
+                }
                 if d == "lavra" {
                     if self.city_has_building_family(c, "shrine") {
                         *city_earn.entry("writer".to_string()).or_insert(0.0) += 1.0;
@@ -9751,9 +9938,9 @@ impl Game {
             "Geneva" | "Hattusa" | "Stockholm" => "scientific",
             "Mohenjo-Daro" | "Vilnius" => "cultural",
             "Yerevan" | "Kandy" => "religious",
-            "Kabul" | "Valletta" => "militaristic",
+            "Kabul" | "Carthage" | "Valletta" => "militaristic",
             "Auckland" => "industrial",
-            _ => "trade", // Carthage, Zanzibar, ...
+            _ => "trade", // Zanzibar and modded/extended trade city-states.
         }
     }
 
@@ -9819,6 +10006,40 @@ impl Game {
             Some((n, pid)) if n >= 3 && !tied => Some(pid),
             _ => None,
         }
+    }
+
+    /// A civilization receives a city-state's unique bonus either by being
+    /// its direct Suzerain or through a Level 3 Economic Alliance with that
+    /// direct Suzerain. Sharing is deliberately non-transitive: a partner's
+    /// own Economic Alliance cannot relay the bonus through a third empire.
+    fn grants_city_state_unique_bonus(&self, pid: usize, city_state: &str) -> bool {
+        let economic_partner = self.alliance_partner(pid, "economic", 3);
+        self.players
+            .iter()
+            .filter(|minor| {
+                minor.alive && minor.is_minor && !minor.is_barbarian && minor.civ == city_state
+            })
+            .any(|minor| {
+                let suzerain = self.suzerain_of(minor.id);
+                suzerain == Some(pid)
+                    || economic_partner.is_some_and(|partner| suzerain == Some(partner))
+            })
+    }
+
+    fn at_war_with_any_civilization(&self, pid: usize) -> bool {
+        self.players.iter().any(|other| {
+            other.id != pid && other.alive && !other.is_barbarian && self.is_at_war(pid, other.id)
+        })
+    }
+
+    fn highest_active_alliance_level(&self, pid: usize) -> i32 {
+        self.players[pid]
+            .alliances
+            .values()
+            .filter(|alliance| alliance.ends > self.turn)
+            .map(|alliance| alliance.level)
+            .max()
+            .unwrap_or(0)
     }
 
     fn do_send_envoy(&mut self, pid: usize, minor: usize) -> Result<(), String> {
@@ -10068,7 +10289,7 @@ impl Game {
         })
     }
 
-    fn rock_promotion_offer_key(uid: u32, level: i32, name: &str) -> u64 {
+    fn promotion_offer_key(uid: u32, level: i32, name: &str) -> u64 {
         // Stable FNV-1a ranking gives every promotion event a deterministic
         // three-card offer without consuming the simulation RNG merely by
         // opening the action list.
@@ -10119,10 +10340,14 @@ impl Game {
             })
             .map(|(name, _)| name.clone())
             .collect();
-        if class == "rock_band" && !self.rock_band_choose_any_promotion(unit.owner) {
+        let limited_offer = (class == "rock_band"
+            && !self.rock_band_choose_any_promotion(unit.owner))
+            || (class == "religious_apostle"
+                && !self.grants_city_state_unique_bonus(unit.owner, "Yerevan"));
+        if limited_offer {
             available.sort_by_key(|name| {
                 (
-                    Self::rock_promotion_offer_key(unit.id, unit.level, name),
+                    Self::promotion_offer_key(unit.id, unit.level, name),
                     name.clone(),
                 )
             });
@@ -10184,7 +10409,11 @@ impl Game {
         if killed_opponent {
             relative *= 2.0;
         }
-        let amount = relative + if ranged { 1.0 } else { 2.0 } + if attacking { 1.0 } else { 0.0 };
+        let mut amount =
+            relative + if ranged { 1.0 } else { 2.0 } + if attacking { 1.0 } else { 0.0 };
+        if attacking && self.grants_city_state_unique_bonus(unit.owner, "Kabul") {
+            amount *= 2.0;
+        }
         let gained = self.modified_xp(uid, amount).min(8);
         self.units.get_mut(&uid).unwrap().xp += gained;
     }
@@ -10810,7 +11039,8 @@ impl Game {
     pub fn city_housing(&self, city: &City) -> f64 {
         // fresh water (river/oasis) = 5, coastal = 3, otherwise 2 (Civ 6)
         let center = &self.map.tiles[&city.pos];
-        let fresh = center.has_river()
+        let fresh = self.grants_city_state_unique_bonus(city.owner, "Mohenjo-Daro")
+            || center.has_river()
             || self.nbrs(city.pos).iter().any(|n| {
                 self.map
                     .get(*n)
@@ -11712,14 +11942,21 @@ impl Game {
     /// Distinct luxury resources that actually supply the empire. A resource
     /// must be improved (or lie under a City Center); merely owning an
     /// unimproved copy does not unlock its Amenities or Aztec combat bonus.
+    /// Zanzibar's two synthetic luxuries participate in those same systems.
     fn empire_luxury_names(&self, pid: usize) -> BTreeSet<String> {
-        self.rules
+        let mut luxuries: BTreeSet<String> = self
+            .rules
             .resources
             .iter()
             .filter(|(_, spec)| spec.class == "luxury")
             .filter(|(resource, _)| self.resource_access_count(pid, resource) > 0)
             .map(|(resource, _)| resource.clone())
-            .collect()
+            .collect();
+        if self.grants_city_state_unique_bonus(pid, "Zanzibar") {
+            luxuries.insert("cinnamon".to_string());
+            luxuries.insert("cloves".to_string());
+        }
+        luxuries
     }
 
     /// Gathering Storm removed the free population Amenity: cities require
@@ -12264,7 +12501,20 @@ impl Game {
                 sources * base * suzerain_multiplier
             })
             .unwrap_or(0.0);
-        improved * (base + extra) + governor_accumulation + spaceport + wonder + building + amani
+        let hattusa = if self.grants_city_state_unique_bonus(pid, "Hattusa")
+            && self.connected_resource_count_unchecked(pid, res) == 0
+        {
+            2.0
+        } else {
+            0.0
+        };
+        improved * (base + extra)
+            + governor_accumulation
+            + spaceport
+            + wonder
+            + building
+            + amani
+            + hattusa
     }
 
     pub fn strategic_stockpile_capacity(&self, pid: usize) -> f64 {
@@ -12803,6 +13053,12 @@ impl Game {
                 .iter()
                 .any(|o| o.id != pid && o.discovered_natural_wonders.contains(&wonder));
             self.add_era_score(pid, if first { 3 } else { 1 });
+            if self.grants_city_state_unique_bonus(pid, "Kandy") {
+                *self.players[pid]
+                    .counters
+                    .entry("great_work:relic".to_string())
+                    .or_insert(0) += 1;
+            }
         }
     }
 
@@ -14490,6 +14746,11 @@ impl Game {
                             self.governor_effect(pid, city.id, "commercial_harbor_adjacency_pct");
                     }
                 }
+                if self.district_is_family(dname, "theater_square")
+                    && self.grants_city_state_unique_bonus(pid, "Vilnius")
+                {
+                    percent += 50.0 * self.highest_active_alliance_level(pid) as f64;
+                }
                 let scale = percent / 100.0;
                 adj.add(Yields {
                     food: adj.food * scale,
@@ -15107,6 +15368,10 @@ impl Game {
                 })
             });
 
+        if is_coast_or_lake && self.grants_city_state_unique_bonus(pid, "Auckland") {
+            yields.production += if self.world_era >= 4 { 2.0 } else { 1.0 };
+        }
+
         if !tile.pillaged && tile.improvement.is_none() && tile.feature.is_some() {
             yields.gold += self.governor_effect(pid, city.id, "unimproved_feature_gold");
         }
@@ -15516,6 +15781,11 @@ impl Game {
                 _ => {}
             }
         }
+        let relic_faith = if self.grants_city_state_unique_bonus(city.owner, "Kandy") {
+            6.0
+        } else {
+            4.0
+        };
         if let Some(works) = self.housed_great_works(city.owner).get(&cid) {
             for (kind, count) in works {
                 let count = *count as f64;
@@ -15523,7 +15793,7 @@ impl Game {
                     "writing" => ys.culture += 2.0 * count,
                     "art" | "religious_art" | "artifact" => ys.culture += 3.0 * count,
                     "music" | "any" => ys.culture += 4.0 * count,
-                    "relic" => ys.faith += 4.0 * count,
+                    "relic" => ys.faith += relic_faith * count,
                     _ => {}
                 }
             }
@@ -15996,6 +16266,11 @@ impl Game {
         ys.faith *= m;
         if self.research_alliance_science_bonus(city.owner) {
             ys.science *= 1.10;
+        }
+        if self.grants_city_state_unique_bonus(city.owner, "Geneva")
+            && !self.at_war_with_any_civilization(city.owner)
+        {
+            ys.science *= 1.15;
         }
         ys
     }
@@ -16717,14 +16992,15 @@ impl Game {
         {
             return None;
         }
+        if currency == "gold" {
+            return self.building_gold_purchase_cost(pid, cid, building);
+        }
         let spec = self.rules.buildings.get(building)?;
-        let multiplier = match currency {
-            "gold" => 4.0,
-            "faith" => 2.0,
-            _ => return None,
-        };
+        if currency != "faith" {
+            return None;
+        }
         let discount = self.city_district_effect(city, "gold_faith_purchase_discount_pct");
-        Some(spec.cost * multiplier * (1.0 - discount / 100.0).max(0.0))
+        Some(spec.cost * 2.0 * (1.0 - discount / 100.0).max(0.0))
     }
 
     fn project_has_active_district(
@@ -17299,7 +17575,15 @@ impl Game {
                 }
                 match &spec.district {
                     None => true,
-                    Some(d) => self.city_has_district_family(city, d),
+                    Some(d) if self.district_family(d) == "city_center" => true,
+                    Some(d) => city.districts.iter().any(|(built, position)| {
+                        self.district_is_family(built, d)
+                            && self.district_is_active(city, built, *position)
+                            && !self.units_at(*position).into_iter().any(|unit| {
+                                self.units[&unit].owner != pid
+                                    && self.is_at_war(pid, self.units[&unit].owner)
+                            })
+                    }),
                 }
             }
             Item::District { district, pos } => {
@@ -17335,7 +17619,13 @@ impl Game {
                 let Some(tile) = self.map.get(*pos) else {
                     return false;
                 };
-                if tile.owner_city != Some(cid) || tile.district.is_none() {
+                if tile.owner_city != Some(cid)
+                    || tile.district.is_none()
+                    || self.units_at(*pos).into_iter().any(|unit| {
+                        self.units[&unit].owner != pid
+                            && self.is_at_war(pid, self.units[&unit].owner)
+                    })
+                {
                     return false;
                 }
                 if repair == "district" {
@@ -18015,7 +18305,6 @@ impl Game {
                 > 0.0;
         let monumentality = self.dedication_active(pid, "monumentality");
         let purchasable_units: Vec<String> = self.rules.units.keys().cloned().collect();
-        let purchasable_buildings: Vec<String> = self.rules.buildings.keys().cloned().collect();
         for cid in self.player_city_ids(pid) {
             let producible = self.producible_items(pid, cid);
             for item in &producible {
@@ -18023,6 +18312,18 @@ impl Game {
                     city: cid,
                     item: item.clone(),
                 });
+                if let Item::Building { building } = item {
+                    if self
+                        .building_gold_purchase_cost(pid, cid, building)
+                        .is_some_and(|cost| p.gold + f64::EPSILON >= cost)
+                    {
+                        acts.push(Action::BuyBuilding {
+                            city: cid,
+                            building: building.clone(),
+                            currency: "gold".to_string(),
+                        });
+                    }
+                }
             }
             let faith_districts = self.governor_effect(pid, cid, "faith_purchase_districts") > 0.0;
             let gold_districts = self.governor_effect(pid, cid, "gold_purchase_districts") > 0.0;
@@ -18085,24 +18386,6 @@ impl Game {
                             currency: "faith".to_string(),
                         });
                     }
-                }
-            }
-            for building in &purchasable_buildings {
-                let item = Item::Building {
-                    building: building.clone(),
-                };
-                let spec = &self.rules.buildings[building.as_str()];
-                if !spec.wonder
-                    && self.can_produce(pid, cid, &item)
-                    && self
-                        .building_purchase_cost(pid, cid, building, "gold")
-                        .is_some_and(|cost| p.gold + f64::EPSILON >= cost)
-                {
-                    acts.push(Action::BuyBuilding {
-                        city: cid,
-                        building: building.clone(),
-                        currency: "gold".to_string(),
-                    });
                 }
             }
             let rock_band = &self.rules.units["rock_band"];
@@ -21327,7 +21610,9 @@ impl Game {
         if self.cities.get(&cid).is_none_or(|city| city.owner != pid) {
             return Err("not your city".into());
         }
-        let city = &self.cities[&cid];
+        let item = Item::Building {
+            building: building.to_string(),
+        };
         let spec = self
             .rules
             .buildings
@@ -21345,78 +21630,132 @@ impl Game {
         if self.congress_effect_active("global_energy_treaty", "B", building) {
             return Err("World Congress prohibits that power plant".into());
         }
-        if city.buildings.iter().any(|owned| owned == building) {
+        if self.cities[&cid]
+            .buildings
+            .iter()
+            .any(|owned| owned == building)
+        {
             return Err("building cannot be purchased that way".into());
         }
-        match currency {
-            "gold" => {
-                let item = Item::Building {
-                    building: building.to_string(),
-                };
-                if spec.wonder || !self.can_produce(pid, cid, &item) {
-                    return Err("building cannot be purchased with gold".into());
-                }
+        if currency == "gold" {
+            let cost = self
+                .building_gold_purchase_cost(pid, cid, building)
+                .ok_or_else(|| "building cannot be purchased with Gold".to_string())?;
+            if self.players[pid].gold + f64::EPSILON < cost {
+                return Err("cannot afford".into());
             }
-            "faith" => {
-                let religion = self
-                    .city_religion(city)
-                    .ok_or_else(|| "city has no majority religion".to_string())?;
-                let worship = spec.worship_belief.as_ref().is_some_and(|belief| {
-                    self.religion_founder(religion).is_some_and(|founder| {
-                        self.players[founder]
-                            .religion_beliefs
-                            .iter()
-                            .any(|chosen| chosen == belief)
-                    })
-                });
-                let jesuit = self
-                    .religion_belief_effect(religion, "faith_purchase_science_culture_buildings")
-                    > 0.0
-                    && spec
-                        .district
-                        .as_deref()
-                        .is_some_and(|district| matches!(district, "campus" | "theater_square"));
-                if (!worship && !jesuit)
-                    || spec
-                        .district
-                        .as_ref()
-                        .is_some_and(|district| !self.city_has_district_family(city, district))
-                    || !spec
-                        .requires
-                        .iter()
-                        .all(|required| self.city_has_building_family(city, required))
-                {
-                    return Err("religion does not unlock this building purchase".into());
-                }
+            if !self.complete_item(pid, cid, &item) {
+                return Err("building purchase failed".into());
             }
-            _ => return Err("unknown purchase currency".into()),
+            self.players[pid].gold -= cost;
+            self.finish_purchased_building(cid, &item);
+            return Ok(());
         }
-        let cost = self
-            .building_purchase_cost(pid, cid, building, currency)
-            .ok_or_else(|| "building cannot be purchased that way".to_string())?;
-        let bank = if currency == "gold" {
-            self.players[pid].gold
-        } else {
-            self.players[pid].faith
-        };
-        if bank + f64::EPSILON < cost {
+        if currency != "faith" {
+            return Err("building cannot be purchased that way".into());
+        }
+        let city = &self.cities[&cid];
+        let religion = self
+            .city_religion(city)
+            .ok_or_else(|| "city has no majority religion".to_string())?;
+        let worship = spec.worship_belief.as_ref().is_some_and(|belief| {
+            self.religion_founder(religion).is_some_and(|founder| {
+                self.players[founder]
+                    .religion_beliefs
+                    .iter()
+                    .any(|chosen| chosen == belief)
+            })
+        });
+        let jesuit =
+            self.religion_belief_effect(religion, "faith_purchase_science_culture_buildings") > 0.0
+                && spec
+                    .district
+                    .as_deref()
+                    .is_some_and(|district| matches!(district, "campus" | "theater_square"));
+        if (!worship && !jesuit)
+            || spec
+                .district
+                .as_ref()
+                .is_some_and(|district| !self.city_has_district_family(city, district))
+            || !spec
+                .requires
+                .iter()
+                .all(|required| self.city_has_building_family(city, required))
+        {
+            return Err("religion does not unlock this building purchase".into());
+        }
+        let purchase_discount = self.city_district_effect(city, "gold_faith_purchase_discount_pct");
+        let cost = spec.cost * 2.0 * (1.0 - purchase_discount / 100.0).max(0.0);
+        if self.players[pid].faith + f64::EPSILON < cost {
             return Err("cannot afford".into());
         }
-        if !self.complete_item(
-            pid,
-            cid,
-            &Item::Building {
-                building: building.to_string(),
-            },
-        ) {
-            return Err("building purchase could not be completed".into());
+        if !self.complete_item(pid, cid, &item) {
+            return Err("building purchase failed".into());
         }
-        if currency == "gold" {
-            self.players[pid].gold -= cost;
-        } else {
-            self.players[pid].faith -= cost;
-        }
+        self.players[pid].faith -= cost;
+        self.finish_purchased_building(cid, &item);
         Ok(())
+    }
+
+    /// Stock Gold purchase price for an ordinary building. City defenses,
+    /// Flood Barriers, Government Plaza buildings, and wonders remain
+    /// Production-only; all normal unlock, district, prerequisite, unique,
+    /// and Congress gates are inherited from `can_produce`.
+    pub(crate) fn building_gold_purchase_cost(
+        &self,
+        pid: usize,
+        cid: u32,
+        building: &str,
+    ) -> Option<f64> {
+        let spec = self.rules.buildings.get(building)?;
+        let district = spec
+            .district
+            .as_deref()
+            .map(|district| self.district_family(district))
+            .unwrap_or("city_center");
+        if spec.outer_defense > 0
+            || spec.wonder
+            || district == "government_plaza"
+            || spec
+                .effects
+                .get("protect_coastal_lowlands")
+                .copied()
+                .unwrap_or(0.0)
+                > 0.0
+            || !self.can_produce(
+                pid,
+                cid,
+                &Item::Building {
+                    building: building.to_string(),
+                },
+            )
+        {
+            return None;
+        }
+        let discount = self
+            .city_district_effect(&self.cities[&cid], "gold_faith_purchase_discount_pct")
+            .clamp(0.0, 100.0);
+        Some(
+            self.item_cost_for_city(
+                pid,
+                cid,
+                &Item::Building {
+                    building: building.to_string(),
+                },
+            ) * 4.0
+                * (1.0 - discount / 100.0),
+        )
+    }
+
+    fn finish_purchased_building(&mut self, cid: u32, item: &Item) {
+        let key = Self::item_progress_key(item);
+        let city = self.cities.get_mut(&cid).unwrap();
+        let was_active = city.queue.first() == Some(item);
+        city.queue.retain(|queued| queued != item);
+        city.production_progress.remove(&key);
+        if was_active {
+            city.production = 0.0;
+        }
     }
 
     fn do_buy_district(
