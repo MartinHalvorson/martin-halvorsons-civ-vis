@@ -61,6 +61,9 @@ fn dsight() -> i32 {
 fn done_i() -> i64 {
     1
 }
+fn done_usize() -> usize {
+    1
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TerrainSpec {
@@ -455,6 +458,8 @@ pub struct GreatPersonSpec {
     pub kind: String,
     pub era: usize,
     pub cost: f64,
+    #[serde(default = "done_usize")]
+    pub charges: usize,
     #[serde(default)]
     pub effects: BTreeMap<String, f64>,
 }
