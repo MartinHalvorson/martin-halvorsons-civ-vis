@@ -5,10 +5,10 @@ The supervisor deliberately never replaces code during a healthy live match.
 It checkpoints active matches, revives a crashed or unresponsive server from
 the latest checkpoint, and nudges a spectator whose browser stopped stepping.
 Once a winner appears it retires that server immediately, leaving the rendered
-result screen visible while it builds the newest stable worktree. It launches
-the next game only after the fresh runtime is ready, so the browser's result
-countdown cannot race ahead on stale code. A known-good runtime remains
-available while broken or changing source is repaired.
+result screen visible while it tries the newest stable worktree. A successful
+build launches the fresh runtime; a broken or changing side edit cannot stall
+the cycle because the last verified runtime starts the successor instead. The
+browser's guarded result countdown cannot race either path ahead on stale code.
 """
 
 from __future__ import annotations
@@ -252,6 +252,25 @@ def prepare_latest(retry_seconds: float) -> None:
             return
         log(f"retrying the latest build in {retry_seconds:g}s")
         time.sleep(retry_seconds)
+
+
+def prepare_boundary_runtime(retry_seconds: float) -> bool:
+    """Try fresh code once, falling back when a verified runtime already exists.
+
+    Returns whether the latest worktree was made ready. Cold starts still wait
+    for a build because no executable fallback exists, but an in-progress side
+    edit must never leave the game cycle offline indefinitely.
+    """
+    if prepare_latest_once():
+        return True
+    if RUNTIME_BINARY.exists():
+        log(
+            "latest source is not ready; starting the next game on the last "
+            "verified runtime"
+        )
+        return False
+    prepare_latest(retry_seconds)
+    return True
 
 
 def read_json(
@@ -616,7 +635,7 @@ def main() -> int:
                 resume_attempts[marker] = attempts + 1
 
         if not RUNTIME_BINARY.exists():
-            prepare_latest(args.build_retry)
+            prepare_boundary_runtime(args.build_retry)
         launch_runtime_id = promoted_runtime_id()
         process = start_server(args.port, settings, open_browser, resume)
         running_runtime_id = launch_runtime_id

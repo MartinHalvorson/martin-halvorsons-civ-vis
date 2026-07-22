@@ -227,6 +227,30 @@ class SourceSnapshotTests(unittest.TestCase):
         self.assertTrue(supervisor.runtime_replacement_pending(None, "current"))
         self.assertFalse(supervisor.runtime_replacement_pending("previous", None))
 
+    def test_boundary_uses_verified_runtime_instead_of_retrying_broken_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory) / "civvis"
+            runtime.touch()
+            with (
+                patch.object(supervisor, "RUNTIME_BINARY", runtime),
+                patch.object(supervisor, "prepare_latest_once", return_value=False) as once,
+                patch.object(supervisor, "prepare_latest") as retry,
+            ):
+                self.assertFalse(supervisor.prepare_boundary_runtime(15.0))
+        once.assert_called_once_with()
+        retry.assert_not_called()
+
+    def test_boundary_waits_for_a_build_when_no_verified_runtime_exists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory) / "missing-civvis"
+            with (
+                patch.object(supervisor, "RUNTIME_BINARY", runtime),
+                patch.object(supervisor, "prepare_latest_once", return_value=False),
+                patch.object(supervisor, "prepare_latest") as retry,
+            ):
+                self.assertTrue(supervisor.prepare_boundary_runtime(7.5))
+        retry.assert_called_once_with(7.5)
+
 
 class RecoveryTests(unittest.TestCase):
     def test_successor_detection_closes_the_cooldown_restart_race(self):
@@ -437,7 +461,7 @@ class RecoveryTests(unittest.TestCase):
                 patch.object(supervisor, "stop_server", side_effect=stop),
                 patch.object(
                     supervisor,
-                    "prepare_latest",
+                    "prepare_boundary_runtime",
                     side_effect=lambda _retry: events.append(("prepare", None)),
                 ),
             ):
