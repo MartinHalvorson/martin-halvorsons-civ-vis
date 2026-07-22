@@ -856,6 +856,75 @@ impl AdvancedAi {
             + yields.faith * faith
     }
 
+    fn product_layout_value(&self, g: &Game, pid: usize, strategy: GrandStrategy) -> f64 {
+        g.player_city_ids(pid)
+            .into_iter()
+            .map(|city_id| {
+                let city = &g.cities[&city_id];
+                let mut value = self.yield_value(g.city_yields(city_id), strategy);
+                // Housing beyond +3 no longer changes the immediate growth
+                // rate. Valuing only the useful band sends Salt Products to
+                // constrained cities instead of accumulating them in a city
+                // that already has abundant headroom.
+                let headroom = (g.city_housing(city) - city.pop as f64).clamp(-2.0, 3.0);
+                value += headroom * 18.0;
+                let active_salt = city
+                    .products
+                    .iter()
+                    .take(g.product_capacity(city))
+                    .filter(|product| product.as_str() == "salt")
+                    .count() as f64;
+                value += active_salt * city.pop.max(1) as f64 * 2.5;
+                value
+            })
+            .sum()
+    }
+
+    /// Products are movable economic Great Works. Search every legal move on
+    /// a cloned position and make one only when it strictly improves the
+    /// strategy-sensitive empire evaluation; the strict threshold prevents a
+    /// free relocation from oscillating between equivalent slots.
+    fn advanced_products(&self, g: &mut Game, pid: usize, strategy: GrandStrategy) {
+        let candidates: BTreeSet<(u32, u32, String)> = g
+            .legal_actions(pid)
+            .into_iter()
+            .filter_map(|action| match action {
+                Action::MoveProduct { from, to, product } => Some((from, to, product)),
+                _ => None,
+            })
+            .collect();
+        let baseline = self.product_layout_value(g, pid, strategy);
+        let mut best: Option<(f64, u32, u32, String)> = None;
+        for (from, to, product) in candidates {
+            let action = Action::MoveProduct {
+                from,
+                to,
+                product: product.clone(),
+            };
+            let mut next = g.clone();
+            if next.apply(pid, &action).is_err() {
+                continue;
+            }
+            let value = self.product_layout_value(&next, pid, strategy);
+            let replace = best.as_ref().is_none_or(|current| {
+                value > current.0 + 1e-9
+                    || ((value - current.0).abs() <= 1e-9
+                        && (to, from, product.as_str())
+                            < (current.2, current.1, current.3.as_str()))
+            });
+            if replace {
+                best = Some((value, from, to, product));
+            }
+        }
+        let Some((value, from, to, product)) = best else {
+            return;
+        };
+        if value <= baseline + 0.01 {
+            return;
+        }
+        let _ = g.apply(pid, &Action::MoveProduct { from, to, product });
+    }
+
     fn advanced_research(&self, g: &mut Game, pid: usize, plan: &StrategicPlan) {
         if g.players[pid].research.is_none() {
             let available = g.available_techs(pid);
@@ -1645,6 +1714,15 @@ impl AdvancedAi {
             let Some((_, person)) = g.current_great_person(kind) else {
                 continue;
             };
+            let work_kind = match kind {
+                "writer" => Some("writing"),
+                "artist" => Some("art"),
+                "musician" => Some("music"),
+                _ => None,
+            };
+            if work_kind.is_some_and(|work| !g.can_house_additional_great_work(pid, work)) {
+                continue;
+            }
             let points = g.players[pid].gpp.get(kind).copied().unwrap_or(0.0);
             let missing = (person.cost - points).max(0.0);
             if missing <= f64::EPSILON {
@@ -4391,6 +4469,7 @@ impl Ai for AdvancedAi {
         // governors, religions, and envoys. Research is already selected.
         self.base.research(g, pid);
         self.base.corporations(g, pid);
+        self.advanced_products(g, pid, plan.strategy);
         self.advanced_great_people(g, pid, plan.strategy);
         self.faith_building_spending(g, pid, plan.strategy);
         self.strategic_policies(g, pid, plan.strategy);
@@ -4488,6 +4567,65 @@ mod tests {
         )
         .unwrap();
         (g, source, target)
+    }
+
+    #[test]
+    fn product_search_concentrates_culture_multipliers_without_cycling() {
+        let mut game = Game::new_full(1, 20, 14, 92_101, 120, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let origin = game.player_city_ids(0)[0];
+        let target_position = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .filter(|position| {
+                game.rules.is_passable(&game.map.tiles[position])
+                    && !game.rules.is_water(&game.map.tiles[position])
+                    && game.map.tiles[position].owner_city.is_none()
+                    && game.wdist(game.cities[&origin].pos, *position) >= 4
+            })
+            .max_by_key(|position| game.wdist(game.cities[&origin].pos, *position))
+            .unwrap();
+        let second_settler = game.spawn_test_unit("settler", 0, target_position);
+        game.apply(
+            0,
+            &Action::FoundCity {
+                unit: second_settler,
+            },
+        )
+        .unwrap();
+        let target = game.city_at(target_position).unwrap();
+        game.cities
+            .get_mut(&origin)
+            .unwrap()
+            .buildings
+            .push("stock_exchange".to_string());
+        game.cities
+            .get_mut(&origin)
+            .unwrap()
+            .products
+            .push("silk".to_string());
+        game.cities.get_mut(&target).unwrap().buildings.extend([
+            "stock_exchange".to_string(),
+            "monument".to_string(),
+            "amphitheater".to_string(),
+            "broadcast_center".to_string(),
+        ]);
+
+        let ai = AdvancedAi::targeting(VictoryTarget::Culture);
+        ai.advanced_products(&mut game, 0, GrandStrategy::Culture);
+        assert!(game.cities[&origin].products.is_empty());
+        assert_eq!(game.cities[&target].products, vec!["silk"]);
+
+        ai.advanced_products(&mut game, 0, GrandStrategy::Culture);
+        assert!(game.cities[&origin].products.is_empty());
+        assert_eq!(game.cities[&target].products, vec!["silk"]);
     }
 
     #[test]
@@ -5116,6 +5254,44 @@ mod tests {
         ai.advanced_great_people(&mut game, 0, GrandStrategy::Science);
         assert_eq!(game.players[0].gp_claimed["scientist"], 1);
         assert_eq!(game.players[0].gold, 425.0);
+    }
+
+    #[test]
+    fn culture_patronage_waits_for_compatible_great_work_slots() {
+        let mut game = Game::new(1, 20, 14, 7_104, 200, 0);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = game.player_city_ids(0)[0];
+        game.players[0]
+            .counters
+            .insert("great_work:writing".to_string(), 1);
+        let cost = game.current_great_person("writer").unwrap().1.cost;
+        game.players[0].gpp.insert("writer".to_string(), cost - 5.0);
+        game.players[0].gold = 500.0;
+        let ai = AdvancedAi::targeting(VictoryTarget::Culture);
+
+        ai.advanced_great_people(&mut game, 0, GrandStrategy::Culture);
+        assert_eq!(
+            game.players[0]
+                .gp_claimed
+                .get("writer")
+                .copied()
+                .unwrap_or(0),
+            0,
+            "the occupied Palace slot cannot host another work"
+        );
+
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("amphitheater".to_string());
+        ai.advanced_great_people(&mut game, 0, GrandStrategy::Culture);
+        assert_eq!(game.players[0].gp_claimed["writer"], 1);
     }
 
     #[test]

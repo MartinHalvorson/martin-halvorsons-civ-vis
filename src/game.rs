@@ -43,123 +43,6 @@ fn city_names(civ: &str) -> &'static [&'static str] {
 }
 
 #[cfg(test)]
-mod corporation_mechanics {
-    use super::*;
-
-    fn economic_game() -> (Game, u32, Vec<Pos>) {
-        let mut game = Game::new_full(2, 20, 14, 92_001, 200, 0, false);
-        let units: Vec<u32> = game.units.keys().copied().collect();
-        for unit in units {
-            game.remove_unit(unit);
-        }
-        for tile in game.map.tiles.values_mut() {
-            tile.terrain = "plains".to_string();
-            tile.feature = None;
-            tile.resource = None;
-            tile.improvement = None;
-            tile.district = None;
-            tile.wonder = None;
-            tile.owner_city = None;
-            tile.hills = false;
-        }
-        let center = *game
-            .map
-            .tiles
-            .keys()
-            .find(|position| game.wdisk(**position, 2).len() == 19)
-            .expect("economic test has an interior city site");
-        let city = game.found_city_for(0, center, Some("Market".to_string()));
-        let ring = game.nbrs(center);
-        game.current = 0;
-        game.at_war.clear();
-        (game, city, ring)
-    }
-
-    #[test]
-    fn industries_corporations_products_and_monopolies_follow_mode_thresholds() {
-        let (mut game, city, ring) = economic_game();
-        game.players[0]
-            .techs
-            .extend(["currency".to_string(), "economics".to_string()]);
-
-        for position in ring.iter().take(2) {
-            let tile = game.map.tiles.get_mut(position).unwrap();
-            tile.resource = Some("salt".to_string());
-            tile.improvement = Some("mine".to_string());
-        }
-        game.map.tiles.get_mut(&ring[2]).unwrap().resource = Some("salt".to_string());
-        assert!(game
-            .valid_improvements(0, ring[0])
-            .contains(&"industry".to_string()));
-        assert!(
-            !game
-                .valid_improvements(0, ring[2])
-                .contains(&"industry".to_string()),
-            "an Industry must replace an existing luxury improvement"
-        );
-
-        let builder = game.spawn_unit("builder", 0, ring[0]);
-        game.apply(
-            0,
-            &Action::Improve {
-                unit: builder,
-                improvement: "industry".to_string(),
-            },
-        )
-        .unwrap();
-        let merchant_cost = game.gp_cost(0, "merchant");
-        game.players[0]
-            .gpp
-            .insert("merchant".to_string(), merchant_cost);
-        assert!(
-            !game.can_found_corporation(0, ring[0]),
-            "a two-copy world does not relax the three-copy Corporation gate"
-        );
-
-        game.map.tiles.get_mut(&ring[2]).unwrap().improvement = Some("mine".to_string());
-        assert!(game.can_found_corporation(0, ring[0]));
-        game.do_found_corporation(0, ring[0]).unwrap();
-        assert_eq!(
-            game.map.tiles[&ring[0]].improvement.as_deref(),
-            Some("corporation")
-        );
-
-        let (gold, tourism) = game.monopoly_bonuses(0);
-        assert_eq!(gold, 25.0);
-        assert_eq!(tourism, 9.0);
-
-        let remote: Vec<Pos> = game
-            .map
-            .tiles
-            .keys()
-            .copied()
-            .filter(|position| game.map.tiles[position].owner_city.is_none())
-            .take(2)
-            .collect();
-        assert_eq!(remote.len(), 2);
-        game.map.tiles.get_mut(&remote[0]).unwrap().resource = Some("salt".to_string());
-        assert_eq!(game.monopoly_bonuses(0).0, 10.0, "three of four is 75%");
-        game.map.tiles.get_mut(&remote[1]).unwrap().resource = Some("salt".to_string());
-        assert_eq!(game.monopoly_bonuses(0).0, 5.0, "three of five is 60%");
-
-        game.cities
-            .get_mut(&city)
-            .unwrap()
-            .buildings
-            .extend(["stock_exchange".to_string(), "seaport".to_string()]);
-        let product = Item::Product {
-            product: "salt".to_string(),
-        };
-        for _ in 0..5 {
-            assert!(game.can_produce(0, city, &product));
-            assert!(game.complete_item(0, city, &product));
-        }
-        assert_eq!(game.cities[&city].products.len(), 5);
-        assert!(!game.can_produce(0, city, &product));
-    }
-}
-
-#[cfg(test)]
 mod corporation_tests {
     use super::*;
 
@@ -203,9 +86,17 @@ mod corporation_tests {
         let (mut game, city, positions) = industry_game();
         let builder = game.spawn_unit("builder", 0, positions[0]);
         assert_eq!(game.controlled_resource_count(0, "silk"), 3);
+        game.map.tiles.get_mut(&positions[2]).unwrap().improvement = None;
+        assert_eq!(game.controlled_resource_count(0, "silk"), 2);
         assert!(game
             .valid_improvements(0, positions[0])
             .contains(&"industry".to_string()));
+        assert!(
+            !game
+                .valid_improvements(0, positions[2])
+                .contains(&"industry".to_string()),
+            "the Industry must replace an existing resource improvement"
+        );
         game.apply(
             0,
             &Action::Improve {
@@ -231,6 +122,11 @@ mod corporation_tests {
         game.players[0]
             .gpp
             .insert("merchant".to_string(), merchant_cost);
+        assert!(
+            !game.can_found_corporation(0, positions[0]),
+            "a Corporation always requires three connected copies"
+        );
+        game.map.tiles.get_mut(&positions[2]).unwrap().improvement = Some("plantation".to_string());
         assert!(game.can_found_corporation(0, positions[0]));
         let gold_before = game.players[0].gold;
         game.apply(0, &Action::FoundCorporation { pos: positions[0] })
@@ -269,14 +165,26 @@ mod corporation_tests {
         assert!(game.city_yields(city).culture > culture_before);
         assert!(game.tourism_per_turn(0) >= 1.0);
 
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("seaport".to_string());
+        for _ in 1..5 {
+            assert!(game.can_produce(0, city, &product));
+            assert!(game.complete_item(0, city, &product));
+        }
+        assert_eq!(game.cities[&city].products.len(), 5);
+        assert!(!game.can_produce(0, city, &product));
+
         let encoded = serde_json::to_value(&game).unwrap();
         let restored: Game = serde_json::from_value(encoded).unwrap();
-        assert_eq!(restored.cities[&city].products, vec!["silk"]);
+        assert_eq!(restored.cities[&city].products.len(), 5);
         assert_eq!(
             restored.map.tiles[&positions[0]].improvement.as_deref(),
             Some("corporation")
         );
-        assert_eq!(restored.product_capacity(&restored.cities[&city]), 3);
+        assert_eq!(restored.product_capacity(&restored.cities[&city]), 6);
     }
 
     #[test]
@@ -384,20 +292,21 @@ mod corporation_tests {
             tile.resource = Some("wine".to_string());
             tile.improvement = Some("plantation".to_string());
         }
-        let uncontrolled: Vec<Pos> = game
+        let uncontrolled = game
             .map
             .tiles
             .keys()
             .copied()
-            .filter(|position| game.map.tiles[position].owner_city.is_none())
-            .take(1)
-            .collect();
-        for position in uncontrolled {
-            game.map.tiles.get_mut(&position).unwrap().resource = Some("wine".to_string());
-        }
+            .find(|position| game.map.tiles[position].owner_city.is_none())
+            .unwrap();
+        game.map.tiles.get_mut(&uncontrolled).unwrap().resource = Some("wine".to_string());
         assert_eq!(game.monopoly_bonuses(0), (5.0, 3.0));
         game.map.tiles.get_mut(&owned[0]).unwrap().improvement = Some("industry".to_string());
         assert_eq!(game.monopoly_bonuses(0), (5.0, 9.0));
+        game.map.tiles.get_mut(&uncontrolled).unwrap().resource = None;
+        assert_eq!(game.monopoly_bonuses(0).0, 10.0, "three of four is 75%");
+        game.map.tiles.get_mut(&rival_copy).unwrap().resource = None;
+        assert_eq!(game.monopoly_bonuses(0).0, 25.0, "three of three is 100%");
     }
 }
 
@@ -10519,6 +10428,18 @@ impl Game {
                 _ => {}
             }
         }
+        if let Some(works) = self.housed_great_works(city.owner).get(&cid) {
+            for (kind, count) in works {
+                let count = *count as f64;
+                match kind.as_str() {
+                    "writing" => ys.culture += 2.0 * count,
+                    "art" | "religious_art" | "artifact" => ys.culture += 3.0 * count,
+                    "music" | "any" => ys.culture += 4.0 * count,
+                    "relic" => ys.faith += 4.0 * count,
+                    _ => {}
+                }
+            }
+        }
         ys.science += 0.5 * city.pop as f64;
         ys.culture += 0.3 * city.pop as f64;
         if self.city_has_palace(city) {
@@ -10982,6 +10903,11 @@ impl Game {
                 if self.can_establish_industry(pid, pos) {
                     out.push(name.clone());
                 }
+                continue;
+            }
+            if matches!(name.as_str(), "archaeological_dig" | "shipwreck_excavation")
+                && !self.can_house_additional_great_work(pid, "artifact")
+            {
                 continue;
             }
             if spec.unbuildable
@@ -14482,8 +14408,17 @@ impl Game {
             return Err("invalid improvement here".into());
         }
         let removes = self.rules.improvements[imp].removes_feature;
+        let excavates_artifact = matches!(imp, "archaeological_dig" | "shipwreck_excavation");
         let t = self.map.tiles.get_mut(&u.pos).unwrap();
-        t.improvement = Some(imp.to_string());
+        // Excavation consumes the Antiquity Site/Shipwreck and immediately
+        // transfers its Artifact to an active compatible Great Work slot. It
+        // is an Archaeologist action, not a persistent tile improvement.
+        if excavates_artifact {
+            t.resource = None;
+            t.improvement = None;
+        } else {
+            t.improvement = Some(imp.to_string());
+        }
         t.pillaged = false;
         if removes {
             t.feature = None;
@@ -14493,6 +14428,12 @@ impl Game {
         mu.moves_left = 0.0;
         mu.acted = true;
         bump(&mut self.players[pid], "improvements");
+        if excavates_artifact {
+            *self.players[pid]
+                .counters
+                .entry("great_work:artifact".to_string())
+                .or_insert(0) += 1;
+        }
         if self.units[&uid].charges <= 0 {
             self.remove_unit(uid);
         }
@@ -17543,6 +17484,245 @@ impl Game {
         (exposure / (starting_majors as f64 * TOURISM_PER_VISITOR)).floor() as i64
     }
 
+    fn great_work_local_multiplier(&self, city: &City, kind: &str) -> f64 {
+        let mut multiplier = if self.world_era >= 5 {
+            1.0 + self.city_building_effect(city, "modern_civ_tourism_pct") / 100.0
+        } else {
+            1.0
+        };
+        if kind == "relic" && city.wonders.contains_key("st_basils_cathedral") {
+            multiplier *= 1.0
+                + self.rules.wonders["st_basils_cathedral"]
+                    .effects
+                    .get("city_religious_tourism_pct")
+                    .copied()
+                    .unwrap_or(0.0)
+                    / 100.0;
+        }
+        multiplier
+    }
+
+    fn great_work_slots(&self, pid: usize) -> Vec<(u32, String)> {
+        let mut slots = Vec::new();
+        for city in self.cities.values().filter(|city| city.owner == pid) {
+            if self.city_has_palace(city) {
+                for (kind, count) in &self.rules.buildings["palace"].great_work_slots {
+                    slots.extend(std::iter::repeat_n(
+                        (city.id, kind.clone()),
+                        (*count).max(0) as usize,
+                    ));
+                }
+            }
+            for building in city
+                .buildings
+                .iter()
+                .filter(|building| !city.pillaged_buildings.contains(*building))
+            {
+                for (kind, count) in &self.rules.buildings[building.as_str()].great_work_slots {
+                    slots.extend(std::iter::repeat_n(
+                        (city.id, kind.clone()),
+                        (*count).max(0) as usize,
+                    ));
+                }
+            }
+            for wonder in city.wonders.keys() {
+                for (kind, count) in &self.rules.wonders[wonder.as_str()].great_work_slots {
+                    slots.extend(std::iter::repeat_n(
+                        (city.id, kind.clone()),
+                        (*count).max(0) as usize,
+                    ));
+                }
+            }
+        }
+        slots
+    }
+
+    fn housed_great_works_with_extra(
+        &self,
+        pid: usize,
+        extra: Option<&str>,
+    ) -> BTreeMap<u32, BTreeMap<String, usize>> {
+        let slots = self.great_work_slots(pid);
+        let mut housed = BTreeMap::<u32, BTreeMap<String, usize>>::new();
+        let mut available = BTreeMap::<String, usize>::new();
+        for kind in [
+            "writing",
+            "art",
+            "religious_art",
+            "artifact",
+            "music",
+            "relic",
+        ] {
+            let count = self.players[pid]
+                .counters
+                .get(&format!("great_work:{kind}"))
+                .copied()
+                .unwrap_or(0)
+                .max(0) as usize;
+            available.insert(kind.to_string(), count);
+        }
+        let named_total = available.values().sum::<usize>();
+        if named_total == 0 {
+            // Pre-named-Great-Person saves represented each generic Artist as
+            // three works that matched the slots available at the time.
+            let legacy = self.players[pid]
+                .gp_claimed
+                .get("artist")
+                .copied()
+                .unwrap_or(0)
+                .max(0) as usize
+                * 3;
+            if legacy > 0 {
+                let mut ranked_slots: Vec<(usize, &(u32, String))> = slots
+                    .iter()
+                    .enumerate()
+                    // Legacy generic Artists predate the universal Palace
+                    // slot model and filled typed cultural-building slots.
+                    .filter(|(_, (_, kind))| kind != "any")
+                    .collect();
+                ranked_slots.sort_by(
+                    |(left_index, (left_city, left_kind)),
+                     (right_index, (right_city, right_kind))| {
+                        let left_value = self.great_work_tourism(pid, left_kind)
+                            * self.great_work_local_multiplier(&self.cities[left_city], left_kind);
+                        let right_value = self.great_work_tourism(pid, right_kind)
+                            * self
+                                .great_work_local_multiplier(&self.cities[right_city], right_kind);
+                        right_value
+                            .partial_cmp(&left_value)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| left_city.cmp(right_city))
+                            .then_with(|| left_index.cmp(right_index))
+                    },
+                );
+                let occupied: BTreeSet<usize> = ranked_slots
+                    .iter()
+                    .take(legacy)
+                    .map(|(index, _)| *index)
+                    .collect();
+                for (_, (city, slot_kind)) in ranked_slots.into_iter().take(legacy) {
+                    *housed
+                        .entry(*city)
+                        .or_default()
+                        .entry(slot_kind.clone())
+                        .or_insert(0) += 1;
+                }
+                if let Some(work) = extra {
+                    let compatible = |slot: &str| {
+                        work == slot
+                            || (matches!(work, "art" | "religious_art")
+                                && matches!(slot, "art" | "religious_art"))
+                    };
+                    let destination = slots
+                        .iter()
+                        .enumerate()
+                        .find(|(index, (_, slot))| !occupied.contains(index) && compatible(slot))
+                        .or_else(|| {
+                            slots.iter().enumerate().find(|(index, (_, slot))| {
+                                !occupied.contains(index) && slot == "any"
+                            })
+                        });
+                    if let Some((_, (city, _))) = destination {
+                        *housed
+                            .entry(*city)
+                            .or_default()
+                            .entry(work.to_string())
+                            .or_insert(0) += 1;
+                    }
+                }
+                return housed;
+            }
+        }
+        if let Some(kind) = extra {
+            *available.entry(kind.to_string()).or_insert(0) += 1;
+        }
+
+        let mut used = BTreeSet::<usize>::new();
+        let compatible = |work: &str, slot: &str| {
+            work == slot
+                || (matches!(work, "art" | "religious_art")
+                    && matches!(slot, "art" | "religious_art"))
+        };
+        for work in [
+            "relic",
+            "music",
+            "religious_art",
+            "art",
+            "artifact",
+            "writing",
+        ] {
+            let mut candidates: Vec<usize> = slots
+                .iter()
+                .enumerate()
+                .filter(|(index, (_, slot))| !used.contains(index) && compatible(work, slot))
+                .map(|(index, _)| index)
+                .collect();
+            candidates.sort_by(|left, right| {
+                let left_city = &self.cities[&slots[*left].0];
+                let right_city = &self.cities[&slots[*right].0];
+                self.great_work_local_multiplier(right_city, work)
+                    .partial_cmp(&self.great_work_local_multiplier(left_city, work))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| slots[*left].0.cmp(&slots[*right].0))
+                    .then_with(|| left.cmp(right))
+            });
+            let count = available.get(work).copied().unwrap_or(0);
+            for index in candidates.into_iter().take(count) {
+                used.insert(index);
+                *housed
+                    .entry(slots[index].0)
+                    .or_default()
+                    .entry(work.to_string())
+                    .or_insert(0) += 1;
+                *available.get_mut(work).unwrap() -= 1;
+            }
+        }
+
+        let mut any_slots: Vec<usize> = slots
+            .iter()
+            .enumerate()
+            .filter(|(index, (_, slot))| !used.contains(index) && slot == "any")
+            .map(|(index, _)| index)
+            .collect();
+        any_slots.sort_by_key(|index| (slots[*index].0, *index));
+        for index in any_slots {
+            let city = &self.cities[&slots[index].0];
+            let best = available
+                .iter()
+                .filter(|(_, count)| **count > 0)
+                .max_by(|(left, _), (right, _)| {
+                    let left_value = self.great_work_tourism(pid, left)
+                        * self.great_work_local_multiplier(city, left);
+                    let right_value = self.great_work_tourism(pid, right)
+                        * self.great_work_local_multiplier(city, right);
+                    left_value
+                        .partial_cmp(&right_value)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| right.cmp(left))
+                })
+                .map(|(kind, _)| kind.clone());
+            let Some(kind) = best else { break };
+            *available.get_mut(&kind).unwrap() -= 1;
+            *housed.entry(city.id).or_default().entry(kind).or_insert(0) += 1;
+        }
+        housed
+    }
+
+    fn housed_great_works(&self, pid: usize) -> BTreeMap<u32, BTreeMap<String, usize>> {
+        self.housed_great_works_with_extra(pid, None)
+    }
+
+    pub(crate) fn can_house_additional_great_work(&self, pid: usize, kind: &str) -> bool {
+        let count = |allocation: &BTreeMap<u32, BTreeMap<String, usize>>| {
+            allocation
+                .values()
+                .flat_map(|works| works.values())
+                .sum::<usize>()
+        };
+        count(&self.housed_great_works_with_extra(pid, Some(kind)))
+            > count(&self.housed_great_works(pid))
+    }
+
     /// Tourism generated specifically by Relics and Holy Cities. Keeping this
     /// source separate is necessary because Enlightenment reduces only these
     /// sources and Cristo Redentor cancels exactly that reduction.
@@ -17557,64 +17737,25 @@ impl Game {
             .count() as f64
             * 8.0;
 
-        let relics = self.players[pid]
-            .counters
-            .get("great_work:relic")
-            .copied()
-            .unwrap_or(0)
-            .max(0) as usize;
-        let mut slots = Vec::new();
-        for city in self.cities.values().filter(|city| city.owner == pid) {
-            let city_multiplier = (if city.wonders.contains_key("st_basils_cathedral") {
-                1.0 + self.rules.wonders["st_basils_cathedral"]
-                    .effects
-                    .get("city_religious_tourism_pct")
-                    .copied()
-                    .unwrap_or(0.0)
-                    / 100.0
-            } else {
-                1.0
-            }) * if self.world_era >= 5 {
-                1.0 + self.city_building_effect(city, "modern_civ_tourism_pct") / 100.0
-            } else {
-                1.0
-            };
-            for wonder in city.wonders.keys() {
-                let count = self.rules.wonders[wonder.as_str()]
-                    .great_work_slots
-                    .get("relic")
-                    .copied()
-                    .unwrap_or(0)
-                    .max(0) as usize;
-                slots.extend(std::iter::repeat_n(8.0 * city_multiplier, count));
-            }
-            for building in city
-                .buildings
-                .iter()
-                .filter(|building| !city.pillaged_buildings.contains(*building))
-            {
-                let count = self.rules.buildings[building.as_str()]
-                    .great_work_slots
-                    .get("relic")
-                    .copied()
-                    .unwrap_or(0)
-                    .max(0) as usize;
-                slots.extend(std::iter::repeat_n(8.0 * city_multiplier, count));
-            }
-        }
-        slots.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-        (holy_city_tourism + slots.into_iter().take(relics).sum::<f64>()) * global_multiplier
+        let relic_tourism = self
+            .housed_great_works(pid)
+            .into_iter()
+            .map(|(city_id, works)| {
+                works.get("relic").copied().unwrap_or(0) as f64
+                    * self.great_work_tourism(pid, "relic")
+                    * self.great_work_local_multiplier(&self.cities[&city_id], "relic")
+            })
+            .sum::<f64>();
+        (holy_city_tourism + relic_tourism) * global_multiplier
     }
 
     /// Current tourism generated by this civilization each turn.
     ///
-    /// Great people are intentionally generic in this simulation. Each
-    /// claimed Artist therefore represents a writer/artist/musician who
-    /// automatically fills up to three available Great Work slots. Art and
-    /// artifact slots use their themed value, and Printing doubles Writing.
+    /// Named Great Works occupy compatible active building/wonder slots;
+    /// legacy generic-Artist saves retain their former three-work fallback.
     pub fn tourism_per_turn(&self, pid: usize) -> f64 {
         let mut tourism = 0.0;
-        let mut work_slots: Vec<f64> = Vec::new();
+        let housed_works = self.housed_great_works(pid);
         for city in self.cities.values().filter(|city| city.owner == pid) {
             let city_tourism_start = tourism;
             let modern_tourism_multiplier = if self.world_era >= 5 {
@@ -17624,6 +17765,19 @@ impl Game {
             };
             tourism += 2.0 * city.wonders.len() as f64;
             tourism += city.products.len().min(self.product_capacity(city)) as f64;
+            for (kind, count) in housed_works.get(&city.id).into_iter().flatten() {
+                let mut value = self.great_work_tourism(pid, kind) * *count as f64;
+                if kind == "relic" && city.wonders.contains_key("st_basils_cathedral") {
+                    value *= 1.0
+                        + self.rules.wonders["st_basils_cathedral"]
+                            .effects
+                            .get("city_religious_tourism_pct")
+                            .copied()
+                            .unwrap_or(0.0)
+                            / 100.0;
+                }
+                tourism += value;
+            }
             if self.tree_effect(pid, "improvement_culture_tourism") > 0.0 {
                 for (district, position) in &city.districts {
                     if !self.district_is_active(city, district, *position) {
@@ -17642,20 +17796,6 @@ impl Game {
             for wonder in city.wonders.keys() {
                 let spec = &self.rules.wonders[wonder.as_str()];
                 tourism += spec.effects.get("tourism").copied().unwrap_or(0.0);
-                for (kind, count) in &spec.great_work_slots {
-                    let mut value = self.great_work_tourism(pid, kind);
-                    if kind == "relic" && city.wonders.contains_key("st_basils_cathedral") {
-                        value *= 1.0
-                            + self.rules.wonders["st_basils_cathedral"]
-                                .effects
-                                .get("city_religious_tourism_pct")
-                                .copied()
-                                .unwrap_or(0.0)
-                                / 100.0;
-                    }
-                    value *= modern_tourism_multiplier;
-                    work_slots.extend(std::iter::repeat_n(value, (*count).max(0) as usize));
-                }
             }
             for building in city
                 .buildings
@@ -17769,20 +17909,6 @@ impl Game {
                             / 100.0;
                 }
                 tourism += building_tourism;
-                for (kind, count) in &spec.great_work_slots {
-                    let mut value = self.great_work_tourism(pid, kind);
-                    if kind == "relic" && city.wonders.contains_key("st_basils_cathedral") {
-                        value *= 1.0
-                            + self.rules.wonders["st_basils_cathedral"]
-                                .effects
-                                .get("city_religious_tourism_pct")
-                                .copied()
-                                .unwrap_or(0.0)
-                                / 100.0;
-                    }
-                    value *= modern_tourism_multiplier;
-                    work_slots.extend(std::iter::repeat_n(value, (*count).max(0) as usize));
-                }
             }
             for pos in &city.owned_tiles {
                 let Some(improvement) = self.map.tiles[pos].improvement.as_deref() else {
@@ -17841,31 +17967,6 @@ impl Game {
             tourism += (tourism - city_tourism_start) * (modern_tourism_multiplier - 1.0);
         }
 
-        work_slots.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-        let named_works = [
-            "great_work:writing",
-            "great_work:art",
-            "great_work:music",
-            "great_work:relic",
-        ]
-        .into_iter()
-        .map(|key| self.players[pid].counters.get(key).copied().unwrap_or(0))
-        .sum::<i64>()
-        .max(0) as usize;
-        let great_works = if named_works > 0 {
-            named_works
-        } else {
-            // Legacy saves used one generic Artist claim for three works.
-            self.players[pid]
-                .gp_claimed
-                .get("artist")
-                .copied()
-                .unwrap_or(0)
-                .max(0) as usize
-                * 3
-        };
-        tourism += work_slots.into_iter().take(great_works).sum::<f64>();
-
         let culture = self
             .player_city_ids(pid)
             .into_iter()
@@ -17885,13 +17986,12 @@ impl Game {
     fn great_work_tourism(&self, pid: usize, kind: &str) -> f64 {
         match kind {
             "writing" => 2.0 * (1.0 + self.tree_effect(pid, "writing_tourism_pct") / 100.0),
-            "art" | "artifact" => {
-                6.0 * (1.0 + self.policy_effect(pid, "art_artifact_tourism_pct") / 100.0)
+            "art" | "religious_art" | "artifact" => {
+                3.0 * (1.0 + self.policy_effect(pid, "art_artifact_tourism_pct") / 100.0)
             }
             "music" => 4.0 * (1.0 + self.policy_effect(pid, "music_tourism_pct") / 100.0),
             "any" => 4.0,
             "relic" => 8.0,
-            "religious_art" => 3.0,
             _ => 0.0,
         }
     }
@@ -21948,17 +22048,30 @@ mod victory_conditions {
         let base = g.tourism_per_turn(0);
         g.players[0].techs.insert("printing".to_string());
         let printing = g.tourism_per_turn(0);
-        assert!((printing - base - 4.0).abs() < 1e-9);
+        assert!(
+            (printing - base - 4.0).abs() < 1e-9,
+            "base={base}, printing={printing}"
+        );
 
         g.players[0].policies.insert("heritage_tourism".to_string());
         let heritage = g.tourism_per_turn(0);
-        assert!((heritage - printing - 18.0).abs() < 1e-9);
+        assert!(
+            (heritage - printing - 9.0).abs() < 1e-9,
+            "printing={printing}, heritage={heritage}, policy={}, art={}, global={}, housed={:?}",
+            g.policy_effect(0, "art_artifact_tourism_pct"),
+            g.great_work_tourism(0, "art"),
+            g.tree_effect(0, "tourism_pct") + g.monopoly_bonuses(0).1,
+            g.housed_great_works(0),
+        );
 
         g.players[0]
             .policies
             .insert("satellite_broadcasts".to_string());
         let broadcasts = g.tourism_per_turn(0);
-        assert!((broadcasts - heritage - 8.0).abs() < 1e-9);
+        assert!(
+            (broadcasts - heritage - 8.0).abs() < 1e-9,
+            "heritage={heritage}, broadcasts={broadcasts}"
+        );
     }
 
     #[test]
@@ -22413,6 +22526,153 @@ mod victory_conditions {
         let religion = g.players[0].religion.clone().unwrap();
         assert_eq!(g.cities[&first].pressure[&religion], 1_000.0);
         assert_eq!(g.cities[&second].pressure[&religion], 1_000.0);
+    }
+}
+
+#[cfg(test)]
+mod great_work_tests {
+    use super::*;
+
+    fn game_with_capital(seed: u64) -> (Game, u32) {
+        let mut game = Game::new_full(1, 24, 16, seed, 300, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        let city = game.found_city_for(0, game.units[&settler].pos, None);
+        (game, city)
+    }
+
+    #[test]
+    fn great_works_obey_typed_and_universal_slots() {
+        let (mut game, city) = game_with_capital(4_121);
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("archaeological_museum".to_string());
+        game.players[0]
+            .counters
+            .insert("great_work:relic".to_string(), 1);
+        game.players[0]
+            .counters
+            .insert("great_work:writing".to_string(), 1);
+
+        let housed = game.housed_great_works(0);
+        assert_eq!(housed[&city].get("relic"), Some(&1));
+        assert_eq!(
+            housed[&city].get("writing"),
+            None,
+            "Writing cannot occupy an Artifact slot"
+        );
+        assert_eq!(game.religious_tourism_per_turn(0), 8.0);
+
+        game.players[0].counters.remove("great_work:writing");
+        assert!(!game.can_house_additional_great_work(0, "writing"));
+        assert!(game.can_house_additional_great_work(0, "artifact"));
+    }
+
+    #[test]
+    fn archaeologists_extract_housed_artifacts_and_consume_sites() {
+        let (mut game, city) = game_with_capital(4_122);
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("archaeological_museum".to_string());
+        // Occupy the Palace so the Museum's three Artifact slots define the
+        // exact excavation capacity.
+        game.players[0]
+            .counters
+            .insert("great_work:relic".to_string(), 1);
+        game.players[0].civics.insert("natural_history".to_string());
+        let sites: Vec<Pos> = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .filter(|position| *position != game.cities[&city].pos)
+            .take(4)
+            .collect();
+        assert_eq!(sites.len(), 4);
+        for position in &sites {
+            let tile = game.map.tiles.get_mut(position).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.hills = false;
+            tile.resource = Some("antiquity_site".to_string());
+            tile.improvement = None;
+            tile.pillaged = false;
+        }
+
+        for position in sites.iter().take(3).copied() {
+            assert!(game
+                .valid_improvements(0, position)
+                .contains(&"archaeological_dig".to_string()));
+            let archaeologist = game.spawn_unit("archaeologist", 0, position);
+            game.apply(
+                0,
+                &Action::Improve {
+                    unit: archaeologist,
+                    improvement: "archaeological_dig".to_string(),
+                },
+            )
+            .unwrap();
+            assert!(game.map.tiles[&position].resource.is_none());
+            assert!(game.map.tiles[&position].improvement.is_none());
+        }
+        assert_eq!(game.players[0].counters["great_work:artifact"], 3);
+        assert_eq!(game.housed_great_works(0)[&city].get("artifact"), Some(&3));
+        assert!(!game
+            .valid_improvements(0, sites[3])
+            .contains(&"archaeological_dig".to_string()));
+        assert_eq!(game.great_work_tourism(0, "artifact"), 3.0);
+
+        let culture_with_artifacts = game.city_yields(city).culture;
+        game.players[0]
+            .counters
+            .insert("great_work:artifact".to_string(), 0);
+        let culture_without_artifacts = game.city_yields(city).culture;
+        assert!((culture_with_artifacts - culture_without_artifacts - 9.0).abs() < 1e-9);
+        game.players[0]
+            .counters
+            .insert("great_work:artifact".to_string(), 3);
+
+        let restored: Game = serde_json::from_str(&serde_json::to_string(&game).unwrap()).unwrap();
+        assert_eq!(
+            restored.housed_great_works(0)[&city].get("artifact"),
+            Some(&3)
+        );
+    }
+
+    #[test]
+    fn pillaged_cultural_buildings_suspend_their_great_work_slots() {
+        let (mut game, city) = game_with_capital(4_123);
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("archaeological_museum".to_string());
+        game.players[0]
+            .counters
+            .insert("great_work:relic".to_string(), 1);
+        game.players[0]
+            .counters
+            .insert("great_work:artifact".to_string(), 1);
+        assert_eq!(game.housed_great_works(0)[&city].get("artifact"), Some(&1));
+
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .pillaged_buildings
+            .insert("archaeological_museum".to_string());
+        assert_eq!(game.housed_great_works(0)[&city].get("artifact"), None);
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .pillaged_buildings
+            .remove("archaeological_museum");
+        assert_eq!(game.housed_great_works(0)[&city].get("artifact"), Some(&1));
     }
 }
 
