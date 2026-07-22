@@ -5536,23 +5536,63 @@ impl AdvancedAi {
         // is fixed after the first assessment, preventing a rolling optimum
         // from leading the settler across the map for many compounding turns.
         if g.player_city_ids(pid).is_empty() {
-            let target = self.settler_targets.get(&uid).copied().or_else(|| {
+            let cached = self.settler_targets.get(&uid).copied().filter(|target| {
+                let Some(tile) = g.map.get(*target) else {
+                    return false;
+                };
+                !g.rules.is_water(tile)
+                    && g.rules.is_passable(tile)
+                    && !g.cities.values().any(|city| g.wdist(city.pos, *target) < 4)
+                    && tile
+                        .owner_city
+                        .is_none_or(|cid| g.cities[&cid].owner == pid)
+                    && (*target == current || g.route_step(uid, *target, 0).is_some())
+            });
+            if cached.is_none() {
+                self.settler_targets.remove(&uid);
+            }
+            let target = cached.or_else(|| {
                 let current_value = self.settle_value(g, pid, current);
-                let best = self.best_reachable_settle_site(g, pid, uid, 2);
-                let target = best
-                    .filter(|(_, value)| *value > current_value + 3.0)
-                    .map(|(pos, _)| pos)
-                    .unwrap_or(current);
-                self.settler_targets.insert(uid, target);
-                Some(target)
+                let local = self.best_reachable_settle_site(g, pid, uid, 2);
+                let target = if g.can_found_city(uid) {
+                    Some(
+                        local
+                            .filter(|(_, value)| *value > current_value + 3.0)
+                            .map(|(pos, _)| pos)
+                            .unwrap_or(current),
+                    )
+                } else {
+                    local
+                        .or_else(|| {
+                            self.best_reachable_settle_site(g, pid, uid, g.map.width + g.map.height)
+                        })
+                        .or_else(|| {
+                            self.base.best_reachable_settle_site(
+                                g,
+                                pid,
+                                uid,
+                                g.map.width + g.map.height,
+                            )
+                        })
+                        .map(|(pos, _)| pos)
+                };
+                if let Some(target) = target {
+                    self.settler_targets.insert(uid, target);
+                }
+                target
             });
             if target == Some(current) && g.can_found_city(uid) {
                 self.settler_targets.remove(&uid);
                 return g.apply(pid, &Action::FoundCity { unit: uid }).is_ok();
             }
             if let Some(target) = target {
-                return self.base.step_toward(g, pid, uid, target);
+                let moved = self.base.step_toward(g, pid, uid, target);
+                if !moved {
+                    self.settler_targets.remove(&uid);
+                }
+                return moved;
             }
+            return false;
         }
         let valid_target = self.settler_targets.get(&uid).copied().filter(|target| {
             let Some(tile) = g.map.get(*target) else {
@@ -8586,6 +8626,47 @@ mod tests {
             .map
             .get(g.units[&settler].pos)
             .is_some_and(|tile| g.rules.is_water(tile)));
+    }
+
+    #[test]
+    fn capital_settler_retargets_when_its_cached_site_becomes_illegal() {
+        let mut game = Game::new_full(2, 30, 18, 9_204, 120, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|uid| game.units[uid].kind == "settler")
+            .unwrap();
+        let start = game.units[&settler].pos;
+        let blocker = game
+            .map
+            .tiles
+            .iter()
+            .filter(|(_, tile)| game.rules.is_passable(tile) && !game.rules.is_water(tile))
+            .map(|(position, _)| *position)
+            .find(|position| game.wdist(start, *position) == 3)
+            .expect("test start has a land tile three hexes away");
+        game.found_city_for(1, blocker, None);
+        game.current = 0;
+        assert!(!game.can_found_city(settler));
+
+        let mut ai = AdvancedAi::new();
+        ai.settler_targets.insert(settler, start);
+        for _ in 0..100 {
+            if !game.units.contains_key(&settler) {
+                break;
+            }
+            let unit = game.units.get_mut(&settler).unwrap();
+            unit.moves_left = 4.0;
+            unit.acted = false;
+            assert!(
+                ai.advanced_settler_step(&mut game, 0, settler),
+                "the capital settler should keep routing to a replacement site"
+            );
+            assert_ne!(ai.settler_targets.get(&settler), Some(&start));
+        }
+
+        assert!(!game.player_city_ids(0).is_empty());
+        assert!(!game.units.contains_key(&settler));
     }
 
     #[test]
