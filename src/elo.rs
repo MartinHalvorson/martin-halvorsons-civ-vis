@@ -7,7 +7,7 @@ use crate::ai::{run_game, Ai, BasicAi, RandomAi};
 use crate::game::Game;
 use crate::rng::Rng;
 
-pub const BUILTIN_AIS: [&str; 2] = ["basic", "random"];
+pub const BUILTIN_AIS: [&str; 3] = ["basic", "random", "evolved"];
 
 pub fn expected(ra: f64, rb: f64) -> f64 {
     1.0 / (1.0 + 10f64.powf((rb - ra) / 400.0))

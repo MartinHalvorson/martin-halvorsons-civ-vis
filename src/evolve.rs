@@ -47,10 +47,11 @@ pub fn load_champion(dir: &str) -> Option<Weights> {
 
 /// Fitness of one game: 50 * major-score share (+100 on outright win).
 /// 50 ≈ parity with the champion opponents filling the other seats.
-fn eval_game(w: &Weights, champ: &Weights, seat: usize, cfg: &EvoCfg, seed: u64)
-    -> (f64, bool) {
-    let mut g = Game::new(cfg.players, cfg.width, cfg.height, seed,
-                          cfg.max_turns, 2);
+fn eval_game(w: &Weights, champ: &Weights, seat: usize, cfg: &EvoCfg, seed: u64,
+             long: bool) -> (f64, bool) {
+    // mix game lengths so champions aren't tuned only for short score races
+    let turns = if long { cfg.max_turns * 2 } else { cfg.max_turns };
+    let mut g = Game::new(cfg.players, cfg.width, cfg.height, seed, turns, 2);
     let mut ais: Vec<BasicAi> = g.players.iter().map(|p| {
         if p.is_minor || p.is_barbarian {
             BasicAi::new()
@@ -87,7 +88,7 @@ fn sprt_confirm(cand: &Weights, champ: &Weights, cfg: &EvoCfg, gen: u32)
     for i in 0..200u64 {
         let seat = (i as usize) % cfg.players;
         let seed = 7_000_000 + gen as u64 * 10_000 + i;
-        let (_, won) = eval_game(cand, champ, seat, cfg, seed);
+        let (_, won) = eval_game(cand, champ, seat, cfg, seed, i % 3 == 2);
         if won { w += 1; llr += lw; } else { l += 1; llr += ll; }
         if llr >= bound {
             return (true, w, l);
@@ -112,7 +113,7 @@ fn evaluate_all(pop: &[Weights], champ: &Weights, cfg: &EvoCfg, gen: u32) -> Vec
                         let seat = gm % cfg.players;
                         // same seeds for every genome → paired comparison
                         let seed = cfg.seed + gen as u64 * 1_000 + gm as u64;
-                        f += eval_game(w, champ, seat, cfg, seed).0;
+                        f += eval_game(w, champ, seat, cfg, seed, gm % 3 == 2).0;
                     }
                     fi[j] = f / cfg.games as f64;
                 }
