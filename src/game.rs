@@ -31673,6 +31673,45 @@ mod combat_scenarios {
     }
 
     #[test]
+    fn based_aircraft_are_protected_but_deployed_fighters_can_be_dogfought() {
+        let (mut game, target, ring) = controlled_game(31_443);
+        let archer = game.spawn_unit("archer", 0, ring[0]);
+        let based = game.spawn_unit("biplane", 1, target);
+        assert!(!game.legal_actions(0).contains(&Action::Ranged {
+            unit: archer,
+            target,
+        }));
+        assert!(game
+            .apply(
+                0,
+                &Action::Ranged {
+                    unit: archer,
+                    target,
+                },
+            )
+            .is_err());
+        assert_eq!(game.units[&based].hp, 100);
+
+        let attacker = game.spawn_unit("fighter", 0, ring[1]);
+        let patrol_tile = ring[2];
+        let deployed = game.units.get_mut(&based).unwrap();
+        deployed.air_patrol = true;
+        deployed.air_patrol_pos = Some(patrol_tile);
+        let dogfight = Action::AirStrike {
+            unit: attacker,
+            target: patrol_tile,
+        };
+        assert!(game.legal_actions(0).contains(&dogfight));
+        game.apply(0, &dogfight).unwrap();
+        assert!(
+            !game.units.contains_key(&attacker)
+                || !game.units.contains_key(&based)
+                || game.units[&attacker].hp < 100
+                || game.units[&based].hp < 100
+        );
+    }
+
+    #[test]
     fn eagle_warrior_conversion_uses_base_strength_probability() {
         let (mut g, target, ring) = controlled_game(3144);
         let eagle = g.spawn_unit("eagle_warrior", 0, ring[0]);
