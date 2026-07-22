@@ -1196,11 +1196,14 @@ mod tests {
             (pts - 2.0).abs() < 1e-9,
             "expected 2 scientist gpp, got {pts}"
         );
-        assert_eq!(g.gp_cost(0, "scientist"), 60.0);
+        let hypatia_cost = g.gp_cost(0, "scientist");
+        assert_eq!(hypatia_cost, 78.0);
         // Reaching the threshold auto-claims Hypatia. Because this Campus
         // already has a Library, her instant building is a no-op while her
         // permanent +1 Science to Libraries still applies.
-        g.players[0].gpp.insert("scientist".to_string(), 59.0);
+        g.players[0]
+            .gpp
+            .insert("scientist".to_string(), hypatia_cost - 1.0);
         let boosts_before = g.players[0].boosted_techs.clone();
         let science_before = g.city_yields(cid).science;
         round(&mut g);
@@ -1213,7 +1216,7 @@ mod tests {
             g.current_great_person("scientist").unwrap().0,
             "isaac_newton"
         );
-        assert_eq!(g.gp_cost(0, "scientist"), 240.0);
+        assert_eq!(g.gp_cost(0, "scientist"), 1_646.0);
     }
 
     #[test]

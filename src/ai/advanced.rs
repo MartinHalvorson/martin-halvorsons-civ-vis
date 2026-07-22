@@ -2912,7 +2912,8 @@ impl AdvancedAi {
                 continue;
             }
             let points = g.players[pid].gpp.get(kind).copied().unwrap_or(0.0);
-            let missing = (person.cost - points).max(0.0);
+            let cost = g.gp_cost(pid, kind);
+            let missing = (cost - points).max(0.0);
             if missing <= f64::EPSILON {
                 continue;
             }
@@ -2927,16 +2928,19 @@ impl AdvancedAi {
                 (_, "prophet") if g.players[pid].religion.is_some() => -1_000.0,
                 _ => 100.0,
             };
-            let close_fraction = missing / person.cost.max(1.0);
+            let close_fraction = missing / cost.max(1.0);
             let limit = if affinity >= 500.0 { 0.40 } else { 0.15 };
             if affinity < 0.0 || close_fraction > limit {
                 continue;
             }
             let effect_value = person.effects.values().sum::<f64>() * 12.0;
-            for (currency, price, bank, reserve) in [
-                ("gold", missing * 15.0, g.players[pid].gold, gold_reserve),
-                ("faith", missing * 10.0, g.players[pid].faith, faith_reserve),
+            for (currency, bank, reserve) in [
+                ("gold", g.players[pid].gold, gold_reserve),
+                ("faith", g.players[pid].faith, faith_reserve),
             ] {
+                let Some(price) = g.great_person_patronage_price(pid, kind, currency) else {
+                    continue;
+                };
                 if bank + f64::EPSILON < price + reserve {
                     continue;
                 }
@@ -5634,7 +5638,7 @@ impl AdvancedAi {
         city: &crate::game::City,
         strategy: GrandStrategy,
     ) -> f64 {
-        let mut value = self.yield_value(g.route_yields(city.id, city.owner == pid), strategy);
+        let mut value = self.yield_value(g.trade_route_yields(pid, city.id), strategy);
         if let Some(alliance) = g.alliance_with(pid, city.owner) {
             let mut yields = Yields::default();
             match alliance.kind.as_str() {
@@ -10471,7 +10475,7 @@ mod tests {
             .find(|unit| game.units[unit].kind == "settler")
             .unwrap();
         game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
-        let cost = game.current_great_person("scientist").unwrap().1.cost;
+        let cost = game.gp_cost(0, "scientist");
         game.players[0]
             .gpp
             .insert("scientist".to_string(), cost - 5.0);
@@ -10491,7 +10495,7 @@ mod tests {
         game.players[0].gold = 500.0;
         ai.advanced_great_people(&mut game, 0, GrandStrategy::Science);
         assert_eq!(game.players[0].gp_claimed["scientist"], 1);
-        assert_eq!(game.players[0].gold, 425.0);
+        assert_eq!(game.players[0].gold, 225.0);
     }
 
     #[test]
@@ -10766,6 +10770,55 @@ mod tests {
             unconnected_value - science_unconnected > connected_value - science_connected,
             "only the Culture objective should add the missing-rival pressure bonus"
         );
+    }
+
+    #[test]
+    fn advanced_trade_routes_value_named_great_person_destination_gold() {
+        let mut game = Game::new_full(2, 20, 12, 79_004, 200, 0, false);
+        for pid in 0..2 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.current = pid;
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        let destination = game.player_city_ids(1)[0];
+        let ai = AdvancedAi::targeting(VictoryTarget::Science);
+        let value = |game: &Game| {
+            ai.trade_route_destination_value(
+                game,
+                0,
+                &game.cities[&destination],
+                GrandStrategy::Expansion,
+            )
+        };
+        let baseline = value(&game);
+
+        game.cities
+            .get_mut(&destination)
+            .unwrap()
+            .great_person_foreign_route_gold = 2.0;
+        let city_bonus = value(&game);
+        assert!(city_bonus > baseline);
+
+        let resource_tile = game.cities[&destination]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != game.cities[&destination].pos)
+            .unwrap();
+        let tile = game.map.tiles.get_mut(&resource_tile).unwrap();
+        tile.resource = Some("iron".to_string());
+        tile.improvement = Some("mine".to_string());
+        tile.pillaged = false;
+        game.players[0].counters.insert(
+            "great_person:strategic_destination_trade_gold".to_string(),
+            2,
+        );
+        assert!(value(&game) > city_bonus);
     }
 
     #[test]

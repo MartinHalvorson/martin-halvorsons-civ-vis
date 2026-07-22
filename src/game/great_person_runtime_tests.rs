@@ -231,12 +231,14 @@ fn named_merchants_annex_tiles_and_apply_exact_trade_and_oil_effects() {
     game.players[0].civics.insert("foreign_trade".to_string());
 
     let gold_before_crassus = game.players[0].gold;
+    let envoys_before_crassus = game.players[0].envoys_free;
     let tiles_before_crassus = game.cities[&merchant_city].owned_tiles.len();
     assert_eq!(
         recruit_current_merchant(&mut game),
         "marcus_licinius_crassus"
     );
     assert_eq!(game.players[0].gold - gold_before_crassus, 180.0);
+    assert_eq!(game.players[0].envoys_free, envoys_before_crassus);
     assert_eq!(
         game.cities[&merchant_city].owned_tiles.len() - tiles_before_crassus,
         3
@@ -256,8 +258,10 @@ fn named_merchants_annex_tiles_and_apply_exact_trade_and_oil_effects() {
         .filter(|unit| unit.owner == 0 && unit.kind == "trader")
         .count();
     let capacity_before = game.trade_capacity(0);
+    let gold_before_marco = game.players[0].gold;
     assert_eq!(recruit_current_merchant(&mut game), "marco_polo");
     assert_eq!(game.trade_capacity(0) - capacity_before, 1);
+    assert_eq!(game.players[0].gold, gold_before_marco);
     assert_eq!(
         game.units
             .values()
@@ -265,6 +269,15 @@ fn named_merchants_annex_tiles_and_apply_exact_trade_and_oil_effects() {
             .count()
             - traders_before,
         1
+    );
+    let free_trader = game
+        .units
+        .values()
+        .find(|unit| unit.owner == 0 && unit.kind == "trader")
+        .unwrap();
+    assert_ne!(
+        free_trader.pos, game.cities[&merchant_city].pos,
+        "the free Trader must obey civilian stacking around the activation city"
     );
     assert_eq!(
         game.city_yields(foreign_city).gold - foreign_origin_gold,
@@ -275,6 +288,12 @@ fn named_merchants_annex_tiles_and_apply_exact_trade_and_oil_effects() {
         2.0
     );
 
+    for position in game.cities[&foreign_city].owned_tiles.clone() {
+        let tile = game.map.tiles.get_mut(&position).unwrap();
+        tile.resource = None;
+        tile.improvement = None;
+        tile.pillaged = false;
+    }
     let resource_tiles: Vec<Pos> = game.cities[&foreign_city]
         .owned_tiles
         .iter()
@@ -300,11 +319,25 @@ fn named_merchants_annex_tiles_and_apply_exact_trade_and_oil_effects() {
     });
     game.players[0].techs.insert("refining".to_string());
     let rockefeller_route_gold = game.city_yields(merchant_city).gold;
+    let capacity_before_rockefeller = game.trade_capacity(0);
+    let gold_before_rockefeller = game.players[0].gold;
     assert_eq!(recruit_current_merchant(&mut game), "john_rockefeller");
+    assert_eq!(game.trade_capacity(0), capacity_before_rockefeller);
+    assert_eq!(game.players[0].gold, gold_before_rockefeller);
     assert_eq!(
         game.city_yields(merchant_city).gold - rockefeller_route_gold,
         4.0
     );
+    assert_eq!(
+        game.trade_route_yields(0, foreign_city).gold - game.route_yields(foreign_city, false).gold,
+        4.0
+    );
+    game.map.tiles.get_mut(&resource_tiles[0]).unwrap().pillaged = true;
+    assert_eq!(
+        game.trade_route_yields(0, foreign_city).gold - game.route_yields(foreign_city, false).gold,
+        2.0
+    );
+    game.map.tiles.get_mut(&resource_tiles[0]).unwrap().pillaged = false;
     assert_eq!(game.strategic_resource_rate(0, "oil"), 3.0);
     game.process_strategic_resources(0);
     assert_eq!(game.strategic_stockpile(0, "oil"), 3.0);
@@ -348,7 +381,7 @@ fn named_generals_promote_or_form_exactly_one_land_unit() {
 }
 
 #[test]
-fn named_admirals_apply_city_trade_building_loyalty_and_flanking_effects() {
+fn named_admirals_apply_exact_unit_trade_building_and_flanking_effects() {
     let mut game = Game::new_full(2, 28, 18, 95_006, 300, 0, false);
     let mut cities = Vec::new();
     for pid in 0..2 {
@@ -361,35 +394,39 @@ fn named_admirals_apply_city_trade_building_loyalty_and_flanking_effects() {
     }
     let admiral_city = cities[0];
     let foreign_city = cities[1];
-    install_test_district(&mut game, admiral_city, "harbor");
+    let harbor = install_test_district(&mut game, admiral_city, "harbor");
+    game.map.tiles.get_mut(&harbor).unwrap().terrain = "coast".to_string();
     game.players[0].civics.extend([
         "foreign_trade".to_string(),
         "military_tradition".to_string(),
     ]);
 
+    let quadrireme = Item::Unit {
+        unit: "quadrireme".to_string(),
+    };
+    let quadriremes = game
+        .units
+        .values()
+        .filter(|unit| unit.owner == 0 && unit.kind == "quadrireme")
+        .count();
+    let naval_ranged_production = game.item_prod_mult(0, admiral_city, Some(&quadrireme));
     assert_eq!(
         recruit_current_military_person(&mut game, "admiral"),
         "themistocles"
     );
     assert_eq!(
-        game.cities[&admiral_city].great_person_loyalty_per_turn,
-        2.0
+        game.units
+            .values()
+            .filter(|unit| unit.owner == 0 && unit.kind == "quadrireme")
+            .count()
+            - quadriremes,
+        1
     );
-    game.cities.get_mut(&admiral_city).unwrap().loyalty = 50.0;
-    let mut loyalty_baseline: Game =
-        serde_json::from_str(&serde_json::to_string(&game).unwrap()).unwrap();
-    loyalty_baseline
-        .cities
-        .get_mut(&admiral_city)
-        .unwrap()
-        .great_person_loyalty_per_turn = 0.0;
-    game.process_loyalty(0);
-    loyalty_baseline.process_loyalty(0);
-    assert_eq!(
-        game.cities[&admiral_city].loyalty - loyalty_baseline.cities[&admiral_city].loyalty,
-        2.0
+    assert!(
+        (game.item_prod_mult(0, admiral_city, Some(&quadrireme)) - naval_ranged_production - 0.20)
+            .abs()
+            < 1e-9
     );
-    game.cities.get_mut(&admiral_city).unwrap().loyalty = 100.0;
 
     game.routes.push(TradeRoute {
         origin: foreign_city,
@@ -452,8 +489,77 @@ fn named_admirals_apply_city_trade_building_loyalty_and_flanking_effects() {
 
     let restored: Game = serde_json::from_str(&serde_json::to_string(&game).unwrap()).unwrap();
     assert_eq!(restored.flanking_bonus(attacker, target), 3.0);
-    assert_eq!(
-        restored.cities[&admiral_city].great_person_loyalty_per_turn,
-        2.0
+    assert!(
+        (restored.item_prod_mult(0, admiral_city, Some(&quadrireme))
+            - naval_ranged_production
+            - 0.20)
+            .abs()
+            < 1e-9
     );
+}
+
+#[test]
+fn great_person_eras_offer_prices_and_patronage_follow_stock_rules() {
+    let mut game = Game::new_full(1, 24, 16, 95_007, 300, 0, false);
+
+    for (id, era, cost) in [
+        ("donatello", 3, 240.0),
+        ("rembrandt", 4, 420.0),
+        ("claude_monet", 6, 960.0),
+        ("antonio_vivaldi", 4, 420.0),
+        ("ludwig_van_beethoven", 4, 420.0),
+        ("liu_tianhua", 5, 660.0),
+        ("leo_tolstoy", 5, 660.0),
+    ] {
+        let person = &game.rules.great_people[id];
+        assert_eq!((person.era, person.cost), (era, cost));
+    }
+
+    // Classical non-art people are one era ahead of an Ancient world.
+    assert_eq!(game.gp_cost(0, "scientist"), 78.0);
+    // Imhotep is two eras ahead: floor(120 * 1.6^2) = 307.
+    assert_eq!(game.gp_cost(0, "engineer"), 307.0);
+    // Art people and Prophets never receive the ahead-of-era multiplier.
+    assert_eq!(game.gp_cost(0, "writer"), 60.0);
+    assert_eq!(game.gp_cost(0, "artist"), 240.0);
+    assert_eq!(game.gp_cost(0, "musician"), 420.0);
+    assert_eq!(game.gp_cost(0, "prophet"), 60.0);
+
+    let locked_engineer_cost = game.gp_cost(0, "engineer");
+    game.world_era = 2;
+    assert_eq!(game.gp_cost(0, "engineer"), locked_engineer_cost);
+    let restored: Game = serde_json::from_str(&serde_json::to_string(&game).unwrap()).unwrap();
+    assert_eq!(restored.gp_cost(0, "engineer"), locked_engineer_cost);
+
+    // A newly exposed person is priced in the world era at reveal time.
+    game.world_era = 3;
+    let hypatia_cost = game.gp_cost(0, "scientist");
+    game.players[0]
+        .gpp
+        .insert("scientist".to_string(), hypatia_cost);
+    game.claim_great_person(0, "scientist", None).unwrap();
+    assert_eq!(
+        game.current_great_person("scientist").unwrap().0,
+        "isaac_newton"
+    );
+    assert_eq!(game.gp_cost(0, "scientist"), 240.0);
+
+    let mut patronage = Game::new_full(1, 24, 16, 95_008, 300, 0, false);
+    assert_eq!(
+        patronage.great_person_patronage_price(0, "scientist", "gold"),
+        Some(1_370.0)
+    );
+    assert_eq!(
+        patronage.great_person_patronage_price(0, "scientist", "faith"),
+        Some(930.0)
+    );
+    patronage.players[0].gold = 1_369.0;
+    assert!(patronage
+        .claim_great_person(0, "scientist", Some("gold"))
+        .is_err());
+    patronage.players[0].gold = 1_370.0;
+    patronage
+        .claim_great_person(0, "scientist", Some("gold"))
+        .unwrap();
+    assert_eq!(patronage.players[0].gold, 0.0);
 }
