@@ -286,6 +286,7 @@
     "domain": "sea",
     "tech": "combined_arms",
     "promotion_class": "naval_carrier",
+    "can_formations": false,
     "zone_of_control": true
   },
   "missile_cruiser": {
@@ -545,8 +546,8 @@
   },
   "biplane": {
     "class": "military", "cost": 430, "maintenance": 6, "moves": 6, "strength": 80,
-    "ranged_strength": 75, "range": 4, "tech": "flight", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1,
-    "requires_district": "aerodrome", "domain": "air"
+    "ranged_strength": 75, "range": 4, "sight": 4, "tech": "flight", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1,
+    "requires_district": "aerodrome", "domain": "air", "promotion_class": "air_fighter"
   },
   "observation_balloon": {"class": "support", "cost": 240, "maintenance": 2, "moves": 2, "tech": "flight", "sight": 3, "effects": {"adjacent_siege_range": 1}},
   "medic": {"class": "support", "cost": 370, "maintenance": 5, "moves": 2, "tech": "sanitation", "effects": {"adjacent_heal": 20}},
@@ -558,13 +559,13 @@
   "supply_convoy": {"class": "support", "cost": 450, "maintenance": 2, "moves": 4, "tech": "combustion", "effects": {"adjacent_heal": 20, "adjacent_movement": 1}},
   "fighter": {
     "class": "military", "cost": 520, "maintenance": 7, "moves": 8, "strength": 100,
-    "ranged_strength": 100, "range": 6, "tech": "advanced_flight", "requires_resource": "aluminum", "resource_cost": 1, "resource_maintenance": 1,
-    "requires_district": "aerodrome", "domain": "air"
+    "ranged_strength": 100, "range": 5, "sight": 4, "tech": "advanced_flight", "requires_resource": "aluminum", "resource_cost": 1, "resource_maintenance": 1,
+    "requires_district": "aerodrome", "domain": "air", "promotion_class": "air_fighter"
   },
   "bomber": {
-    "class": "military", "cost": 560, "maintenance": 7, "moves": 7, "strength": 85,
-    "bombard_strength": 110, "range": 8, "tech": "advanced_flight", "requires_resource": "aluminum", "resource_cost": 1, "resource_maintenance": 1,
-    "requires_district": "aerodrome", "domain": "air", "siege": true
+    "class": "military", "cost": 560, "maintenance": 7, "moves": 10, "strength": 85,
+    "bombard_strength": 110, "range": 10, "sight": 4, "tech": "advanced_flight", "requires_resource": "aluminum", "resource_cost": 1, "resource_maintenance": 1,
+    "requires_district": "aerodrome", "domain": "air", "promotion_class": "air_bomber", "siege": true
   },
   "anti_air_gun": {
     "class": "support", "cost": 455, "maintenance": 2, "moves": 2,
@@ -612,13 +613,13 @@
   },
   "jet_fighter": {
     "class": "military", "cost": 650, "maintenance": 8, "moves": 10, "strength": 110,
-    "ranged_strength": 110, "range": 8, "tech": "lasers", "requires_resource": "aluminum", "resource_cost": 1, "resource_maintenance": 1,
-    "requires_district": "aerodrome", "domain": "air"
+    "ranged_strength": 110, "range": 6, "sight": 5, "tech": "lasers", "requires_resource": "aluminum", "resource_cost": 1, "resource_maintenance": 1,
+    "requires_district": "aerodrome", "domain": "air", "promotion_class": "air_fighter"
   },
   "jet_bomber": {
-    "class": "military", "cost": 700, "maintenance": 8, "moves": 9, "strength": 90,
-    "bombard_strength": 120, "range": 10, "tech": "stealth_technology", "requires_resource": "aluminum", "resource_cost": 1, "resource_maintenance": 1,
-    "requires_district": "aerodrome", "domain": "air", "siege": true
+    "class": "military", "cost": 700, "maintenance": 8, "moves": 15, "strength": 90,
+    "bombard_strength": 120, "range": 15, "sight": 5, "tech": "stealth_technology", "requires_resource": "aluminum", "resource_cost": 1, "resource_maintenance": 1,
+    "requires_district": "aerodrome", "domain": "air", "promotion_class": "air_bomber", "siege": true
   },
   "giant_death_robot": {
     "class": "military", "cost": 1500, "maintenance": 15, "moves": 5, "strength": 130,

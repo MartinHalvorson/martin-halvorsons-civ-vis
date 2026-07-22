@@ -14535,6 +14535,18 @@ impl Game {
             }
     }
 
+    /// Aircraft rebase up to twice their printed Movement. This deliberately
+    /// differs from operational attack range (and from range promotions).
+    pub fn air_rebase_range(&self, uid: u32) -> i32 {
+        self.units
+            .get(&uid)
+            .filter(|unit| {
+                self.rules.units[unit.kind.as_str()].domain.as_deref() == Some("air")
+            })
+            .map(|unit| (self.rules.units[unit.kind.as_str()].moves * 2.0).floor() as i32)
+            .unwrap_or(0)
+    }
+
     pub fn unit_sight(&self, uid: u32) -> i32 {
         let unit = &self.units[&uid];
         self.rules.units[unit.kind.as_str()].sight + self.promotion_effect(unit, "sight") as i32
@@ -19368,13 +19380,13 @@ impl Game {
         let mut actions = Vec::new();
         if spec.domain.as_deref() == Some("air") {
             if u.moves_left > 0.0 {
-                let range = spec.range.max(1);
+                let range = self.unit_attack_range(uid);
                 for target in self.wdisk(u.pos, range) {
                     if target != u.pos && self.enemy_combat_target_at(pid, target) {
                         actions.push(Action::AirStrike { unit: uid, target });
                     }
                 }
-                for base in self.wdisk(u.pos, range * 2) {
+                for base in self.wdisk(u.pos, self.air_rebase_range(uid)) {
                     if base != u.pos && self.can_air_base_at(pid, base, Some(uid)) {
                         actions.push(Action::AirRebase {
                             unit: uid,
@@ -19438,13 +19450,13 @@ impl Game {
             }
             if spec.domain.as_deref() == Some("air") {
                 if u.moves_left > 0.0 {
-                    let range = spec.range.max(1);
+                    let range = self.unit_attack_range(uid);
                     for target in self.wdisk(u.pos, range) {
                         if target != u.pos && self.enemy_combat_target_at(pid, target) {
                             acts.push(Action::AirStrike { unit: uid, target });
                         }
                     }
-                    for base in self.wdisk(u.pos, range * 2) {
+                    for base in self.wdisk(u.pos, self.air_rebase_range(uid)) {
                         if base != u.pos && self.can_air_base_at(pid, base, Some(uid)) {
                             acts.push(Action::AirRebase {
                                 unit: uid,
@@ -22605,7 +22617,7 @@ impl Game {
         if spec.domain.as_deref() != Some("air")
             || unit.moves_left <= 0.0
             || unit.pos == to
-            || self.wdist(unit.pos, to) > spec.range.max(1) * 2
+            || self.wdist(unit.pos, to) > self.air_rebase_range(uid)
             || !self.can_air_base_at(pid, to, Some(uid))
         {
             return Err("aircraft cannot rebase there".into());
@@ -22682,7 +22694,7 @@ impl Game {
         if spec.domain.as_deref() != Some("air")
             || attacker.moves_left <= 0.0
             || attacker.attacks_left <= 0
-            || self.wdist(attacker.pos, target) > spec.range.max(1)
+            || self.wdist(attacker.pos, target) > self.unit_attack_range(uid)
             || !self.enemy_combat_target_at(pid, target)
         {
             return Err("invalid air strike".into());
