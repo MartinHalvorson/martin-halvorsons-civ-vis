@@ -50,7 +50,7 @@
 
   /* Command deck */
   #side {
-    width: 400px; min-width: 400px; height: 100%; position: relative; z-index: 12;
+    width: 360px; min-width: 360px; height: 100%; position: relative; z-index: 12;
     display: flex; flex-direction: column; overflow: hidden;
     background:
       radial-gradient(circle at 80% -10%, #23483b80, transparent 34%),
@@ -235,6 +235,9 @@
   .spec-controls button { margin: 0; }
   .speed-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; margin-top: 9px; }
   .speed-row span { color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+  .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; color: var(--muted); font-size: 10px; cursor: pointer; }
+  .setting-row span { display: flex; align-items: center; gap: 7px; }
+  .setting-row kbd { margin: 0; }
   .shortcut-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
   .shortcut-grid span { color: var(--muted); font-size: 9px; }
   kbd { display: inline-grid; min-width: 19px; height: 18px; place-items: center; margin-right: 5px; padding: 0 4px; border-radius: 5px; color: #cbd5d0; background: #091310; border: 1px solid #354c44; box-shadow: inset 0 -1px #000; font: 700 8px Inter, sans-serif; }
@@ -263,7 +266,7 @@
   .tnode .req { color: var(--faint); font-size: 8px; margin-top: 3px; }
 
   @media (max-width: 980px) {
-    #side { width: 350px; min-width: 350px; }
+    #side { width: 330px; min-width: 330px; }
     #topbar { left: 14px; transform: none; max-width: calc(100% - 84px); overflow: hidden; }
     .hud-stat i { display: none; }
     #ubar { max-width: calc(100% - 70px); }
@@ -341,6 +344,7 @@
         <option value="cinematic">Cinematic terrain</option>
         <option value="strategic">Strategic map</option>
       </select>
+      <label class="setting-row"><span><input type="checkbox" id="yieldchk"> Show yields per tile</span><kbd>Y</kbd></label>
       <div class="shortcut-grid" style="margin-top:11px">
         <span><kbd>1</kbd>Next unit</span><span><kbd>2</kbd>Settler lens</span>
         <span><kbd>3</kbd>Map tacks</span><span><kbd>F</kbd>Focus mode</span>
@@ -365,8 +369,8 @@
       </div>
       <div class="speed-row"><span>Watch pace</span>
         <select id="specspeed">
-          <option value="100">Lightning · 0.1s</option>
-          <option value="250" selected>Blitz · 0.25s</option>
+          <option value="100" selected>Lightning · 0.1s</option>
+          <option value="250">Blitz · 0.25s</option>
           <option value="500">Fast · 0.5s</option>
           <option value="1000">Brisk · 1s</option>
           <option value="2000">Measured · 2s</option>
@@ -386,6 +390,21 @@ const TERRAIN = { grassland:"#5e9440", plains:"#ab9e4e", desert:"#d8c184",
 const TERRAIN_HI = { grassland:"#79ad52", plains:"#c1b360", desert:"#e8d49c",
                      tundra:"#aab29a", snow:"#f6fafc", coast:"#2f7d99",
                      ocean:"#174a6b", mountain:"#9c9484" };
+const ATLAS_CELL = { grassland:[0,0], plains:[1,0], desert:[2,0], tundra:[3,0],
+                     coast:[0,1], ocean:[1,1], snow:[2,1], mountain:[3,1] };
+const TERRAIN_ATLAS = new Image();
+let ATLAS_READY = false;
+TERRAIN_ATLAS.onload = () => { ATLAS_READY = true; if (state) draw(); };
+TERRAIN_ATLAS.src = "/assets/terrain-atlas.png";
+const FEATURE_CELL = { forest:0, jungle:1, marsh:2, oasis:3 };
+const FEATURE_ATLAS = new Image();
+let FEATURE_ATLAS_READY = false;
+FEATURE_ATLAS.onload = () => { FEATURE_ATLAS_READY = true; if (state) draw(); };
+FEATURE_ATLAS.src = "/assets/feature-atlas.png";
+const MOUNTAIN_ATLAS = new Image();
+let MOUNTAIN_ATLAS_READY = false;
+MOUNTAIN_ATLAS.onload = () => { MOUNTAIN_ATLAS_READY = true; if (state) draw(); };
+MOUNTAIN_ATLAS.src = "/assets/mountain-atlas.png";
 const PARCH = "#c7b58a", PARCH_GRID = "#8a795533", PARCH_INK = "#6d5c3a";
 const FEAT_ICON = { forest:"🌲", jungle:"🌴", marsh:"🌾", oasis:"🏝" };
 const RES_ICON = { wheat:"🌾", cattle:"🐄", sheep:"🐑", stone:"🪨", deer:"🦌",
@@ -400,6 +419,8 @@ const DISTRICT_COLOR = { campus:"#4aa3df", holy_site:"#e8e4ef", commercial_hub:"
                          industrial_zone:"#e67e22", entertainment_complex:"#e75480" };
 const YICON = { food:"🍞", production:"⚙️", gold:"🪙", science:"🔬",
                 culture:"🎭", faith:"✡" };
+const YCOLOR = { food:"#76c893", production:"#d7b66a", gold:"#e8c64c",
+                 science:"#76cde4", culture:"#c49be8", faith:"#eee7cf" };
 const PCOLORS = ["#ffd700","#e05050","#50a0e0","#50c878","#c878e0","#e09050",
                  "#70d0d0","#f0f080","#a0a0ff","#ffa0c0","#80e080","#d0b080"];
 const EDGE_CORNERS = [[0,1],[5,0],[4,5],[3,4],[2,3],[1,2]]; // matches DIRS order
@@ -411,6 +432,7 @@ let SPEC = false, specPaused = false, specTimer = null, specBusy = false;
 let worldEvents = [], lastLeader = null;
 let TMAP = new Map();
 let VIEW = localStorage.getItem("civvis-view") || "cinematic";
+let SHOW_YIELDS = localStorage.getItem("civvis-show-yields") === "1";
 // migrate legacy mode names (performance mode lives on as headless sims)
 if (VIEW === "beautiful") VIEW = "cinematic";
 if (VIEW === "simple" || VIEW === "minimal") VIEW = "strategic";
@@ -596,8 +618,10 @@ async function boot() {
   RULES = await fetchJSON("/rules");
   render(await fetchJSON("/state"));
   if (firstLoad) {
-    firstLoad = false; centerHome();
+    firstLoad = false;
+    if (SPEC) centerMainLandmass(); else centerHome();
     document.getElementById("specchk").checked = SPEC;
+    if (SPEC) document.getElementById("specspeed").value = "100";
     scheduleSpec(state);
   }
 }
@@ -614,13 +638,29 @@ async function send(action) {
 // Self-healing: a failed step (server restart, hiccup) retries with backoff,
 // and a watchdog revives the loop if the timer chain ever dies.
 let specLast = Date.now();
+let specRenderMs = 0;
 async function specStep(force) {
   if (!SPEC || (!force && specPaused) || specBusy) return;
   specBusy = true;
   let st = null;
   try {
-    st = await fetchJSON("/step", { method: "POST" });
-    render(st);
+    const pace = +document.getElementById("specspeed").value || 100;
+    // The photographic renderer can cost more than one Lightning interval.
+    // Advance enough simulation states per paint to preserve the selected
+    // world pace, while still recording every civilization in the Chronicle.
+    const batch = force ? 1 : Math.max(1, Math.min(12,
+      Math.round((specRenderMs + pace) / pace)));
+    let prev = state;
+    for (let i = 0; i < batch; i++) {
+      st = await fetchJSON("/step", { method: "POST" });
+      chronicle(prev, st);
+      prev = st;
+      if (st.winner !== null && st.winner !== undefined) break;
+    }
+    const paintStart = performance.now();
+    render(st, false);
+    const measured = performance.now() - paintStart;
+    specRenderMs = specRenderMs ? specRenderMs * 0.65 + measured * 0.35 : measured;
   } catch (e) {
     specBusy = false;
     clearTimeout(specTimer);
@@ -653,7 +693,7 @@ function startRestartCountdown() {
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({seed: Math.floor(Math.random() * 1e9),
                               spectate: true}) }));
-      centerHome();
+      centerMainLandmass();
       scheduleSpec(state);
       return;
     }
@@ -758,8 +798,8 @@ function chronicle(prev, next) {
   chronicleActions(next);
 }
 
-function render(st) {
-  chronicle(state, st);
+function render(st, recordChronicle = true) {
+  if (recordChronicle) chronicle(state, st);
   animateDiff(state, st);
   state = st;
   SPEC = !!st.spectate;
@@ -818,6 +858,121 @@ function shade(hex, f) {
   g = Math.min(255, Math.max(0, Math.round(g * f)));
   b = Math.min(255, Math.max(0, Math.round(b * f)));
   return "rgb(" + r + "," + g + "," + b + ")";
+}
+
+// Paint an AI-authored, photographic material sample onto the world plane.
+// Each tile takes a deterministic crop from its biome swatch, so neighboring
+// tiles share a visual language without producing an obvious repeated stamp.
+function drawTerrainTexture(t, x, y) {
+  if (!ATLAS_READY || !ATLAS_CELL[t.terrain]) return;
+  const [col, row] = ATLAS_CELL[t.terrain];
+  const cw = TERRAIN_ATLAS.naturalWidth / 4;
+  const ch = TERRAIN_ATLAS.naturalHeight / 2;
+  const crop = Math.min(cw, ch) * 0.78;
+  const marginX = Math.max(2, cw - crop - 2);
+  const marginY = Math.max(2, ch - crop - 2);
+  const hx = hash2(t.pos[0] * 19 + row * 31, t.pos[1] * 23 + col * 17);
+  const hy = hash2(t.pos[0] * 29 + col * 13, t.pos[1] * 11 + row * 37);
+  const sx = col * cw + 1 + hx * marginX;
+  const sy = row * ch + 1 + hy * marginY;
+  const water = t.terrain === "coast" || t.terrain === "ocean";
+
+  cx.save();
+  hexPath(x, y, S + 0.25); cx.clip();
+  cx.globalAlpha = water ? 0.94 : (t.terrain === "snow" ? 0.88 : 0.9);
+  cx.imageSmoothingEnabled = true;
+  cx.imageSmoothingQuality = "high";
+  cx.translate(x, y);
+  // Match the same rotated, vertically-squashed world plane as the hex.
+  cx.transform(COSR, SINR * YS, -SINR, COSR * YS, 0, 0);
+  if (hx > 0.5) cx.scale(-1, 1);
+  cx.drawImage(TERRAIN_ATLAS, sx, sy, crop, crop, -S, -S, S * 2, S * 2);
+  cx.restore();
+
+  // Broad illumination unifies the photo material with the raised tile prism.
+  cx.save();
+  hexPath(x, y, S + 0.25); cx.clip();
+  const light = cx.createLinearGradient(x - S * 0.45, y - S, x + S * 0.35, y + S);
+  light.addColorStop(0, "rgba(255,249,222,.14)");
+  light.addColorStop(0.48, "rgba(255,255,255,0)");
+  light.addColorStop(1, water ? "rgba(0,18,35,.2)" : "rgba(24,17,8,.18)");
+  cx.fillStyle = light; cx.fillRect(x - S * 1.4, y - S, S * 2.8, S * 2);
+  cx.restore();
+}
+
+function drawFeatureSprite(t, x, y) {
+  const col = FEATURE_CELL[t.feature];
+  if (!FEATURE_ATLAS_READY || col === undefined) return false;
+  const cw = FEATURE_ATLAS.naturalWidth / 4;
+  const ch = FEATURE_ATLAS.naturalHeight;
+  const hv = hash2(t.pos[0] * 41 + col * 7, t.pos[1] * 43 + col * 11);
+  const scale = 0.88 + hv * 0.18;
+  // The atlas includes clear padding around each cutout. Drawing the full cell
+  // preserves the foliage silhouette and keeps neighboring tiles readable.
+  cx.save();
+  cx.imageSmoothingEnabled = true;
+  cx.imageSmoothingQuality = "high";
+  cx.globalAlpha = t.feature === "forest" || t.feature === "jungle" ? 0.96 : 0.94;
+  cx.translate(x, y - S * 0.08);
+  // The source cells are slightly portrait; 180° variation preserves their
+  // natural footprint while avoiding the thin, sideways look of quarter turns.
+  cx.rotate(Math.floor(hv * 2) * Math.PI);
+  if (hash2(t.pos[0] * 13, t.pos[1] * 17) > 0.5) cx.scale(-1, 1);
+  cx.drawImage(FEATURE_ATLAS, col * cw, 0, cw, ch,
+               -S * 1.02 * scale, -S * 0.78 * scale,
+               S * 2.04 * scale, S * 1.55 * scale);
+  cx.restore();
+  return true;
+}
+
+// Compact Civ-style yield chips. Three fit on a row; unusually rich natural
+// wonders wrap to a second row instead of spilling into neighboring tiles.
+function drawTileYields(t, x, y, worked) {
+  const entries = Object.entries(tileYieldFull(t)).filter(([, amount]) => amount > 0);
+  if (!entries.length) return;
+  const cols = Math.min(3, entries.length), chipW = 19, chipH = 12;
+  const rows = Math.ceil(entries.length / cols);
+  const top = y + (rows === 1 ? 10 : 3);
+  cx.save();
+  cx.textAlign = "center"; cx.textBaseline = "middle";
+  cx.shadowColor = "#000b"; cx.shadowBlur = 3; cx.shadowOffsetY = 1;
+  entries.forEach(([kind, amount], i) => {
+    const row = Math.floor(i / cols), rowCount = Math.min(cols, entries.length - row * cols);
+    const col = i % cols;
+    const px = x + (col - (rowCount - 1) / 2) * (chipW + 1);
+    const py = top + row * (chipH + 1);
+    cx.fillStyle = "#0a100de8";
+    cx.beginPath(); cx.roundRect(px - chipW / 2, py - chipH / 2, chipW, chipH, 5); cx.fill();
+    cx.strokeStyle = worked ? "#f0c674" : (YCOLOR[kind] || "#ddd");
+    cx.lineWidth = worked ? 1.4 : 0.8; cx.stroke();
+    cx.shadowBlur = 0;
+    cx.fillStyle = YCOLOR[kind] || "#fff";
+    cx.font = "bold 8px Inter, sans-serif";
+    cx.fillText(String(amount), px - 4.5, py + 0.5);
+    cx.font = "7px 'Segoe UI Symbol', sans-serif";
+    cx.fillText(YICON[kind] || "•", px + 4, py + 0.5);
+  });
+  cx.restore();
+}
+
+function drawMountainSprite(t, x, y) {
+  if (!MOUNTAIN_ATLAS_READY) return false;
+  const cw = MOUNTAIN_ATLAS.naturalWidth / 3;
+  const ch = MOUNTAIN_ATLAS.naturalHeight;
+  const polar = state && (t.pos[1] < state.map.height * 0.2 || t.pos[1] > state.map.height * 0.8);
+  const hv = hash2(t.pos[0] * 47, t.pos[1] * 53);
+  const col = polar ? (hv > 0.3 ? 1 : 0) : (hv > 0.62 ? 2 : 0);
+  const scale = 0.92 + hash2(t.pos[0] * 7, t.pos[1] * 5) * 0.14;
+  const w = S * 2.55 * scale, h = S * 2.0 * scale;
+  cx.save();
+  cx.fillStyle = "#00000042";
+  cx.beginPath(); cx.ellipse(x + 2, y + S * 0.22, w * 0.4, S * 0.18, 0, 0, 7); cx.fill();
+  cx.imageSmoothingEnabled = true;
+  cx.imageSmoothingQuality = "high";
+  cx.drawImage(MOUNTAIN_ATLAS, col * cw, 0, cw, ch,
+               x - w / 2, y - h + S * 0.34, w, h);
+  cx.restore();
+  return true;
 }
 
 function tri(ax, ay, bx, by, ccx, ccy) {
@@ -1065,6 +1220,8 @@ function draw() {
     hexXY(a.pos[0], a.pos[1])[1] - hexXY(b.pos[0], b.pos[1])[1]);
   const visSet = new Set(state.visible.map(key));
   const campSet = new Set(state.camps.map(key));
+  const workedSet = new Set(state.cities.flatMap(c =>
+    c.citizens ? c.citizens.worked_tiles.map(key) : []));
   const beau = VIEW === "cinematic";
   const hl = {};
   if (sel) {
@@ -1092,6 +1249,12 @@ function draw() {
       cx.fillStyle = base;
     }
     cx.fill();
+    if (beau) {
+      drawTerrainTexture(t, x, y);
+      hexPath(x, y, S + 0.15);
+      cx.strokeStyle = water ? "#a8e4ef18" : "#fff8dc12";
+      cx.lineWidth = 0.85; cx.stroke();
+    }
     if (beau && water) { // waves + specular glints (deep OLED water)
       const ph = hash2(t.pos[0], t.pos[1]);
       cx.strokeStyle = "#9fd8ef22"; cx.lineWidth = 1.4;
@@ -1107,6 +1270,23 @@ function draw() {
       }
     }
     if (!beau) { hexPath(x, y); cx.strokeStyle = "#00000038"; cx.lineWidth = 1; cx.stroke(); }
+  }
+  // A narrow beach/foam seam gives continents a natural readable coastline.
+  if (beau) for (const t of tiles) {
+    if (t.terrain !== "coast") continue;
+    const [x, yy] = hexXY(t.pos[0], t.pos[1]);
+    const y = yy - elev(t);
+    for (let i = 0; i < 6; i++) {
+      const n = nbrTile(t.pos, DIRS[i]);
+      if (!n || n.terrain === "coast" || n.terrain === "ocean") continue;
+      const [c1, c2] = EDGE_CORNERS[i];
+      const [ax, ay] = corner(x, y, S - 1.2, c1);
+      const [bx, by] = corner(x, y, S - 1.2, c2);
+      cx.strokeStyle = "#d7c797b8"; cx.lineWidth = 4.2;
+      cx.beginPath(); cx.moveTo(ax, ay); cx.lineTo(bx, by); cx.stroke();
+      cx.strokeStyle = "#e9fff2b8"; cx.lineWidth = 1.15;
+      cx.beginPath(); cx.moveTo(ax, ay); cx.lineTo(bx, by); cx.stroke();
+    }
   }
   // --- rivers (drawn tile-to-tile toward neighboring river/water)
   cx.strokeStyle = "#5b93b8"; cx.lineWidth = 4; cx.lineCap = "round";
@@ -1154,7 +1334,7 @@ function draw() {
     const k = key(t.pos);
     if (t.terrain === "mountain") {
       if (beau) {
-        drawMountainRange(t, x, y);
+        if (!drawMountainSprite(t, x, y)) drawMountainRange(t, x, y);
       } else {
         cx.fillStyle = "#6f747c";
         tri(x - 13, y + 9, x - 3, y - 11, x + 5, y + 9);
@@ -1198,7 +1378,9 @@ function draw() {
         cx.stroke();
       }
     }
-    if (t.feature === "forest" || t.feature === "jungle") {
+    if (beau && drawFeatureSprite(t, x, y)) {
+      // Lifelike atlas sprite already painted.
+    } else if (t.feature === "forest" || t.feature === "jungle") {
       const jungle = t.feature === "jungle";
       if (beau) {
         // dense cluster of small individual trees (Civ 6 woods)
@@ -1259,6 +1441,7 @@ function draw() {
       cx.fillStyle = "#10151d"; cx.font = "bold 11px sans-serif";
       cx.fillText(t.district[0].toUpperCase(), x, y + 0.5);
     }
+    if (SHOW_YIELDS && !t.district) drawTileYields(t, x, y, workedSet.has(k));
   }
   // --- settler lens
   if (lensOn) {
@@ -1551,7 +1734,10 @@ mini.addEventListener("click", ev => {
 function drawTopbar() {
   const me = state.me, y = me.yields;
   const actor = state.players[SPEC ? state.current : 0] || state.players[state.player];
-  const era = (state.world_era || "ancient").replaceAll("_", " ");
+  const eraRaw = state.world_era;
+  const era = typeof eraRaw === "number"
+    ? (["ancient", "classical", "medieval", "renaissance"][eraRaw] || `era ${eraRaw}`)
+    : String(eraRaw || "ancient").replaceAll("_", " ");
   document.getElementById("topbar").innerHTML =
     `<div class="hud-turn"><span>TURN</span><strong>${state.turn}</strong><i>· ${era}</i></div>` +
     (SPEC ? `<div class="hud-stat hud-watch">◉ <strong>${actor.civ}</strong><i>acting</i></div>` : "") +
@@ -1710,6 +1896,10 @@ function drawCityPanel() {
   }
   h += `<div class="row"><span class="small">Growth</span><span class="small">${c.amenity_surplus >= 0 ? "+" : ""}${c.amenity_surplus} amenities</span></div>` +
     prog(c.food, c.growth_need, "#76c893");
+  if (c.citizens) {
+    h += `<div class="row" style="margin-top:8px"><span class="small">Citizen focus</span>` +
+      `<b title="${c.citizens.worked_tiles.length} population-worked tiles">${titleCase(c.citizens.focus)} · ${c.citizens.worked_tiles.length}/${c.pop}</b></div>`;
+  }
   if (c.queue && c.queue.length) {
     h += `<div class="row" style="margin-top:8px"><span class="small">Producing</span><b>${titleCase(itemName(c.queue[0]))}</b></div>` +
       prog(c.production, c.queue_cost, "#d7b66a");
@@ -1840,6 +2030,66 @@ function centerHome() {
               state.units.find(u => u.owner === pid);
   if (own) centerWorld(own.pos);
 }
+function centerMainLandmass() {
+  if (!state) return;
+  const major = owner => {
+    const p = state.players[owner];
+    return p && !p.is_minor && !p.is_barbarian;
+  };
+  const activity = new Map();
+  for (const city of state.cities) if (major(city.owner))
+    activity.set(key(city.pos), (activity.get(key(city.pos)) || 0) + 8);
+  for (const unit of state.units) if (major(unit.owner))
+    activity.set(key(unit.pos), (activity.get(key(unit.pos)) || 0) + 1);
+  const land = new Map(state.map.tiles
+    .filter(t => t.terrain !== "coast" && t.terrain !== "ocean")
+    .map(t => [key(t.pos), t]));
+  const seen = new Set();
+  let main = [], mainActivity = -1;
+  for (const tile of land.values()) {
+    const start = key(tile.pos);
+    if (seen.has(start)) continue;
+    const stack = [tile], component = [];
+    seen.add(start);
+    while (stack.length) {
+      const cur = stack.pop();
+      component.push(cur);
+      for (const d of DIRS) {
+        const pos = canonPos([cur.pos[0] + d[0], cur.pos[1] + d[1]]);
+        const k = key(pos), next = land.get(k);
+        if (next && !seen.has(k)) { seen.add(k); stack.push(next); }
+      }
+    }
+    const action = component.reduce((sum, t) => sum + (activity.get(key(t.pos)) || 0), 0);
+    if (action > mainActivity || (action === mainActivity && component.length > main.length)) {
+      main = component; mainActivity = action;
+    }
+  }
+  if (!main.length) { centerHome(); return; }
+
+  // Circular longitude keeps a continent crossing the map seam together.
+  const width = state.map.width;
+  let sin = 0, cos = 0, row = 0, totalWeight = 0;
+  const hasAction = main.some(tile => activity.has(key(tile.pos)));
+  for (const tile of main) {
+    const weight = hasAction ? (activity.get(key(tile.pos)) || 0) : 1;
+    if (!weight) continue;
+    const col = tile.pos[0] + (tile.pos[1] - (tile.pos[1] & 1)) / 2;
+    const angle = 2 * Math.PI * (((col % width) + width) % width) / width;
+    sin += weight * Math.sin(angle); cos += weight * Math.cos(angle);
+    row += weight * tile.pos[1]; totalWeight += weight;
+  }
+  const centerCol = ((Math.atan2(sin, cos) / (2 * Math.PI) * width) + width) % width;
+  const centerRow = row / totalWeight;
+  const anchor = main.reduce((best, tile) => {
+    const col = ((tile.pos[0] + (tile.pos[1] - (tile.pos[1] & 1)) / 2) % width + width) % width;
+    const dx0 = Math.abs(col - centerCol), dx = Math.min(dx0, width - dx0);
+    const score = dx * dx + (tile.pos[1] - centerRow) ** 2;
+    return !best || score < best.score ? { tile, score } : best;
+  }, null).tile;
+  cam.scale = 0.9;
+  centerWorld(anchor.pos);
+}
 function centerOn(pos) { centerWorld(pos); }
 function focusPlayer(pid) {
   if (!state) return;
@@ -1853,10 +2103,10 @@ function focusPlayer(pid) {
 area.addEventListener("wheel", ev => {
   ev.preventDefault();
   const r = cv.getBoundingClientRect();
-  zoomAt(ev.deltaY < 0 ? 1.18 : 1 / 1.18, ev.clientX - r.left, ev.clientY - r.top);
+  zoomAt(ev.deltaY < 0 ? 1.10 : 1 / 1.10, ev.clientX - r.left, ev.clientY - r.top);
 }, { passive: false });
-document.getElementById("zin").onclick = () => zoomAt(1.25);
-document.getElementById("zout").onclick = () => zoomAt(0.8);
+document.getElementById("zin").onclick = () => zoomAt(1.15);
+document.getElementById("zout").onclick = () => zoomAt(1 / 1.15);
 document.getElementById("zhome").onclick = centerHome;
 
 // ---------------------------------------------------------------- input
@@ -2042,6 +2292,12 @@ document.addEventListener("keydown", ev => {
   else if (ev.key === "1") nextAction();
   else if (ev.key === "2") { lensOn = !lensOn; tackMode = false; modeline(); draw(); }
   else if (ev.key === "3") { tackMode = !tackMode; lensOn = false; modeline(); draw(); }
+  else if (ev.key.toLowerCase() === "y") {
+    SHOW_YIELDS = !SHOW_YIELDS;
+    document.getElementById("yieldchk").checked = SHOW_YIELDS;
+    localStorage.setItem("civvis-show-yields", SHOW_YIELDS ? "1" : "0");
+    draw();
+  }
   else if (ev.key.toLowerCase() === "f") togglePanel();
 });
 document.addEventListener("keyup", ev => {
@@ -2077,7 +2333,7 @@ document.getElementById("newgame").onclick = async () => {
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({num_players: np, seed: Math.floor(Math.random() * 1e9),
                           spectate: document.getElementById("specchk").checked}) }));
-  centerHome();
+  if (SPEC) centerMainLandmass(); else centerHome();
   scheduleSpec(state);
 };
 {
@@ -2085,6 +2341,15 @@ document.getElementById("newgame").onclick = async () => {
   vs.value = VIEW;
   vs.onchange = () => {
     VIEW = vs.value; localStorage.setItem("civvis-view", VIEW);
+    if (state) draw();
+  };
+}
+{
+  const ys = document.getElementById("yieldchk");
+  ys.checked = SHOW_YIELDS;
+  ys.onchange = () => {
+    SHOW_YIELDS = ys.checked;
+    localStorage.setItem("civvis-show-yields", SHOW_YIELDS ? "1" : "0");
     if (state) draw();
   };
 }

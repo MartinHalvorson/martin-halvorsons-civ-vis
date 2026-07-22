@@ -10,6 +10,9 @@ use crate::game::{Action, Game};
 use crate::obs::{observation, observation_spectator};
 
 const EMBEDDED_INDEX: &str = include_str!("../web/index.html");
+const EMBEDDED_TERRAIN_ATLAS: &[u8] = include_bytes!("../web/assets/terrain-atlas.png");
+const EMBEDDED_FEATURE_ATLAS: &[u8] = include_bytes!("../web/assets/feature-atlas.png");
+const EMBEDDED_MOUNTAIN_ATLAS: &[u8] = include_bytes!("../web/assets/mountain-atlas.png");
 
 #[derive(Clone)]
 pub struct Params {
@@ -128,6 +131,21 @@ fn index_html() -> Vec<u8> {
     EMBEDDED_INDEX.as_bytes().to_vec()
 }
 
+fn terrain_atlas() -> Vec<u8> {
+    std::fs::read("web/assets/terrain-atlas.png")
+        .unwrap_or_else(|_| EMBEDDED_TERRAIN_ATLAS.to_vec())
+}
+
+fn feature_atlas() -> Vec<u8> {
+    std::fs::read("web/assets/feature-atlas.png")
+        .unwrap_or_else(|_| EMBEDDED_FEATURE_ATLAS.to_vec())
+}
+
+fn mountain_atlas() -> Vec<u8> {
+    std::fs::read("web/assets/mountain-atlas.png")
+        .unwrap_or_else(|_| EMBEDDED_MOUNTAIN_ATLAS.to_vec())
+}
+
 fn respond(stream: &mut TcpStream, code: &str, ctype: &str, body: &[u8]) {
     let head = format!(
         "HTTP/1.1 {code}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -170,6 +188,15 @@ fn handle(stream: &mut TcpStream, session: &mut Session) {
     match (method.as_str(), path.as_str()) {
         ("GET", "/") | ("GET", "/index.html") => {
             respond(stream, "200 OK", "text/html; charset=utf-8", &index_html());
+        }
+        ("GET", "/assets/terrain-atlas.png") => {
+            respond(stream, "200 OK", "image/png", &terrain_atlas());
+        }
+        ("GET", "/assets/feature-atlas.png") => {
+            respond(stream, "200 OK", "image/png", &feature_atlas());
+        }
+        ("GET", "/assets/mountain-atlas.png") => {
+            respond(stream, "200 OK", "image/png", &mountain_atlas());
         }
         ("GET", "/state") => respond_json(stream, &session.state()),
         ("GET", "/rules") => {
