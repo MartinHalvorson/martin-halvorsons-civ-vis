@@ -164,7 +164,7 @@
     "housing": 3,
     "amenity": 1,
     "appeal": 1,
-    "effects": {"flood_protection": 1}
+    "effects": {"flood_protection": 1, "drought_protection": 1}
   },
   "aerodrome": {
     "cost": 54,
@@ -251,6 +251,8 @@
       "plantation": {"science": 2},
       "farm": {"science": 0.5},
       "district": {"science": 0.5},
+      "great_barrier_reef": {"science": 2},
+      "pamukkale": {"science": 2},
       "government_plaza": {"science": 1}
     },
     "great_person_points": {"scientist": 1}
@@ -284,7 +286,8 @@
       "government_plaza": {"faith": 1}
     },
     "great_person_points": {"prophet": 2},
-    "appeal": 1
+    "appeal": 1,
+    "effects": {"border_growth_on_great_person": 1}
   },
   "ikanda": {
     "cost": 27,

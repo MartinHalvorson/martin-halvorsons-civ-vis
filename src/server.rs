@@ -1,6 +1,6 @@
 //! Zero-dependency local HTTP server for the human-vs-AI browser GUI.
 //! Endpoints: GET / (page), GET /state, GET /save, GET /rules,
-//! POST /action, POST /step, POST /new.
+//! POST /action, POST /step, POST /spectator-status, POST /new.
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -35,6 +35,7 @@ pub struct Session {
     pub params: Params,
     pub game: Game,
     ais: Vec<Box<dyn Ai + Send>>,
+    spectator_paused: bool,
 }
 
 /// Server-side exhibition state: in spectate mode a background thread steps
@@ -76,7 +77,12 @@ impl Session {
         // strongest built-in default. Minors/barbarians retain the cheaper
         // baseline because they do not need empire-level planning.
         let ais = Self::ai_fleet(&game);
-        Session { params, game, ais }
+        Session {
+            params,
+            game,
+            ais,
+            spectator_paused: false,
+        }
     }
 
     /// Restore an interrupted match and rebuild only the AIs' transient plans.
@@ -97,7 +103,12 @@ impl Session {
         params.seed = game.seed;
         params.max_turns = game.max_turns;
         let ais = Self::ai_fleet(&game);
-        Session { params, game, ais }
+        Session {
+            params,
+            game,
+            ais,
+            spectator_paused: false,
+        }
     }
 
     pub fn state(&self) -> Value {
@@ -116,6 +127,7 @@ impl Session {
             };
             let mut o = observation_spectator(g, pid);
             o["spectate"] = json!(true);
+            o["spectator_paused"] = json!(self.spectator_paused);
             o["legal_actions"] = json!([]);
             // Lets a long-running spectator notice that its server was
             // rebuilt/restarted between games and reload the latest UI.
@@ -355,7 +367,12 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
             if let Some(v) = parsed["paused"].as_bool() {
                 sh.paused.store(v, Ordering::Relaxed);
             }
-            let mut o = sh.session.lock().unwrap().state();
+            let mut session = sh.session.lock().unwrap();
+            if let Some(v) = parsed["paused"].as_bool() {
+                session.spectator_paused = v;
+            }
+            let mut o = session.state();
+            drop(session);
             decorate(&mut o, sh);
             respond_json(stream, &o);
         }
@@ -408,6 +425,17 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
             drop(session);
             decorate(&mut out, sh);
             respond_json(stream, &out);
+        }
+        ("POST", "/spectator-status") => {
+            let mut session = sh.session.lock().unwrap();
+            if session.params.spectate {
+                if let Some(paused) = parsed["paused"].as_bool() {
+                    session.spectator_paused = paused;
+                }
+                respond_json(stream, &json!({"ok": true}));
+            } else {
+                respond_json(stream, &json!({"error": "not in spectate mode"}));
+            }
         }
         ("POST", "/new") => {
             let mut session = sh.session.lock().unwrap();
@@ -506,6 +534,14 @@ mod tests {
             state["server_instance"].as_u64(),
             Some(std::process::id() as u64)
         );
+    }
+
+    #[test]
+    fn spectator_state_reports_the_pause_liveness_signal() {
+        let mut params = current();
+        params.spectate = true;
+        let session = Session::new(params);
+        assert_eq!(session.state()["spectator_paused"].as_bool(), Some(false));
     }
 
     #[test]

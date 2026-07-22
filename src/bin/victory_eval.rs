@@ -35,7 +35,7 @@ fn default_turn_limit(target: VictoryTarget) -> u32 {
         VictoryTarget::Domination => 650,
         VictoryTarget::Diplomacy => 750,
         VictoryTarget::Culture => 900,
-        VictoryTarget::Science => 1_200,
+        VictoryTarget::Science => 1_300,
         VictoryTarget::Score => 300,
     }
 }
@@ -76,6 +76,22 @@ fn main() {
 
             let actual = game.victory_type.as_deref().unwrap_or("none");
             let winner = game.winner.unwrap_or(usize::MAX);
+            let research_eras: Vec<usize> =
+                game.players
+                    .iter()
+                    .filter(|player| !player.is_minor && !player.is_barbarian)
+                    .map(|player| {
+                        player
+                            .techs
+                            .iter()
+                            .filter_map(|node| game.rules.techs.get(node).map(|spec| spec.era))
+                            .chain(player.civics.iter().filter_map(|node| {
+                                game.rules.civics.get(node).map(|spec| spec.era)
+                            }))
+                            .max()
+                            .unwrap_or(0)
+                    })
+                    .collect();
             let passed = actual == target.as_str();
             failures += usize::from(!passed);
             if passed {
@@ -150,7 +166,7 @@ fn main() {
                 VictoryTarget::Score => format!("score={}", game.score(winner)),
             });
             println!(
-                "{:<11} seed={} target={:<10} actual={:<10} winner={} turn={} {} [{:.2}s]",
+                "{:<11} seed={} target={:<10} actual={:<10} winner={} turn={} world_era={} research_eras={:?} {} [{:.2}s]",
                 if passed { "PASS" } else { "FAIL" },
                 seed,
                 target.as_str(),
@@ -161,6 +177,8 @@ fn main() {
                     winner.to_string()
                 },
                 game.turn,
+                game.world_era,
+                research_eras,
                 progress.unwrap_or_default(),
                 game_started.elapsed().as_secs_f64(),
             );

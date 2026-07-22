@@ -105,6 +105,15 @@ class SourceSnapshotTests(unittest.TestCase):
         command.assert_not_called()
         promote.assert_not_called()
 
+    def test_single_update_attempt_returns_control_after_a_failed_build(self):
+        with (
+            patch.object(supervisor, "sync_current_branch") as sync,
+            patch.object(supervisor, "build_latest", return_value=False) as build,
+        ):
+            self.assertFalse(supervisor.prepare_latest_once())
+        sync.assert_called_once_with()
+        build.assert_called_once_with(max_attempts=1)
+
 
 class RecoveryTests(unittest.TestCase):
     def test_progress_marker_tracks_player_steps_within_a_turn(self):
@@ -112,6 +121,14 @@ class RecoveryTests(unittest.TestCase):
         stepped = {**first, "current": 2}
         self.assertNotEqual(
             supervisor.progress_marker(first), supervisor.progress_marker(stepped)
+        )
+
+    def test_stall_recovery_respects_an_intentional_browser_pause(self):
+        self.assertTrue(supervisor.should_nudge({}, stalled_for=31, timeout=30))
+        self.assertFalse(
+            supervisor.should_nudge(
+                {"spectator_paused": True}, stalled_for=300, timeout=30
+            )
         )
 
     def test_server_command_can_resume_an_atomic_checkpoint(self):
@@ -156,6 +173,56 @@ class RecoveryTests(unittest.TestCase):
 
             path.write_text(json.dumps({**active, "winner": 1}), encoding="utf-8")
             self.assertIsNone(supervisor.checkpoint_marker(path))
+
+    def test_cold_supervisor_start_resumes_an_active_checkpoint(self):
+        args = SimpleNamespace(
+            port=8766,
+            players=4,
+            width=60,
+            height=38,
+            city_states=6,
+            turns=500,
+            cooldown=10.0,
+            poll=0.5,
+            build_retry=15.0,
+            unresponsive_timeout=20.0,
+            stall_timeout=30.0,
+            checkpoint_interval=5.0,
+            max_resume_attempts=2,
+            no_open=True,
+            adopt_pid=None,
+        )
+        state = {"seed": 9, "turn": 22, "current": 3, "winner": None}
+        process = SimpleNamespace(pid=321)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "civvis"
+            runtime.touch()
+            checkpoint = root / "save.json"
+            checkpoint.write_text(json.dumps(state), encoding="utf-8")
+            with (
+                patch.object(supervisor, "parse_args", return_value=args),
+                patch.object(supervisor, "RUNTIME_BINARY", runtime),
+                patch.object(supervisor, "checkpoint_path", return_value=checkpoint),
+                patch.object(supervisor, "start_server", return_value=process) as start,
+                patch.object(supervisor, "wait_for_server", return_value=state),
+                patch.object(supervisor, "read_state", side_effect=KeyboardInterrupt),
+                patch.object(supervisor, "stop_server") as stop,
+            ):
+                self.assertEqual(supervisor.main(), 0)
+        start.assert_called_once_with(
+            8766,
+            {
+                "players": 4,
+                "width": 60,
+                "height": 38,
+                "city_states": 6,
+                "turns": 500,
+            },
+            False,
+            checkpoint,
+        )
+        self.assertGreaterEqual(stop.call_count, 2)
 
 
 if __name__ == "__main__":

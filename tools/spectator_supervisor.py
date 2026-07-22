@@ -175,11 +175,16 @@ def build_latest(max_attempts: int = 3) -> bool:
     return False
 
 
+def prepare_latest_once() -> bool:
+    """Try one stable-source build without abandoning live monitoring forever."""
+    sync_current_branch()
+    return build_latest(max_attempts=1)
+
+
 def prepare_latest(retry_seconds: float) -> None:
-    """Block until the newest local/upstream source has a verified build."""
+    """Block until a verified build exists when no runtime can serve instead."""
     while True:
-        sync_current_branch()
-        if build_latest():
+        if prepare_latest_once():
             return
         log(f"retrying the latest build in {retry_seconds:g}s")
         time.sleep(retry_seconds)
@@ -216,6 +221,11 @@ def progress_marker(state: dict[str, Any]) -> tuple[Any, ...]:
         state.get("current"),
         state.get("winner"),
     )
+
+
+def should_nudge(state: dict[str, Any], stalled_for: float, timeout: float) -> bool:
+    """Distinguish a dead spectator loop from an intentional GUI pause."""
+    return not state.get("spectator_paused", False) and stalled_for >= max(0.1, timeout)
 
 
 def checkpoint_path(port: int) -> Path:
@@ -442,8 +452,11 @@ def main() -> int:
     checkpoint_at = 0.0
     checkpointed_progress: tuple[Any, ...] | None = None
     resume_attempts: dict[tuple[Any, ...], int] = {}
+    finished_key: tuple[Any, ...] | None = None
+    finished_seen_at = 0.0
+    update_retry_at = 0.0
 
-    def launch_recovery() -> dict[str, Any]:
+    def launch_recovery(open_browser: bool = False) -> dict[str, Any]:
         nonlocal process, adopted_pid
         stop_server(process, adopted_pid)
         process = None
@@ -462,7 +475,7 @@ def main() -> int:
 
         if not RUNTIME_BINARY.exists():
             prepare_latest(args.build_retry)
-        process = start_server(args.port, settings, False, resume)
+        process = start_server(args.port, settings, open_browser, resume)
         try:
             recovered = wait_for_server(args.port, process)
         except RuntimeError:
@@ -471,7 +484,7 @@ def main() -> int:
             log("checkpoint could not be loaded; quarantining it and starting a fresh game")
             stop_server(process, None)
             quarantine_checkpoint(save_path)
-            process = start_server(args.port, settings, False)
+            process = start_server(args.port, settings, open_browser)
             recovered = wait_for_server(args.port, process)
             marker = None
 
@@ -492,8 +505,7 @@ def main() -> int:
             # are compiled while a completed result screen remains reachable.
             if not RUNTIME_BINARY.exists():
                 prepare_latest(args.build_retry)
-            process = start_server(args.port, settings, not args.no_open)
-            state = wait_for_server(args.port, process)
+            state = launch_recovery(not args.no_open)
         else:
             if not process_alive(None, adopted_pid):
                 log(f"cannot adopt PID {adopted_pid}: it is not running")
@@ -522,12 +534,17 @@ def main() -> int:
             unavailable_since = None
             settings = session_settings(state, settings)
             if state.get("winner") is None:
+                finished_key = None
                 now = time.monotonic()
                 marker = progress_marker(state)
                 if marker != last_progress:
                     last_progress = marker
                     progress_at = now
-                elif now - progress_at >= max(0.1, args.stall_timeout):
+                elif state.get("spectator_paused", False):
+                    # A human pause is not a freeze. Keep its stall clock fresh
+                    # so unpausing does not immediately trigger a false nudge.
+                    progress_at = now
+                elif should_nudge(state, now - progress_at, args.stall_timeout):
                     log(
                         f"simulation stalled at turn {state.get('turn')} "
                         f"player {state.get('current')}; requesting a recovery step"
@@ -553,16 +570,30 @@ def main() -> int:
                 time.sleep(args.poll)
                 continue
 
-            finished_at = time.monotonic()
             finished_instance = state.get("server_instance")
             finished_seed = state.get("seed")
-            log(
-                f"game finished on turn {state.get('turn')} "
-                f"({state.get('victory_type') or 'unknown'} victory); checking for updates"
-            )
+            current_finished_key = (finished_instance, finished_seed)
+            now = time.monotonic()
+            if current_finished_key != finished_key:
+                finished_key = current_finished_key
+                finished_seen_at = now
+                update_retry_at = 0.0
+                log(
+                    f"game finished on turn {state.get('turn')} "
+                    f"({state.get('victory_type') or 'unknown'} victory); checking for updates"
+                )
+
+            if now < update_retry_at:
+                time.sleep(min(args.poll, update_retry_at - now))
+                continue
+
             # Keep the completed game's result server available while builds
-            # retry, and only create a brief handoff gap once fresh code is ready.
-            prepare_latest(args.build_retry)
+            # retry. A broken worktree gets one attempt per retry interval so
+            # this loop can still checkpoint/recover a browser-started game.
+            if not prepare_latest_once():
+                update_retry_at = time.monotonic() + args.build_retry
+                time.sleep(args.poll)
+                continue
 
             # The page also has a result countdown. If it already created a
             # successor while compilation ran, never interrupt that live game.
@@ -576,9 +607,10 @@ def main() -> int:
                 state = latest_state
                 last_progress = progress_marker(state)
                 progress_at = time.monotonic()
+                finished_key = None
                 continue
 
-            remaining = args.cooldown - (time.monotonic() - finished_at)
+            remaining = args.cooldown - (time.monotonic() - finished_seen_at)
             if remaining > 0:
                 time.sleep(remaining)
             stop_server(process, adopted_pid)

@@ -96,9 +96,15 @@ for force in ai.force_groups() {
 }
 ```
 
-The planner is domain-generic: fleets intercept hostile naval units and choose
-reachable coastal approaches to land objectives. New domains can use the same
-group/order pipeline instead of adding another independent-unit AI.
+The planner is domain-generic: fleets intercept ships and embarked enemies,
+screen embarked settlers, and choose adjacent coastal approaches so ranged
+ships can reduce defenses before naval melee captures. Coastal empires treat
+Sailing, Shipbuilding, Celestial Navigation, and Cartography as a capability
+chain, keep a role-balanced exploration/escort fleet, and pursue current naval
+upgrades during maritime wars. Settlers retain globally scored, route-checked
+colony targets across multiple turns and linked ships lead them over water.
+New domains can use the same group/order pipeline instead of adding another
+independent-unit AI.
 
 ## Genetic strategy evolution
 

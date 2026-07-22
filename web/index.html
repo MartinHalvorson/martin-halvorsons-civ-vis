@@ -755,6 +755,7 @@ async function boot() {
       document.getElementById("specchk").checked = SPEC;
       if (SPEC) document.getElementById("specspeed").value = "100";
       scheduleSpec(state);
+      reportSpecStatus();
     }
   } catch (e) {
     clearTimeout(bootTimer);
@@ -775,6 +776,13 @@ async function send(action) {
 // --- spectate is SERVER-DRIVEN: a thread in the server steps the game at the
 // chosen pace and auto-restarts 10s after a victory, with or without viewers.
 // The page is a live viewer: poll /state, render, and control via /pace.
+function reportSpecStatus() {
+  if (!SPEC) return;
+  fetchJSON("/spectator-status", {method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({paused: specPaused})}, 3000).catch(() => {});
+}
+setInterval(reportSpecStatus, 4000);
 function directorCue(prev, next) {
   if (!DIRECTOR || !prev || prev.seed !== next.seed) return null;
   let best = null;
@@ -2674,11 +2682,13 @@ document.getElementById("specpause").onclick = () => {
   specPaused = !specPaused;
   document.getElementById("specpause").textContent =
     specPaused ? "▶ Resume" : "⏸ Pause";
+  reportSpecStatus();
   setPace({paused: specPaused});
 };
 document.getElementById("specstep").onclick = () => {
   if (!SPEC) return;
   specPaused = true;
+  reportSpecStatus();
   document.getElementById("specpause").textContent = "▶ Resume";
   setPace({paused: true}).then(specStep);
 };
@@ -2696,6 +2706,8 @@ document.getElementById("newgame").onclick = async () => {
                           spectate: document.getElementById("specchk").checked}) }));
   if (SPEC) centerMainLandmass(); else centerHome();
   setPace({paused: false});
+  reportSpecStatus();
+  scheduleSpec(state);
 };
 {
   const vs = document.getElementById("viewsel");

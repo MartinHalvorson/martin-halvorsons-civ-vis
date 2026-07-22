@@ -498,6 +498,41 @@ impl BasicAi {
         {
             return Some("cartography");
         }
+        let naval_war = g.players.iter().any(|enemy| {
+            enemy.id != pid
+                && enemy.alive
+                && g.is_at_war(pid, enemy.id)
+                && (g.units.values().any(|unit| {
+                    unit.owner == enemy.id
+                        && g.map
+                            .get(unit.pos)
+                            .is_some_and(|tile| g.rules.is_water(tile))
+                }) || g
+                    .player_city_ids(enemy.id)
+                    .into_iter()
+                    .any(|cid| Self::city_is_coastal(g, cid)))
+        });
+        if naval_war && player.techs.contains("cartography") {
+            if !player.techs.contains("square_rigging") {
+                return Some("square_rigging");
+            }
+            // After the first dedicated naval-ranged unlock, pursue later
+            // fleet upgrades only when their era's prerequisite is already in
+            // hand. This keeps naval readiness current without dragging an
+            // ancient empire through an entire industrial branch at once.
+            for (goal, prerequisite) in [
+                ("steam_power", "industrialization"),
+                ("refining", "rifling"),
+                ("electricity", "steam_power"),
+                ("combined_arms", "combustion"),
+                ("lasers", "nuclear_fission"),
+                ("telecommunications", "computers"),
+            ] {
+                if player.techs.contains(prerequisite) && !player.techs.contains(goal) {
+                    return Some(goal);
+                }
+            }
+        }
         None
     }
 
@@ -869,15 +904,21 @@ impl BasicAi {
                 let water_pick = Self::water_research_goal(g, pid).and_then(|goal| {
                     avail
                         .iter()
-                        .filter(|tech| Self::tech_leads_to(g, tech, goal))
-                        .min_by(|a, b| {
-                            g.rules.techs[*a]
-                                .cost
-                                .partial_cmp(&g.rules.techs[*b].cost)
-                                .unwrap()
-                                .then(a.cmp(b))
-                        })
+                        .find(|tech| tech.as_str() == goal)
                         .cloned()
+                        .or_else(|| {
+                            avail
+                                .iter()
+                                .filter(|tech| Self::tech_leads_to(g, tech, goal))
+                                .min_by(|a, b| {
+                                    g.rules.techs[*a]
+                                        .cost
+                                        .partial_cmp(&g.rules.techs[*b].cost)
+                                        .unwrap()
+                                        .then(a.cmp(b))
+                                })
+                                .cloned()
+                        })
                 });
                 let pick = water_pick
                     .or_else(|| {
@@ -971,7 +1012,7 @@ impl BasicAi {
                 }
             }
         }
-        while g.players[pid].governors.len() < g.governor_titles(pid) {
+        while g.governor_titles_available(pid) > 0 {
             // anchor the shakiest city
             let target = g
                 .player_city_ids(pid)
@@ -984,13 +1025,50 @@ impl BasicAi {
                         .unwrap()
                         .then(a.cmp(b))
                 });
-            match target {
-                Some(c) => {
-                    if g.apply(pid, &Action::AssignGovernor { city: c }).is_err() {
+            if let Some(c) = target {
+                let governor = [
+                    "pingala", "magnus", "liang", "reyna", "victor", "moksha", "amani",
+                ]
+                .into_iter()
+                .find(|governor| !g.players[pid].governor_roster.contains_key(*governor));
+                if let Some(governor) = governor {
+                    if g.apply(
+                        pid,
+                        &Action::AppointGovernor {
+                            governor: governor.to_string(),
+                            city: c,
+                        },
+                    )
+                    .is_err()
+                    {
                         break;
                     }
+                    continue;
                 }
-                None => break,
+            }
+            let promotion = [
+                "pingala", "magnus", "liang", "reyna", "victor", "moksha", "amani",
+            ]
+            .into_iter()
+            .find_map(|governor| {
+                g.available_governor_promotions(pid, governor)
+                    .into_iter()
+                    .next()
+                    .map(|promotion| (governor.to_string(), promotion))
+            });
+            let Some((governor, promotion)) = promotion else {
+                break;
+            };
+            if g.apply(
+                pid,
+                &Action::PromoteGovernor {
+                    governor,
+                    promotion,
+                },
+            )
+            .is_err()
+            {
+                break;
             }
         }
         while g.players[pid].envoys_free > 0 {
@@ -2213,11 +2291,14 @@ impl BasicAi {
         // formation leader and must execute movement for both. Keep the
         // destination for that leader instead of treating the follower's
         // intentionally unavailable Move action as a failed route.
-        if g.units[&uid].linked_to.is_some_and(|peer| {
-            g.units.get(&peer).is_some_and(|escort| {
+        if let Some(escort) = g.units[&uid].linked_to.filter(|peer| {
+            g.units.get(peer).is_some_and(|escort| {
                 g.rules.units[escort.kind.as_str()].domain.as_deref() == Some("sea")
             })
         }) {
+            if g.wdist(upos, target) == 1 {
+                return g.apply(pid, &Action::UnlinkUnits { unit: escort }).is_ok();
+            }
             return false;
         }
         let moved = self.step_toward(g, pid, uid, target);
@@ -2557,6 +2638,19 @@ impl BasicAi {
     /// leads the formation toward the settler's persistent colony site; an
     /// unlinked ship first closes on the embarked settler so they can link on
     /// a later command phase.
+    pub(crate) fn naval_approach(g: &Game, uid: u32, target: Pos) -> Option<Pos> {
+        let current = g.units.get(&uid)?.pos;
+        let mut approaches: Vec<Pos> = g
+            .nbrs(target)
+            .into_iter()
+            .filter(|pos| g.unit_can_traverse(uid, *pos))
+            .collect();
+        approaches.sort_by_key(|pos| (g.wdist(current, *pos), *pos));
+        approaches
+            .into_iter()
+            .find(|pos| *pos == current || g.route_step(uid, *pos, 0).is_some())
+    }
+
     fn naval_escort_objective(&self, g: &Game, pid: usize, uid: u32) -> Option<Pos> {
         let unit = &g.units[&uid];
         if g.rules.units[unit.kind.as_str()].domain.as_deref() != Some("sea") {
@@ -2571,6 +2665,7 @@ impl BasicAi {
                 .settler_targets
                 .get(&settler)
                 .copied()
+                .and_then(|target| Self::naval_approach(g, uid, target))
                 .or_else(|| Some(g.units[&settler].pos));
         }
         g.units
@@ -2984,6 +3079,14 @@ mod tests {
         (g, source, target)
     }
 
+    fn grant_tech_with_prerequisites(g: &mut Game, pid: usize, tech: &str) {
+        let prerequisites = g.rules.techs[tech].requires.clone();
+        for prerequisite in prerequisites {
+            grant_tech_with_prerequisites(g, pid, &prerequisite);
+        }
+        g.players[pid].techs.insert(tech.to_string());
+    }
+
     #[test]
     fn coastal_empires_research_navigation_before_generic_land_unlocks() {
         let (mut g, _, _) = island_colony_game(1);
@@ -2991,6 +3094,43 @@ mod tests {
         let ai = BasicAi::new();
         ai.research(&mut g, 0);
         assert_eq!(g.players[0].research.as_deref(), Some("sailing"));
+    }
+
+    #[test]
+    fn naval_wars_prioritize_the_next_fleet_upgrade() {
+        let (mut g, source, _) = island_colony_game(2);
+        grant_tech_with_prerequisites(&mut g, 0, "cartography");
+        grant_tech_with_prerequisites(&mut g, 0, "celestial_navigation");
+        g.at_war.insert((0, 1));
+        let contact = g
+            .nbrs(source)
+            .into_iter()
+            .find(|pos| g.map.get(*pos).is_some_and(|tile| g.rules.is_water(tile)))
+            .unwrap();
+        g.spawn_test_unit("galley", 1, contact);
+        g.players[0].research = None;
+        assert_eq!(
+            BasicAi::water_research_goal(&g, 0),
+            Some("square_rigging"),
+            "available={:?}, war={}, enemy_alive={}",
+            g.available_techs(0),
+            g.is_at_war(0, 1),
+            g.players[1].alive
+        );
+        assert!(
+            g.available_techs(0)
+                .iter()
+                .any(|tech| tech == "square_rigging"),
+            "available={:?}",
+            g.available_techs(0)
+        );
+        let available = g.available_techs(0);
+        BasicAi::new().research(&mut g, 0);
+        assert_eq!(
+            g.players[0].research.as_deref(),
+            Some("square_rigging"),
+            "available before selection: {available:?}"
+        );
     }
 
     #[test]
@@ -3003,6 +3143,32 @@ mod tests {
             .pick_item(&g, 0, cid, 1, 0, 2, 1, 0, 4, 2, 2)
             .expect("coastal city has a production choice");
         assert!(matches!(item, Item::Unit { unit } if unit == "galley"));
+    }
+
+    #[test]
+    fn coastal_cities_add_ranged_firepower_after_the_melee_screen() {
+        let (mut g, source, _) = island_colony_game(2);
+        g.players[0]
+            .techs
+            .extend(["sailing".to_string(), "shipbuilding".to_string()]);
+        g.at_war.insert((0, 1));
+        let water = g
+            .nbrs(source)
+            .into_iter()
+            .find(|pos| g.map.get(*pos).is_some_and(|tile| g.rules.is_water(tile)))
+            .unwrap();
+        g.spawn_test_unit("galley", 0, water);
+        let enemy_water = g
+            .nbrs(water)
+            .into_iter()
+            .find(|pos| g.map.get(*pos).is_some_and(|tile| g.rules.is_water(tile)))
+            .unwrap();
+        g.spawn_test_unit("galley", 1, enemy_water);
+        let cid = g.player_city_ids(0)[0];
+        let item = BasicAi::new()
+            .pick_item(&g, 0, cid, 1, 0, 2, 1, 0, 5, 3, 2)
+            .expect("coastal city has a production choice");
+        assert!(matches!(item, Item::Unit { unit } if unit == "quadrireme"));
     }
 
     #[test]
@@ -3059,6 +3225,54 @@ mod tests {
             .map
             .get(g.units[&galley].pos)
             .is_some_and(|tile| g.rules.is_water(tile)));
+    }
+
+    #[test]
+    fn escorted_settler_unlinks_at_the_destination_coast_and_founds_the_colony() {
+        let (mut g, source, target) = island_colony_game(1);
+        g.players[0]
+            .techs
+            .extend(["sailing".to_string(), "shipbuilding".to_string()]);
+        let settler = g.spawn_test_unit("settler", 0, source);
+        let galley = g.spawn_test_unit("galley", 0, source);
+        let mut ai = BasicAi::new();
+        ai.prepare_unit_formations(&mut g, 0);
+
+        for _ in 0..12 {
+            for uid in [settler, galley] {
+                if let Some(unit) = g.units.get_mut(&uid) {
+                    unit.moves_left = 4.0;
+                    unit.attacks_left = 1;
+                    unit.acted = false;
+                    unit.moved = false;
+                    unit.fortified = false;
+                }
+            }
+            for _ in 0..8 {
+                if !g.units.contains_key(&settler)
+                    || g.units[&settler].moves_left <= 0.0
+                    || !ai.settler_step(&mut g, 0, settler)
+                {
+                    break;
+                }
+            }
+            for _ in 0..8 {
+                if !g.units.contains_key(&galley)
+                    || g.units[&galley].moves_left <= 0.0
+                    || !ai.military_step(&mut g, 0, galley)
+                {
+                    break;
+                }
+            }
+            if !g.units.contains_key(&settler) {
+                break;
+            }
+        }
+
+        assert!(!g.units.contains_key(&settler));
+        assert!(g
+            .city_at(target)
+            .is_some_and(|cid| g.cities[&cid].owner == 0));
     }
 
     #[test]

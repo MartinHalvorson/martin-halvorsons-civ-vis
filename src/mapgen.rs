@@ -503,6 +503,24 @@ fn spawn_layout_score(
     }
 }
 
+fn layout_balance_percentages(
+    score: SpawnLayoutScore,
+    civilization_count: usize,
+    landmass_tiles: usize,
+) -> (i32, i32, i32) {
+    let territory =
+        score.minimum_territory * civilization_count as i32 * 100 / landmass_tiles.max(1) as i32;
+    let neighbor = if civilization_count <= 1 {
+        100
+    } else {
+        let maximum = score.minimum_separation - score.negative_neighbor_range;
+        score.minimum_separation * 100 / maximum.max(1)
+    };
+    let maximum_quality = score.minimum_quality - score.negative_quality_range;
+    let quality = score.minimum_quality * 100 / maximum_quality.max(1);
+    (territory, neighbor, quality)
+}
+
 fn farthest_layout(
     wm: &WorldMap,
     candidates: &[Pos],
@@ -610,12 +628,8 @@ fn balanced_major_spawns(
     let mut layout = layouts
         .into_iter()
         .max_by_key(|(score, _)| {
-            let territory_balance =
-                score.minimum_territory * count as i32 * 100 / landmass.len().max(1) as i32;
-            let maximum_neighbor = score.minimum_separation - score.negative_neighbor_range;
-            let neighbor_balance = score.minimum_separation * 100 / maximum_neighbor.max(1);
-            let maximum_quality = score.minimum_quality - score.negative_quality_range;
-            let quality_balance = score.minimum_quality * 100 / maximum_quality.max(1);
+            let (territory_balance, neighbor_balance, quality_balance) =
+                layout_balance_percentages(*score, count, landmass.len());
             let worst_balance = territory_balance.min(neighbor_balance).min(quality_balance);
             (
                 worst_balance,
@@ -1015,17 +1029,63 @@ mod river_tests {
             let landmass = largest_component(&passable, wm.width);
             let majors = &spawns[..size.default_players];
             assert!(majors.iter().all(|start| landmass.contains(start)));
+            assert_eq!(
+                spawns.iter().copied().collect::<BTreeSet<_>>().len(),
+                spawns.len(),
+                "{} assigned two civilizations the same start",
+                size.name
+            );
+            for (spawn_index, start) in spawns.iter().enumerate() {
+                assert!(
+                    spawns[spawn_index + 1..]
+                        .iter()
+                        .all(|other| hex::wdistance(*start, *other, wm.width) >= 4),
+                    "{} produced starts too close to found distinct cities",
+                    size.name
+                );
+            }
             let qualities = majors
                 .iter()
                 .map(|start| (*start, start_quality(&rules, &wm, *start)))
                 .collect();
             let score = spawn_layout_score(&wm, &landmass, majors, &qualities);
-            eprintln!("{} ({} land): {score:?}", size.name, landmass.len());
+            let balance = layout_balance_percentages(score, size.default_players, landmass.len());
             assert!(score.minimum_separation >= 6, "{}: {score:?}", size.name);
             assert!(
-                score.negative_neighbor_range >= -10,
-                "{}: {score:?}",
-                size.name
+                balance.0 >= 50 && balance.1 >= 50 && balance.2 >= 50,
+                "{} has an unfair start outlier: territory/neighbor/quality balance = {balance:?}, {score:?}",
+                size.name,
+            );
+        }
+    }
+
+    #[test]
+    fn varied_seeds_keep_major_start_outliers_within_a_roughly_equal_band() {
+        let rules = Rules::embedded();
+        for seed in 0..8 {
+            let mut rng = Rng::new(30_000 + seed);
+            let (wm, spawns) = generate(&rules, 48, 30, 4, 6, 3, 2, &mut rng);
+            assert_eq!(spawns.len(), 10, "seed {seed}");
+            let passable: BTreeSet<Pos> = wm
+                .tiles
+                .iter()
+                .filter(|(_, tile)| !rules.is_water(tile) && rules.is_passable(tile))
+                .map(|(pos, _)| *pos)
+                .collect();
+            let landmass = largest_component(&passable, wm.width);
+            let majors = &spawns[..4];
+            let qualities = majors
+                .iter()
+                .map(|start| (*start, start_quality(&rules, &wm, *start)))
+                .collect();
+            let score = spawn_layout_score(&wm, &landmass, majors, &qualities);
+            let balance = layout_balance_percentages(score, majors.len(), landmass.len());
+            assert!(
+                score.minimum_separation >= 10
+                    && balance.0 >= 50
+                    && balance.1 >= 50
+                    && balance.2 >= 50,
+                "seed {seed} has an unfair start outlier: territory/neighbor/quality balance = {balance:?}, {score:?}",
             );
         }
     }
