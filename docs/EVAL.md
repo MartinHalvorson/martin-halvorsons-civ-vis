@@ -11,6 +11,7 @@ civvis soak --games 12 --players 4 --turns 350 --start-seed 100
 civvis tournament --ais advanced,basic,random --games 30 --players 4 --turns 250 --quiet
 victory_eval --games 2 --players 2       # all six targets, stock turn limits
 ai_eval advanced basic --pairs 100 --seed 4000   # paired, low-variance
+ai_eval advanced basic --pairs 100 --difficulty emperor   # against the ladder
 ```
 
 ## 2026-07-22 — commit fba4785 (session F baseline)
@@ -151,3 +152,28 @@ count and population. 66% is the honest number.
 (54%) over advanced. Above parity but inside the noise band at n=50, and
 each decision costs six full rollouts. Verdict: keep as the builtin
 `strategic` for further work; **not** promoted to the exhibition default.
+
+## 2026-07-22 — the difficulty ladder as an external yardstick (session U)
+
+Elo between our own bots is a closed system: it says one bot is 130 points
+better than another, and nothing about whether either is any good. Now that
+difficulty is a real setting (see [UNCIV_LESSONS.md](UNCIV_LESSONS.md)),
+`ai_eval --difficulty <level>` gives an outside reference — the challenger
+plays the *human* side of the handicap and its opponents play the AI side, so
+"beats Emperor" means what a Civ player expects it to mean. Seats still swap,
+which moves the challenger around the map rather than moving the handicap.
+
+Reference run, `ai_eval advanced basic --pairs 6 --turns 90`, challenger
+`advanced` against handicapped `basic`:
+
+| Level | Challenger seat-win% | Challenger score | Opponent score |
+|---|---|---|---|
+| prince (no handicap) | 58.3% | 90.8 | 75.2 |
+| deity | 16.7% | 80.9 | 154.7 |
+
+Read that as calibration, not as a result: six pairs at 90 turns is a smoke
+test, and Deity hands the opposition +80% Production and Gold, +32% Science,
+Culture and Faith, +3 Combat Strength, four free boosts per era and seven
+extra opening units. The point is that the axis exists and moves the right
+way; the number worth tracking over time is the highest level the current
+agent still beats at `--pairs 100`.

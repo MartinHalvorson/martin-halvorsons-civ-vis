@@ -1,8 +1,9 @@
 //! Paired, seat-balanced head-to-head evaluator for built-in AIs.
 use civvis::ai::{run_game, Ai};
 use civvis::elo::{builtin_ai, BUILTIN_AIS};
-use civvis::game::Game;
-use std::collections::BTreeMap;
+use civvis::game::{default_difficulty, Game, GameOptions};
+use civvis::rules::Rules;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Default)]
 struct Metrics {
@@ -118,6 +119,14 @@ impl Metrics {
     }
 }
 
+fn text(args: &[String], flag: &str, default: &str) -> String {
+    args.iter()
+        .position(|arg| arg == flag)
+        .and_then(|index| args.get(index + 1))
+        .cloned()
+        .unwrap_or_else(|| default.to_string())
+}
+
 fn number(args: &[String], flag: &str, default: i64) -> i64 {
     args.iter()
         .position(|a| a == flag)
@@ -144,6 +153,16 @@ fn main() {
     let width = number(&args, "--width", 24).max(8) as i32;
     let height = number(&args, "--height", 16).max(8) as i32;
     let seed = number(&args, "--seed", 4000).max(0) as u64;
+    // The difficulty ladder as an external yardstick: the challenger plays
+    // the human side of the handicap and its opponents play the AI side, so
+    // "beats Emperor" means what a Civ player would expect it to mean.
+    // Seats still swap, which moves the challenger around the map rather than
+    // moving the handicap.
+    let difficulty = text(&args, "--difficulty", &default_difficulty());
+    if !Rules::embedded().difficulties.contains_key(&difficulty) {
+        eprintln!("unknown difficulty {difficulty:?}");
+        std::process::exit(2);
+    }
     let mut totals: BTreeMap<String, Metrics> = [a, b]
         .into_iter()
         .map(|name| (name.to_string(), Metrics::default()))
@@ -156,7 +175,17 @@ fn main() {
             let seats: Vec<&str> = (0..players)
                 .map(|pid| if (pid + swap) % 2 == 0 { a } else { b })
                 .collect();
-            let mut g = Game::new(players, width, height, game_seed, turns, city_states);
+            let challenger_seats: BTreeSet<usize> = seats
+                .iter()
+                .enumerate()
+                .filter(|(_, name)| **name == a)
+                .map(|(pid, _)| pid)
+                .collect();
+            let mut g = Game::new_with(GameOptions {
+                difficulty: difficulty.clone(),
+                human_seats: challenger_seats,
+                ..GameOptions::new(players, width, height, game_seed, turns, city_states)
+            });
             let mut ais: Vec<Box<dyn Ai>> = g
                 .players
                 .iter()
