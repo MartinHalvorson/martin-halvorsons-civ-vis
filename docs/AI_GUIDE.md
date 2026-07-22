@@ -311,6 +311,21 @@ scale. On an Apple M5 Max, the current release Advanced-v2 workload measured
 Throughput varies materially with map size, era, player count, and agent; older
 tens-of-thousands figures describe a much smaller historical rules workload.
 
+## Machine-learning surfaces
+
+- `civvis::obs_tensor::obs_tensor(&game, pid)` renders a fog-honest spatial
+  observation: 25 named `f32` feature planes over the full wrapped map plus
+  a named global scalar vector (own empire exact, per-rival public facts).
+  Same visibility contract as the JSON protocol (`obs::visibility`), so a
+  net trained on it never sees hidden state.
+- `civvis evolve` appends value-net training rows to `evolved/dataset.csv`
+  during SPRT confirmation games; `python tools/train_valuenet.py` trains
+  the 25→64→32→1 net (CUDA via torch when present, NumPy fallback) and
+  writes `evolved/valuenet.json` for `NeuralAi` plus the Rust parity
+  fixture.
+- Ranked AI-strength roadmap and current status: `docs/AI_GAPS.md`.
+  Recorded eval baselines and the regression battery: `docs/EVAL.md`.
+
 ## Evaluation tips
 
 - Fix multiple seed sets; report paired win rate vs `basic` plus multiplayer Elo.
