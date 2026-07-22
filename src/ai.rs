@@ -1649,8 +1649,8 @@ impl BasicAi {
             pid,
             &Action::Trade {
                 player: deal.partner,
-                offer: deal.offer,
-                request: deal.request,
+                offer: Box::new(deal.offer),
+                request: Box::new(deal.request),
             },
         );
     }
@@ -4464,6 +4464,23 @@ mod tests {
             .unwrap()
             .districts
             .insert("spaceport".to_string(), spaceport);
+        let government_plaza = g.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| {
+                *position != g.cities[&city].pos
+                    && *position != spaceport
+                    && g.map.tiles[position].district.is_none()
+            })
+            .unwrap();
+        g.map.tiles.get_mut(&government_plaza).unwrap().district =
+            Some("government_plaza".to_string());
+        g.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert("government_plaza".to_string(), government_plaza);
         g.cities
             .get_mut(&city)
             .unwrap()
