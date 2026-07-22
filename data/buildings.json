@@ -9,7 +9,7 @@
     "cost": 65,
     "tech": "pottery",
     "yields": {
-      "food": 2
+      "food": 1
     },
     "housing": 2
   },
@@ -48,7 +48,8 @@
     "district": "encampment",
     "yields": {
       "production": 1
-    }
+    },
+    "housing": 1
   },
   "lighthouse": {
     "cost": 120,
@@ -81,7 +82,7 @@
     "yields": {
       "culture": 1
     },
-    "amenity": 1
+    "amenity": 2
   },
   "workshop": {
     "cost": 195,

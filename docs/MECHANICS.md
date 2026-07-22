@@ -10,9 +10,9 @@ Status: ✅ implemented · 🟡 simplified · ❌ not yet.
 |---|---|---|
 | Hex map, fog of war, terrain/features/resources | ✅ | all six stock Civ VI map-size profiles; tile-based rivers (🟡 vs edge rivers) |
 | Leaders & civ uniques | ✅ | all 8 civs: Trajan, Cleopatra, Pericles, Qin Shi Huang, Gilgamesh, Montezuma, Amanitore, Tomyris — signature ability each + 8 unique units (legion, hoplite, eagle warrior, war cart, pítati archer, maryannu chariot archer, saka horse archer, crouching tiger) replacing/blocking their base units |
-| Rivers & fresh water housing (5/3/2) | ✅ | wiki values; oasis counts as fresh |
-| City growth curve, border expansion | ✅ | |
-| Housing & amenities | ✅ | water/building/policy sources plus +0.5 from owned Farms, Pastures, Plantations, Camps, and Fishing Boats within 3 tiles; luxuries global (🟡 vs 4-city rationing) |
+| Rivers & fresh water housing (5/3/2) | ✅ | water values plus Palace, Aqueduct normalization, coastal Lighthouse bonus, and +0.5 from owned Farms, Pastures, Plantations, Camps, and Fishing Boats within 3 tiles |
+| City growth curve, border expansion | ✅ | exact Housing headroom bands: 100% at +2, 50% at +1, 25% through -4, and no growth at -5 |
+| Housing & amenities | ✅ | final Gathering Storm demand, satisfaction thresholds, yield/growth modifiers, Palace Amenity, connected unique luxuries allocated to the four neediest cities (six for Aztec), and local district/building/policy sources |
 | Districts + adjacency (incl. river) | ✅ | 8 district types; specialty-district capacity unlocks at population 1/4/7/... while Spaceports are exempt |
 | Wonders | 🟡 | 9 wonders, world-unique, effect engine (growth %, builder charges, unit levels); no tile placement |
 | Tech + civics trees, Eureka/Inspiration | ✅ | 28 early-game Civ VI techs + 5 future-era space-race techs / 14 civics; Ancient starts have no phantom Agriculture tech |
@@ -26,7 +26,7 @@ Status: ✅ implemented · 🟡 simplified · ❌ not yet.
 | Religion | 🟡 | pantheon at 25 faith (6 beliefs, exclusive); prophet + holy site founds (map-scaled max 2/3/4/5/6/7, classic names); follower/founder beliefs; missionaries (faith-buy, 3 spreads, +200 pressure); passive pressure ±9 tiles; majority at 50; no theological combat/apostles |
 | Trade routes & roads | ✅ | wiki capacity (Foreign Trade +1/hub-or-harbor city, +2 merchant republic); vanilla per-district yield table; traders lay roads (cost 1, bridge rivers 🟡); 30-turn duration; war/capture cancels |
 | Diplomacy (deals, alliances, grievances) | 🟡 | war/peace only |
-| Loyalty + governors (R&F) | 🟡 | population pressure ±9 tiles, capitals immune, defection to strongest neighbor at 0; governor titles from civic milestones (3), +8 loyalty +1 amenity; no promotions/named governors |
+| Loyalty + governors (R&F) | 🟡 | population pressure ±9 tiles, capitals immune, defection to strongest neighbor at 0; governor titles from civic milestones (3), +8 loyalty; no promotions/named governors |
 | Natural wonders + goody huts | 🟡 | map-scaled 2–7 unique single-tile wonders, feature-based, impassable/crossable, tile yields, discovery era score (+3 first finder); huts ~1/40 land tiles with gold/faith/eureka/inspiration rewards |
 | Zone of control | ✅ | innate from turn 1 for the modeled roster; explicit per-unit capability, native domains, river blocking, defensible districts, religious ZOC, cavalry immunity, and class-specific stop behavior |
 | Movement: MP paid up front, min-1-tile, river +2 MP | ✅ | river surcharge on entering channel tile (tile-model 🟡) |

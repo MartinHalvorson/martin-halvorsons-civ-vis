@@ -505,12 +505,12 @@ mod tests {
         assert_eq!(wonder.focus, "wonder");
         assert!(wonder.weights.production > before.weights.production);
 
-        // Fixed food from infrastructure frees both citizens for strategic
-        // jobs; the governor does not redundantly force the grassland tile.
+        // A Civ VI Granary supplies exactly +1 Food. That frees one citizen
+        // for a strategic job, while the other still covers food consumption.
         g.rules.buildings.get_mut("granary").unwrap().housing = 0.0;
         g.cities.get_mut(&cid).unwrap().buildings.push("granary".to_string());
         let fed_by_infrastructure = g.city_citizen_plan(cid);
-        assert!(!fed_by_infrastructure.worked_tiles.contains(&ring[0]));
+        assert!(fed_by_infrastructure.worked_tiles.contains(&ring[0]));
         assert!(fed_by_infrastructure.worked_tiles.contains(&ring[1]));
 
         let observed = crate::obs::observation(&g, 0);

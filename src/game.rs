@@ -1661,7 +1661,19 @@ impl Game {
         let coastal = self.nbrs(city.pos).iter().any(|n| {
             self.map.get(*n).map(|t| self.rules.is_water(t)).unwrap_or(false)
         });
-        let mut h = if fresh { 5.0 } else if coastal { 3.0 } else { 2.0 };
+        let has_aqueduct = city.buildings.iter().any(|b| b == "aqueduct");
+        let mut h = if has_aqueduct {
+            if fresh { 7.0 } else { 6.0 }
+        } else if fresh {
+            5.0
+        } else if coastal {
+            3.0
+        } else {
+            2.0
+        };
+        if city.is_capital && city.owner == city.original_owner {
+            h += 1.0; // Palace
+        }
         for pos in city.owned_tiles.iter().filter(|p| self.wdist(city.pos, **p) <= 3) {
             if let Some(improvement) = self.map.tiles[pos].improvement.as_deref() {
                 h += self.rules.improvements.get(improvement)
@@ -1669,7 +1681,12 @@ impl Game {
             }
         }
         for b in &city.buildings {
-            h += self.rules.buildings[b.as_str()].housing;
+            if b != "aqueduct" {
+                h += self.rules.buildings[b.as_str()].housing;
+            }
+            if b == "lighthouse" && coastal {
+                h += 2.0;
+            }
         }
         if self.has_policy(city.owner, "insulae") && city.districts.len() >= 2 {
             h += 1.0;
@@ -1690,21 +1707,42 @@ impl Game {
     }
 
     pub fn empire_luxuries(&self, pid: usize) -> usize {
-        let mut lux: BTreeSet<&str> = BTreeSet::new();
+        self.empire_luxury_names(pid).len()
+    }
+
+    /// Distinct luxury resources that actually supply the empire. A resource
+    /// must be improved (or lie under a City Center); merely owning an
+    /// unimproved copy does not unlock its Amenities or Aztec combat bonus.
+    fn empire_luxury_names(&self, pid: usize) -> BTreeSet<&str> {
+        let mut lux = BTreeSet::new();
         for c in self.cities.values().filter(|c| c.owner == pid) {
             for pos in &c.owned_tiles {
-                if let Some(r) = &self.map.tiles[pos].resource {
-                    if self.rules.resources[r.as_str()].class == "luxury" {
+                let tile = &self.map.tiles[pos];
+                if let Some(r) = tile.resource.as_deref() {
+                    let spec = &self.rules.resources[r];
+                    let connected = *pos == c.pos
+                        || tile.improvement.as_deref() == Some(spec.improvement.as_str());
+                    if spec.class == "luxury" && connected {
                         lux.insert(r);
                     }
                 }
             }
         }
-        lux.len()
+        lux
     }
 
-    pub fn city_amenity_surplus(&self, city: &City) -> i64 {
-        let mut supply = self.empire_luxuries(city.owner) as f64;
+    /// Gathering Storm removed the free population Amenity: cities require
+    /// ceil(population / 2), while the Palace supplies the capital with one.
+    fn city_amenities_required(city: &City) -> i64 {
+        (city.pop.max(1) as i64 + 1) / 2
+    }
+
+    fn city_local_amenities(&self, city: &City) -> i64 {
+        let mut supply = if city.is_capital && city.owner == city.original_owner {
+            1.0 // Palace
+        } else {
+            0.0
+        };
         for dname in city.districts.keys() {
             supply += self.rules.districts[dname.as_str()].amenity;
         }
@@ -1712,9 +1750,6 @@ impl Game {
             supply += self.rules.buildings[b.as_str()].amenity;
         }
         supply += self.gov_effects(city.owner).amenity;
-        if self.players[city.owner].governors.contains(&city.id) {
-            supply += 1.0; // an established governor steadies the city
-        }
         if self.has_policy(city.owner, "retainers") {
             let garrison = self.units_at(city.pos).into_iter().any(|id| {
                 let o = &self.units[&id];
@@ -1725,19 +1760,84 @@ impl Game {
                 supply += 1.0;
             }
         }
-        supply as i64 - 0.max((city.pop - 1) / 2) as i64
+        supply.round() as i64
+    }
+
+    /// Each distinct luxury gives +1 Amenity to the four cities that need it
+    /// most. Gifts for the Tlatoani raises that reach to six for the Aztecs.
+    fn luxury_amenity_allocations(&self, pid: usize) -> BTreeMap<u32, i64> {
+        let cities: Vec<&City> = self.cities.values()
+            .filter(|city| city.owner == pid).collect();
+        let mut allocations: BTreeMap<u32, i64> = cities.iter()
+            .map(|city| (city.id, 0)).collect();
+        let mut surplus: BTreeMap<u32, i64> = cities.iter().map(|city| {
+            (city.id, self.city_local_amenities(city) - Self::city_amenities_required(city))
+        }).collect();
+        let reach = if self.has_ability(pid, "gifts_for_the_tlatoani") { 6 } else { 4 };
+        for _ in self.empire_luxury_names(pid) {
+            let mut neediest: Vec<u32> = cities.iter().map(|city| city.id).collect();
+            neediest.sort_by_key(|cid| (surplus[cid], *cid));
+            for cid in neediest.into_iter().take(reach) {
+                *allocations.get_mut(&cid).unwrap() += 1;
+                *surplus.get_mut(&cid).unwrap() += 1;
+            }
+        }
+        allocations
+    }
+
+    pub fn city_amenity_surplus(&self, city: &City) -> i64 {
+        let luxury = self.luxury_amenity_allocations(city.owner)
+            .get(&city.id).copied().unwrap_or(0);
+        self.city_local_amenities(city) + luxury - Self::city_amenities_required(city)
     }
 
     fn amenity_yield_mult(&self, city: &City) -> f64 {
-        let s = self.city_amenity_surplus(city);
-        if s >= 2 {
-            1.05
-        } else if s >= 0 {
+        Self::amenity_yield_mult_for(self.city_amenity_surplus(city))
+    }
+
+    fn amenity_yield_mult_for(surplus: i64) -> f64 {
+        if surplus >= 5 {
+            1.20
+        } else if surplus >= 3 {
+            1.10
+        } else if surplus >= 0 {
             1.0
-        } else if s >= -2 {
-            0.93
+        } else if surplus >= -2 {
+            0.90
+        } else if surplus >= -4 {
+            0.80
+        } else if surplus >= -6 {
+            0.70
         } else {
+            0.60
+        }
+    }
+
+    fn amenity_growth_mult(surplus: i64) -> f64 {
+        if surplus >= 5 {
+            1.20
+        } else if surplus >= 3 {
+            1.10
+        } else if surplus >= 0 {
+            1.0
+        } else if surplus >= -2 {
             0.85
+        } else if surplus >= -4 {
+            0.70
+        } else {
+            0.0
+        }
+    }
+
+    fn housing_growth_mult(headroom: f64) -> f64 {
+        if headroom >= 2.0 {
+            1.0
+        } else if headroom >= 1.0 {
+            0.5
+        } else if headroom > -5.0 {
+            0.25
+        } else {
+            0.0
         }
     }
 
@@ -4991,11 +5091,8 @@ impl Game {
             let mut surplus = ys.food - 2.0 * city.pop as f64;
             if surplus > 0.0 {
                 let headroom = housing - city.pop as f64;
-                let hf = if headroom > 1.0 { 1.0 }
-                    else if headroom >= 1.0 { 0.5 }
-                    else if headroom > -2.0 { 0.25 } else { 0.0 };
-                let af = if am >= 2 { 1.1 } else if am >= 0 { 1.0 }
-                    else if am >= -2 { 0.75 } else { 0.5 };
+                let hf = Self::housing_growth_mult(headroom);
+                let af = Self::amenity_growth_mult(am);
                 surplus *= hf * af * (1.0 + growth_bonus / 100.0);
             }
             city.food += surplus;
@@ -6160,5 +6257,118 @@ mod victory_conditions {
 
         g.cities.get_mut(&cid).unwrap().pop = 7;
         assert!(!g.district_sites(cid, "theater_square").is_empty());
+    }
+
+    #[test]
+    fn gathering_storm_amenities_require_connected_luxuries_and_ration_them() {
+        let mut g = game_with_capitals(2, 408, 300);
+        let capital = g.player_city_ids(0)[0];
+        let occupied: BTreeSet<Pos> = g.cities.values().map(|city| city.pos).collect();
+        let sites: Vec<Pos> = g.map.tiles.keys().copied()
+            .filter(|pos| !occupied.contains(pos)).take(5).collect();
+        for (n, pos) in sites.into_iter().enumerate() {
+            g.found_city_for(0, pos, Some(format!("Amenity {n}")));
+        }
+        for cid in g.player_city_ids(0) {
+            let city = g.cities.get_mut(&cid).unwrap();
+            city.pop = 1;
+            city.buildings.clear();
+            city.districts.clear();
+        }
+        g.players[0].government = None;
+        g.players[0].policies.clear();
+        g.players[0].governors.clear();
+
+        let luxury_pos = g.cities[&capital].owned_tiles.iter().copied()
+            .find(|pos| *pos != g.cities[&capital].pos).unwrap();
+        let tile = g.map.tiles.get_mut(&luxury_pos).unwrap();
+        tile.resource = Some("silk".to_string());
+        tile.improvement = None;
+        assert_eq!(g.empire_luxuries(0), 0,
+                   "an unimproved luxury supplies no Amenities");
+
+        g.map.tiles.get_mut(&luxury_pos).unwrap().improvement = Some("plantation".to_string());
+        assert_eq!(g.empire_luxuries(0), 1);
+        let mut surpluses: Vec<i64> = g.player_city_ids(0).into_iter()
+            .map(|cid| g.city_amenity_surplus(&g.cities[&cid])).collect();
+        surpluses.sort();
+        assert_eq!(surpluses, vec![-1, 0, 0, 0, 0, 0],
+                   "one luxury serves the four neediest cities; the Palace serves the capital");
+
+        let duplicate_pos = g.cities[&capital].owned_tiles.iter().copied()
+            .find(|pos| *pos != g.cities[&capital].pos && *pos != luxury_pos).unwrap();
+        let tile = g.map.tiles.get_mut(&duplicate_pos).unwrap();
+        tile.resource = Some("silk".to_string());
+        tile.improvement = Some("plantation".to_string());
+        assert_eq!(g.empire_luxuries(0), 1,
+                   "duplicate copies of a luxury do not supply more cities");
+
+        g.players[0].civ = "Aztec".to_string();
+        let mut aztec_surpluses: Vec<i64> = g.player_city_ids(0).into_iter()
+            .map(|cid| g.city_amenity_surplus(&g.cities[&cid])).collect();
+        aztec_surpluses.sort();
+        assert_eq!(aztec_surpluses, vec![0, 0, 0, 0, 0, 1],
+                   "Gifts for the Tlatoani extends each luxury from four to six cities");
+    }
+
+    #[test]
+    fn gathering_storm_happiness_bands_apply_exact_growth_and_yield_modifiers() {
+        let cases = [
+            (5, 1.20, 1.20),
+            (3, 1.10, 1.10),
+            (0, 1.00, 1.00),
+            (-2, 0.90, 0.85),
+            (-4, 0.80, 0.70),
+            (-6, 0.70, 0.00),
+            (-7, 0.60, 0.00),
+        ];
+        for (surplus, yields, growth) in cases {
+            assert_eq!(Game::amenity_yield_mult_for(surplus), yields);
+            assert_eq!(Game::amenity_growth_mult(surplus), growth);
+        }
+    }
+
+    #[test]
+    fn housing_uses_palace_aqueduct_lighthouse_and_exact_growth_bands() {
+        let mut g = game_with_capitals(2, 409, 300);
+        let cid = g.player_city_ids(0)[0];
+        let center = g.cities[&cid].pos;
+        for pos in std::iter::once(center).chain(g.nbrs(center)) {
+            let tile = g.map.tiles.get_mut(&pos).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.river = false;
+        }
+        assert_eq!(g.city_housing(&g.cities[&cid]), 3.0,
+                   "a dry capital has 2 water Housing plus 1 from its Palace");
+
+        let coast = g.nbrs(center)[0];
+        g.map.tiles.get_mut(&coast).unwrap().terrain = "coast".to_string();
+        assert_eq!(g.city_housing(&g.cities[&cid]), 4.0,
+                   "a coastal capital starts with 3 + Palace");
+        g.cities.get_mut(&cid).unwrap().buildings.push("lighthouse".to_string());
+        assert_eq!(g.city_housing(&g.cities[&cid]), 7.0,
+                   "a coastal Lighthouse supplies 1 Housing plus the 2-Housing coastal bonus");
+
+        g.cities.get_mut(&cid).unwrap().buildings.retain(|b| b != "lighthouse");
+        g.map.tiles.get_mut(&coast).unwrap().terrain = "plains".to_string();
+        g.cities.get_mut(&cid).unwrap().buildings.push("aqueduct".to_string());
+        assert_eq!(g.city_housing(&g.cities[&cid]), 7.0,
+                   "an Aqueduct raises dry water Housing to 6, plus the Palace");
+        g.map.tiles.get_mut(&center).unwrap().river = true;
+        assert_eq!(g.city_housing(&g.cities[&cid]), 8.0,
+                   "a fresh-water Aqueduct adds 2 to 5, plus the Palace");
+
+        let cases = [
+            (2.0, 1.0),
+            (1.5, 0.5),
+            (1.0, 0.5),
+            (0.0, 0.25),
+            (-4.5, 0.25),
+            (-5.0, 0.0),
+        ];
+        for (headroom, growth) in cases {
+            assert_eq!(Game::housing_growth_mult(headroom), growth);
+        }
     }
 }
