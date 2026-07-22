@@ -519,3 +519,88 @@ fn kilwa_scales_total_type_yields_and_matching_production_categories() {
         no_production_kilwa.item_prod_mult(0, second, Some(&unit)) + 0.15,
     );
 }
+
+#[test]
+fn sent_envoys_expand_borders_and_suzerain_envoys_strengthen_the_city_state() {
+    let (mut game, major_cities) = game_with_capitals(2, 89_011);
+    let minor = add_city_state(&mut game, "Geneva");
+    let minor_position = game
+        .map
+        .tiles
+        .iter()
+        .filter(|(_, tile)| {
+            tile.owner_city.is_none() && game.rules.is_passable(tile) && !game.rules.is_water(tile)
+        })
+        .map(|(position, _)| *position)
+        .max_by_key(|position| {
+            major_cities
+                .iter()
+                .map(|city| game.wdist(game.cities[city].pos, *position))
+                .sum::<i32>()
+        })
+        .unwrap();
+    let minor_city = game.found_city_for(minor, minor_position, None);
+    let initial_tiles = game.cities[&minor_city].owned_tiles.len();
+
+    game.players[0].envoys_free = 2;
+    game.do_send_envoy(0, minor).unwrap();
+    assert_eq!(
+        game.cities[&minor_city].owned_tiles.len(),
+        initial_tiles + 1
+    );
+    game.do_send_envoy(0, minor).unwrap();
+    assert_eq!(
+        game.cities[&minor_city].owned_tiles.len(),
+        initial_tiles + 2
+    );
+
+    game.players[1].envoys_free = 3;
+    game.do_send_envoy(1, minor).unwrap();
+    game.do_send_envoy(1, minor).unwrap();
+    assert_eq!(
+        game.cities[&minor_city].owned_tiles.len(),
+        initial_tiles + 4,
+        "the first placement and a placement that creates a tie both expand borders"
+    );
+    game.do_send_envoy(1, minor).unwrap();
+    assert_eq!(
+        game.cities[&minor_city].owned_tiles.len(),
+        initial_tiles + 5
+    );
+    assert_eq!(game.suzerain_of(minor), Some(1));
+
+    install_district(&mut game, minor_city, "encampment");
+    {
+        let city = game.cities.get_mut(&minor_city).unwrap();
+        city.encampment_hp = 100;
+        city.encampment_wall_hp = 100;
+    }
+    let warrior = game.spawn_unit("warrior", minor, minor_position);
+    let mut without_envoys = game.clone();
+    without_envoys.players[1].envoys.clear();
+    assert_close(
+        game.unit_strength(&game.units[&warrior], true)
+            - without_envoys.unit_strength(&without_envoys.units[&warrior], true),
+        3.0,
+    );
+    assert_close(
+        game.city_strength(minor_city) - without_envoys.city_strength(minor_city),
+        3.0,
+    );
+    assert_close(
+        game.encampment_strength(minor_city) - without_envoys.encampment_strength(minor_city),
+        3.0,
+    );
+
+    game.players[1].gold = 1_000.0;
+    game.do_levy_military(1, minor).unwrap();
+    assert_eq!(game.units[&warrior].owner, 1);
+    assert_eq!(game.units[&warrior].levied_from, Some(minor));
+    let mut levied_without_envoys = game.clone();
+    levied_without_envoys.players[1].envoys.clear();
+    assert_close(
+        game.unit_strength(&game.units[&warrior], true)
+            - levied_without_envoys.unit_strength(&levied_without_envoys.units[&warrior], true),
+        3.0,
+    );
+}

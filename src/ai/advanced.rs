@@ -3795,14 +3795,29 @@ impl AdvancedAi {
                 let spec = &g.rules.units[unit];
                 if spec.class == "military" {
                     let naval = spec.domain.as_deref() == Some("sea");
+                    let aircraft = spec.domain.as_deref() == Some("air");
                     let desired_naval = BasicAi::desired_navy(g, pid);
+                    let desired_aircraft = if plan.strategy == GrandStrategy::Conquest {
+                        city_count.max(1)
+                    } else {
+                        city_count.div_ceil(2).max(1)
+                    };
+                    let land_military = counts
+                        .military
+                        .saturating_sub(counts.naval + counts.aircraft);
                     if naval && !BasicAi::city_is_coastal(g, cid) {
                         return -10_000.0;
                     }
+                    let domain_saturated = if naval {
+                        counts.naval >= desired_naval
+                    } else if aircraft {
+                        counts.aircraft >= desired_aircraft
+                    } else {
+                        land_military >= desired_military
+                    };
                     if self.victory_target.is_some()
                         && self.victory_target != Some(VictoryTarget::Domination)
-                        && counts.military >= desired_military
-                        && (!naval || counts.naval >= desired_naval)
+                        && domain_saturated
                         && !threatened
                     {
                         return -2_000.0;
@@ -3834,11 +3849,10 @@ impl AdvancedAi {
                     if unit != "scout" && power + 5.0 < best_role_power {
                         return -2_000.0;
                     }
-                    let land_military = counts
-                        .military
-                        .saturating_sub(counts.naval + counts.aircraft);
                     let force_gap = if naval {
                         desired_naval.saturating_sub(counts.naval) as f64
+                    } else if aircraft {
+                        desired_aircraft.saturating_sub(counts.aircraft) as f64
                     } else {
                         desired_military.saturating_sub(land_military) as f64
                     };
@@ -3867,6 +3881,8 @@ impl AdvancedAi {
                             }
                             _ => 0.0,
                         }
+                    } else if aircraft {
+                        0.0
                     } else if spec.has_ranged_attack() {
                         (counts.melee > counts.ranged) as i32 as f64 * 55.0
                     } else {
@@ -6645,13 +6661,11 @@ impl Ai for AdvancedAi {
             self.base.take_turn(g, pid);
             return;
         }
-        self.resolve_city_dispositions(
-            g,
-            pid,
-            self.victory_target
-                .map(VictoryTarget::strategy)
-                .unwrap_or(GrandStrategy::Expansion),
-        );
+        let disposition_strategy = self
+            .victory_target
+            .map(VictoryTarget::strategy)
+            .unwrap_or_else(|| self.victory_focus(g, pid).strategy);
+        self.resolve_city_dispositions(g, pid, disposition_strategy);
         self.observe_campaign(g, pid);
         if self.plan_stale(g, pid) {
             self.plan = Some(self.assess(g, pid));
@@ -8074,6 +8088,51 @@ mod tests {
         assert!(
             resumed > fresh,
             "incremental evaluation should prefer finishing invested infrastructure"
+        );
+    }
+
+    #[test]
+    fn military_production_keeps_land_sea_and_air_force_gaps_separate() {
+        let mut game = Game::new_full(1, 20, 14, 71_003, 120, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        for unit in game.player_unit_ids(0) {
+            if game.rules.units[game.units[&unit].kind.as_str()].class == "military" {
+                game.remove_unit(unit);
+            }
+        }
+        let water = game
+            .map
+            .tiles
+            .iter()
+            .find(|(_, tile)| game.rules.is_water(tile))
+            .map(|(position, _)| *position)
+            .unwrap();
+        game.spawn_test_unit("galley", 0, water);
+        let city = game.player_city_ids(0)[0];
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Science,
+            target_player: None,
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 1,
+            assessed_turn: game.turn,
+        };
+        let ai = AdvancedAi::targeting(VictoryTarget::Science);
+        let counts = ai.counts(&game, 0);
+        assert_eq!(counts.naval, 1);
+        assert_eq!(counts.military - counts.naval - counts.aircraft, 0);
+
+        let defender = Item::Unit {
+            unit: "warrior".to_string(),
+        };
+        assert!(
+            ai.production_value(&game, 0, city, &defender, &plan, &counts) > 0.0,
+            "a Galley cannot satisfy the empire's missing land-defense quota"
         );
     }
 
@@ -9756,6 +9815,36 @@ mod tests {
         ai.resolve_city_dispositions(&mut conquest, 0, GrandStrategy::Conquest);
         assert_eq!(conquest.cities[&city].owner, 0);
         assert_eq!(conquest.cities[&city].captured_from, None);
+    }
+
+    #[test]
+    fn adaptive_turn_uses_live_victory_focus_for_mandatory_city_disposition() {
+        let mut game = Game::new_full(2, 24, 16, 107_001, 80, 1, false);
+        let minor = game
+            .players
+            .iter()
+            .find(|player| player.is_minor && !player.is_barbarian)
+            .unwrap()
+            .id;
+        let city = game.player_city_ids(minor)[0];
+        {
+            let captured = game.cities.get_mut(&city).unwrap();
+            captured.owner = 0;
+            captured.captured_from = Some(1);
+            captured.occupied_from = Some(1);
+            captured.loyalty = 50.0;
+        }
+        game.players[0].dvp = 19;
+        let mut ai = AdvancedAi::new();
+        assert_eq!(
+            ai.victory_focus(&game, 0).strategy,
+            GrandStrategy::Diplomacy
+        );
+
+        ai.take_turn(&mut game, 0);
+
+        assert_eq!(game.cities[&city].owner, minor);
+        assert_eq!(game.players[0].diplomatic_favor, 100.0);
     }
 
     #[test]
