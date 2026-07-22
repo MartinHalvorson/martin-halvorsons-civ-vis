@@ -5,3 +5,4 @@ target/
 civvis-play*.log
 evolved/
 *.log
+target-tools/
