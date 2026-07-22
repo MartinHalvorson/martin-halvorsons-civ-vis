@@ -241,6 +241,25 @@ impl BasicAi {
                 let _ = g.apply(pid, &Action::SlotPolicy { policy: card.to_string() });
             }
         }
+        if g.players[pid].pantheon.is_none() && g.players[pid].faith >= 25.0 {
+            for b in ["divine_spark", "fertility_rites", "god_of_the_forge",
+                      "religious_settlements", "god_of_the_open_sky", "god_of_the_sea"] {
+                if g.apply(pid, &Action::ChoosePantheon {
+                    belief: b.to_string() }).is_ok() {
+                    break;
+                }
+            }
+        }
+        if g.players[pid].prophet_pending {
+            'found: for fo in ["work_ethic", "choral_music", "feed_the_world"] {
+                for fu in ["tithe", "world_church"] {
+                    if g.apply(pid, &Action::FoundReligion {
+                        follower: fo.to_string(), founder: fu.to_string() }).is_ok() {
+                        break 'found;
+                    }
+                }
+            }
+        }
         while g.players[pid].envoys_free > 0 {
             // consolidate on the city-state we already lead in (suzerain push)
             let target = g.players.iter()
@@ -349,6 +368,22 @@ impl BasicAi {
                 unit: "builder".to_string(),
                 currency: "faith".to_string(),
             });
+        }
+        if g.players[pid].religion.is_some() && g.players[pid].faith >= 250.0 {
+            let missionaries = g.units.values()
+                .filter(|u| u.owner == pid && u.kind == "missionary").count();
+            if missionaries < 2 {
+                for cid in &city_ids {
+                    if g.cities[cid].districts.contains_key("holy_site") {
+                        let _ = g.apply(pid, &Action::Buy {
+                            city: *cid,
+                            unit: "missionary".to_string(),
+                            currency: "faith".to_string(),
+                        });
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -470,6 +505,7 @@ impl BasicAi {
                     "settler" => self.settler_step(g, pid, uid),
                     "builder" => self.builder_step(g, pid, uid),
                     "trader" => self.trader_step(g, pid, uid),
+                    "missionary" => self.missionary_step(g, pid, uid),
                     _ => self.military_step(g, pid, uid),
                 };
                 if !acted {
@@ -581,6 +617,27 @@ impl BasicAi {
             Some(t) => self.step_toward(g, pid, uid, t),
             None => false,
         }
+    }
+
+    fn missionary_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
+        let religion = match g.players[pid].religion.clone() {
+            Some(r) => r,
+            None => return false,
+        };
+        let upos = g.units[&uid].pos;
+        let target = g.cities.values()
+            .filter(|c| g.city_religion(c) != Some(religion.as_str())
+                && !g.is_at_war(pid, c.owner))
+            .min_by_key(|c| (g.wdist(upos, c.pos), c.id))
+            .map(|c| c.pos);
+        let target = match target {
+            Some(t) => t,
+            None => return false,
+        };
+        if g.wdist(upos, target) <= 1 {
+            return g.apply(pid, &Action::Spread { unit: uid }).is_ok();
+        }
+        self.step_toward(g, pid, uid, target)
     }
 
     fn builder_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {

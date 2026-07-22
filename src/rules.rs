@@ -212,6 +212,19 @@ pub struct GovSpec {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct BeliefSpec {
+    #[serde(default)]
+    pub note: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BeliefsData {
+    pub pantheon: BTreeMap<String, BeliefSpec>,
+    pub founder: BTreeMap<String, BeliefSpec>,
+    pub follower: BTreeMap<String, BeliefSpec>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PolicySpec {
     pub slot: String, // military | economic | diplomatic | wildcard
     #[serde(default)]
@@ -235,6 +248,7 @@ pub struct Rules {
     pub civics: BTreeMap<String, TechSpec>,
     pub governments: BTreeMap<String, GovSpec>,
     pub policies: BTreeMap<String, PolicySpec>,
+    pub beliefs: BeliefsData,
 }
 
 impl Rules {
@@ -251,6 +265,7 @@ impl Rules {
             civics: serde_json::from_str(include_str!("../data/civics.json")).unwrap(),
             governments: serde_json::from_str(include_str!("../data/governments.json")).unwrap(),
             policies: serde_json::from_str(include_str!("../data/policies.json")).unwrap(),
+            beliefs: serde_json::from_str(include_str!("../data/beliefs.json")).unwrap(),
         }
     }
 

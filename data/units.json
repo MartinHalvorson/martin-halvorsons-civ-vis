@@ -120,5 +120,12 @@
     "moves": 2,
     "civic": "foreign_trade",
     "sight": 2
+  },
+  "missionary": {
+    "class": "religious",
+    "cost": 100,
+    "moves": 4,
+    "tech": "astrology",
+    "charges": 3
   }
 }

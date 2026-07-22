@@ -68,6 +68,7 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             "pos": [c.pos.0, c.pos.1], "pop": c.pop, "hp": c.hp,
             "is_capital": c.is_capital,
             "wall_hp": c.wall_hp, "wall_max": g.city_max_wall_hp(c),
+            "religion": g.city_religion(c),
         });
         if c.owner == pid {
             let ys = g.city_yields(c.id);
@@ -119,6 +120,10 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool) -> Value {
             "trade_capacity": g.trade_capacity(pid),
             "gpp": p.gpp,
             "gp_claimed": p.gp_claimed,
+            "pantheon": p.pantheon,
+            "religion": p.religion,
+            "religion_beliefs": p.religion_beliefs,
+            "prophet_pending": p.prophet_pending,
             "routes": g.routes.iter().filter(|r| r.owner == pid)
                 .map(|r| json!({"origin": r.origin, "dest": r.dest, "ends": r.ends}))
                 .collect::<Vec<_>>(),

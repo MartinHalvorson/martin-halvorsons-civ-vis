@@ -1,6 +1,7 @@
 //! Martin Halvorson's Civilization VIS — Rust performance core.
 //! Same ruleset JSON, action protocol, and mechanics as the Python
 //! reference engine (`civvis/`); deterministic per seed within this engine.
+#![recursion_limit = "256"]
 
 pub mod ai;
 pub mod elo;
@@ -362,6 +363,74 @@ mod tests {
         }
         assert_eq!(g.active_routes(0), 0);
         assert!(g.units.values().any(|u| u.owner == 0 && u.kind == "trader"));
+    }
+
+    #[test]
+    fn religion() {
+        let mut g = Game::new_full(2, 24, 16, 9, 200, 0, false);
+        let s = g.player_unit_ids(0).into_iter()
+            .find(|id| g.units[id].kind == "settler").unwrap();
+        g.apply(0, &Action::FoundCity { unit: s }).unwrap();
+        let cid = g.player_city_ids(0)[0];
+        // pantheon at 25 faith; beliefs are exclusive
+        assert!(g.apply(0, &Action::ChoosePantheon {
+            belief: "fertility_rites".to_string() }).is_err());
+        g.players[0].faith = 30.0;
+        g.apply(0, &Action::ChoosePantheon {
+            belief: "fertility_rites".to_string() }).unwrap();
+        assert!(g.apply(0, &Action::ChoosePantheon {
+            belief: "divine_spark".to_string() }).is_err());
+        // prophet + holy site founds a religion with exclusive beliefs
+        let dpos = g.cities[&cid].owned_tiles.iter()
+            .find(|p| **p != g.cities[&cid].pos).cloned().unwrap();
+        g.cities.get_mut(&cid).unwrap().districts
+            .insert("holy_site".to_string(), dpos);
+        g.players[0].prophet_pending = true;
+        g.apply(0, &Action::FoundReligion {
+            follower: "choral_music".to_string(),
+            founder: "tithe".to_string() }).unwrap();
+        assert!(g.players[0].religion.is_some());
+        // the holy city converts instantly
+        assert_eq!(g.city_religion(&g.cities[&cid]),
+                   g.players[0].religion.as_deref());
+        // follower belief: +2 culture with a shrine in a following city
+        let before = g.city_yields(cid).culture;
+        g.cities.get_mut(&cid).unwrap().buildings.push("shrine".to_string());
+        let after = g.city_yields(cid).culture;
+        assert!((after - before - 2.0).abs() < 1e-9);
+        // missionary spread converts a foreign city
+        let religion = g.players[0].religion.clone().unwrap();
+        let s1 = g.player_unit_ids(1).into_iter()
+            .find(|id| g.units[id].kind == "settler").unwrap();
+        let mut g = {
+            // second civ founds far away
+            let far = g.map.tiles.values()
+                .find(|t| g.wdist(t.pos, g.cities[&cid].pos) >= 6
+                    && !g.rules.is_water(t) && g.rules.is_passable(t)
+                    && g.units_at(t.pos).is_empty()
+                    && g.cities.values().all(|c| g.wdist(t.pos, c.pos) >= 4))
+                .map(|t| t.pos).unwrap();
+            let mut v = serde_json::to_value(&g).unwrap();
+            for u in v["units"].as_array_mut().unwrap() {
+                if u["id"] == serde_json::json!(s1) {
+                    u["pos"] = serde_json::json!([far.0, far.1]);
+                }
+            }
+            let g2: Game = serde_json::from_value(v).unwrap();
+            g2
+        };
+        g.apply(0, &Action::EndTurn).unwrap();
+        g.apply(1, &Action::FoundCity { unit: s1 }).unwrap();
+        let their = g.player_city_ids(1)[0];
+        assert_eq!(g.city_religion(&g.cities[&their]), None);
+        let (mut g, m) = conjure(&g, "missionary", g.cities[&their].pos);
+        g.units.get_mut(&m).unwrap().charges = 3;
+        g.apply(1, &Action::EndTurn).unwrap();
+        g.apply(0, &Action::Spread { unit: m }).unwrap();
+        assert_eq!(g.city_religion(&g.cities[&their]), Some(religion.as_str()));
+        // every major majority-following → religious victory
+        assert_eq!(g.winner, Some(0));
+        assert_eq!(g.victory_type.as_deref(), Some("religious"));
     }
 
     #[test]

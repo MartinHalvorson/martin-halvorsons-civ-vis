@@ -135,6 +135,8 @@ pub struct City {
     pub wall_hp: i32,
     #[serde(default)]
     pub last_attacked: u32,
+    #[serde(default)]
+    pub pressure: BTreeMap<String, f64>, // religious pressure by religion
 }
 
 fn wall_unset() -> i32 {
@@ -173,6 +175,14 @@ pub struct Player {
     #[serde(default)]
     pub gp_claimed: BTreeMap<String, i64>,
     #[serde(default)]
+    pub pantheon: Option<String>,
+    #[serde(default)]
+    pub religion: Option<String>,
+    #[serde(default)]
+    pub religion_beliefs: Vec<String>,
+    #[serde(default)]
+    pub prophet_pending: bool,
+    #[serde(default)]
     pub envoys: Vec<(usize, i64)>, // (city-state pid, envoys placed)
     #[serde(default)]
     pub counters: BTreeMap<String, i64>,
@@ -209,6 +219,10 @@ impl Player {
             envoys_free: 0,
             gpp: BTreeMap::new(),
             gp_claimed: BTreeMap::new(),
+            pantheon: None,
+            religion: None,
+            religion_beliefs: Vec::new(),
+            prophet_pending: false,
             envoys: Vec::new(),
             counters: BTreeMap::new(),
             boosted_techs: BTreeSet::new(),
@@ -240,6 +254,9 @@ pub enum Action {
     UnslotPolicy { policy: String },
     TradeRoute { unit: u32, city: u32 },
     SendEnvoy { player: usize },
+    ChoosePantheon { belief: String },
+    FoundReligion { follower: String, founder: String },
+    Spread { unit: u32 },
     CityStrike { city: u32, target: Pos },
     EndTurn,
 }
@@ -694,6 +711,168 @@ impl Game {
         });
     }
 
+    // -------------------------------------------------- religion
+
+    const RELIGION_NAMES: [&'static str; 8] = ["Buddhism", "Christianity",
+        "Confucianism", "Hinduism", "Islam", "Judaism", "Protestantism", "Shinto"];
+
+    pub fn religions_founded(&self) -> usize {
+        self.players.iter().filter(|p| p.religion.is_some()).count()
+    }
+
+    pub fn has_pantheon_belief(&self, pid: usize, belief: &str) -> bool {
+        self.players[pid].pantheon.as_deref() == Some(belief)
+    }
+
+    /// The religion a city predominantly follows (highest pressure, min 50).
+    pub fn city_religion<'a>(&self, city: &'a City) -> Option<&'a str> {
+        city.pressure.iter()
+            .filter(|(_, v)| **v >= 50.0)
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap().then(b.0.cmp(a.0)))
+            .map(|(r, _)| r.as_str())
+    }
+
+    fn religion_founder(&self, religion: &str) -> Option<usize> {
+        self.players.iter()
+            .find(|p| p.religion.as_deref() == Some(religion))
+            .map(|p| p.id)
+    }
+
+    fn founder_has(&self, religion: &str, belief: &str) -> bool {
+        self.religion_founder(religion)
+            .map(|pid| self.players[pid].religion_beliefs.iter().any(|b| b == belief))
+            .unwrap_or(false)
+    }
+
+    fn do_choose_pantheon(&mut self, pid: usize, belief: &str) -> Result<(), String> {
+        if self.players[pid].pantheon.is_some() {
+            return Err("pantheon already chosen".into());
+        }
+        if self.players[pid].faith < 25.0 {
+            return Err("needs 25 faith".into());
+        }
+        if !self.rules.beliefs.pantheon.contains_key(belief) {
+            return Err("no such pantheon belief".into());
+        }
+        if self.players.iter().any(|p| p.pantheon.as_deref() == Some(belief)) {
+            return Err("belief already taken".into());
+        }
+        self.players[pid].pantheon = Some(belief.to_string());
+        Ok(())
+    }
+
+    fn do_found_religion(&mut self, pid: usize, follower: &str,
+                         founder: &str) -> Result<(), String> {
+        if !self.players[pid].prophet_pending {
+            return Err("no great prophet available".into());
+        }
+        if !self.rules.beliefs.follower.contains_key(follower)
+            || !self.rules.beliefs.founder.contains_key(founder) {
+            return Err("no such belief".into());
+        }
+        let taken = |b: &str| self.players.iter()
+            .any(|p| p.religion_beliefs.iter().any(|x| x == b));
+        if taken(follower) || taken(founder) {
+            return Err("belief already taken".into());
+        }
+        let holy = self.cities.values()
+            .find(|c| c.owner == pid && c.districts.contains_key("holy_site"))
+            .map(|c| c.id)
+            .ok_or_else(|| "needs a city with a holy site".to_string())?;
+        let name = Self::RELIGION_NAMES[self.religions_founded() % 8].to_string();
+        let p = &mut self.players[pid];
+        p.prophet_pending = false;
+        p.religion = Some(name.clone());
+        p.religion_beliefs = vec![follower.to_string(), founder.to_string()];
+        self.cities.get_mut(&holy).unwrap().pressure.insert(name, 1000.0);
+        Ok(())
+    }
+
+    fn do_spread(&mut self, pid: usize, uid: u32) -> Result<(), String> {
+        let u = self.own_unit(pid, uid)?;
+        if u.kind != "missionary" || u.charges <= 0 {
+            return Err("not a missionary with charges".into());
+        }
+        let religion = self.players[pid].religion.clone()
+            .ok_or_else(|| "no religion to spread".to_string())?;
+        let cid = self.city_at(u.pos)
+            .or_else(|| self.nbrs(u.pos).into_iter()
+                .find_map(|n| self.city_at(n)))
+            .ok_or_else(|| "no city in range".to_string())?;
+        *self.cities.get_mut(&cid).unwrap()
+            .pressure.entry(religion).or_insert(0.0) += 200.0;
+        let mu = self.units.get_mut(&uid).unwrap();
+        mu.charges -= 1;
+        mu.moves_left = 0.0;
+        if self.units[&uid].charges <= 0 {
+            self.remove_unit(uid);
+        }
+        self.check_religious_victory();
+        Ok(())
+    }
+
+    /// Passive spread: each city following a religion exerts +1 pressure/turn
+    /// on cities within 9 tiles (+2 from the founder's holy city).
+    fn process_pressure(&mut self, pid: usize) {
+        let sources: Vec<(Pos, String, f64)> = self.cities.values()
+            .filter_map(|c| {
+                self.city_religion(c).map(|r| {
+                    let boost = if c.pressure.get(r).copied().unwrap_or(0.0) >= 1000.0 {
+                        2.0
+                    } else {
+                        1.0
+                    };
+                    (c.pos, r.to_string(), boost)
+                })
+            })
+            .collect();
+        let targets: Vec<u32> = self.player_city_ids(pid);
+        for cid in targets {
+            let cpos = self.cities[&cid].pos;
+            for (spos, r, amt) in &sources {
+                if *spos != cpos && self.wdist(*spos, cpos) <= 9 {
+                    *self.cities.get_mut(&cid).unwrap()
+                        .pressure.entry(r.clone()).or_insert(0.0) += amt;
+                }
+            }
+        }
+        self.check_religious_victory();
+    }
+
+    /// Religious victory: your religion is the majority in over half the
+    /// cities of every living major civilization (Civ 6 simplified).
+    fn check_religious_victory(&mut self) {
+        if self.winner.is_some() {
+            return;
+        }
+        for p in 0..self.players.len() {
+            let religion = match &self.players[p].religion {
+                Some(r) => r.clone(),
+                None => continue,
+            };
+            let mut all = true;
+            for o in self.players.iter().filter(|o| o.alive && !o.is_minor) {
+                let cities: Vec<&City> = self.cities.values()
+                    .filter(|c| c.owner == o.id).collect();
+                if cities.is_empty() {
+                    all = false; // a civ without cities cannot be converted
+                    break;
+                }
+                let following = cities.iter()
+                    .filter(|c| self.city_religion(c) == Some(religion.as_str()))
+                    .count();
+                if following * 2 <= cities.len() {
+                    all = false;
+                    break;
+                }
+            }
+            if all {
+                self.set_winner(p, "religious");
+                return;
+            }
+        }
+    }
+
     // -------------------------------------------------- great people
 
     fn gp_district(d: &str) -> Option<&'static str> {
@@ -757,6 +936,16 @@ impl Game {
         if self.has_policy(pid, "revelation") {
             *earn.entry("prophet".to_string()).or_insert(0.0) += 2.0;
         }
+        if self.has_pantheon_belief(pid, "divine_spark") {
+            for c in self.cities.values().filter(|c| c.owner == pid) {
+                for d in ["campus", "holy_site", "theater_square"] {
+                    if c.districts.contains_key(d) {
+                        let t = Self::gp_district(d).unwrap();
+                        *earn.entry(t.to_string()).or_insert(0.0) += 1.0;
+                    }
+                }
+            }
+        }
         let mult = 1.0 + self.gov_effects(pid).great_people_pct / 100.0;
         for (t, amt) in earn {
             *self.players[pid].gpp.entry(t).or_insert(0.0) += amt * mult;
@@ -794,7 +983,18 @@ impl Game {
                 self.players[pid].gold += 200.0;
                 self.players[pid].envoys_free += 1;
             }
-            "prophet" => self.players[pid].faith += 100.0,
+            "prophet" => {
+                let can_found = self.players[pid].religion.is_none()
+                    && self.religions_founded() < 4
+                    && self.cities.values().any(|c| {
+                        c.owner == pid && c.districts.contains_key("holy_site")
+                    });
+                if can_found {
+                    self.players[pid].prophet_pending = true;
+                } else {
+                    self.players[pid].faith += 100.0;
+                }
+            }
             "general" | "admiral" => {
                 let sea = kind == "admiral";
                 for uid in self.player_unit_ids(pid) {
@@ -1004,10 +1204,14 @@ impl Game {
                     bonus += 1.0;
                 } else if spec.cavalry && self.has_policy(pid, "maneuver") {
                     bonus += 0.5;
-                } else if spec.class == "military" && !spec.siege
-                    && (self.has_policy(pid, "agoge")
-                        || self.has_policy(pid, "feudal_contract")) {
-                    bonus += 0.5;
+                } else if spec.class == "military" && !spec.siege {
+                    if self.has_policy(pid, "agoge")
+                        || self.has_policy(pid, "feudal_contract") {
+                        bonus += 0.5;
+                    }
+                    if self.has_pantheon_belief(pid, "god_of_the_forge") {
+                        bonus += 0.25;
+                    }
                 }
             }
             Some(Item::Building { building }) => {
@@ -1781,6 +1985,33 @@ impl Game {
         if !self.players[city.owner].is_minor {
             ys.add(self.envoy_yields(city.owner, city));
         }
+        if let Some(r) = self.city_religion(city) {
+            let r = r.to_string();
+            let has_shrine = city.buildings.iter().any(|b| b == "shrine");
+            if has_shrine && self.founder_has(&r, "choral_music") {
+                ys.culture += 2.0;
+            }
+            if has_shrine && self.founder_has(&r, "feed_the_world") {
+                ys.food += 2.0;
+            }
+            if self.founder_has(&r, "work_ethic")
+                && city.districts.contains_key("holy_site") {
+                ys.production += 1.0;
+            }
+        }
+        match self.players[city.owner].pantheon.as_deref() {
+            Some("god_of_the_open_sky") => {
+                ys.culture += city.owned_tiles.iter().filter(|p| {
+                    self.map.tiles[p].improvement.as_deref() == Some("pasture")
+                }).count() as f64;
+            }
+            Some("god_of_the_sea") => {
+                ys.production += city.owned_tiles.iter().filter(|p| {
+                    self.map.tiles[p].improvement.as_deref() == Some("fishing_boats")
+                }).count() as f64;
+            }
+            _ => {}
+        }
         let eff = self.gov_effects(city.owner);
         ys.production *= 1.0 + eff.production_pct / 100.0;
         ys.science *= 1.0 + eff.science_pct / 100.0;
@@ -1879,6 +2110,9 @@ impl Game {
                 };
                 if !self.unlocked(pid, &spec.tech, &spec.civic) {
                     return false;
+                }
+                if spec.class == "religious" {
+                    return false; // faith purchase only (Civ 6)
                 }
                 if let Some(res) = &spec.requires_resource {
                     if !self.has_resource(pid, res) {
@@ -2122,6 +2356,45 @@ impl Game {
                     }
                 }
             }
+            if p.pantheon.is_none() && p.faith >= 25.0 {
+                for b in self.rules.beliefs.pantheon.keys() {
+                    if !self.players.iter()
+                        .any(|o| o.pantheon.as_deref() == Some(b.as_str())) {
+                        acts.push(Action::ChoosePantheon { belief: b.clone() });
+                    }
+                }
+            }
+            if p.prophet_pending {
+                let taken = |b: &str| self.players.iter()
+                    .any(|o| o.religion_beliefs.iter().any(|x| x == b));
+                for fo in self.rules.beliefs.follower.keys().filter(|b| !taken(b)) {
+                    for fu in self.rules.beliefs.founder.keys().filter(|b| !taken(b)) {
+                        acts.push(Action::FoundReligion {
+                            follower: fo.clone(), founder: fu.clone() });
+                    }
+                }
+            }
+            for uid in self.player_unit_ids(pid) {
+                let u = &self.units[&uid];
+                if u.kind == "missionary" && u.charges > 0 && u.moves_left > 0.0 {
+                    let near_city = self.city_at(u.pos).is_some()
+                        || self.nbrs(u.pos).iter().any(|n| self.city_at(*n).is_some());
+                    if near_city {
+                        acts.push(Action::Spread { unit: uid });
+                    }
+                }
+            }
+            if p.religion.is_some() && p.faith >= 200.0 {
+                for cid in self.player_city_ids(pid) {
+                    if self.cities[&cid].districts.contains_key("holy_site") {
+                        acts.push(Action::Buy {
+                            city: cid,
+                            unit: "missionary".to_string(),
+                            currency: "faith".to_string(),
+                        });
+                    }
+                }
+            }
         }
         if !p.is_barbarian {
             for o in &self.players {
@@ -2176,6 +2449,10 @@ impl Game {
             Action::UnslotPolicy { policy } => self.do_unslot_policy(pid, policy),
             Action::TradeRoute { unit, city } => self.do_trade_route(pid, *unit, *city),
             Action::SendEnvoy { player } => self.do_send_envoy(pid, *player),
+            Action::ChoosePantheon { belief } => self.do_choose_pantheon(pid, belief),
+            Action::FoundReligion { follower, founder } =>
+                self.do_found_religion(pid, follower, founder),
+            Action::Spread { unit } => self.do_spread(pid, *unit),
             Action::CityStrike { city, target } => self.do_city_strike(pid, *city, *target),
             Action::EndTurn => {
                 self.do_end_turn();
@@ -2545,6 +2822,7 @@ impl Game {
             struck: false,
             wall_hp: 0,
             last_attacked: 0,
+            pressure: BTreeMap::new(),
         };
         {
             let center = self.map.tiles.get_mut(&pos).unwrap();
@@ -2608,9 +2886,28 @@ impl Game {
             Some(c) if c.owner == pid => {}
             _ => return Err("not your city".into()),
         }
-        let it = Item::Unit { unit: unit.to_string() };
-        if !self.can_produce(pid, cid, &it) {
-            return Err("cannot buy that".into());
+        let religious = self.rules.units.get(unit)
+            .map(|s| s.class == "religious").unwrap_or(false);
+        if religious {
+            // faith purchase in a holy-site city of a religion founder
+            if currency != "faith" {
+                return Err("religious units are bought with faith".into());
+            }
+            if self.players[pid].religion.is_none() {
+                return Err("no religion founded".into());
+            }
+            if !self.cities[&cid].districts.contains_key("holy_site") {
+                return Err("needs a holy site".into());
+            }
+            let spec = &self.rules.units[unit];
+            if !self.unlocked(pid, &spec.tech.clone(), &spec.civic.clone()) {
+                return Err("not unlocked".into());
+            }
+        } else {
+            let it = Item::Unit { unit: unit.to_string() };
+            if !self.can_produce(pid, cid, &it) {
+                return Err("cannot buy that".into());
+            }
         }
         if unit == "settler" && self.cities[&cid].pop < 2 {
             return Err("city too small for settler".into());
@@ -2855,6 +3152,7 @@ impl Game {
         self.check_boosts(pid);
         self.process_routes(pid);
         self.process_great_people(pid);
+        self.process_pressure(pid);
         if !self.players[pid].is_minor {
             // influence points scale with government tier; 100 points = 1 envoy
             let tier = match self.players[pid].government.as_deref() {
@@ -2903,6 +3201,17 @@ impl Game {
             cul += ys.culture;
             gold += ys.gold;
             faith += ys.faith;
+        }
+        if let Some(r) = self.players[pid].religion.clone() {
+            let following = self.cities.values()
+                .filter(|c| self.city_religion(c) == Some(r.as_str()))
+                .count() as f64;
+            if self.players[pid].religion_beliefs.iter().any(|b| b == "tithe") {
+                gold += (following / 4.0).floor();
+            }
+            if self.players[pid].religion_beliefs.iter().any(|b| b == "world_church") {
+                cul += (following / 5.0).floor();
+            }
         }
         let n_units = self.player_unit_ids(pid).len() as f64;
         // 1 gold/unit past the first three; conscription (-1/unit) zeroes it
@@ -3041,7 +3350,10 @@ impl Game {
         let ys = self.city_yields(cid);
         let housing = self.city_housing(&self.cities[&cid]);
         let am = self.city_amenity_surplus(&self.cities[&cid]);
-        let growth_bonus = self.empire_building_sum(pid, |b| b.growth_pct);
+        let mut growth_bonus = self.empire_building_sum(pid, |b| b.growth_pct);
+        if self.players[pid].pantheon.as_deref() == Some("fertility_rites") {
+            growth_bonus += 10.0;
+        }
         {
             let city = self.cities.get_mut(&cid).unwrap();
             let mut surplus = ys.food - 2.0 * city.pop as f64;
@@ -3085,8 +3397,14 @@ impl Game {
         }
         {
             let owned = self.cities[&cid].owned_tiles.len() as i32;
+            let border_mult =
+                if self.players[pid].pantheon.as_deref() == Some("religious_settlements") {
+                    1.15
+                } else {
+                    1.0
+                };
             let city = self.cities.get_mut(&cid).unwrap();
-            city.border_culture += 1.0 + ys.culture * 0.5;
+            city.border_culture += (1.0 + ys.culture * 0.5) * border_mult;
             let need_b = (15 + 8 * (owned - 7).max(0)) as f64;
             if city.border_culture >= need_b {
                 city.border_culture -= need_b;

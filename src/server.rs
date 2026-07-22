@@ -164,7 +164,7 @@ fn handle(stream: &mut TcpStream, session: &mut Session) {
                 "resources": r.resources, "improvements": r.improvements,
                 "governments": r.governments, "units": r.units,
                 "buildings": r.buildings, "districts": r.districts,
-                "policies": r.policies,
+                "policies": r.policies, "beliefs": r.beliefs,
             }));
         }
         ("POST", "/action") => {

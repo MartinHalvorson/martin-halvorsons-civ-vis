@@ -1,0 +1,19 @@
+{
+  "pantheon": {
+    "fertility_rites": {"note": "city growth +10%"},
+    "god_of_the_forge": {"note": "+25% production toward ancient/classical military units"},
+    "religious_settlements": {"note": "border expansion 15% faster"},
+    "god_of_the_open_sky": {"note": "+1 culture per pasture"},
+    "god_of_the_sea": {"note": "+1 production per fishing boats"},
+    "divine_spark": {"note": "+1 great person point per campus, holy site and theater square"}
+  },
+  "founder": {
+    "tithe": {"note": "+1 gold per 4 cities following this religion"},
+    "world_church": {"note": "+1 culture per 5 cities following this religion"}
+  },
+  "follower": {
+    "choral_music": {"note": "+2 culture in following cities with a shrine"},
+    "work_ethic": {"note": "+1 production per holy site in following cities"},
+    "feed_the_world": {"note": "+2 food in following cities with a shrine"}
+  }
+}

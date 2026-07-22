@@ -4,7 +4,7 @@ Tracked against the [Civilization Wiki](https://civilization.fandom.com/wiki/Civ
 Status: ✅ implemented · 🟡 simplified · ❌ not yet.
 
 > **In progress** (claimed by parallel sessions — check before starting a batch):
-> - Session B: religion (pantheons, founding, missionaries/pressure, beliefs, religious victory). NOT touching web/index.html.
+> - (none currently claimed by session B; GUI wiring for religion/GP/trade panels is open)
 
 | System | Status | Notes |
 |---|---|---|
@@ -22,7 +22,7 @@ Status: ✅ implemented · 🟡 simplified · ❌ not yet.
 | Barbarians (camps, raiders, rewards) | ✅ | no scout-alert mechanic |
 | City-states + envoys | ✅ | influence by gov tier (100 pts = envoy); type bonuses at 1/3/6 (capital +2, +2 per matching district); suzerain = 6+ & strict lead; war clears envoys |
 | Great People | 🟡 | GPP per district/building (+1 each), Classical Republic +15%, Strategos/Inspiration/Revelation wildcards; doubling thresholds (60/120/...); auto-claim generic GPs with instant effects (eurekas, production, gold+envoy, faith, unit levels) — no named individuals/patronage |
-| Religion (pantheons, beliefs, units) | ❌ | faith yield + faith purchases only |
+| Religion | 🟡 | pantheon at 25 faith (6 beliefs, exclusive); prophet + holy site founds (max 4, classic names); follower/founder beliefs; missionaries (faith-buy, 3 spreads, +200 pressure); passive pressure ±9 tiles; majority at 50; no theological combat/apostles |
 | Trade routes & roads | ✅ | wiki capacity (Foreign Trade +1/hub-or-harbor city, +2 merchant republic); vanilla per-district yield table; traders lay roads (cost 1, bridge rivers 🟡); 30-turn duration; war/capture cancels |
 | Diplomacy (deals, alliances, grievances) | 🟡 | war/peace only |
 | Loyalty, governors (R&F/GS) | ❌ | |
@@ -30,7 +30,7 @@ Status: ✅ implemented · 🟡 simplified · ❌ not yet.
 | Zone of control | ✅ | melee exerts (same domain, not over river banks), cities/encampments exert all-adjacent, cavalry ignores, civilians drop all MP |
 | Movement: MP paid up front, min-1-tile, river +2 MP | ✅ | river surcharge on entering channel tile (tile-model 🟡) |
 | Formations/corps, support units | ❌ | |
-| Victory: domination, science, score | ✅ | culture/religious/diplomatic ❌ |
+| Victory: domination, science, score, religious | ✅ | religious = majority in >half of every civ's cities; culture/diplomatic ❌ |
 | Eras, era score, golden ages | ❌ | |
 
 Next batch: policy cards + government slots, trade routes, great people,
