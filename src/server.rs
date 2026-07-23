@@ -2270,7 +2270,84 @@ mod tests {
     }
 
     #[test]
-    fn browser_keeps_atlas_art_on_its_owning_tile_footprint() {
+    fn browser_includes_the_cinematic_spectator_director() {
+        for id in [
+            "cinemachk",
+            "cinema-atmosphere",
+            "cinema-lighting",
+            "cinema-frame",
+            "cinema-transition",
+            "cinema-prologue",
+            "cinema-story",
+            "cinema-audio",
+            "cinema-follow",
+        ] {
+            assert!(
+                EMBEDDED_INDEX.contains(&format!("id=\"{id}\"")),
+                "cinematic spectator element {id} is missing"
+            );
+        }
+        for function in [
+            "function applyCinemaMode()",
+            "function showCinemaPrologue(st)",
+            "function showCinemaChapter(cue)",
+            "function createCinemaAudioGraph()",
+            "function playCinemaCue(cue = {})",
+            "function showDirectorStory(cue)",
+            "function cinematicDisasterStory(disaster, next)",
+            "function drawCinematicDisasterField(sceneTime)",
+            "function directorCue(prev, next)",
+            "function cinematicShotGoal(goal, variation = 0)",
+            "function directorSurveyGoal()",
+            "function directorAmbientCue()",
+            "function advanceDirector(now = performance.now())",
+            "function advanceUserCameraMotion(now = performance.now())",
+            "function advanceCameraFollow(now = performance.now())",
+            "function startCameraFollow(unitId)",
+            "function unitMapPoint(p, nearX = cam.x)",
+            "function sampleUnitMove(mv, now = performance.now())",
+            "function cinematicUnitMapPoint(unit, now = performance.now())",
+            "function unitMoveDuration(unitId, steps)",
+            "function drawCinematicSubjectMarker(u, x, y, now)",
+            "function drawCinematicSubjectBrackets(u, x, y, now)",
+            "function beginTouchTransform()",
+            "function cinematicSurveyUnits(units)",
+            "function drawWalls(t, x, ytop, baseColor, tileElevation)",
+        ] {
+            assert!(
+                EMBEDDED_INDEX.contains(function),
+                "cinematic spectator behavior {function} is missing"
+            );
+        }
+        for story in [
+            "A new world awakens",
+            "Nature unleashed",
+            "The world enters the ${eraName} Era",
+            "A civilization falls",
+            "History has a victor",
+            "City captured",
+            "War declared",
+            "Wonder completed",
+        ] {
+            assert!(
+                EMBEDDED_INDEX.contains(story),
+                "cinematic spectator story cue {story} is missing"
+            );
+        }
+        assert!(EMBEDDED_INDEX.contains("civvis-cinema-audio-v1"));
+        assert!(EMBEDDED_INDEX.contains("REDUCED_MOTION_QUERY.matches"));
+        assert!(EMBEDDED_INDEX.contains("touch-action: none"));
+        assert!(EMBEDDED_INDEX.contains("kind:tracksUnit ? \"character\" : \"event\""));
+        assert!(EMBEDDED_INDEX.contains("class=\"winner-content\""));
+        assert!(EMBEDDED_INDEX.contains("cinema-finale"));
+        assert!(EMBEDDED_INDEX.contains("DEFAULT_CINEMA_YS = 0.64"));
+        assert!(EMBEDDED_INDEX.contains("function drawUnitFormationBadge"));
+        assert!(EMBEDDED_INDEX.contains("specular glints travel"));
+        assert!(EMBEDDED_INDEX.contains("cx.lineDashOffset = dash.length"));
+    }
+
+    #[test]
+    fn browser_blends_atlas_art_only_across_compatible_tile_footprints() {
         let atlas_drawer = EMBEDDED_INDEX
             .split("function drawAtlasFeatureCell")
             .nth(1)
@@ -2279,12 +2356,37 @@ mod tests {
         assert!(atlas_drawer.contains("tileArtPath(footprint"));
         assert!(atlas_drawer.contains("cx.clip()"));
 
+        let blend_footprint = EMBEDDED_INDEX
+            .split("function blendedTileFootprint")
+            .nth(1)
+            .and_then(|tail| tail.split("function featureBlendKind").next())
+            .expect("compatible-neighbor footprint builder");
+        assert!(blend_footprint.contains("if (!neighbor || !accepts(neighbor)) continue"));
+        assert!(EMBEDDED_INDEX.contains("featureBlendKind(neighbor.feature) === baseFeature"));
+        assert!(EMBEDDED_INDEX.contains("neighbor.terrain === \"mountain\""));
+
+        let terrain_texture = EMBEDDED_INDEX
+            .split("function drawTerrainTexture")
+            .nth(1)
+            .and_then(|tail| tail.split("function drawTerrainBlend").next())
+            .expect("terrain material renderer");
+        assert!(terrain_texture.contains("drawContinuousTerrain(t, x, y"));
+        assert!(!terrain_texture.contains("hexPath(x, y"));
+        let terrain_blend = EMBEDDED_INDEX
+            .split("function drawTerrainBlend")
+            .nth(1)
+            .and_then(|tail| tail.split("function drawAtlasFeatureCell").next())
+            .expect("terrain transition renderer");
+        assert!(terrain_blend.contains("drawFeathered(t, x, y"));
+        assert!(EMBEDDED_INDEX.contains("function drawContinuousTerrain(t, x, y, alpha)"));
+        assert!(EMBEDDED_INDEX.contains("cx.createPattern(c, \"repeat\")"));
+
         let mountain_drawer = EMBEDDED_INDEX
             .split("function drawMountainSprite")
             .nth(1)
             .and_then(|tail| tail.split("function tri(").next())
             .expect("mountain sprite renderer");
-        assert!(mountain_drawer.contains("tileArtPath([{x, y}], true"));
+        assert!(mountain_drawer.contains("tileArtPath(footprint, true"));
         assert!(mountain_drawer.contains("cx.clip()"));
 
         let wonder_placement = EMBEDDED_INDEX
