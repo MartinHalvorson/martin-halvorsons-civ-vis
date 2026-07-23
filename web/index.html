@@ -1137,6 +1137,13 @@ const YCOLOR = { food:"#76c893", production:"#d7b66a", gold:"#e8c64c",
                  science:"#76cde4", culture:"#c49be8", faith:"#eee7cf" };
 const PCOLORS = ["#ffd700","#e05050","#50a0e0","#50c878","#c878e0","#e09050",
                  "#70d0d0","#f0f080","#a0a0ff","#ffa0c0","#80e080","#d0b080"];
+// Jersey partners, Civ 6 style: each empire pairs its colour with a second one
+// chosen for hue/lightness distance from the first, so anything stroked in
+// both can never dissolve into terrain that happens to share one of them —
+// the green empire's off-white casing carries its border across grassland,
+// the green core carries it across snow. Indexed in PCOLORS order.
+const PCOLORS2 = ["#4a2a8a","#f8eed6","#0e2f5e","#f4f7e8","#e8c25a","#1d3a6e",
+                  "#5c2140","#7a2020","#4e1e30","#123c3c","#3d2070","#7a1f2e"];
 const CITY_STATE_TINT = "#202225";
 const CITY_STATE_TYPE_COLORS = {
   scientific:"#4aa3df", cultural:"#a46bd4", religious:"#eee7cf",
@@ -1525,6 +1532,15 @@ function pcol(id) {
   if (p && p.is_barbarian) return "#30262a";
   if (p && p.is_minor) return CITY_STATE_TINT;
   return PCOLORS[id % PCOLORS.length];
+}
+// The jersey partner. City-states get their type colour — black-on-type is
+// exactly how Civ 6 dresses them, and their near-black primary needs the help.
+function pcol2(id) {
+  const p = state.players[id];
+  if (p && p.is_barbarian) return "#8a3a34";
+  if (p && p.is_minor)
+    return CITY_STATE_TYPE_COLORS[p.cs_type] || CITY_STATE_TYPE_COLORS.trade;
+  return PCOLORS2[id % PCOLORS2.length];
 }
 function cityBannerColor(owner) {
   const p = state.players[owner];
@@ -3907,9 +3923,16 @@ function draw() {
     }
   }
   cx.lineCap = "round"; cx.lineJoin = "round";
+  // Two-tone ribbon, Civ 6 style: a casing in the empire's jersey partner
+  // under a crisp core in its main colour. A single colour kept dissolving
+  // into terrain that shared its hue — green borders into grassland, gold
+  // into desert; whichever of the pair the ground steals, the other still
+  // draws the line.
   for (const [owner, segs] of borderSegs) {
-    const c = pcol(owner);
-    for (const [w, a] of [[5.4, 0.3], [1.8, 0.95]]) {  // soft glow, then crisp core
+    const passes = [[6.0, 0.25, pcol(owner)],   // soft glow
+                    [4.2, 0.9,  pcol2(owner)],  // casing
+                    [1.8, 0.95, pcol(owner)]];  // core
+    for (const [w, a, c] of passes) {
       cx.strokeStyle = c; cx.lineWidth = w; cx.globalAlpha = a;
       cx.beginPath();
       for (const [ax, ay, bx, by] of segs) { cx.moveTo(ax, ay); cx.lineTo(bx, by); }
