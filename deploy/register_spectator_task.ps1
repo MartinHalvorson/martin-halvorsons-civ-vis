@@ -42,8 +42,10 @@ $action = New-ScheduledTaskAction -Execute $Pythonw -Argument $argline -WorkingD
 # recovery path - if the supervisor ever dies, the next fire brings it back,
 # and the per-port lock makes every fire while it is healthy a no-op.
 $atLogon = New-ScheduledTaskTrigger -AtLogOn
+# A ~10-year repetition reads as "indefinitely" in practice; TimeSpan.MaxValue
+# overflows the task XML's duration field, so use a concrete large span.
 $recover = New-ScheduledTaskTrigger -Once -At (Get-Date) `
-    -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration ([TimeSpan]::MaxValue)
+    -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
     -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 0
