@@ -86,8 +86,14 @@
     font-size: 9px; font-weight: 800; letter-spacing: .13em; text-transform: uppercase;
   }
   .live-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #66d38b; box-shadow: 0 0 0 4px #66d38b1c; }
+  /* The deck is a column: the fixed panels take the height they need and the
+     two chronicles share whatever is left, so a tall screen reads more
+     history rather than more empty parchment. Below the point where the
+     panels no longer fit, min-height stops the log collapsing and the deck
+     goes back to scrolling. */
   .side-scroll {
     flex: 1; min-height: 0; padding: 12px 11px 22px; overflow-y: auto; overflow-anchor: none;
+    display: flex; flex-direction: column;
     scrollbar-color: #385148 transparent; scrollbar-width: thin; scrollbar-gutter: stable;
     background: linear-gradient(90deg, #ffffff02, transparent 14%, transparent 86%, #0002);
   }
@@ -106,7 +112,23 @@
     margin-bottom: 9px; color: var(--muted); font-size: 9px; font-weight: 800;
     letter-spacing: .18em; text-transform: uppercase;
   }
-  .sidebar-section { margin: 0 0 10px; }
+  .sidebar-section { flex: 0 0 auto; margin: 0 0 10px; }
+  #eventsec[open], #warsec[open] { display: flex; flex-direction: column; min-height: 0; }
+  /* Share the spare height three to two, and never shrink — a shrunk section
+     would push its own content past its box and over the panel below instead
+     of scrolling. The basis is zero rather than auto so that a long log
+     inside cannot inflate its own section: each list scrolls within the
+     height it was given, floored by the min-height below. */
+  #eventsec[open] { flex: 3 0 0; }
+  #warsec[open] { flex: 2 0 0; }
+  /* A <details> hands its children to an internal content box, so the panel
+     inside it only inherits the extra height if that box is told to grow
+     too. Browsers without ::details-content simply keep the log at its
+     min-height, which is the old fixed-box behaviour. */
+  #eventsec[open]::details-content, #warsec[open]::details-content {
+    flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+  }
+  #eventsec[open] > .sec, #warsec[open] > .sec { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
   .section-label {
     min-height: 39px; display: flex; align-items: center; gap: 9px; padding: 7px 8px 7px 9px;
     color: #bac8c2; background: linear-gradient(135deg, #162622, #101c19);
@@ -364,7 +386,8 @@
   .metric { padding: 7px 6px; text-align: center; border-radius: 8px; background: #091310; border: 1px solid #1e332e; }
   .metric b { display: block; color: var(--text); font-size: 12px; }
   .metric span { color: var(--faint); font-size: 7px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
-  .event-list { height: 168px; display: flex; flex-direction: column; gap: 7px; overflow-y: auto; overflow-anchor: none; scrollbar-gutter: stable; }
+  .event-list { flex: 1 1 auto; min-height: 168px; display: flex; flex-direction: column; gap: 7px; overflow-y: auto; overflow-anchor: none; scrollbar-gutter: stable; }
+  .event-list > * { flex: 0 0 auto; }
   .event-item { min-height: 42px; display: grid; grid-template-columns: 25px 1fr; gap: 8px; padding: 8px; border-left: 2px solid #49645a; background: #0b1613; border-radius: 4px 9px 9px 4px; }
   .event-item.important { border-left-color: var(--gold); background: linear-gradient(90deg, #302713, #0b1613 72%); box-shadow: inset 0 0 0 1px #d7b66a18; }
   .event-item.important .event-icon { color: var(--gold-bright); background: #d7b66a14; }
@@ -372,6 +395,29 @@
   .event-text { color: #cad5cf; font-size: 10px; }
   .event-turn { color: var(--faint); font-size: 8px; letter-spacing: .1em; text-transform: uppercase; }
   .empty-state { padding: 10px 0 2px; color: var(--faint); font-size: 10px; text-align: center; }
+
+  /* War log — one card per front, ongoing wars first */
+  .war-list { flex: 1 1 auto; min-height: 132px; display: flex; flex-direction: column; gap: 7px; overflow-y: auto; overflow-anchor: none; scrollbar-gutter: stable; }
+  .war-list > * { flex: 0 0 auto; }
+  .war-card { padding: 8px 9px 7px; border-left: 2px solid var(--danger); border-radius: 4px 9px 9px 4px; background: linear-gradient(100deg, #1d1211, #0b1613 68%); }
+  .war-card.ended { border-left-color: #4f7a68; background: #0b1613; opacity: .78; }
+  .war-belligerents { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 6px; }
+  .war-side { min-width: 0; display: flex; align-items: center; gap: 5px; color: #e7ece7; font-size: 10px; font-weight: 750; }
+  .war-side.defender { flex-direction: row-reverse; text-align: right; }
+  .war-side span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .war-flag { width: 9px; height: 9px; flex: 0 0 9px; border-radius: 2px; box-shadow: inset 0 0 0 1px #0008; }
+  .war-clash { color: var(--danger); font-size: 11px; }
+  .war-card.ended .war-clash { color: #8dd6b1; }
+  .war-since { margin-top: 4px; color: var(--faint); font-size: 8px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; text-align: center; }
+  .war-tally { display: grid; grid-template-columns: 1fr auto 1fr; gap: 6px; margin-top: 6px; }
+  .war-toll { display: flex; gap: 8px; color: #b9c6c0; font-size: 9px; font-variant-numeric: tabular-nums; }
+  .war-toll.defender { justify-content: flex-end; }
+  .war-toll b { color: #f2d7d3; font-weight: 800; }
+  .war-toll.quiet { color: var(--faint); }
+  .war-moments { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; border-top: 1px solid #ffffff0d; padding-top: 5px; }
+  .war-moment { display: grid; grid-template-columns: 30px 1fr; gap: 6px; color: #cad5cf; font-size: 9px; }
+  .war-moment em { color: var(--faint); font-style: normal; font-weight: 800; letter-spacing: .06em; }
+  .war-moment.capture { color: #f2c0b8; }
   .spec-controls { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; }
   .spec-controls button { margin: 0; }
   #specdirector.active { color: var(--gold-bright); border-color: #b88f45; box-shadow: 0 0 16px #d7b66a24; }
@@ -716,6 +762,14 @@
         <span class="section-meta"><span class="event-scope" id="eventscope"></span><span class="section-chevron" aria-hidden="true"></span></span>
       </summary>
       <div class="sec"><div id="events" class="event-list"><div class="empty-state">The world is quiet—for now.</div></div></div>
+    </details>
+
+    <details class="sidebar-section" id="warsec" data-section="war-log" open>
+      <summary class="section-label">
+        <span class="section-title"><span class="section-icon" aria-hidden="true">⚔</span><span>War log</span></span>
+        <span class="section-meta"><span class="event-scope" id="warscope"></span><span class="section-chevron" aria-hidden="true"></span></span>
+      </summary>
+      <div class="sec"><div id="wars" class="war-list"><div class="empty-state">No war has been declared.</div></div></div>
     </details>
 
     <details class="sidebar-section" id="strategysec" data-section="active-strategy" open>
@@ -1459,7 +1513,9 @@ function addEvent(icon, text, turn, st, important = false) {
   const viewKey = eventViewKey(st);
   const events = eventLogs.get(viewKey) || [];
   events.unshift({ icon, text, turn, important, at: performance.now() });
-  eventLogs.set(viewKey, events.slice(0, 12));
+  // The panel is as tall as the deck allows now, so the log keeps enough
+  // history to fill a large screen instead of the dozen a fixed box held.
+  eventLogs.set(viewKey, events.slice(0, 60));
 }
 const SERVER_EVENT_ICONS = {
   General: "✦", Cities: "🏛", War: "⚔", Science: "⌬",
@@ -4155,6 +4211,80 @@ function drawEvents() {
   ).join("");
 }
 
+// A war is a running account, not a stream of notices: who is fighting, since
+// when, what it has cost each side, and the handful of moments that decided
+// it. The engine keeps the ledger so a reload — or a second browser — reads
+// the same war the same way.
+function warPartyName(id) {
+  const player = (state.players || [])[id];
+  if (!player) return `Player ${id}`;
+  return player.is_minor ? `${player.civ}` : player.civ;
+}
+function warPartyMarkup(id, role) {
+  const player = (state.players || [])[id] || {};
+  const flag = cityBannerColor(id);
+  const title = player.is_minor ? `${warPartyName(id)} · city-state` : warPartyName(id);
+  return `<div class="war-side ${role}" title="${title}">` +
+    `<i class="war-flag" style="background:${flag}"></i>` +
+    `<span>${warPartyName(id)}${player.is_minor ? " ⌂" : ""}</span></div>`;
+}
+function warTollMarkup(side, role) {
+  const units = side.units_lost || 0, cities = side.cities_lost || 0;
+  if (!units && !cities)
+    return `<div class="war-toll ${role} quiet">no losses</div>`;
+  const parts = [];
+  if (units) parts.push(`<b>${units}</b> unit${units === 1 ? "" : "s"}`);
+  if (cities) parts.push(`<b>${cities}</b> cit${cities === 1 ? "y" : "ies"}`);
+  return `<div class="war-toll ${role}">${parts.join(" · ")}</div>`;
+}
+function warMomentText(moment) {
+  const actor = warPartyName(moment.actor), subject = warPartyName(moment.subject);
+  switch (moment.kind) {
+    case "declared": return `${actor} declared war on ${subject}.`;
+    case "city_captured": return `${actor} took ${moment.city} from ${subject}.`;
+    case "peace": return `${actor} and ${subject} made peace.`;
+    default: return `${actor} against ${subject}.`;
+  }
+}
+function drawWarLog() {
+  const el = document.getElementById("wars");
+  const scope = document.getElementById("warscope");
+  if (!el) return;
+  const wars = Array.isArray(state.wars) ? state.wars : [];
+  const ongoing = wars.filter(w => w.ended === null || w.ended === undefined);
+  scope.textContent = ongoing.length
+    ? `${ongoing.length} ongoing`
+    : (wars.length ? "At peace" : "");
+  const signature = JSON.stringify(wars) + `|${state.turn}`;
+  if (el.dataset.signature === signature) return;
+  el.dataset.signature = signature;
+  if (!wars.length) {
+    el.innerHTML = `<div class="empty-state">No war has been declared.</div>`;
+    return;
+  }
+  el.innerHTML = wars.map(war => {
+    const over = war.ended !== null && war.ended !== undefined;
+    const [attacker, defender] = war.sides;
+    const length = Math.max(0, (over ? war.ended : state.turn) - war.started);
+    const since = over
+      ? `Turn ${war.started}–${war.ended} · ${length} turn${length === 1 ? "" : "s"} · peace`
+      : `Since turn ${war.started} · ${length} turn${length === 1 ? "" : "s"}`;
+    // Newest moment first, and never so many that a long war pushes the
+    // other fronts off the panel.
+    const moments = [...war.highlights].reverse().slice(0, 4).map(moment =>
+      `<div class="war-moment ${moment.kind === "city_captured" ? "capture" : ""}">` +
+      `<em>T${moment.turn}</em><span>${warMomentText(moment)}</span></div>`).join("");
+    return `<div class="war-card${over ? " ended" : ""}">` +
+      `<div class="war-belligerents">${warPartyMarkup(war.aggressor, "aggressor")}` +
+      `<div class="war-clash">${over ? "☮" : "⚔"}</div>` +
+      `${warPartyMarkup(war.defender, "defender")}</div>` +
+      `<div class="war-since">${since}</div>` +
+      `<div class="war-tally">${warTollMarkup(attacker, "aggressor")}` +
+      `<div></div>${warTollMarkup(defender, "defender")}</div>` +
+      `<div class="war-moments">${moments}</div></div>`;
+  }).join("");
+}
+
 function drawSide(force = true) {
   const now = performance.now();
   const pace = +(document.getElementById("specspeed") || {}).value || 1000;
@@ -4209,6 +4339,7 @@ function drawSide(force = true) {
   } else gs.style.display = "none";
   drawCityPanel();
   drawEvents();
+  drawWarLog();
   if (scroller) scroller.scrollTop = Math.min(priorScroll, Math.max(0, scroller.scrollHeight - scroller.clientHeight));
 }
 
