@@ -214,6 +214,17 @@ fn standings(g: &Game) {
     }
 }
 
+/// How many games to play at once. Defaults to one per core; `--jobs 1`
+/// restores the strictly serial run, which is what timing one game wants.
+fn jobs_arg(args: &[String]) -> usize {
+    let requested = arg(args, "--jobs", 0);
+    if requested > 0 {
+        requested as usize
+    } else {
+        civvis::parallel::default_jobs()
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cmd = args.first().map(|s| s.as_str()).unwrap_or("help");
@@ -256,8 +267,11 @@ fn main() {
             let players = arg(&args, "--players", 4);
             let games = arg(&args, "--games", 10);
             let start = arg(&args, "--start-seed", 0);
-            let mut fails = 0;
-            for seed in start..start + games {
+            let jobs = jobs_arg(&args);
+            // Each game is played on its own thread, then described on the
+            // main one, so a soak reads exactly as it did when it was serial.
+            let lines = civvis::parallel::map(games as usize, jobs, |index| {
+                let seed = start + index as i64;
                 let t0 = Instant::now();
                 let result = std::panic::catch_unwind(|| {
                     let mut g = Game::new_with(game_options(&args, players, seed as u64));
@@ -319,7 +333,7 @@ fn main() {
                             " ARMY {army} obsolete={obsolete} ancient={ancient} era={}",
                             g.world_era
                         ));
-                        println!(
+                        Some(format!(
                             "seed {:3}  t{:<4} {:<10} {:<8} majors_alive={}/{} cities={:<2} cs_alive={}/{} [{:.2}s]{}",
                             seed,
                             g.turn,
@@ -332,11 +346,18 @@ fn main() {
                             minors.len(),
                             t0.elapsed().as_secs_f64(),
                             flags
-                        );
+                        ))
                     }
-                    Err(_) => {
+                    Err(_) => None,
+                }
+            });
+            let mut fails = 0;
+            for (index, line) in lines.into_iter().enumerate() {
+                match line {
+                    Some(line) => println!("{line}"),
+                    None => {
                         fails += 1;
-                        println!("seed {seed:3}  CRASH (panic)");
+                        println!("seed {:3}  CRASH (panic)", start + index as i64);
                     }
                 }
             }
@@ -348,17 +369,19 @@ fn main() {
         "benchmark" => {
             let games = arg(&args, "--games", 50);
             let turns = arg(&args, "--turns", 100) as u32;
+            let jobs = jobs_arg(&args);
             let t0 = Instant::now();
-            let mut total_turns: u64 = 0;
-            for seed in 0..games {
+            let played = civvis::parallel::map(games as usize, jobs, |seed| {
                 let mut g = Game::new(2, 20, 14, seed as u64, turns, 0);
                 let mut ais = AdvancedAi::fleet(&g);
                 run_game(&mut g, &mut ais);
-                total_turns += g.turn as u64;
-            }
+                g.turn as u64
+            });
+            let total_turns: u64 = played.iter().sum();
             let dt = t0.elapsed().as_secs_f64();
             println!(
-                "{} games, {} turns in {:.2}s = {:.0} turns/sec (2 players, 20x14)",
+                "{} games, {} turns in {:.2}s = {:.0} turns/sec \
+                 (2 players, 20x14, {jobs} at a time)",
                 games,
                 total_turns,
                 dt,
@@ -392,6 +415,7 @@ fn main() {
                 seed: arg(&args, "--seed", 0) as u64,
                 k: arg(&args, "--k", 24) as f64,
                 verbose: !args.iter().any(|a| a == "--quiet"),
+                jobs: jobs_arg(&args),
             };
             let pool = civvis::elo::run_tournament(&names, civvis::elo::builtin_ai, &cfg);
             println!();
@@ -411,6 +435,7 @@ fn main() {
                 every: arg(&args, "--every", 10).max(1) as u32,
                 ai: arg_text(&args, "--ai", "advanced"),
                 out: arg_text(&args, "--out", "selfplay"),
+                jobs: jobs_arg(&args),
             };
             match civvis::selfplay::export(&cfg) {
                 Ok(stats) => println!(

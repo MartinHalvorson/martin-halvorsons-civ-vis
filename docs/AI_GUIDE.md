@@ -307,9 +307,11 @@ Actions are plain JSON dicts identical to what `legal_actions` returns —
 feed them straight into LLM tool-calling or an RL policy. One process per
 concurrent game; in-process Rust agents remain the fast path for self-play at
 scale. On an Apple M5 Max, the current release Advanced-v2 workload measured
-1,173 turns/sec for `benchmark --games 100 --turns 100` (two players, 20×14).
-Throughput varies materially with map size, era, player count, and agent; older
-tens-of-thousands figures describe a much smaller historical rules workload.
+1,173 turns/sec for `benchmark --games 100 --turns 100 --jobs 1` (two players,
+20×14, one game at a time). A batch that leaves `--jobs` alone plays across
+every core and reaches several times that. Throughput varies materially with
+map size, era, player count, and agent; older tens-of-thousands figures
+describe a much smaller historical rules workload.
 
 ## Machine-learning surfaces
 

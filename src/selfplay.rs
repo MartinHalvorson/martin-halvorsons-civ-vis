@@ -41,12 +41,66 @@ pub struct SelfPlayCfg {
     pub every: u32,
     pub ai: String,
     pub out: String,
+    /// How many games to play at once. Samples are still written in game
+    /// order; a chunk of this many games is held in memory while it plays.
+    pub jobs: usize,
 }
 
 pub struct SelfPlayStats {
     pub games: usize,
     pub samples: usize,
     pub decisive: usize,
+}
+
+/// Play one game, holding every sample it produced until its winner is known.
+type PlayedGame = (Game, Vec<(Vec<f32>, Vec<f32>, Vec<f32>, usize, f32)>, Vec<String>, usize);
+
+fn play_one(cfg: &SelfPlayCfg, game_index: usize) -> PlayedGame {
+    let seed = cfg.seed.wrapping_add(game_index as u64);
+    let mut g = Game::new_with(GameOptions::new(
+        cfg.players,
+        cfg.width,
+        cfg.height,
+        seed,
+        cfg.max_turns,
+        cfg.city_states,
+    ));
+    let mut ais: Vec<Box<dyn Ai>> = g
+        .players
+        .iter()
+        .map(|p| builtin_ai(&cfg.ai, seed.wrapping_add(p.id as u64)))
+        .collect();
+
+    let mut pending: Vec<(Vec<f32>, Vec<f32>, Vec<f32>, usize, f32)> = Vec::new();
+    let mut global_names: Vec<String> = Vec::new();
+    let mut globals_len = 0usize;
+    let mut last_sampled: Option<u32> = None;
+    while g.winner.is_none() && g.turn <= cfg.max_turns {
+        let pid = g.current;
+        if g.turn % cfg.every == 0 && last_sampled != Some(g.turn) {
+            last_sampled = Some(g.turn);
+            let fraction = g.turn as f32 / cfg.max_turns.max(1) as f32;
+            for player in 0..g.players.len() {
+                if g.players[player].is_minor
+                    || g.players[player].is_barbarian
+                    || !g.players[player].alive
+                {
+                    continue;
+                }
+                let t = obs_tensor(&g, player);
+                if global_names.is_empty() {
+                    global_names = t.global_names.clone();
+                    globals_len = t.global.len();
+                }
+                pending.push((t.data, t.global, scalar_features(&g, player), player, fraction));
+            }
+        }
+        ais[pid].take_turn(&mut g, pid);
+        if g.winner.is_none() && g.current == pid {
+            let _ = g.apply(pid, &Action::EndTurn);
+        }
+    }
+    (g, pending, global_names, globals_len)
 }
 
 /// Play the configured games, exporting one sample per living major every
@@ -64,77 +118,52 @@ pub fn export(cfg: &SelfPlayCfg) -> std::io::Result<SelfPlayStats> {
     let mut globals_len = 0usize;
     let mut global_names: Vec<String> = Vec::new();
 
-    for game_index in 0..cfg.games {
-        let seed = cfg.seed.wrapping_add(game_index as u64);
-        let mut g = Game::new_with(GameOptions::new(
-            cfg.players,
-            cfg.width,
-            cfg.height,
-            seed,
-            cfg.max_turns,
-            cfg.city_states,
-        ));
-        let mut ais: Vec<Box<dyn Ai>> = g
-            .players
-            .iter()
-            .map(|p| builtin_ai(&cfg.ai, seed.wrapping_add(p.id as u64)))
-            .collect();
-
-        // (features, globals, pid) held until the outcome is known.
-        let mut pending: Vec<(Vec<f32>, Vec<f32>, Vec<f32>, usize, f32)> = Vec::new();
-        let mut last_sampled: Option<u32> = None;
-        while g.winner.is_none() && g.turn <= cfg.max_turns {
-            let pid = g.current;
-            if g.turn % cfg.every == 0 && last_sampled != Some(g.turn) {
-                last_sampled = Some(g.turn);
-                let fraction = g.turn as f32 / cfg.max_turns.max(1) as f32;
-                for player in 0..g.players.len() {
-                    if g.players[player].is_minor
-                        || g.players[player].is_barbarian
-                        || !g.players[player].alive
-                    {
-                        continue;
-                    }
-                    let t = obs_tensor(&g, player);
-                    if global_names.is_empty() {
-                        global_names = t.global_names.clone();
-                        globals_len = t.global.len();
-                    }
-                    pending.push((t.data, t.global, scalar_features(&g, player), player, fraction));
+    // Games are played a chunk at a time and written out in game order, so
+    // the export is byte for byte what a single-threaded run produced while
+    // only one chunk's samples are ever held in memory.
+    let jobs = cfg.jobs.max(1);
+    let mut game_index = 0usize;
+    while game_index < cfg.games {
+        let chunk = jobs.min(cfg.games - game_index);
+        let chunk_start = game_index;
+        let played = crate::parallel::map(chunk, jobs, |offset| {
+            play_one(cfg, chunk_start + offset)
+        });
+        for (offset, (g, pending, names, len)) in played.into_iter().enumerate() {
+            let game_index = chunk_start + offset;
+            let seed = cfg.seed.wrapping_add(game_index as u64);
+            if global_names.is_empty() {
+                global_names = names;
+                globals_len = len;
+            }
+            if g.winner.is_some() {
+                decisive += 1;
+            }
+            for (planes, globals, scalars, pid, fraction) in pending {
+                let won = if g.winner == Some(pid) { 1.0f32 } else { 0.0f32 };
+                for value in &planes {
+                    planes_out.write_all(&value.to_le_bytes())?;
                 }
+                for value in &globals {
+                    globals_out.write_all(&value.to_le_bytes())?;
+                }
+                labels_out.write_all(&won.to_le_bytes())?;
+                labels_out.write_all(&fraction.to_le_bytes())?;
+                labels_out.write_all(&(game_index as f32).to_le_bytes())?;
+                let row: Vec<String> = scalars.iter().map(|v| format!("{v:.4}")).collect();
+                writeln!(csv_out, "{},{},{}", row.join(","), won as u8, game_index)?;
+                samples += 1;
             }
-            ais[pid].take_turn(&mut g, pid);
-            if g.winner.is_none() && g.current == pid {
-                let _ = g.apply(pid, &Action::EndTurn);
-            }
+            println!(
+                "game {:3} seed {:<6} t{:<4} {:<10} samples={}",
+                game_index,
+                seed,
+                g.turn,
+                g.victory_type.clone().unwrap_or_else(|| "none".into()),
+                samples
+            );
         }
-
-        if g.winner.is_some() {
-            decisive += 1;
-        }
-        for (planes, globals, scalars, pid, fraction) in pending {
-            let won = if g.winner == Some(pid) { 1.0f32 } else { 0.0f32 };
-            for value in &planes {
-                planes_out.write_all(&value.to_le_bytes())?;
-            }
-            for value in &globals {
-                globals_out.write_all(&value.to_le_bytes())?;
-            }
-            labels_out.write_all(&won.to_le_bytes())?;
-            labels_out.write_all(&fraction.to_le_bytes())?;
-            labels_out.write_all(&(game_index as f32).to_le_bytes())?;
-            let row: Vec<String> = scalars.iter().map(|v| format!("{v:.4}")).collect();
-            writeln!(csv_out, "{},{},{}", row.join(","), won as u8, game_index)?;
-            samples += 1;
-        }
-        println!(
-            "game {:3} seed {:<6} t{:<4} {:<10} samples={}",
-            game_index,
-            seed,
-            g.turn,
-            g.victory_type.clone().unwrap_or_else(|| "none".into()),
-            samples
-        );
+        game_index += chunk;
     }
     planes_out.flush()?;
     globals_out.flush()?;
@@ -194,6 +223,7 @@ mod tests {
             every: 2,
             ai: "basic".to_string(),
             out: dir.to_string_lossy().to_string(),
+            jobs: 2,
         };
         let stats = export(&cfg).expect("export");
         assert!(stats.samples > 0);

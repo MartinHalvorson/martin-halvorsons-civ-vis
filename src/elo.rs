@@ -111,6 +111,9 @@ pub struct TourneyCfg {
     pub seed: u64,
     pub k: f64,
     pub verbose: bool,
+    /// How many games to play at once. Seating and ratings stay in game
+    /// order, so this changes only how long the tournament takes.
+    pub jobs: usize,
 }
 
 impl Default for TourneyCfg {
@@ -126,32 +129,44 @@ impl Default for TourneyCfg {
             seed: 0,
             k: 24.0,
             verbose: true,
+            jobs: crate::parallel::default_jobs(),
         }
     }
 }
 
 pub fn run_tournament<F>(names: &[String], make: F, cfg: &TourneyCfg) -> EloPool
 where
-    F: Fn(&str, u64) -> Box<dyn Ai>,
+    F: Fn(&str, u64) -> Box<dyn Ai> + Sync,
 {
     assert!(!names.is_empty(), "no entrants");
+    // Seating is drawn from one stream and ratings are updated in game order,
+    // so both stay on this thread; only the games themselves are spread out.
+    // A tournament therefore produces the same table however many cores run
+    // it.
     let mut rng = Rng::new(cfg.seed.wrapping_add(0x5EED));
     let mut pool = EloPool::new(names, 1000.0);
-    for gi in 0..cfg.games {
-        let gseed = cfg.seed * 100_000 + gi as u64;
-        let mut seats: Vec<String> = (0..cfg.players_per_game)
-            .map(|_| names[rng.below(names.len())].clone())
-            .collect();
-        if names.len() > 1 && seats.iter().all(|s| *s == seats[0]) {
-            let others: Vec<&String> = names.iter().filter(|n| **n != seats[0]).collect();
-            let i = rng.below(cfg.players_per_game);
-            seats[i] = others[rng.below(others.len())].clone();
-        }
+    let draws: Vec<(u64, Vec<String>)> = (0..cfg.games)
+        .map(|gi| {
+            let gseed = cfg.seed * 100_000 + gi as u64;
+            let mut seats: Vec<String> = (0..cfg.players_per_game)
+                .map(|_| names[rng.below(names.len())].clone())
+                .collect();
+            if names.len() > 1 && seats.iter().all(|s| *s == seats[0]) {
+                let others: Vec<&String> = names.iter().filter(|n| **n != seats[0]).collect();
+                let i = rng.below(cfg.players_per_game);
+                seats[i] = others[rng.below(others.len())].clone();
+            }
+            (gseed, seats)
+        })
+        .collect();
+
+    let played = crate::parallel::map(draws.len(), cfg.jobs, |gi| {
+        let (gseed, seats) = &draws[gi];
         let mut game = Game::new(
             cfg.players_per_game,
             cfg.width,
             cfg.height,
-            gseed,
+            *gseed,
             cfg.max_turns,
             cfg.num_city_states,
         );
@@ -167,6 +182,11 @@ where
             })
             .collect();
         run_game(&mut game, &mut ais);
+        game
+    });
+
+    for (gi, game) in played.into_iter().enumerate() {
+        let seats = &draws[gi].1;
         let winner = game.winner.unwrap();
         let mut ranked: Vec<usize> = (0..cfg.players_per_game).collect();
         ranked.sort_by_key(|pid| (*pid != winner, -game.score(*pid), *pid));

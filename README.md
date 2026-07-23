@@ -121,6 +121,11 @@ observations under `citizens` and shown in the city panel.
 
 ## Headless AI
 
+`soak`, `benchmark`, `tournament`, and `selfplay` play their games across every
+core and produce exactly what a single-threaded run produced — same seeds, same
+order, same output. Pass `--jobs N` to cap that, or `--jobs 1` to time one game
+at a time.
+
 ```bash
 ./target/release/civvis simulate --players 4 --seed 42   # AI self-play
 ./target/release/civvis soak --games 20 --turns 150      # many games, flag anomalies
