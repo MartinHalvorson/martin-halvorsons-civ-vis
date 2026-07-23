@@ -83,8 +83,7 @@
       "faith": 5,
       "science": 1
     },
-    "natural_wonder": true,
-    "impassable": true
+    "natural_wonder": true
   },
   "pantanal": {
     "yields": {
