@@ -1168,6 +1168,18 @@ function hexDistUI(a, b) {
   const dq = a[0] - b[0], dr = a[1] - b[1];
   return Math.max(Math.abs(dq), Math.abs(dr), Math.abs(dq + dr));
 }
+// Everything in flight: tweens, floats, sparks, casualties, claim pulses, a
+// half-finished lunge. All of it is positioned in a particular world and means
+// nothing in another one.
+function resetAnim() {
+  anim.moves.clear();
+  anim.floats.length = 0;
+  anim.sparks.length = 0;
+  anim.deaths.length = 0;
+  anim.claims.length = 0;
+  anim.strike = null;
+  pendingStrike = null;
+}
 function claimPulse(c) {
   const k = key(c.pos);
   const at = anim.claims.findIndex(p => key(p.pos) === k);
@@ -1881,13 +1893,17 @@ function render(st, recordChronicle = true) {
   const viewChanged = !!state && !newWorld && st.view_player !== state.view_player;
   if (recordChronicle && !viewChanged) chronicle(state, st);
   const sameWorld = state && state.seed === st.seed;
+  // A new world inherits none of the last one's motion. Only a change of
+  // observed seat used to clear this, so on the game AFTER a game — which is
+  // every few minutes in an exhibition — the previous world's damage numbers,
+  // spark bursts and territory pulses kept drawing over a brand new map, at
+  // coordinates that meant nothing there, until they timed out.
+  if (newWorld) resetAnim();
   if (!viewChanged) {
     queueDirectorCue(directorCue(state, st));
     animateDiff(sameWorld ? state : null, st);
   } else {
-    anim.moves.clear(); anim.floats.length = 0; anim.sparks.length = 0;
-    anim.deaths.length = 0; anim.claims.length = 0;
-    anim.strike = null; pendingStrike = null;
+    resetAnim();
     sel = null; selCity = null;
   }
   if (!sameWorld) directorGoal = null;
