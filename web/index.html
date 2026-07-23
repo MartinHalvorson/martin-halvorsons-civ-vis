@@ -3267,8 +3267,14 @@ function draw() {
       for (const [ax, ay, bx, by] of frontSegs) { cx.moveTo(ax, ay); cx.lineTo(bx, by); }
       cx.stroke();
     };
-    strokeFront(8.5, "#e0402f", 0.24, []);
-    strokeFront(2.6, "#ff8452", 0.92, [5, 4]);
+    // A front holds its on-screen weight as the map zooms out, the way unit
+    // plates and status badges do. Ordinary borders deliberately do not — there
+    // are hundreds of them and scaling every one would smother the map — but
+    // there are only ever a few fronts, and survey zoom is exactly the range
+    // where you want to see the shape of a war rather than hunt for it.
+    const fk = UI_K();
+    strokeFront(8.5 * fk, "#e0402f", 0.24, []);
+    strokeFront(2.6 * fk, "#ff8452", 0.92, [5 * fk, 4 * fk]);
     cx.setLineDash([]);
   }
   cx.globalAlpha = 1; cx.lineCap = "butt"; cx.lineJoin = "miter";
