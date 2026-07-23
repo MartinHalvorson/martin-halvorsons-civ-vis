@@ -151,6 +151,41 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse(collab.compare_status_is_current("behind"))
         self.assertFalse(collab.compare_status_is_current("diverged"))
 
+    def test_required_checks_must_finish_successfully_before_merge(self):
+        merged_at = "2026-07-23T22:37:13Z"
+        runs = [
+            {
+                "name": "cargo-test",
+                "started_at": "2026-07-23T22:32:11Z",
+                "completed_at": "2026-07-23T22:37:02Z",
+                "conclusion": "success",
+            },
+            {
+                "name": "collaboration-policy",
+                "started_at": "2026-07-23T22:37:13Z",
+                "completed_at": "2026-07-23T22:37:19Z",
+                "conclusion": "failure",
+            },
+        ]
+        self.assertEqual(
+            collab.required_check_gate_errors(runs, merged_at),
+            ["required check collaboration-policy was not green before merge"],
+        )
+
+    def test_successful_required_checks_before_merge_pass_the_gate(self):
+        runs = [
+            {
+                "name": name,
+                "started_at": "2026-07-23T22:30:00Z",
+                "completed_at": "2026-07-23T22:35:00Z",
+                "conclusion": "success",
+            }
+            for name in ("cargo-test", "collaboration-policy")
+        ]
+        self.assertEqual(
+            collab.required_check_gate_errors(runs, "2026-07-23T22:36:00Z"), []
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

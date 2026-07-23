@@ -326,6 +326,65 @@ def associated_pr_number(sha: str) -> Optional[int]:
     return commit_is_pr_backed(rows or [], sha)
 
 
+def required_check_gate_errors(
+    check_runs: Sequence[Dict[str, Any]],
+    merged_at: str,
+    required: Iterable[str] = ("cargo-test", "collaboration-policy"),
+) -> List[str]:
+    """Report required checks that were not successful before a PR merged."""
+    merge_time = dt.datetime.fromisoformat(merged_at.replace("Z", "+00:00"))
+    errors: List[str] = []
+    for name in required:
+        eligible: List[Dict[str, Any]] = []
+        for row in check_runs:
+            if row.get("name") != name:
+                continue
+            started_at = str(row.get("started_at") or "")
+            if not started_at:
+                continue
+            started = dt.datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+            if started <= merge_time:
+                eligible.append(row)
+        if not eligible:
+            errors.append(f"required check {name} had not started before merge")
+            continue
+        latest = max(eligible, key=lambda row: str(row.get("started_at") or ""))
+        completed_at = str(latest.get("completed_at") or "")
+        completed = (
+            dt.datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+            if completed_at
+            else None
+        )
+        if latest.get("conclusion") != "success" or not completed or completed > merge_time:
+            errors.append(f"required check {name} was not green before merge")
+    return errors
+
+
+def merged_pr_gate_errors(number: int) -> List[str]:
+    view = gh_json(
+        (
+            "pr",
+            "view",
+            str(number),
+            "--repo",
+            REPOSITORY,
+            "--json",
+            "headRefOid,mergedAt",
+        )
+    )
+    head_sha = str(view.get("headRefOid") or "")
+    merged_at = str(view.get("mergedAt") or "")
+    if not head_sha or not merged_at:
+        return ["merged PR metadata is incomplete"]
+    payload = gh_json(
+        (
+            "api",
+            f"repos/{REPOSITORY}/commits/{head_sha}/check-runs?per_page=100",
+        )
+    )
+    return required_check_gate_errors(payload.get("check_runs") or [], merged_at)
+
+
 def format_claim_body(
     *,
     machine: str,
@@ -804,6 +863,15 @@ def monitor_command(args: argparse.Namespace) -> int:
                     findings["ok"].append(
                         f"main commit {sha[:7]} is backed by merged PR #{pr_number}"
                     )
+                    gate_errors = merged_pr_gate_errors(pr_number)
+                    for error in gate_errors:
+                        findings["errors"].append(
+                            f"PR #{pr_number} merged without a green gate: {error}"
+                        )
+                    if not gate_errors:
+                        findings["ok"].append(
+                            f"PR #{pr_number} had both required checks green before merge"
+                        )
         for branch, sha in current_heads.items():
             if branch == DEFAULT_BRANCH or previous_heads.get(branch) == sha:
                 continue
