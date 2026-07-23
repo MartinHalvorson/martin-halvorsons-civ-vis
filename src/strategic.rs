@@ -6,7 +6,7 @@
 //! macro search applied to victory routing, generalizing the war-decision
 //! rollouts `NeuralAi` proved. Positions are judged by the trained value net
 //! when `evolved/valuenet.json` exists, otherwise by score share.
-use crate::ai::{AdvancedAi, Ai, BasicAi, VictoryTarget, Weights};
+use crate::ai::{AdvancedAi, Ai, BasicAi, PlanReport, VictoryTarget, Weights};
 use crate::evolve::features;
 use crate::game::{Action, Game};
 use crate::valuenet::ValueNet;
@@ -137,6 +137,10 @@ impl Ai for StrategicAi {
 
     fn strategy_label(&self) -> Option<&'static str> {
         self.inner.strategy_label()
+    }
+
+    fn plan_report(&self) -> Option<PlanReport> {
+        self.inner.plan_report()
     }
 }
 

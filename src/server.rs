@@ -932,6 +932,44 @@ impl Session {
         Ok(())
     }
 
+    /// An agent's plan as the spectator sees it. City ids mean nothing to a
+    /// browser, so each one is resolved here into the name and owner the HUD
+    /// can actually print.
+    fn plan_json(&self, plan: &crate::ai::PlanReport) -> Value {
+        let city = |id: Option<u32>| {
+            id.and_then(|id| self.game.cities.get(&id)).map(|city| {
+                json!({
+                    "id": city.id,
+                    "name": city.name,
+                    "owner": city.owner,
+                    "owner_civ": self.game.players[city.owner].civ,
+                    "pos": [city.pos.0, city.pos.1],
+                })
+            })
+        };
+        json!({
+            "strategy": plan.strategy,
+            "victory_target": plan.victory_target,
+            "target_player": plan.target_player,
+            "target_civ": plan
+                .target_player
+                .and_then(|pid| self.game.players.get(pid))
+                .map(|player| player.civ.clone()),
+            "target_city": city(plan.target_city),
+            "threatened_city": city(plan.threatened_city),
+            "desired_cities": plan.desired_cities,
+            "assessed_turn": plan.assessed_turn,
+            "forces": plan.forces.iter().map(|force| json!({
+                "domain": force.domain,
+                "posture": force.posture,
+                "units": force.units,
+                "objective": [force.objective.0, force.objective.1],
+                "readiness": (force.readiness * 100.0).round() / 100.0,
+                "strength_ratio": (force.strength_ratio * 100.0).round() / 100.0,
+            })).collect::<Vec<_>>(),
+        })
+    }
+
     pub fn state(&self) -> Value {
         if self.params.spectate {
             let g = &self.game;
@@ -959,6 +997,12 @@ impl Session {
                     };
                     if let Some(strategy) = self.ais.get(id).and_then(|ai| ai.strategy_label()) {
                         player["ai_strategy"] = json!(strategy);
+                    }
+                    // The expanded HUD card explains a civilization's whole
+                    // medium-term plan, not just its one-word label, so the
+                    // spectator frame carries the agent's own read-out.
+                    if let Some(plan) = self.ais.get(id).and_then(|ai| ai.plan_report()) {
+                        player["ai_plan"] = self.plan_json(&plan);
                     }
                 }
             }
@@ -1917,6 +1961,12 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("Global lifetime carbon emissions"));
         assert!(EMBEDDED_INDEX.contains("Alliance · Level"));
         assert!(EMBEDDED_INDEX.contains("p.ai_strategy"));
+        // The ribbon is the consolidated view; one civilization at a time can
+        // be opened into the dossier from its name.
+        assert!(EMBEDDED_INDEX.contains("function civDossier(p, rank, relation)"));
+        assert!(EMBEDDED_INDEX.contains("function toggleCivDossier(id)"));
+        assert!(EMBEDDED_INDEX.contains("p.ai_plan"));
+        assert!(EMBEDDED_INDEX.contains(".civ-dossier {"));
         assert!(EMBEDDED_INDEX.contains("changed its grand strategy from"));
         assert!(EMBEDDED_INDEX.contains("e.important && now - e.at < 6000"));
         assert!(EMBEDDED_INDEX.contains("const cadence = active ? (SPEC ? 32 : 16) : 90"));
@@ -1926,7 +1976,11 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("View as"));
         assert!(EMBEDDED_INDEX.contains("id=\"viewplayer\""));
         assert!(EMBEDDED_INDEX.contains("fetchJSON(\"/view\""));
-        assert!(EMBEDDED_INDEX.contains("onclick=\"spectatePlayer(${p.id})\""));
+        // The ribbon repaints under the cursor, so its buttons declare their
+        // action as data and one delegated listener dispatches it.
+        assert!(EMBEDDED_INDEX.contains("data-hud-action=\"watch\" data-hud-civ=\"${p.id}\""));
+        assert!(EMBEDDED_INDEX.contains("data-hud-action=\"dossier\" data-hud-civ=\"${p.id}\""));
+        assert!(EMBEDDED_INDEX.contains("else spectatePlayer(id);"));
         assert!(EMBEDDED_INDEX.contains("async function spectatePlayer(player)"));
         assert!(EMBEDDED_INDEX.contains("player log"));
         assert!(EMBEDDED_INDEX.contains("Spectator · combined summary"));
@@ -2101,8 +2155,16 @@ mod tests {
             .iter()
             .all(|unit| unit.get("reachable").is_none()));
         assert!(state["players"][0]["ai_strategy"].is_null());
+        assert!(state["players"][0]["ai_plan"].is_null());
         session.step();
-        assert_eq!(session.state()["players"][0]["ai_strategy"], "expansion");
+        let stepped = session.state();
+        assert_eq!(stepped["players"][0]["ai_strategy"], "expansion");
+        // The expanded HUD card reads the whole plan, not just its label.
+        let plan = &stepped["players"][0]["ai_plan"];
+        assert_eq!(plan["strategy"], "expansion");
+        assert!(plan["desired_cities"].as_u64().is_some());
+        assert!(plan["assessed_turn"].as_u64().is_some());
+        assert!(plan["forces"].is_array());
     }
 
     #[test]

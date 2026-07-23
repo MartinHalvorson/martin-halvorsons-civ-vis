@@ -101,6 +101,15 @@ AI-only games also provide a **View as** selector: watch the full world as an
 omniscient spectator, or choose any major civilization to see only its explored
 territory and currently visible units through that player's fog of war.
 
+The leader ribbon ranks every civilization by score with its output, empire and
+standing. Clicking a civilization's **name** opens its dossier under the card —
+one at a time, about three cards tall — with the plan its AI is actually
+following (grand strategy, committed victory lane, settlement goal, campaign
+target, threatened city and standing forces), its progress down all six victory
+tracks, the diplomatic ledger behind its standing, and the exact figures the
+ribbon's four-glyph columns have to abbreviate. Clicking the medallion or the
+stat columns still follows that civilization; **Escape** closes the dossier.
+
 Quick Deals gathers every AI's acceptable Buy/Sell quote into a sortable,
 one-click screen. It shows both sides' modeled gain before acceptance, and the
 engine rejects the action if either side no longer benefits when it is clicked.

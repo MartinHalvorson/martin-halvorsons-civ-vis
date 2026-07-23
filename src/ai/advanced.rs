@@ -3,7 +3,7 @@
 //! `BasicAi` deliberately remains the small deterministic baseline.  This
 //! agent adds a shared strategic model so research, production, diplomacy,
 //! civilian work, and military movement pursue the same medium-term goal.
-use super::{Ai, BasicAi, UnitDoctrine, Weights};
+use super::{Ai, BasicAi, ForceReport, PlanReport, UnitDoctrine, Weights};
 use crate::game::{Action, CongressResolution, DiplomaticDeal, Game, Item};
 use crate::rules::Yields;
 use crate::Pos;
@@ -115,6 +115,15 @@ pub enum ForceDomain {
     Sea,
 }
 
+impl ForceDomain {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ForceDomain::Land => "land",
+            ForceDomain::Sea => "sea",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ForcePosture {
     Muster,
@@ -122,6 +131,18 @@ pub enum ForcePosture {
     Engage,
     Hold,
     Recover,
+}
+
+impl ForcePosture {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ForcePosture::Muster => "muster",
+            ForcePosture::Advance => "advance",
+            ForcePosture::Engage => "engage",
+            ForcePosture::Hold => "hold",
+            ForcePosture::Recover => "recover",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -8868,6 +8889,31 @@ impl AdvancedAi {
 impl Ai for AdvancedAi {
     fn strategy_label(&self) -> Option<&'static str> {
         self.plan.as_ref().map(|plan| plan.strategy.as_str())
+    }
+
+    fn plan_report(&self) -> Option<PlanReport> {
+        let plan = self.plan.as_ref()?;
+        Some(PlanReport {
+            strategy: plan.strategy.as_str(),
+            victory_target: self.victory_target.map(VictoryTarget::as_str),
+            target_player: plan.target_player,
+            target_city: plan.target_city,
+            threatened_city: plan.threatened_city,
+            desired_cities: plan.desired_cities,
+            assessed_turn: plan.assessed_turn,
+            forces: self
+                .force_groups
+                .iter()
+                .map(|group| ForceReport {
+                    domain: group.domain.as_str(),
+                    posture: group.posture.as_str(),
+                    units: group.units.len(),
+                    objective: group.objective,
+                    readiness: group.readiness,
+                    strength_ratio: group.local_strength_ratio,
+                })
+                .collect(),
+        })
     }
 
     fn take_turn(&mut self, g: &mut Game, pid: usize) {

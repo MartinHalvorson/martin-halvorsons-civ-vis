@@ -12,7 +12,7 @@
 //! the agent falls back to the scripted `AdvancedAi` rather than playing
 //! randomly.
 use crate::action_space::{kind_name, legal_encoded};
-use crate::ai::{AdvancedAi, Ai, Weights};
+use crate::ai::{AdvancedAi, Ai, PlanReport, Weights};
 use crate::evolve::features;
 use crate::game::{Action, Game};
 use crate::valuenet::ValueNet;
@@ -152,6 +152,10 @@ impl Ai for PolicyAi {
 
     fn strategy_label(&self) -> Option<&'static str> {
         self.fallback.strategy_label()
+    }
+
+    fn plan_report(&self) -> Option<PlanReport> {
+        self.fallback.plan_report()
     }
 }
 

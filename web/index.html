@@ -316,7 +316,7 @@
     width: 100%; min-height: 56px; margin: 0; padding: 4px 5px; overflow: hidden; border-radius: 9px;
     color: var(--text); background: linear-gradient(100deg, #0a1512f0, #13231fe8);
     border: 1px solid #40574f; box-shadow: inset 0 1px #ffffff0b;
-    text-align: left; cursor: pointer; transition: border-color .12s ease, background .12s ease;
+    text-align: left; transition: border-color .12s ease, background .12s ease;
   }
   .diplomacy-card:hover { transform: none; border-color: #718b81; background: linear-gradient(100deg, #0e1b17f7, #1a302af2); }
   .diplomacy-card.active { border-color: #e3c777; box-shadow: inset 3px 0 var(--gold), inset 0 1px #fff2, 0 0 18px #d7b66a17; }
@@ -324,13 +324,22 @@
   .diplomacy-card.friend { border-color: #708d62; box-shadow: inset 3px 0 #9dbb7d, inset 0 1px #fff1; }
   .diplomacy-card.at-war { border-color: #a65450; box-shadow: inset 3px 0 var(--danger), inset 0 1px #fff1; }
   .diplomacy-card.dead { opacity: .42; filter: grayscale(.75); }
+  /* The card carries two separate actions now: the medallion and the stat
+     block follow a civilization, the name column opens its dossier. Each is a
+     real button, so the ribbon stays keyboard-reachable. */
   .leader-medallion {
-    width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%;
+    width: 38px; height: 38px; display: grid; place-items: center; padding: 0; border-radius: 50%;
     color: #fff; background: radial-gradient(circle at 35% 28%, color-mix(in srgb, var(--civ) 72%, white), var(--civ) 58%, #07110f);
     border: 2px solid var(--civ); box-shadow: 0 0 0 2px #07110f, 0 4px 12px #0008;
-    font: 700 15px/1 Georgia, serif; text-shadow: 0 1px 3px #000;
+    font: 700 15px/1 Georgia, serif; text-shadow: 0 1px 3px #000; cursor: pointer;
+  }
+  .diplomacy-identity, .diplomacy-stats {
+    margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit;
+    text-align: left; cursor: pointer;
   }
   .diplomacy-identity { min-width: 0; }
+  .diplomacy-identity:hover .diplomacy-name, .diplomacy-identity:focus-visible .diplomacy-name { color: #fff; }
+  .detail-caret { margin-left: 5px; color: #93aca1; font-size: 9px; vertical-align: 1px; }
   .diplomacy-name { display: block; overflow: hidden; color: #f1f4ed; font-size: 13px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
   .diplomacy-rank { margin-right: 5px; color: var(--gold-bright); font: 700 11px Georgia, serif; }
   /* Leader, war plan and standing all share this line, which as a single
@@ -366,6 +375,46 @@
   .ribbon-stat.suzerain b { color: #8dd6b1; }
   .ribbon-stat.wonders b { color: #e9d88e; }
   .ribbon-stat.score b { color: var(--gold-bright); }
+  /* The dossier is one card opened up — about three cards tall, one
+     civilization at a time. It hangs off the bottom of its own card so the
+     ribbon still reads as a single ranked column. */
+  .diplomacy-card.expanded { border-color: #8ba79b; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+  .civ-dossier {
+    margin-top: -3px; padding: 7px 8px 8px; border: 1px solid #8ba79b; border-top: 0;
+    border-radius: 0 0 9px 9px; background: linear-gradient(180deg, #0b1a16f7, #08120fef);
+    box-shadow: inset 0 -1px #ffffff08;
+  }
+  .dossier-head { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+  .dossier-title { flex: 0 1 auto; overflow: hidden; color: #f1f4ed; font-size: 12px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+  .dossier-tags { display: flex; flex: 1; flex-wrap: wrap; gap: 4px; min-width: 0; }
+  .dossier-tag {
+    padding: 1px 6px; border: 1px solid #ffffff1c; border-radius: 999px; background: #ffffff0d;
+    color: #c6d4ce; font-size: 8px; font-weight: 850; letter-spacing: .1em; text-transform: uppercase;
+  }
+  .dossier-tag.civ { border-color: color-mix(in srgb, var(--civ) 55%, transparent); color: color-mix(in srgb, var(--civ) 45%, #eef4f1); }
+  .dossier-tag.war { border-color: #a6545080; color: #f2a09b; }
+  .dossier-btn {
+    flex: none; margin: 0; padding: 3px 8px; border: 1px solid #4c655c; border-radius: 6px;
+    background: #0d1a16; color: #d8e2dd; font-size: 10px; font-weight: 800; cursor: pointer;
+  }
+  .dossier-btn:hover { border-color: #7fa294; color: #fff; }
+  .dossier-grid { display: grid; grid-template-columns: 1.1fr .85fr 1fr 1.15fr; gap: 6px; }
+  .dossier-section { min-width: 0; padding: 6px 7px; border: 1px solid #ffffff0d; border-radius: 7px; background: #04100db8; }
+  .dossier-section h4 { margin: 0 0 4px; color: #93a79f; font-size: 8px; font-weight: 850; letter-spacing: .14em; text-transform: uppercase; }
+  .dossier-row { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; padding: 1px 0; font-size: 10px; line-height: 1.35; }
+  .dossier-row > span { flex: none; color: #8ba098; white-space: nowrap; }
+  .dossier-row > b { flex: 1; min-width: 0; overflow: hidden; color: #e7efea; text-align: right; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .dossier-note { margin-top: 4px; color: #9db0a8; font-size: 9px; line-height: 1.4; }
+  .dossier-empty { color: #708379; font-size: 9px; font-style: italic; }
+  .dossier-track { margin-bottom: 3px; color: var(--track); }
+  .dossier-track-line { display: flex; align-items: baseline; justify-content: space-between; gap: 4px; font-size: 9px; font-weight: 750; }
+  .dossier-track-line b { color: #dfe8e3; font-variant-numeric: tabular-nums; }
+  .civ-dossier .victory-meter { height: 4px; margin: 2px 0 0; border-radius: 3px; }
+  .force-chip { display: inline-block; margin: 2px 3px 0 0; padding: 1px 5px; border-radius: 5px; background: #ffffff10; color: #d5e0da; font-size: 9px; font-weight: 750; }
+  .force-chip.engage { background: #7a30293d; color: #f2a09b; }
+  .force-chip.advance { background: #7a5f2740; color: #e9c07c; }
+  .force-chip.muster { background: #2a4a6b3d; color: #9fc7e6; }
+  .force-chip.recover { background: #3d3a5c40; color: #c0b6e8; }
   #zoomctl {
     position: absolute; z-index: 14; bottom: 16px; left: 16px; display: flex; flex-direction: row;
     gap: 5px; padding: 5px; border-radius: 13px; background: #0a1512cb; border: 1px solid #3c554c;
@@ -617,6 +666,9 @@
     .diplomacy-leader { font-size: 9px; }
     .ribbon-stat b { font-size: 11px; }
     .ribbon-stat em { font-size: 7px; }
+    /* Four dossier columns need about 480px to stay readable; below that they
+       stack two by two rather than shedding sections. */
+    .dossier-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   @media (max-width: 1320px) {
     #topbar { right: 70px; }
@@ -659,6 +711,7 @@
     .ribbon-stat { padding-inline: 0; }
     .ribbon-stat b { font-size: 8px; }
     .ribbon-stat em { font-size: 6px; letter-spacing: 0; }
+    .dossier-grid { grid-template-columns: minmax(0, 1fr); }
   }
 </style>
 </head>
@@ -1085,6 +1138,9 @@ let viewChanging = false;
 let eventLogs = new Map(), lastLeaderByView = new Map(), lastSidePaint = 0;
 let TMAP = new Map();
 let tradeFilter = "all", tradeBusy = false;
+// The leader ribbon opens one civilization at a time — this is whose dossier
+// is showing, or null for the consolidated ribbon alone.
+let hudExpanded = null;
 let VIEW = localStorage.getItem("civvis-view") || "cinematic";
 let SHOW_YIELDS = localStorage.getItem("civvis-show-yields") === "1";
 let SHOW_ARTIFACT_SITES = localStorage.getItem("civvis-show-artifact-sites") === "1";
@@ -4409,6 +4465,12 @@ function exactStat(value) {
   return (Math.round(n * 10) / 10).toLocaleString(undefined, {maximumFractionDigits: 1});
 }
 
+// Rebuilding the ribbon's markup on a frame where nothing in it changed
+// replaced every card mid-click: a press that lands between mousedown and
+// mouseup on a detached button never becomes a click at all. Painting only on
+// a real change keeps both the follow and the dossier buttons pressable.
+let hudHtml = "";
+
 function drawPlayerHud() {
   const hud = document.getElementById("playerhud");
   const acting = SPEC ? state.current : 0;
@@ -4416,7 +4478,7 @@ function drawPlayerHud() {
     .filter(p => !p.is_minor && !p.is_barbarian)
     .sort((a, b) => b.score - a.score || a.id - b.id);
   const rankById = new Map(majors.map((p, index) => [p.id, index + 1]));
-  hud.innerHTML =
+  const html =
     `<div class="ribbon-heading"><span>World leaders</span><span>output · empire · score</span></div>` +
     `<div class="diplomacy-ribbon">` + majors.map(p => {
       const y = p.yields || {};
@@ -4464,15 +4526,192 @@ function drawPlayerHud() {
         ["wonders", "WNDR", p.wonder_count, `World wonders controlled: ${exactStat(p.wonder_count)}`],
         ["score", "SCORE", p.score, `Score: ${exactStat(p.score)} · rank ${rank}`],
       ];
-      return `<button class="diplomacy-card ${stateClass}" style="--civ:${color}" onclick="spectatePlayer(${p.id})" ` +
-        `title="Watch ${p.civ} through its fog of war · ${relationSummary}${agendaText}" aria-label="Watch ${p.civ}, rank ${rank}, ${relationSummary}">` +
-        `<span class="leader-medallion">${initial}</span>` +
-        `<span class="diplomacy-identity"><span class="diplomacy-name"><span class="diplomacy-rank">#${rank}</span>${p.id === acting && SPEC ? "◉ " : ""}${p.civ}</span>` +
-        `<span class="diplomacy-leader">${leader}${agendaGlyph} · ${strategyLabel}${relation}</span></span>` +
-        `<span class="diplomacy-stats">` + stats.map(([kind, shortLabel, value, label]) =>
+      const watchTitle = `Watch ${p.civ} through its fog of war · ${relationSummary}${agendaText}`;
+      const expanded = hudExpanded === p.id;
+      return `<div class="diplomacy-card ${stateClass} ${expanded ? "expanded" : ""}" style="--civ:${color}">` +
+        `<button class="leader-medallion" data-hud-action="watch" data-hud-civ="${p.id}" title="${watchTitle}" aria-label="Watch ${p.civ}">${initial}</button>` +
+        `<button class="diplomacy-identity" data-hud-action="dossier" data-hud-civ="${p.id}" aria-expanded="${expanded}" ` +
+        `title="${expanded ? "Close" : "Open"} the ${p.civ} dossier · ${relationSummary}${agendaText}" ` +
+        `aria-label="${expanded ? "Close" : "Open"} dossier for ${p.civ}, rank ${rank}, ${relationSummary}">` +
+        `<span class="diplomacy-name"><span class="diplomacy-rank">#${rank}</span>${p.id === acting && SPEC ? "◉ " : ""}${p.civ}` +
+        `<span class="detail-caret">${expanded ? "▾" : "▸"}</span></span>` +
+        `<span class="diplomacy-leader">${leader}${agendaGlyph} · ${strategyLabel}${relation}</span></button>` +
+        `<button class="diplomacy-stats" data-hud-action="watch" data-hud-civ="${p.id}" title="${watchTitle}" aria-label="Watch ${p.civ}">` +
+        stats.map(([kind, shortLabel, value, label]) =>
           `<span class="ribbon-stat ${kind}" title="${label}"><b>${ribbonStat(value)}</b><em>${shortLabel}</em></span>`
-        ).join("") + `</span></button>`;
+        ).join("") + `</button></div>` +
+        (expanded ? civDossier(p, rank, relation) : "");
     }).join("") + `</div>`;
+  if (html === hudHtml) return;
+  hudHtml = html;
+  hud.innerHTML = html;
+}
+
+function toggleCivDossier(id) {
+  hudExpanded = hudExpanded === id ? null : id;
+  drawPlayerHud();
+}
+
+function runHudAction(target) {
+  const id = +target.dataset.hudCiv;
+  if (!Number.isInteger(id)) return;
+  if (target.dataset.hudAction === "dossier") toggleCivDossier(id);
+  else spectatePlayer(id);
+}
+
+// The ribbon is rewritten whenever the world it describes changes, and a
+// button that is replaced between press and release never becomes a click at
+// all: on a running game more than half the presses on a card were simply
+// swallowed. Act on the press, which always lands on what was under the
+// cursor, and keep click for keyboard activation — which reports no press.
+const hudRibbon = document.getElementById("playerhud");
+hudRibbon.addEventListener("mousedown", ev => {
+  if (ev.button !== 0) return;
+  const target = ev.target.closest?.("[data-hud-action]");
+  if (target) runHudAction(target);
+});
+hudRibbon.addEventListener("click", ev => {
+  if (ev.detail !== 0) return;
+  const target = ev.target.closest?.("[data-hud-action]");
+  if (target) runHudAction(target);
+});
+
+function civName(id) {
+  return state.players.find(player => player.id === id)?.civ || `Player ${id}`;
+}
+
+// Wars this civilization is still fighting, longest-running first, with what
+// the war has cost it so far.
+function activeWarsFor(pid) {
+  return (state.wars || [])
+    .filter(war => war.ended === null || war.ended === undefined)
+    .filter(war => war.aggressor === pid || war.defender === pid)
+    .map(war => {
+      const side = (war.sides || []).find(entry => entry.player === pid) || {};
+      return {
+        enemy: war.aggressor === pid ? war.defender : war.aggressor,
+        aggressor: war.aggressor === pid,
+        turns: war.turns || 0,
+        units: side.units_lost || 0,
+        cities: side.cities_lost || 0,
+      };
+    })
+    .sort((a, b) => b.turns - a.turns);
+}
+
+// The dossier is one ribbon card opened up: about three cards tall, and only
+// ever one at a time. The ribbon answers "who is winning"; this answers "what
+// is this civilization actually trying to do", which is the question a
+// spectator asks next and which no single row of numbers can carry.
+function civDossier(p, rank, relation) {
+  const plan = p.ai_plan || null;
+  const y = p.yields || {};
+  const row = (label, value, title) => value === null || value === undefined || value === ""
+    ? ""
+    : `<div class="dossier-row"${title ? ` title="${title}"` : ""}><span>${label}</span><b>${value}</b></div>`;
+
+  // --- what the agent is trying to do
+  const strategy = plan?.strategy || p.ai_strategy || "";
+  const planAge = plan ? Math.max(0, (state.turn || 0) - (plan.assessed_turn || 0)) : null;
+  const forces = plan?.forces || [];
+  const forceChips = forces.slice(0, 6).map(force =>
+    `<span class="force-chip ${force.posture}" title="${titleCase(force.posture)} · ${force.units} ${force.domain === "sea" ? "naval" : "land"} units` +
+    ` · objective ${force.objective?.[0]},${force.objective?.[1]} · local strength ${Math.round((force.strength_ratio || 0) * 100)}%` +
+    ` of the defenders · readiness ${Math.round((force.readiness || 0) * 100)}%">` +
+    `${force.domain === "sea" ? "⚓" : "⚔"} ${titleCase(force.posture)} ×${force.units}</span>`).join("");
+  const strategyBody = plan
+    ? row("Doctrine", `<span class="ai-plan ${plan.strategy}">${titleCase(plan.strategy)}</span>`,
+        "The medium-term plan every department of this AI is currently serving") +
+      row("Victory lane", plan.victory_target ? titleCase(plan.victory_target) : "Opportunistic",
+        plan.victory_target ? "A committed game-ending objective" : "No committed objective — the plan follows whichever lane is going best") +
+      row("Reassessed", planAge === 0 ? "This turn" : `Turn ${plan.assessed_turn} · ${planAge} ago`) +
+      row("Settlement goal", `${p.cities} of ${plan.desired_cities}`, "Cities held against the cities this plan wants") +
+      row("Campaign target", plan.target_city
+        ? `${plan.target_city.name}${plan.target_civ ? ` (${plan.target_civ})` : ""}`
+        : plan.target_civ || "None",
+        plan.target_city
+          ? `Working towards ${plan.target_city.name}, a ${plan.target_city.owner_civ} city at ${plan.target_city.pos?.[0]},${plan.target_city.pos?.[1]}`
+          : plan.target_civ ? `${plan.target_civ} is the civilization this plan is measured against` : "") +
+      row("Defending", plan.threatened_city ? plan.threatened_city.name : "Nothing under threat",
+        plan.threatened_city
+          ? `${plan.threatened_city.name} at ${plan.threatened_city.pos?.[0]},${plan.threatened_city.pos?.[1]} is the city this plan expects to lose first`
+          : "") +
+      (forces.length
+        ? `<div class="dossier-note">${forceChips}${forces.length > 6 ? ` <span class="dossier-empty">+${forces.length - 6} more</span>` : ""}</div>`
+        : `<div class="dossier-note"><span class="dossier-empty">No coordinated forces in the field</span></div>`)
+    : `<div class="dossier-empty">No published plan. The hierarchical AI reports one from its first turn of a spectated game.</div>`;
+
+  // --- the victory race, at the width the topbar cannot spare
+  const tracks = VICTORY_TRACKS
+    .filter(track => state.victory_conditions?.[track.id] !== false)
+    .map(track => {
+      const metric = victoryMetric(p, track.id);
+      const progress = Math.max(0, Math.min(100, +metric.progress || 0));
+      return `<div class="dossier-track" style="--track:${track.color}" title="${track.label}: ${victoryDescription(track.id, metric)}">` +
+        `<div class="dossier-track-line"><span>${track.icon} ${track.label}</span><b>${victoryValue(track.id, metric)}</b></div>` +
+        `<div class="victory-meter"><b style="width:${progress}%"></b></div></div>`;
+    }).join("");
+
+  // --- how the rest of the world sees them
+  const wars = activeWarsFor(p.id);
+  const borders = p.open_borders_to_me && p.my_open_borders_to_them ? "Mutual"
+    : p.open_borders_to_me ? "They granted"
+    : p.my_open_borders_to_them ? "You granted"
+    : "Closed";
+  const opinion = +p.opinion_of_me || 0;
+  const diplomacy =
+    row("Government", p.government ? titleCase(p.government) : "Unformed") +
+    row("Standing", relation) +
+    row("Agenda", p.agenda ? p.agenda.name : "Unrevealed", p.agenda ? p.agenda.description : "") +
+    row("Opinion of you", `${opinion > 0 ? "+" : ""}${exactStat(opinion)}`,
+      "Above +15 they approve of you, below -15 they disapprove") +
+    row("Grievances", `${exactStat(p.my_grievances)} ↔ ${exactStat(p.grievances_against_me)}`,
+      "Grievances you hold against them ↔ grievances they hold against you") +
+    row("Your envoys", p.my_envoys || 0) +
+    row("Open borders", borders) +
+    (wars.length
+      ? `<div class="dossier-note">${wars.slice(0, 3).map(war =>
+          `<span class="force-chip engage" title="${war.aggressor ? "Declared war on" : "Was attacked by"} ${civName(war.enemy)} ${war.turns} turns ago · ` +
+          `${war.units} units and ${war.cities} cities lost">⚔ ${civName(war.enemy)} · ${war.turns}t</span>`).join("")}</div>`
+      : `<div class="dossier-note"><span class="dossier-empty">At peace with the world</span></div>`);
+
+  // --- the empire behind the ribbon's four-glyph columns
+  const goldPerTurn = Number.isFinite(+p.gold_per_turn) ? +p.gold_per_turn : +(y.gold || 0);
+  const projects = (p.science_projects || []).length;
+  const ledger =
+    row("Treasury", `${exactStat(p.gold)} (${goldPerTurn >= 0 ? "+" : ""}${exactStat(goldPerTurn)})`, "Gold banked, and net Gold per turn") +
+    row("Faith", `${exactStat(p.faith)} (+${exactStat(y.faith)})`, "Faith banked, and Faith per turn") +
+    row("Output", `${exactStat(y.production)}⚒ ${exactStat(y.science)}🔬 ${exactStat(y.culture)}🎭`,
+      `Production ${exactStat(y.production)} · Science ${exactStat(y.science)} · Culture ${exactStat(y.culture)} · Food ${exactStat(y.food)} per turn`) +
+    row("Military", exactStat(p.military), "Total strength of every unit in the field") +
+    row("Holdings", `${p.cities} cities · ${p.wonder_count} wonders`) +
+    row("Suzerainty", `${p.suzerain_count} city-states`) +
+    row("Tourism", `${compactStat(p.foreign_tourists)} visiting · ${compactStat(p.domestic_tourists)} domestic`,
+      "Foreign tourists attracted, against the domestic tourists other civilizations must out-attract") +
+    row("Space race", projects
+      ? `${projects} projects${p.exoplanet_distance > 0 ? ` · ${compactStat(p.exoplanet_distance)}ly` : ""}`
+      : "Not launched");
+
+  const tags = [
+    `<span class="dossier-tag civ">Rank #${rank}</span>`,
+    strategy ? `<span class="dossier-tag">${titleCase(strategy)} plan</span>` : "",
+    plan?.victory_target ? `<span class="dossier-tag">${titleCase(plan.victory_target)} lane</span>` : "",
+    wars.length ? `<span class="dossier-tag war">${wars.length} war${wars.length > 1 ? "s" : ""}</span>` : "",
+    p.alive ? "" : `<span class="dossier-tag war">Defeated</span>`,
+  ].filter(Boolean).join("");
+
+  return `<div class="civ-dossier" style="--civ:${pcol(p.id)}">` +
+    `<div class="dossier-head">` +
+    `<span class="dossier-title">${p.civ} · ${p.leader || "Unknown leader"}</span>` +
+    `<span class="dossier-tags">${tags}</span>` +
+    `<button class="dossier-btn" data-hud-action="watch" data-hud-civ="${p.id}">◉ Watch</button>` +
+    `<button class="dossier-btn" data-hud-action="dossier" data-hud-civ="${p.id}" aria-label="Close dossier">✕</button></div>` +
+    `<div class="dossier-grid">` +
+    `<section class="dossier-section"><h4>Grand strategy</h4>${strategyBody}</section>` +
+    `<section class="dossier-section"><h4>Victory race</h4>${tracks}</section>` +
+    `<section class="dossier-section"><h4>Diplomacy</h4>${diplomacy}</section>` +
+    `<section class="dossier-section"><h4>Empire ledger</h4>${ledger}</section>` +
+    `</div></div>`;
 }
 
 function tradeItemIcon(item) {
@@ -5566,6 +5805,8 @@ document.addEventListener("keydown", ev => {
     else { sel = null; send({type: "end_turn"}); }
   }
   else if (ev.key === "Escape") {
+    // The dossier is the topmost thing Escape can close, so it goes first.
+    if (hudExpanded !== null) { hudExpanded = null; drawPlayerHud(); return; }
     sel = null; selCity = null; lensOn = false; tackMode = false;
     modeline(); draw(); drawSide(); drawUbar();
   }

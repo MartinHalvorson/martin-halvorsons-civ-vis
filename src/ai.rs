@@ -46,10 +46,44 @@ const CIVIC_PRIORITY: [&str; 8] = [
 ];
 const DISTRICT_PRIORITY: [&str; 4] = ["campus", "commercial_hub", "holy_site", "theater_square"];
 
+/// One coordinated force as an observer sees it: what it is, where it is
+/// going, and how ready it is to fight when it gets there.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ForceReport {
+    pub domain: &'static str,
+    pub posture: &'static str,
+    pub units: usize,
+    pub objective: Pos,
+    pub readiness: f64,
+    pub strength_ratio: f64,
+}
+
+/// Everything an agent is willing to say about its own medium-term
+/// intentions. The spectator HUD reads this to explain *why* a civilization
+/// is doing what it does instead of only showing the outcome; nothing here
+/// feeds back into the simulation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlanReport {
+    pub strategy: &'static str,
+    pub victory_target: Option<&'static str>,
+    pub target_player: Option<usize>,
+    pub target_city: Option<u32>,
+    pub threatened_city: Option<u32>,
+    pub desired_cities: usize,
+    pub assessed_turn: u32,
+    pub forces: Vec<ForceReport>,
+}
+
 pub trait Ai {
     fn take_turn(&mut self, g: &mut Game, pid: usize);
 
     fn strategy_label(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// The agent's current plan, for observers only. Stateless baselines
+    /// have no plan to report.
+    fn plan_report(&self) -> Option<PlanReport> {
         None
     }
 }
@@ -61,6 +95,10 @@ impl<T: Ai + ?Sized> Ai for Box<T> {
 
     fn strategy_label(&self) -> Option<&'static str> {
         (**self).strategy_label()
+    }
+
+    fn plan_report(&self) -> Option<PlanReport> {
+        (**self).plan_report()
     }
 }
 
