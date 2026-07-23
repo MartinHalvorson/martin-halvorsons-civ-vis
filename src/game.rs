@@ -2118,6 +2118,28 @@ mod governor_runtime_tests {
     }
 
     #[test]
+    fn mines_and_quarries_lower_the_appeal_of_their_neighbours() {
+        let mut game = Game::new_full(1, 24, 16, 91_971, 200, 0, false);
+        let city = found_capital(&mut game, 0);
+        let centre = game.cities[&city].pos;
+        let site = game.nbrs(centre)[0];
+        for position in [centre, site] {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.feature = None;
+            tile.improvement = None;
+            tile.pillaged = false;
+        }
+        let before = game.tile_appeal(centre);
+        game.map.tiles.get_mut(&site).unwrap().improvement = Some("mine".to_string());
+        assert_eq!(game.tile_appeal(centre), before - 1);
+        game.map.tiles.get_mut(&site).unwrap().improvement = Some("sphinx".to_string());
+        assert_eq!(game.tile_appeal(centre), before + 1);
+        // Pillaging stops the grant and costs the tile its own Appeal point.
+        game.map.tiles.get_mut(&site).unwrap().pillaged = true;
+        assert_eq!(game.tile_appeal(centre), before - 1);
+    }
+
+    #[test]
     fn lumber_mills_reach_rainforest_only_at_mercantilism() {
         let mut game = Game::new_full(1, 24, 16, 91_963, 200, 0, false);
         let city = found_capital(&mut game, 0);
@@ -18783,12 +18805,7 @@ impl Game {
                     .map(|spec| spec.appeal.round() as i32)
                     .unwrap_or(0);
             }
-            if matches!(
-                adjacent.improvement.as_deref(),
-                Some("mine" | "quarry" | "oil_well" | "airstrip" | "missile_silo")
-            ) {
-                appeal -= 1;
-            }
+
             if !adjacent.pillaged {
                 appeal += adjacent
                     .improvement
