@@ -4931,6 +4931,17 @@ impl BasicAi {
                 return self.fortify_or_stop(g, pid, uid);
             }
         }
+        // Coming ashore outranks exploring. A Recon unit explores for as long
+        // as any unseen tile remains, which on an ocean map is forever, so
+        // Scouts and Skirmishers walked off across the water and never came
+        // back: 11% of every empire's land army ended its games embarked,
+        // where no upgrade is offered at all. Only that case jumps the queue —
+        // a unit merely away from home still explores first and modernizes
+        // afterwards, because taking recon off the map early costs more than
+        // the delayed upgrade is worth.
+        if g.is_embarked(&g.units[&uid]) && self.modernization_step(g, pid, uid) {
+            return true;
+        }
         if self.should_explore(g, pid, uid, false) && self.explore_step(g, pid, uid) {
             return true;
         }
@@ -4949,11 +4960,14 @@ impl BasicAi {
     /// in no-man's-land can never modernize however rich its owner is; the
     /// modernization pass simply never sees it. Only units whose successor is
     /// already unlocked and paid for make the trip.
+    ///
+    /// An embarked unit is included deliberately: it is the case that most
+    /// needs the trip, since no upgrade at all is offered at sea.
     fn modernization_step(&mut self, g: &mut Game, pid: usize, uid: u32) -> bool {
         let target = {
             let unit = &g.units[&uid];
             let upos = unit.pos;
-            if g.is_embarked(unit) || g.unit_upgrade_target(pid, &unit.kind).is_none() {
+            if g.unit_upgrade_target(pid, &unit.kind).is_none() {
                 return false;
             }
             let at_home = g
@@ -5288,6 +5302,45 @@ mod tests {
         g.players[0].gold = 0.0;
         let broke = g.spawn_test_unit("warrior", 0, target);
         assert!(!ai.modernization_step(&mut g, 0, broke));
+    }
+
+    /// A Recon unit explores for as long as any tile is unseen, which on an
+    /// ocean map is forever, so Scouts and Skirmishers walked out across the
+    /// water and stayed there: 11% of every empire's land army ended its games
+    /// embarked, where no upgrade is offered at all.
+    #[test]
+    fn an_embarked_unit_comes_ashore_before_it_explores_any_further() {
+        let (mut g, source, _) = island_colony_game(1);
+        grant_tech_with_prerequisites(&mut g, 0, "iron_working");
+        // Without embarkation a castaway cannot cross open water at all, so
+        // grant the technology that put it out there in the first place.
+        grant_tech_with_prerequisites(&mut g, 0, "shipbuilding");
+        g.players[0]
+            .strategic_resources
+            .insert("iron".to_string(), 400.0);
+        g.players[0].gold = 900.0;
+        let at_sea = g
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .filter(|pos| g.rules.is_water(&g.map.tiles[pos]))
+            // Far enough out that the only way home is not the city tile
+            // itself, which the starting garrison already occupies.
+            .filter(|pos| g.wdist(*pos, source) >= 3)
+            .min_by_key(|pos| (g.wdist(*pos, source), *pos))
+            .expect("the colony sits in an ocean");
+        let castaway = g.spawn_test_unit("warrior", 0, at_sea);
+        assert!(g.is_embarked(&g.units[&castaway]), "the case needs a unit at sea");
+        let before = g.wdist(at_sea, source);
+
+        let mut ai = BasicAi::new();
+        ai.peacetime_step(&mut g, 0, castaway);
+
+        assert!(
+            g.wdist(g.units[&castaway].pos, source) < before,
+            "an embarked unit heads for shore instead of exploring on"
+        );
     }
 
     /// The standing-army target used to count heads, so a single Warrior that

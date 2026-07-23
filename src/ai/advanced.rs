@@ -14689,7 +14689,7 @@ mod tests {
                 .filter(|unit| unit.owner == 0 && unit.kind == "slinger")
                 .count()
         };
-        let mut raise = |g: &mut Game, wanted: usize| {
+        let raise = |g: &mut Game, wanted: usize| {
             let before = slingers(g);
             for pos in g.wdisk(home, 4) {
                 if slingers(g) >= before + wanted {
