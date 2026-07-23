@@ -37079,9 +37079,9 @@ mod combat_scenarios {
         assert!(g.is_embarked(&g.units[&warrior]));
         // Embarked strength follows the shipped per-era ladder.
         assert_eq!(g.unit_strength(&g.units[&warrior], true), 10.0);
-        g.world_era = 1;
+        g.players[0].techs.insert("horseback_riding".to_string());
         assert_eq!(g.unit_strength(&g.units[&warrior], true), 15.0);
-        g.world_era = 3;
+        g.players[0].techs.insert("cartography".to_string());
         assert_eq!(g.unit_strength(&g.units[&warrior], true), 30.0);
         g.units.get_mut(&warrior).unwrap().formation = 1;
         assert_eq!(g.unit_strength(&g.units[&warrior], true), 40.0);

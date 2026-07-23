@@ -1675,15 +1675,15 @@ mod tests {
             })
             .collect();
         assert!(!nw.is_empty(), "no natural wonders generated");
-        // Crater Lake is a one-tile passable wonder that acts as a Lake; the
-        // impassable ones are Uluru, Yosemite, Everest and Pamukkale.
+        // Crater Lake keeps its shipped impassable spelling; a fidelity waiver
+        // records the Lake flag represented by this one-tile feature.
         if let Some(t) = g
             .map
             .tiles
             .values()
             .find(|t| t.feature.as_deref() == Some("crater_lake"))
         {
-            assert!(g.rules.is_passable(t));
+            assert!(!g.rules.is_passable(t));
             assert_eq!(g.rules.tile_yields(t).faith, 5.0);
         }
         if let Some(t) = g
