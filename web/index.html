@@ -416,7 +416,7 @@
      the existing terrain renderer remains authoritative while the broadcast
      furniture yields to it. The race stays readable across the room; the
      dense leader table and command deck remain one C/F key away. */
-  #cinema-atmosphere, #cinema-prologue, #cinema-matte, #cinema-story,
+  #cinema-atmosphere, #cinema-transition, #cinema-prologue, #cinema-matte, #cinema-story,
   #cinema-follow, #cinema-chrome { display: none; }
   body.cinema-mode #cinema-atmosphere {
     position: absolute; inset: -8%; z-index: 2; display: block; overflow: hidden;
@@ -437,6 +437,18 @@
   body.cinema-mode #cinema-atmosphere::after {
     content: ""; position: absolute; inset: 0;
     background: linear-gradient(128deg, #ffe6a014 0%, transparent 32%, transparent 69%, #24443d12 100%);
+  }
+  body.cinema-mode #cinema-transition {
+    position: absolute; inset: 0; z-index: 16; display: block; pointer-events: none;
+    opacity: 0; background: #010403;
+  }
+  body.cinema-mode #cinema-transition.active {
+    animation: cinema-cut-veil .56s cubic-bezier(.5, 0, .25, 1) both;
+  }
+  @keyframes cinema-cut-veil {
+    0% { opacity: 0; }
+    32%, 53% { opacity: .96; }
+    100% { opacity: 0; }
   }
   body.cinema-mode #cinema-prologue.active {
     position: absolute; inset: 0; z-index: 17; display: grid; place-items: center;
@@ -570,6 +582,7 @@
     body.cinema-mode #winner .winner-content { animation: none !important; }
     body.cinema-mode #cinema-story, body.cinema-mode #playerhud,
     body.cinema-mode #cinema-follow, body.cinema-mode #cinema-chrome { transition-duration: .01ms; }
+    body.cinema-mode #cinema-transition.active { animation: none; opacity: 0; }
   }
   #zoomctl {
     position: absolute; z-index: 14; bottom: 16px; left: 16px; display: flex; flex-direction: row;
@@ -929,6 +942,7 @@
 <div id="maparea">
   <canvas id="map"></canvas>
   <div id="cinema-atmosphere" aria-hidden="true"></div>
+  <div id="cinema-transition" aria-hidden="true"></div>
   <section id="cinema-prologue" aria-live="polite" aria-atomic="true">
     <div class="cinema-prologue-content">
       <div class="cinema-prologue-rule"></div>
@@ -1404,6 +1418,7 @@ const REDUCED_MOTION_QUERY = window.matchMedia("(prefers-reduced-motion: reduce)
 let cinemaIdleTimer = null, cinemaIntertitleTimer = null, cinemaIntertitleSignature = null;
 let DIRECTOR = localStorage.getItem("civvis-director-v2") === "1";
 let directorGoal = null, directorLast = 0, directorMotionLast = 0;
+let directorTransition = null;
 let directorStoryUntil = 0, directorAmbientLast = performance.now();
 let directorPortraitIndex = 0;
 let cinemaAudioContext = null, cinemaAudioMaster = null, cinemaAudioAnalyser = null;
@@ -1497,6 +1512,7 @@ function applyCinemaMode() {
   } else if (!active) {
     clearTimeout(cinemaIdleTimer);
     cinemaIdleTimer = null;
+    clearDirectorTransition();
     hideCinemaIntertitle();
   }
   updateCinemaAudioButton();
@@ -2435,14 +2451,20 @@ function queueDirectorCue(cue) {
     // enough that the action remains comfortably in frame at the spectator's
     // deliberately gentle 0.9 zoom.
     const tracksUnit = cue.unitId !== undefined && cue.unitId !== null;
-    directorGoal = {
+    const nextGoal = {
       pos: tracksUnit ? [...cue.pos] : actionViewingAnchor(cue.pos),
       focus:[...cue.pos],
       scale:Math.max(.78, Math.min(1.42, cue.zoom || 1.08)),
       kind:tracksUnit ? "character" : "event", subjectUnitId:cue.unitId,
       holdMs:cue.silent ? 3600 : (cue.priority >= 7 ? 6200 : 4300), arrivedAt:0
     };
-    updateCameraFollowChip();
+    let targetX = S * SQ3 * (nextGoal.pos[0] + nextGoal.pos[1] / 2);
+    if (mapWrapsX()) targetX += Math.round((cam.x - targetX) / WW()) * WW();
+    const targetY = S * 1.5 * nextGoal.pos[1];
+    const cutDistance = Math.max(560, area.clientWidth / Math.max(.25, cam.scale) * .62);
+    const useCut = cinemaActive() && cue.priority >= 7 &&
+      Math.hypot(targetX - cam.x, targetY - cam.y) > cutDistance;
+    stageDirectorGoal(nextGoal, useCut, now);
     directorLast = now;
     directorSeen.set(signature, now);
     if (directorSeen.size > 80) {
@@ -2451,6 +2473,28 @@ function queueDirectorCue(cue) {
     if (!cue.silent && (cue.kicker !== "A new age dawns" || !showCinemaChapter(cue)))
       showDirectorStory(cue);
   }
+}
+
+function clearDirectorTransition() {
+  directorTransition = null;
+  document.getElementById("cinema-transition")?.classList.remove("active");
+}
+function stageDirectorGoal(goal, useCut = false, now = performance.now()) {
+  clearDirectorTransition();
+  if (!useCut || REDUCED_MOTION_QUERY.matches) {
+    directorGoal = goal;
+    updateCameraFollowChip();
+    return;
+  }
+  directorTransition = {goal, switchAt:now + 180, endAt:now + 560, switched:false};
+  // The outgoing character label belongs to the old shot. Let it disappear
+  // before the veil reaches black; the incoming identity is revealed only
+  // after the edit has landed.
+  document.getElementById("cinema-follow")?.classList.remove("active");
+  const veil = document.getElementById("cinema-transition");
+  veil.classList.remove("active");
+  void veil.offsetWidth;
+  veil.classList.add("active");
 }
 
 // A directed watch needs shot rhythm, not a succession of permanent close-ups.
@@ -2505,6 +2549,24 @@ function advanceDirector(now = performance.now()) {
   if (!DIRECTOR || !state || dragState || touchGesture) {
     directorMotionLast = now;
     return false;
+  }
+  if (directorTransition) {
+    if (now < directorTransition.switchAt) {
+      directorMotionLast = now;
+      return true;
+    }
+    if (!directorTransition.switched) {
+      directorGoal = directorTransition.goal;
+      let targetX = S * SQ3 * (directorGoal.pos[0] + directorGoal.pos[1] / 2);
+      if (mapWrapsX()) targetX += Math.round((cam.x - targetX) / WW()) * WW();
+      cam.x = targetX;
+      cam.y = clampCameraY(S * 1.5 * directorGoal.pos[1], directorGoal.scale);
+      cam.scale = directorGoal.scale;
+      directorTransition.switched = true;
+      directorMotionLast = now;
+      updateCameraFollowChip();
+    }
+    if (now >= directorTransition.endAt) clearDirectorTransition();
   }
   if (!directorGoal) {
     const quietLongEnough = cinemaActive() && now - directorLast >= 9000 &&
@@ -2847,6 +2909,7 @@ function render(st, recordChronicle = true) {
   }
   if (!sameWorld) {
     unitHeadings.clear();
+    clearDirectorTransition();
     directorGoal = null; directorSeen.clear();
     directorAmbientLast = performance.now(); directorPortraitIndex = 0;
     cameraFollowUnitId = null; cameraFollowManual = false;
@@ -7015,6 +7078,7 @@ function updateDirectorButton() {
 function setDirector(on) {
   DIRECTOR = !!on;
   localStorage.setItem("civvis-director-v2", DIRECTOR ? "1" : "0");
+  clearDirectorTransition();
   directorGoal = null;
   directorAmbientLast = performance.now();
   if (DIRECTOR) {

@@ -2064,6 +2064,7 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("fetchJSON(\"/view\""));
         assert!(EMBEDDED_INDEX.contains("id=\"cinemachk\""));
         assert!(EMBEDDED_INDEX.contains("id=\"cinema-atmosphere\""));
+        assert!(EMBEDDED_INDEX.contains("id=\"cinema-transition\""));
         assert!(EMBEDDED_INDEX.contains("id=\"cinema-prologue\""));
         assert!(EMBEDDED_INDEX.contains("id=\"cinema-story\""));
         assert!(EMBEDDED_INDEX.contains("id=\"cinema-audio\""));
@@ -2080,6 +2081,7 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("Nature unleashed"));
         assert!(EMBEDDED_INDEX.contains("REDUCED_MOTION_QUERY.matches"));
         assert!(EMBEDDED_INDEX.contains("function directorCue(prev, next)"));
+        assert!(EMBEDDED_INDEX.contains("function stageDirectorGoal(goal, useCut = false"));
         assert!(EMBEDDED_INDEX.contains("function directorSurveyGoal()"));
         assert!(EMBEDDED_INDEX.contains("function directorAmbientCue()"));
         assert!(EMBEDDED_INDEX.contains("function advanceDirector(now = performance.now())"));
