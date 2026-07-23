@@ -412,14 +412,16 @@ impl AdvancedAi {
 
     fn plan_stale(&self, g: &Game, pid: usize) -> bool {
         let Some(plan) = &self.plan else { return true };
-        if matches!(
+        let unavailable_victory_plan = matches!(
             plan.strategy,
             GrandStrategy::Science
                 | GrandStrategy::Culture
                 | GrandStrategy::Religion
                 | GrandStrategy::Diplomacy
-        ) && !Self::victory_strategy_enabled(g, plan.strategy)
-        {
+        ) && !Self::victory_strategy_enabled(g, plan.strategy);
+        let useful_religious_opening = plan.strategy == GrandStrategy::Religion
+            && self.religious_opening_viable(g, pid);
+        if unavailable_victory_plan && !useful_religious_opening {
             return true;
         }
         if g.turn.saturating_sub(plan.assessed_turn) >= 5 {
@@ -590,7 +592,7 @@ impl AdvancedAi {
 
     fn religious_opening_viable(&self, g: &Game, pid: usize) -> bool {
         let player = &g.players[pid];
-        if !g.victory_conditions.religious || player.religion.is_some() {
+        if player.religion.is_some() {
             return false;
         }
         if player.prophet_pending {
@@ -3855,11 +3857,11 @@ impl AdvancedAi {
     /// idle. A large surplus may start a secondary campaign, while an active
     /// spreader keeps it moving after the initial purchase lowers the bank.
     fn religious_offensive_posture(&self, g: &Game, pid: usize, strategy: GrandStrategy) -> bool {
-        if !g.victory_conditions.religious {
-            return false;
-        }
         if strategy == GrandStrategy::Religion {
             return true;
+        }
+        if !g.victory_conditions.religious {
+            return false;
         }
         let Some(religion) = g.players[pid].religion.as_deref() else {
             return false;
@@ -9430,9 +9432,8 @@ impl Ai for AdvancedAi {
         self.base.minor = g.players[pid].is_minor;
         self.base.barb = g.players[pid].is_barbarian;
         let active_victory_target = self.active_victory_target(g);
-        self.base.pursue_religion = g.victory_conditions.religious
-            && (active_victory_target.is_none()
-                || active_victory_target == Some(VictoryTarget::Religion));
+        self.base.pursue_religion = active_victory_target.is_none()
+            || active_victory_target == Some(VictoryTarget::Religion);
         if self.base.minor || self.base.barb {
             self.base.take_turn(g, pid);
             return;
@@ -11214,6 +11215,24 @@ mod tests {
         );
         assert!(!ai.religious_opening_viable(&game, 0));
         assert!(!ai.religious_offensive_posture(&game, 0, GrandStrategy::Science));
+
+        let mut opening = Game::new(2, 24, 16, 7_604, 300, 0);
+        opening.victory_conditions.religious = false;
+        opening.players[0].prophet_pending = true;
+        assert!(
+            ai.religious_opening_viable(&opening, 0),
+            "religion remains an economic subsystem when its victory is disabled"
+        );
+        let mut opening_ai = AdvancedAi::new();
+        opening_ai.plan = Some(StrategicPlan {
+            strategy: GrandStrategy::Religion,
+            target_player: None,
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: opening.turn,
+        });
+        assert!(!opening_ai.plan_stale(&opening, 0));
         assert_ne!(
             ai.rival_victory_pressure(&game, 1).strategy,
             GrandStrategy::Diplomacy,
@@ -11242,7 +11261,10 @@ mod tests {
         turn.victory_conditions.diplomatic = false;
         turn.victory_conditions.score = false;
         targeted.take_turn(&mut turn, 0);
-        assert!(!targeted.base.pursue_religion);
+        assert!(
+            targeted.base.pursue_religion,
+            "a disabled explicit target falls back to adaptive ancillary systems"
+        );
         assert_ne!(
             targeted.current_plan().unwrap().strategy,
             GrandStrategy::Diplomacy,
