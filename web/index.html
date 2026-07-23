@@ -229,8 +229,8 @@
 
   /* Floating map HUD */
   #topbar {
-    position: absolute; z-index: 5; top: 10px; left: 64px; right: 510px;
-    display: grid; grid-template-columns: 104px repeat(6, minmax(80px, 1fr)); align-items: stretch; gap: 4px;
+    position: absolute; z-index: 5; top: 10px; left: 64px; right: 753px;
+    display: grid; grid-template-columns: 96px repeat(6, minmax(74px, 1fr)); align-items: stretch; gap: 4px;
     min-width: 0; padding: 5px; border: 1px solid #4961598c; border-radius: 13px;
     background: #0a1512e0; box-shadow: 0 12px 34px #0008; backdrop-filter: blur(16px) saturate(130%);
     pointer-events: none;
@@ -255,19 +255,21 @@
   }
   .victory-meter { overflow: hidden; background: #020706b3; box-shadow: inset 0 1px 2px #000b; }
   .victory-meter b { display: block; height: 100%; border-radius: inherit; background: currentColor; }
-  .victory-track { padding: 6px 5px 5px; color: var(--track); border-left: 1px solid #ffffff0b; }
+  .victory-track { padding: 6px 4px 5px; color: var(--track); border-left: 1px solid #ffffff0b; }
   .victory-heading { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; color: var(--track); }
   .victory-heading b { overflow: hidden; color: #dde5e1; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
   .victory-list { display: flex; flex-direction: column; gap: 3px; }
   .victory-entry { min-width: 0; }
-  .victory-line { display: grid; grid-template-columns: 10px 6px minmax(0, 1fr) auto; align-items: center; gap: 3px; min-width: 0; height: 13px; }
-  .victory-rank { color: #8b9d96; font-size: 9px; font-weight: 850; line-height: 1; }
+  /* The rows are already printed in rank order, so the leading "#1/#2/#3"
+     spent 13px per line restating the order. In a narrower topbar that width
+     is worth more as civilization name, which is what actually truncates. */
+  .victory-line { display: grid; grid-template-columns: 6px minmax(0, 1fr) auto; align-items: center; gap: 3px; min-width: 0; height: 13px; }
   .victory-civ-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--civ); box-shadow: 0 0 5px color-mix(in srgb, var(--civ) 70%, transparent); }
   .victory-civ { overflow: hidden; color: #e6ede9; font-size: 10px; font-weight: 750; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
   .victory-value { color: #c2d0ca; font-size: 10px; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .victory-meter { height: 3px; margin: 0 0 0 22px; border-radius: 3px; }
+  .victory-meter { height: 3px; margin: 0 0 0 9px; border-radius: 3px; }
   #playerhud {
-    position: absolute; z-index: 7; top: 10px; right: 12px; width: min(486px, calc(100% - 82px));
+    position: absolute; z-index: 7; top: 10px; right: 12px; width: min(729px, calc(100% - 82px));
     max-height: calc(100% - 238px); overflow-y: auto; pointer-events: auto;
     scrollbar-width: none; filter: drop-shadow(0 12px 28px #0009);
   }
@@ -280,8 +282,8 @@
   .ribbon-heading span:last-child { color: #82968f; letter-spacing: .08em; }
   .diplomacy-ribbon { display: flex; flex-direction: column; gap: 3px; }
   .diplomacy-card {
-    display: grid; grid-template-columns: 38px minmax(74px, .72fr) minmax(300px, 2.7fr); align-items: center; gap: 6px;
-    width: 100%; min-height: 50px; margin: 0; padding: 4px 5px; overflow: hidden; border-radius: 9px;
+    display: grid; grid-template-columns: 42px minmax(150px, 1.6fr) minmax(380px, 2.3fr); align-items: center; gap: 6px;
+    width: 100%; min-height: 56px; margin: 0; padding: 4px 5px; overflow: hidden; border-radius: 9px;
     color: var(--text); background: linear-gradient(100deg, #0a1512f0, #13231fe8);
     border: 1px solid #40574f; box-shadow: inset 0 1px #ffffff0b;
     text-align: left; cursor: pointer; transition: border-color .12s ease, background .12s ease;
@@ -293,15 +295,22 @@
   .diplomacy-card.at-war { border-color: #a65450; box-shadow: inset 3px 0 var(--danger), inset 0 1px #fff1; }
   .diplomacy-card.dead { opacity: .42; filter: grayscale(.75); }
   .leader-medallion {
-    width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%;
+    width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%;
     color: #fff; background: radial-gradient(circle at 35% 28%, color-mix(in srgb, var(--civ) 72%, white), var(--civ) 58%, #07110f);
     border: 2px solid var(--civ); box-shadow: 0 0 0 2px #07110f, 0 4px 12px #0008;
-    font: 700 13px/1 Georgia, serif; text-shadow: 0 1px 3px #000;
+    font: 700 15px/1 Georgia, serif; text-shadow: 0 1px 3px #000;
   }
   .diplomacy-identity { min-width: 0; }
-  .diplomacy-name { display: block; overflow: hidden; color: #f1f4ed; font-size: 12px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+  .diplomacy-name { display: block; overflow: hidden; color: #f1f4ed; font-size: 13px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
   .diplomacy-rank { margin-right: 5px; color: var(--gold-bright); font: 700 11px Georgia, serif; }
-  .diplomacy-leader { display: block; margin-top: 1px; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+  /* Leader, war plan and standing all share this line, which as a single
+     nowrap row was an ellipsis on nearly every card. The card is tall enough
+     for two lines of it, so spend the height rather than cut the sentence. */
+  .diplomacy-leader {
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    margin-top: 1px; overflow: hidden; color: var(--muted); font-size: 10px;
+    line-height: 1.25; overflow-wrap: anywhere;
+  }
   .agenda-mark { margin-left: 3px; font-size: 8px; vertical-align: 1px; }
   .agenda-mark.up { color: #8fd6a4; }
   .agenda-mark.down { color: #f2a09b; }
@@ -315,8 +324,8 @@
   .ai-plan.recovery { color: #e9ad74; }
   .diplomacy-stats { display: grid; grid-template-columns: repeat(10, 1fr); gap: 0; }
   .ribbon-stat { min-width: 0; padding: 3px 0 2px; text-align: center; border-left: 1px solid #ffffff0b; }
-  .ribbon-stat b { display: block; overflow: hidden; font-size: 11px; line-height: 1.1; text-overflow: ellipsis; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .ribbon-stat em { display: block; margin-top: 2px; color: #82958e; font-size: 7px; font-style: normal; font-weight: 850; letter-spacing: 0; line-height: 1; }
+  .ribbon-stat b { display: block; overflow: hidden; font-size: 12px; line-height: 1.1; text-overflow: ellipsis; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ribbon-stat em { display: block; margin-top: 2px; color: #82958e; font-size: 8px; font-style: normal; font-weight: 850; letter-spacing: 0; line-height: 1; }
   .ribbon-stat.production b { color: #e9ad74; }
   .ribbon-stat.science b { color: var(--blue); }
   .ribbon-stat.culture b { color: var(--violet); }
@@ -547,23 +556,34 @@
 
   /* A wide desktop has room to read the ribbon from across the room. */
   @media (min-width: 2200px) {
-    #topbar { right: 584px; }
-    #playerhud { width: min(560px, calc(100% - 82px)); }
-    .diplomacy-card { grid-template-columns: 42px minmax(84px, .72fr) minmax(346px, 2.7fr); min-height: 56px; }
-    .leader-medallion { width: 38px; height: 38px; font-size: 15px; }
-    .diplomacy-name { font-size: 13px; }
-    .diplomacy-leader { font-size: 10px; }
-    .ribbon-stat b { font-size: 12px; }
-    .ribbon-stat em { font-size: 8px; }
+    #topbar { right: 864px; }
+    #playerhud { width: min(840px, calc(100% - 82px)); }
+    .diplomacy-card { grid-template-columns: 46px minmax(170px, 1.6fr) minmax(440px, 2.3fr); min-height: 60px; }
+    .leader-medallion { width: 42px; height: 42px; font-size: 16px; }
+    .diplomacy-name { font-size: 14px; }
+    .diplomacy-leader { font-size: 11px; }
+    .ribbon-stat b { font-size: 13px; }
+    .ribbon-stat em { font-size: 9px; }
   }
   /* Each step down keeps the six victory tracks inside the topbar's own box:
-     at full size they need 618px, and if the box is narrower than its columns
-     the tracks spill out of it and slide under the leader ribbon. */
-  @media (max-width: 1560px) {
-    #topbar { right: 510px; grid-template-columns: 92px repeat(6, minmax(62px, 1fr)); }
+     at full size they need 576px, and if the box is narrower than its columns
+     the tracks spill out of it and slide under the leader ribbon. The ribbon
+     is what gives way first — it hands its extra width back a step at a time
+     until, below 1580px, both are back at the sizes they had before the
+     ribbon was widened. */
+  @media (max-width: 1770px) {
+    #topbar { right: 664px; grid-template-columns: 92px repeat(6, minmax(62px, 1fr)); }
+    #playerhud { width: min(640px, calc(100% - 82px)); }
   }
-  @media (max-width: 1420px) {
+  @media (max-width: 1580px) {
     #topbar { right: 510px; grid-template-columns: 68px repeat(6, minmax(50px, 1fr)); }
+    #playerhud { width: min(486px, calc(100% - 82px)); }
+    .diplomacy-card { grid-template-columns: 38px minmax(74px, .72fr) minmax(300px, 2.7fr); min-height: 50px; }
+    .leader-medallion { width: 34px; height: 34px; font-size: 13px; }
+    .diplomacy-name { font-size: 12px; }
+    .diplomacy-leader { font-size: 9px; }
+    .ribbon-stat b { font-size: 11px; }
+    .ribbon-stat em { font-size: 7px; }
   }
   @media (max-width: 1320px) {
     #topbar { right: 70px; }
@@ -4052,8 +4072,8 @@ function drawTopbar() {
       `<div class="victory-list">` + ranked.map((player, index) => {
         const metric = victoryMetric(player, track.id);
         const progress = Math.max(0, Math.min(100, +metric.progress || 0));
-        return `<div class="victory-entry" style="--civ:${pcol(player.id)}" title="${player.civ}: ${victoryDescription(track.id, metric)}">` +
-          `<div class="victory-line"><span class="victory-rank">#${index + 1}</span><span class="victory-civ-dot"></span>` +
+        return `<div class="victory-entry" style="--civ:${pcol(player.id)}" title="#${index + 1} ${player.civ}: ${victoryDescription(track.id, metric)}">` +
+          `<div class="victory-line"><span class="victory-civ-dot"></span>` +
           `<span class="victory-civ">${player.civ}</span><span class="victory-value">${victoryValue(track.id, metric)}</span></div>` +
           `<div class="victory-meter"><b style="width:${progress}%"></b></div></div>`;
       }).join("") + `</div></section>`;
