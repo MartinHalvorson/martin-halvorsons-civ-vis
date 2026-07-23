@@ -4620,9 +4620,16 @@ impl AdvancedAi {
             .copied()
             .filter(|spy| {
                 g.spies[spy].city.is_some_and(|city| {
-                    g.cities[&city].owner == pid
-                        && (g.cities[&city].districts.contains_key("spaceport")
-                            || infiltrated_cities.contains(&city))
+                    // A spy outlives the city it was posted to: that city can
+                    // be razed while the agent is still assigned there, and
+                    // indexing the map for it took the whole server down with
+                    // it. The infiltration scan above already reads this the
+                    // safe way.
+                    g.cities.get(&city).is_some_and(|home| {
+                        home.owner == pid
+                            && (home.districts.contains_key("spaceport")
+                                || infiltrated_cities.contains(&city))
+                    })
                 })
             })
             .min();
@@ -15449,6 +15456,54 @@ mod tests {
         );
         assert!(ai.advanced_military_step(&mut game, 0, warrior, &plan));
         assert_eq!(game.units[&warrior].pos, city_pos);
+    }
+
+    #[test]
+    fn a_spy_posted_to_a_razed_city_does_not_bring_the_server_down() {
+        let mut game = Game::new_full(2, 24, 16, 109, 120, 0, false);
+        let cities: Vec<u32> = (0..2)
+            .map(|pid| {
+                let settler = game
+                    .player_unit_ids(pid)
+                    .into_iter()
+                    .find(|unit| game.units[unit].kind == "settler")
+                    .unwrap();
+                game.found_city_for(pid, game.units[&settler].pos, None)
+            })
+            .collect();
+        let spy = game.next_id;
+        game.next_id += 1;
+        game.spies.insert(
+            spy,
+            crate::game::Spy {
+                id: spy,
+                owner: 0,
+                level: 1,
+                promotions: Default::default(),
+                city: Some(cities[0]),
+                ready_turn: game.turn,
+                mission: None,
+                sources_city: None,
+                sources_until: 0,
+                captured_by: None,
+            },
+        );
+        // The city the agent is posted to is razed out from under it, which is
+        // an ordinary wartime event. Indexing the city map for it panicked the
+        // AI thread, and that poisoned the game mutex so every later HTTP
+        // request died too: one razed city took the whole exhibition offline.
+        game.cities.remove(&cities[0]);
+
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Science,
+            target_player: Some(1),
+            target_city: Some(cities[1]),
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+        AdvancedAi::targeting(VictoryTarget::Science).advanced_spies(&mut game, 0, &plan);
+        assert!(game.spies.contains_key(&spy), "the agent survives the raze");
     }
 
     #[test]
