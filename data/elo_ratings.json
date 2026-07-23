@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "base_rating": 1000.0,
+  "ratings": [
+    {
+      "civilization": "China",
+      "strategy": "basic",
+      "elo": 1004.0,
+      "games": 1,
+      "wins": 0,
+      "agents": [
+        "basic"
+      ]
+    },
+    {
+      "civilization": "China",
+      "strategy": "science",
+      "elo": 988.0,
+      "games": 1,
+      "wins": 0,
+      "agents": [
+        "advanced"
+      ]
+    },
+    {
+      "civilization": "Egypt",
+      "strategy": "basic",
+      "elo": 996.0,
+      "games": 1,
+      "wins": 0,
+      "agents": [
+        "basic"
+      ]
+    },
+    {
+      "civilization": "Egypt",
+      "strategy": "science",
+      "elo": 996.0,
+      "games": 1,
+      "wins": 0,
+      "agents": [
+        "advanced"
+      ]
+    },
+    {
+      "civilization": "Greece",
+      "strategy": "basic",
+      "elo": 1004.0,
+      "games": 1,
+      "wins": 0,
+      "agents": [
+        "basic"
+      ]
+    },
+    {
+      "civilization": "Greece",
+      "strategy": "culture",
+      "elo": 988.0,
+      "games": 1,
+      "wins": 0,
+      "agents": [
+        "advanced"
+      ]
+    },
+    {
+      "civilization": "Rome",
+      "strategy": "basic",
+      "elo": 1012.0,
+      "games": 1,
+      "wins": 1,
+      "agents": [
+        "basic"
+      ]
+    },
+    {
+      "civilization": "Rome",
+      "strategy": "science",
+      "elo": 1012.0,
+      "games": 1,
+      "wins": 1,
+      "agents": [
+        "advanced"
+      ]
+    }
+  ]
+}

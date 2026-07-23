@@ -7988,8 +7988,8 @@ pub struct VisionCache {
     built_wonders: Option<BTreeSet<String>>,
 }
 
-/// Memoized `city_yields` answers, live only while a [`YieldMemo`] guard is
-/// held.
+/// Memoized answers to expensive read-only queries, live only while a
+/// [`QueryMemo`] guard is held.
 ///
 /// The guard borrows the game immutably, so the borrow checker — not a
 /// hand-written stamp over the citizen plan, worked tiles, districts,
@@ -7997,28 +7997,32 @@ pub struct VisionCache {
 /// cache cannot go stale. Nothing can reach a `&mut Game` while an entry is
 /// live, so every cached answer is still the answer.
 #[derive(Default)]
-pub struct YieldCache(std::cell::RefCell<Option<BTreeMap<u32, Yields>>>);
+pub struct QueryCache {
+    yields: std::cell::RefCell<Option<BTreeMap<u32, Yields>>>,
+    traversal: std::cell::RefCell<Option<BTreeMap<u32, TraversalClass>>>,
+}
 
-impl Clone for YieldCache {
+impl Clone for QueryCache {
     /// A clone starts with no memo: a search branch is about to be played
     /// forward, and inheriting a parent's answers would be exactly the
     /// staleness this design rules out.
     fn clone(&self) -> Self {
-        YieldCache::default()
+        QueryCache::default()
     }
 }
 
-/// Scope over which `Game::city_yields` answers from a cache. Dropping the
-/// outermost guard clears it.
-pub struct YieldMemo<'a> {
+/// Scope over which `Game::city_yields` and `Game::traversal_class` answer
+/// from a cache. Dropping the outermost guard clears it.
+pub struct QueryMemo<'a> {
     game: &'a Game,
     outermost: bool,
 }
 
-impl Drop for YieldMemo<'_> {
+impl Drop for QueryMemo<'_> {
     fn drop(&mut self) {
         if self.outermost {
-            *self.game.city_yield_memo.0.borrow_mut() = None;
+            *self.game.query_memo.yields.borrow_mut() = None;
+            *self.game.query_memo.traversal.borrow_mut() = None;
         }
     }
 }
@@ -9770,10 +9774,10 @@ pub struct Game {
     /// rebuilt on demand whenever the world moves under it.
     #[serde(skip)]
     routing: std::cell::RefCell<RoutingCache>,
-    /// Memoized city yields; see [`YieldCache`]. Never saved, cleared by the
-    /// guard that opened it, and empty in any clone.
+    /// Memoized read-only answers; see [`QueryCache`]. Never saved, cleared
+    /// by the guard that opened it, and empty in any clone.
     #[serde(skip)]
-    city_yield_memo: YieldCache,
+    query_memo: QueryCache,
     /// The state of the world each seat's remembered map was last taken
     /// under, and the tiles it was taken over. Empty means "assume nothing".
     #[serde(skip)]
@@ -10043,7 +10047,7 @@ impl From<GameSer> for Game {
             rules: Rules::shared(),
             vision: std::cell::RefCell::new(VisionCache::default()),
             routing: std::cell::RefCell::new(RoutingCache::default()),
-            city_yield_memo: YieldCache::default(),
+            query_memo: QueryCache::default(),
             remembered_under: Vec::new(),
             track_fog_memory: true,
             rng: s.rng,
@@ -10343,7 +10347,7 @@ impl Game {
             rules,
             vision: std::cell::RefCell::new(VisionCache::default()),
             routing: std::cell::RefCell::new(RoutingCache::default()),
-            city_yield_memo: YieldCache::default(),
+            query_memo: QueryCache::default(),
             remembered_under: Vec::new(),
             track_fog_memory: true,
             rng,
@@ -16623,6 +16627,22 @@ impl Game {
     /// The [`TraversalClass`] a unit moves as, folding its kind and its
     /// owner's unlocks into the flags the tile predicate reads.
     fn traversal_class(&self, uid: u32) -> TraversalClass {
+        if let Some(memo) = self.query_memo.traversal.borrow().as_ref() {
+            if let Some(class) = memo.get(&uid) {
+                return *class;
+            }
+        }
+        let class = self.traversal_class_uncached(uid);
+        if let Some(memo) = self.query_memo.traversal.borrow_mut().as_mut() {
+            memo.insert(uid, class);
+        }
+        class
+    }
+
+    /// A unit's traversal class costs a ruleset effect sum over every tech
+    /// and civic it owns plus two improvement unlocks, and a route search
+    /// asks for it once per tile it examines — hence the memo above.
+    fn traversal_class_uncached(&self, uid: u32) -> TraversalClass {
         let unit = &self.units[&uid];
         let spec = &self.rules.units[unit.kind.as_str()];
         let sea = spec.domain.as_deref() == Some("sea");
@@ -21416,35 +21436,60 @@ impl Game {
         if self.formation_movement_locked_by_zoc(uid) || is_goal(start) {
             return None;
         }
+        let _memo = self.query_memo();
 
-        let mut parent: HashMap<Pos, Pos> = HashMap::new();
-        let mut seen = HashSet::new();
+        // Same breadth-first walk in the same neighbour order, but the map
+        // already numbers its tiles, so the frontier's bookkeeping is two
+        // dense vectors indexed by that number rather than hash maps keyed by
+        // a hex coordinate. Every tile a unit may enter is on the map —
+        // `can_enter` and `can_path_through` both go through
+        // `unit_can_traverse`, which rejects a position the grid does not
+        // hold — so an index always exists for a reachable neighbour.
+        const NO_PARENT: u32 = u32::MAX;
+        let tile_count = self.map.tiles.len();
+        let mut parent: Vec<u32> = vec![NO_PARENT; tile_count];
+        let mut seen: Vec<bool> = vec![false; tile_count];
         let mut queue = VecDeque::new();
-        seen.insert(start);
-        queue.push_back(start);
+        let start_index = self.map.tiles.index_of(start)?;
+        seen[start_index] = true;
+        queue.push_back((start, start_index));
 
         let mut goal = None;
-        'search: while let Some(cur) = queue.pop_front() {
+        'search: while let Some((cur, cur_index)) = queue.pop_front() {
             for n in self.nbrs(cur) {
                 let enterable = if cur == start {
                     self.can_enter(uid, cur, n)
                 } else {
                     self.can_path_through(uid, cur, n)
                 };
-                if seen.contains(&n) || !enterable {
+                if !enterable {
                     continue;
                 }
-                seen.insert(n);
-                parent.insert(n, cur);
+                let Some(index) = self.map.tiles.index_of(n) else {
+                    continue;
+                };
+                if seen[index] {
+                    continue;
+                }
+                seen[index] = true;
+                parent[index] = cur_index as u32;
                 if is_goal(n) {
-                    goal = Some(n);
+                    goal = Some(index);
                     break 'search;
                 }
-                queue.push_back(n);
+                queue.push_back((n, index));
             }
         }
 
-        Self::unwind_route(start, goal?, &parent)
+        let mut step = goal?;
+        while parent[step] != start_index as u32 {
+            let previous = parent[step];
+            if previous == NO_PARENT {
+                return None;
+            }
+            step = previous as usize;
+        }
+        Some(self.map.tiles.values().as_slice()[step].pos)
     }
 
     fn unwind_route(start: Pos, goal: Pos, parent: &HashMap<Pos, Pos>) -> Option<Pos> {
@@ -23435,33 +23480,33 @@ impl Game {
             .unwrap_or_else(|| self.rules.tile_yields(&unworked))
     }
 
-    /// Open a memo scope for [`Game::city_yields`].
+    /// Open a memo scope for the expensive read-only queries.
     ///
-    /// A candidate loop that scores dozens of purchases or productions asks
-    /// the same handful of cities for their yields over and over; one call
-    /// costs about forty microseconds. While the returned guard is alive the
-    /// game cannot be mutated, so those answers can simply be reused.
-    pub fn yield_memo(&self) -> YieldMemo<'_> {
-        let mut slot = self.city_yield_memo.0.borrow_mut();
-        let outermost = slot.is_none();
+    /// A candidate loop that scores dozens of purchases asks the same handful
+    /// of cities for their yields over and over, and a route search asks the
+    /// same unit how it moves once per tile it considers. Both answers cost
+    /// tens of microseconds to derive. While the returned guard is alive the
+    /// game cannot be mutated, so both can simply be reused.
+    pub fn query_memo(&self) -> QueryMemo<'_> {
+        let outermost = self.query_memo.yields.borrow().is_none();
         if outermost {
-            *slot = Some(BTreeMap::new());
+            *self.query_memo.yields.borrow_mut() = Some(BTreeMap::new());
+            *self.query_memo.traversal.borrow_mut() = Some(BTreeMap::new());
         }
-        drop(slot);
-        YieldMemo {
+        QueryMemo {
             game: self,
             outermost,
         }
     }
 
     pub fn city_yields(&self, cid: u32) -> Yields {
-        if let Some(memo) = self.city_yield_memo.0.borrow().as_ref() {
+        if let Some(memo) = self.query_memo.yields.borrow().as_ref() {
             if let Some(yields) = memo.get(&cid) {
                 return *yields;
             }
         }
         let yields = self.city_yields_uncached(cid);
-        if let Some(memo) = self.city_yield_memo.0.borrow_mut().as_mut() {
+        if let Some(memo) = self.query_memo.yields.borrow_mut().as_mut() {
             memo.insert(cid, yields);
         }
         yields

@@ -572,9 +572,23 @@ fn main() {
                 verbose: !args.iter().any(|a| a == "--quiet"),
                 jobs: jobs_arg(&args),
             };
-            let pool = civvis::elo::run_tournament(&names, civvis::elo::builtin_ai, &cfg);
-            println!();
-            print!("{}", civvis::elo::leaderboard(&pool));
+            let ratings_path = arg_text(&args, "--ratings", civvis::elo::DEFAULT_RATINGS_PATH);
+            match civvis::elo::run_persistent_tournament(
+                &names,
+                civvis::elo::builtin_ai,
+                &cfg,
+                &ratings_path,
+            ) {
+                Ok(pool) => {
+                    println!();
+                    print!("{}", civvis::elo::leaderboard(&pool));
+                    println!("ratings checkpointed to {ratings_path}");
+                }
+                Err(error) => {
+                    eprintln!("Elo tournament failed: {error}");
+                    std::process::exit(1);
+                }
+            }
         }
         "selfplay" => {
             let players = arg(&args, "--players", 4).max(2);
@@ -757,7 +771,7 @@ fn main() {
             println!(
                 "usage: civvis <simulate|soak|benchmark|tournament|league|play|evolve|validate|pedia> \
                       [--players N] [--seed N] [--turns N] [--width N] [--height N] \
-                      [--city-states N] [--games N] [--ais a,b] [--port N] [--no-open] \
+                      [--city-states N] [--games N] [--ais a,b] [--ratings path] [--port N] [--no-open] \
                       [--map pangaea|continents|small_continents|inland_sea] \
                       [--difficulty settler|chieftain|warlord|prince|king|emperor|immortal|deity] \
                       [--speed online|quick|standard|epic|marathon] \

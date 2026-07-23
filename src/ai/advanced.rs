@@ -3858,7 +3858,7 @@ impl AdvancedAi {
             // here and once inside `production_value`. The guard borrows the
             // game immutably, so those answers cannot go stale before it is
             // dropped below.
-            let memo = g.yield_memo();
+            let memo = g.query_memo();
             for action in g.legal_actions_within(
                 pid,
                 ActionFamilies::PURCHASES | ActionFamilies::EMPIRE,
@@ -4054,7 +4054,7 @@ impl AdvancedAi {
                 project: "holy_site_prayers".to_string(),
             };
             let prayer_city = {
-                let _memo = g.yield_memo();
+                let _memo = g.query_memo();
                 city_ids
                     .iter()
                     .filter(|cid| {
@@ -4583,7 +4583,7 @@ impl AdvancedAi {
         }
         // `max_by` re-evaluates both sides of every comparison, so each city's
         // yields would otherwise be recomputed a logarithmic number of times.
-        let _memo = g.yield_memo();
+        let _memo = g.query_memo();
         candidates.into_iter().max_by(|left, right| {
             let value = |city_id: u32| {
                 let city = &g.cities[&city_id];
@@ -4817,7 +4817,7 @@ impl AdvancedAi {
         let reserve = 180.0;
         let counts = self.counts(g, pid);
         let mut candidates = Vec::new();
-        let memo = g.yield_memo();
+        let memo = g.query_memo();
         for action in
             g.legal_actions_within(pid, ActionFamilies::PURCHASES | ActionFamilies::EMPIRE)
         {
@@ -4895,7 +4895,7 @@ impl AdvancedAi {
             });
         if !already_queued {
             let project_city = {
-                let _memo = g.yield_memo();
+                let _memo = g.query_memo();
                 g.player_city_ids(pid)
                     .into_iter()
                     .filter(|cid| {
