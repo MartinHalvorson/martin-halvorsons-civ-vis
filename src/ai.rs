@@ -1513,13 +1513,46 @@ impl BasicAi {
             }
         }
         if self.pursue_religion && g.players[pid].prophet_pending {
-            'found: for fo in ["work_ethic", "choral_music", "feed_the_world"] {
-                for fu in ["tithe", "world_church"] {
+            let mut followers: Vec<String> = [
+                "work_ethic",
+                "choral_music",
+                "feed_the_world",
+                "jesuit_education",
+                "religious_community",
+                "zen_meditation",
+            ]
+            .into_iter()
+            .filter(|belief| g.rules.beliefs.follower.contains_key(*belief))
+            .map(str::to_string)
+            .collect();
+            for belief in g.rules.beliefs.follower.keys() {
+                if !followers.contains(belief) {
+                    followers.push(belief.clone());
+                }
+            }
+            let mut founders: Vec<String> = [
+                "tithe",
+                "world_church",
+                "church_property",
+                "pilgrimage",
+                "religious_unity",
+            ]
+            .into_iter()
+            .filter(|belief| g.rules.beliefs.founder.contains_key(*belief))
+            .map(str::to_string)
+            .collect();
+            for belief in g.rules.beliefs.founder.keys() {
+                if !founders.contains(belief) {
+                    founders.push(belief.clone());
+                }
+            }
+            'found: for follower in followers {
+                for founder in &founders {
                     if g.apply(
                         pid,
                         &Action::FoundReligion {
-                            follower: fo.to_string(),
-                            founder: fu.to_string(),
+                            follower: follower.clone(),
+                            founder: founder.clone(),
                         },
                     )
                     .is_ok()
@@ -2885,6 +2918,29 @@ impl BasicAi {
             .collect();
         dpri.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         for (family, _) in dpri {
+            if family == "holy_site"
+                && g.players[pid].religion.is_none()
+                && g.cities.values().any(|other| {
+                    other.owner == pid
+                        && (other
+                            .districts
+                            .keys()
+                            .any(|district| g.district_family(district) == "holy_site")
+                            || matches!(
+                                other.queue.first(),
+                                Some(Item::District { district, .. })
+                                    if g.district_family(district) == "holy_site"
+                            ))
+                })
+            {
+                // One active Holy Site is enough to contest the finite
+                // Prophet race. Before a religion exists, duplicating it in
+                // every newly founded city sacrifices settlers, campuses, and
+                // basic infrastructure while adding points too late to change
+                // the current recruitment. Founders may expand their faith
+                // network normally once this opening race is resolved.
+                continue;
+            }
             if g.city_has_district_family(&g.cities[&cid], family) {
                 continue;
             }
@@ -4861,6 +4917,123 @@ mod tests {
             matches!(item, Item::Building { ref building } if building == "monument"),
             "repeatable project displaced {item:?}"
         );
+    }
+
+    #[test]
+    fn unfounded_empire_reserves_only_one_holy_site_for_the_prophet_race() {
+        let mut game = Game::new_full(1, 24, 16, 91_772, 120, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let capital = game.player_city_ids(0)[0];
+        let capital_pos = game.cities[&capital].pos;
+        let second_pos = game
+            .map
+            .tiles
+            .iter()
+            .filter(|(_, tile)| {
+                tile.owner_city.is_none()
+                    && game.rules.is_passable(tile)
+                    && !game.rules.is_water(tile)
+            })
+            .map(|(position, _)| *position)
+            .find(|position| (4..=10).contains(&game.wdist(capital_pos, *position)))
+            .unwrap();
+        let second = game.found_city_for(0, second_pos, None);
+        game.players[0].techs.insert("astrology".to_string());
+        for city in [capital, second] {
+            game.cities
+                .get_mut(&city)
+                .unwrap()
+                .buildings
+                .push("monument".to_string());
+        }
+
+        let ai = BasicAi::new();
+        let choose = |game: &Game, city| {
+            ai.pick_item(game, 0, city, 2, 2, 2, 2, 10, 5, 5, 5)
+                .expect("city has a production choice")
+        };
+        let first = choose(&game, capital);
+        assert!(matches!(
+            first,
+            Item::District { ref district, .. }
+                if game.district_family(district) == "holy_site"
+        ));
+        game.apply(
+            0,
+            &Action::Produce {
+                city: capital,
+                item: first,
+            },
+        )
+        .unwrap();
+
+        let reserved = choose(&game, second);
+        assert!(
+            !matches!(
+                reserved,
+                Item::District { ref district, .. }
+                    if game.district_family(district) == "holy_site"
+            ),
+            "a second opening Holy Site displaced development: {reserved:?}"
+        );
+
+        game.players[0].religion = Some("Test Faith".to_string());
+        let founded = choose(&game, second);
+        assert!(matches!(
+            founded,
+            Item::District { ref district, .. }
+                if game.district_family(district) == "holy_site"
+        ));
+    }
+
+    #[test]
+    fn prophet_uses_remaining_data_backed_beliefs_after_preferred_pairs_are_taken() {
+        let mut game = Game::new_full(3, 26, 16, 91_773, 120, 0, false);
+        for pid in 0..3 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            let position = game.units[&settler].pos;
+            game.found_city_for(pid, position, None);
+        }
+        game.players[0].religion = Some("First Faith".to_string());
+        game.players[0].religion_beliefs = vec!["work_ethic".to_string(), "tithe".to_string()];
+        game.players[1].religion = Some("Second Faith".to_string());
+        game.players[1].religion_beliefs =
+            vec!["choral_music".to_string(), "world_church".to_string()];
+
+        let holy_city = game.player_city_ids(2)[0];
+        let center = game.cities[&holy_city].pos;
+        let holy_site = game.cities[&holy_city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != center)
+            .unwrap();
+        game.map.tiles.get_mut(&holy_site).unwrap().district = Some("holy_site".to_string());
+        game.cities
+            .get_mut(&holy_city)
+            .unwrap()
+            .districts
+            .insert("holy_site".to_string(), holy_site);
+        game.players[2].prophet_pending = true;
+        game.current = 2;
+
+        BasicAi::new().research(&mut game, 2);
+
+        assert!(game.players[2].religion.is_some());
+        assert!(!game.players[2].prophet_pending);
+        assert!(game.players[2]
+            .religion_beliefs
+            .iter()
+            .any(|belief| belief == "church_property"));
     }
 
     #[test]
