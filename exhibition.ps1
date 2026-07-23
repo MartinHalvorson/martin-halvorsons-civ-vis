@@ -164,10 +164,13 @@ Log "supervisor started (port $Port, poll ${PollSec}s, git every ${GitSec}s)"
 $lastGit = [DateTime]::MinValue
 $LaunchGraceSec = 12
 $lastLaunch = (Get-Date).AddSeconds(-$LaunchGraceSec)
-# How long a game is left alone before a newer build may cut it short. Short
-# enough that what is on screen is current code; long enough that a match gets
-# somewhere before it is replaced.
-$MinGameSec = 120
+# How long a game is left alone before a newer build may cut it short. Every
+# swap restarts the server, and a browser that navigates during those seconds
+# lands on an error page it will not retry from - so swapping too eagerly
+# costs the very thing it is meant to protect. Two minutes churned hard
+# enough to break the open tab repeatedly; five keeps what is on screen within
+# a few minutes of origin/main while letting a match actually develop.
+$MinGameSec = 300
 $lastGameStart = Get-Date
 # The running compiler, when there is one. Only ever one at a time.
 $build = $null

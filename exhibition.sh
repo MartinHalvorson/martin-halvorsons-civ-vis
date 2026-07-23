@@ -28,10 +28,11 @@ EVOLVE_THREADS="${EVOLVE_THREADS:-8}"
 # faster than that, the revive check below kills it and starts another, which
 # never finishes either - a loop that shows a black screen rather than a game.
 LAUNCH_GRACE_SEC="${LAUNCH_GRACE_SEC:-12}"
-# How long a game is left alone before a newer build may cut it short. Short
-# enough that what is on screen is current code; long enough that a match gets
-# somewhere before it is replaced.
-MIN_GAME_SEC="${MIN_GAME_SEC:-120}"
+# How long a game is left alone before a newer build may cut it short. Every
+# swap restarts the server, and a browser that navigates during those seconds
+# lands on an error page it will not retry from - so swapping too eagerly
+# costs the very thing it is meant to protect.
+MIN_GAME_SEC="${MIN_GAME_SEC:-300}"
 last_game_start=0
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
