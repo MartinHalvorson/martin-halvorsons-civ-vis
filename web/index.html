@@ -229,7 +229,7 @@
 
   /* Floating map HUD */
   #topbar {
-    position: absolute; z-index: 5; top: 10px; left: 64px; right: 438px;
+    position: absolute; z-index: 5; top: 10px; left: 64px; right: 510px;
     display: grid; grid-template-columns: 104px repeat(6, minmax(80px, 1fr)); align-items: stretch; gap: 4px;
     min-width: 0; padding: 5px; border: 1px solid #4961598c; border-radius: 13px;
     background: #0a1512e0; box-shadow: 0 12px 34px #0008; backdrop-filter: blur(16px) saturate(130%);
@@ -267,7 +267,7 @@
   .victory-value { color: #c2d0ca; font-size: 10px; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .victory-meter { height: 3px; margin: 0 0 0 22px; border-radius: 3px; }
   #playerhud {
-    position: absolute; z-index: 7; top: 10px; right: 12px; width: min(414px, calc(100% - 82px));
+    position: absolute; z-index: 7; top: 10px; right: 12px; width: min(486px, calc(100% - 82px));
     max-height: calc(100% - 238px); overflow-y: auto; pointer-events: auto;
     scrollbar-width: none; filter: drop-shadow(0 12px 28px #0009);
   }
@@ -280,8 +280,8 @@
   .ribbon-heading span:last-child { color: #82968f; letter-spacing: .08em; }
   .diplomacy-ribbon { display: flex; flex-direction: column; gap: 3px; }
   .diplomacy-card {
-    display: grid; grid-template-columns: 36px minmax(68px, .8fr) minmax(226px, 2.4fr); align-items: center; gap: 6px;
-    width: 100%; min-height: 48px; margin: 0; padding: 4px 5px; overflow: hidden; border-radius: 9px;
+    display: grid; grid-template-columns: 38px minmax(74px, .72fr) minmax(300px, 2.7fr); align-items: center; gap: 6px;
+    width: 100%; min-height: 50px; margin: 0; padding: 4px 5px; overflow: hidden; border-radius: 9px;
     color: var(--text); background: linear-gradient(100deg, #0a1512f0, #13231fe8);
     border: 1px solid #40574f; box-shadow: inset 0 1px #ffffff0b;
     text-align: left; cursor: pointer; transition: border-color .12s ease, background .12s ease;
@@ -315,7 +315,7 @@
   .ai-plan.recovery { color: #e9ad74; }
   .diplomacy-stats { display: grid; grid-template-columns: repeat(10, 1fr); gap: 0; }
   .ribbon-stat { min-width: 0; padding: 3px 0 2px; text-align: center; border-left: 1px solid #ffffff0b; }
-  .ribbon-stat b { display: block; overflow: hidden; font-size: 10px; line-height: 1.1; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+  .ribbon-stat b { display: block; overflow: hidden; font-size: 11px; line-height: 1.1; text-overflow: ellipsis; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .ribbon-stat em { display: block; margin-top: 2px; color: #82958e; font-size: 7px; font-style: normal; font-weight: 850; letter-spacing: 0; line-height: 1; }
   .ribbon-stat.production b { color: #e9ad74; }
   .ribbon-stat.science b { color: var(--blue); }
@@ -544,12 +544,30 @@
   .capture-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 8px; }
   .capture-actions button { margin: 0; min-height: 43px; }
 
-  @media (max-width: 1360px) {
-    #topbar { right: 438px; grid-template-columns: 92px repeat(6, minmax(62px, 1fr)); }
+  /* A wide desktop has room to read the ribbon from across the room. */
+  @media (min-width: 2200px) {
+    #topbar { right: 584px; }
+    #playerhud { width: min(560px, calc(100% - 82px)); }
+    .diplomacy-card { grid-template-columns: 42px minmax(84px, .72fr) minmax(346px, 2.7fr); min-height: 56px; }
+    .leader-medallion { width: 38px; height: 38px; font-size: 15px; }
+    .diplomacy-name { font-size: 13px; }
+    .diplomacy-leader { font-size: 10px; }
+    .ribbon-stat b { font-size: 12px; }
+    .ribbon-stat em { font-size: 8px; }
   }
-  @media (max-width: 1100px) {
+  /* Each step down keeps the six victory tracks inside the topbar's own box:
+     at full size they need 618px, and if the box is narrower than its columns
+     the tracks spill out of it and slide under the leader ribbon. */
+  @media (max-width: 1560px) {
+    #topbar { right: 510px; grid-template-columns: 92px repeat(6, minmax(62px, 1fr)); }
+  }
+  @media (max-width: 1420px) {
+    #topbar { right: 510px; grid-template-columns: 68px repeat(6, minmax(50px, 1fr)); }
+  }
+  @media (max-width: 1320px) {
     #topbar { right: 70px; }
-    #playerhud { top: 104px; }
+    /* The topbar now runs the full width, so the ribbon hangs below it. */
+    #playerhud { top: 104px; max-height: calc(100% - 300px); }
   }
   @media (max-width: 980px) {
     #side { width: 320px; min-width: 320px; }
@@ -3863,6 +3881,33 @@ function compactStat(value) {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
 
+// The world-leaders ribbon gives every stat the same narrow column, so a value
+// that renders wider than four glyphs used to clip to an ellipsis ("15…") —
+// the number went missing exactly once an empire got big enough for it to be
+// interesting. Spend the four glyphs from the top down: magnitude suffix first,
+// then whole digits, then a decimal only if there is still room for one.
+function ribbonStat(value) {
+  const n = Number(value) || 0;
+  const abs = Math.abs(n);
+  const [suffix, divisor] =
+    abs >= 1e9 ? ["b", 1e9] : abs >= 1e6 ? ["m", 1e6] : abs >= 1e3 ? ["k", 1e3] : ["", 1];
+  const scaled = n / divisor;
+  const room = 4 - suffix.length - (n < 0 ? 1 : 0) - String(Math.floor(Math.abs(scaled))).length;
+  const rounded = scaled.toFixed(room >= 2 && !Number.isInteger(scaled) ? 1 : 0);
+  // Rounding up can add a digit (9.96 → "10.0"), which spends a glyph on a
+  // decimal that is no longer telling anyone anything.
+  const digits = suffix ? rounded : rounded.replace(/\.0$/, "");
+  const text = `${digits}${suffix}`;
+  return text.length > 4 ? `${Math.round(scaled)}${suffix}` : text;
+}
+
+// Tooltips have all the room in the world, so they carry the exact figure the
+// column had to abbreviate.
+function exactStat(value) {
+  const n = Number(value) || 0;
+  return (Math.round(n * 10) / 10).toLocaleString(undefined, {maximumFractionDigits: 1});
+}
+
 function drawPlayerHud() {
   const hud = document.getElementById("playerhud");
   const acting = SPEC ? state.current : 0;
@@ -3907,16 +3952,16 @@ function drawPlayerHud() {
       const relationClass = alliance ? "allied" : p.friend ? "friend" : "";
       const stateClass = `${p.id === acting ? "active" : ""} ${relationClass} ${p.at_war_with_me ? "at-war" : ""} ${p.alive ? "" : "dead"}`;
       const stats = [
-        ["production", "PROD", y.production, `Production: ${compactStat(y.production)} per turn`],
-        ["science", "SCI", y.science, `Science: ${compactStat(y.science)} per turn`],
-        ["culture", "CUL", y.culture, `Culture: ${compactStat(y.culture)} per turn`],
-        ["faith", "FPT", y.faith, `Faith: ${compactStat(y.faith)} per turn · ${compactStat(p.faith)} banked`],
-        ["gold", "GPT", goldPerTurn, `Net Gold: ${compactStat(goldPerTurn)} per turn · ${compactStat(p.gold)} banked`],
-        ["military", "MIL", p.military, `Military strength: ${compactStat(p.military)}`],
-        ["cities", "CITY", p.cities, `Cities controlled: ${compactStat(p.cities)}`],
-        ["suzerain", "SUZ", p.suzerain_count, `City-states under suzerainty: ${compactStat(p.suzerain_count)}`],
-        ["wonders", "WNDR", p.wonder_count, `World wonders controlled: ${compactStat(p.wonder_count)}`],
-        ["score", "SCORE", p.score, `Score: ${compactStat(p.score)} · rank ${rank}`],
+        ["production", "PROD", y.production, `Production: ${exactStat(y.production)} per turn`],
+        ["science", "SCI", y.science, `Science: ${exactStat(y.science)} per turn`],
+        ["culture", "CUL", y.culture, `Culture: ${exactStat(y.culture)} per turn`],
+        ["faith", "FPT", y.faith, `Faith: ${exactStat(y.faith)} per turn · ${exactStat(p.faith)} banked`],
+        ["gold", "GPT", goldPerTurn, `Net Gold: ${exactStat(goldPerTurn)} per turn · ${exactStat(p.gold)} banked`],
+        ["military", "MIL", p.military, `Military strength: ${exactStat(p.military)}`],
+        ["cities", "CITY", p.cities, `Cities controlled: ${exactStat(p.cities)}`],
+        ["suzerain", "SUZ", p.suzerain_count, `City-states under suzerainty: ${exactStat(p.suzerain_count)}`],
+        ["wonders", "WNDR", p.wonder_count, `World wonders controlled: ${exactStat(p.wonder_count)}`],
+        ["score", "SCORE", p.score, `Score: ${exactStat(p.score)} · rank ${rank}`],
       ];
       return `<button class="diplomacy-card ${stateClass}" style="--civ:${color}" onclick="spectatePlayer(${p.id})" ` +
         `title="Watch ${p.civ} through its fog of war · ${relationSummary}${agendaText}" aria-label="Watch ${p.civ}, rank ${rank}, ${relationSummary}">` +
@@ -3924,7 +3969,7 @@ function drawPlayerHud() {
         `<span class="diplomacy-identity"><span class="diplomacy-name"><span class="diplomacy-rank">#${rank}</span>${p.id === acting && SPEC ? "◉ " : ""}${p.civ}</span>` +
         `<span class="diplomacy-leader">${leader}${agendaGlyph} · ${strategyLabel}${relation}</span></span>` +
         `<span class="diplomacy-stats">` + stats.map(([kind, shortLabel, value, label]) =>
-          `<span class="ribbon-stat ${kind}" title="${label}"><b>${compactStat(value)}</b><em>${shortLabel}</em></span>`
+          `<span class="ribbon-stat ${kind}" title="${label}"><b>${ribbonStat(value)}</b><em>${shortLabel}</em></span>`
         ).join("") + `</span></button>`;
     }).join("") + `</div>`;
 }
