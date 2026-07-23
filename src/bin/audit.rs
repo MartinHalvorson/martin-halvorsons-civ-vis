@@ -81,6 +81,15 @@ fn rapid_recapture_window(war: &WarRecord) -> Option<(String, u32, u32)> {
     })
 }
 
+fn treasury_looks_hoarded(is_minor: bool, gold: f64, gold_per_turn: f64) -> bool {
+    let income_buffer = if is_minor {
+        1_000.0
+    } else {
+        (gold_per_turn.max(0.0) * 20.0).max(1_000.0)
+    };
+    gold > income_buffer
+}
+
 #[derive(Default)]
 struct Findings {
     /// Rules the engine broke, keyed by a short signature so one recurring
@@ -114,8 +123,29 @@ impl Findings {
 struct History {
     unit_still_since: BTreeMap<u32, (u32, civvis::Pos)>,
     city_idle_since: BTreeMap<u32, u32>,
+    trader_ready_since: BTreeMap<u32, u32>,
     reported_unit: BTreeMap<u32, bool>,
     reported_city: BTreeMap<u32, bool>,
+}
+
+fn unit_had_idle_opportunity(
+    history: &mut History,
+    id: u32,
+    kind: &str,
+    turn: u32,
+    active_routes: i64,
+    capacity: i64,
+    route_available: bool,
+) -> bool {
+    if kind != "trader" {
+        return true;
+    }
+    if active_routes >= capacity || !route_available {
+        history.trader_ready_since.remove(&id);
+        return false;
+    }
+    let ready = *history.trader_ready_since.entry(id).or_insert(turn);
+    turn > ready
 }
 
 fn stalled_settler_context(g: &Game, id: u32) -> String {
@@ -178,10 +208,6 @@ fn stalled_trader_context(g: &Game, id: u32) -> String {
     )
 }
 
-fn trader_is_waiting_for_capacity(kind: &str, active_routes: i64, capacity: i64) -> bool {
-    kind == "trader" && active_routes >= capacity
-}
-
 fn idle_city_context(g: &Game, id: u32) -> String {
     let city = &g.cities[&id];
     let player = &g.players[city.owner];
@@ -240,6 +266,19 @@ fn audit_turn(g: &Game, history: &mut History, found: &mut Findings) {
         // A unit that never moves is usually a pathing or target-selection
         // dead end rather than a deliberate garrison, so only flag the ones
         // that are not fortified in place.
+        let route_available = unit.kind != "trader"
+            || g.legal_actions(unit.owner)
+                .into_iter()
+                .any(|action| matches!(action, Action::TradeRoute { unit, .. } if unit == *id));
+        let had_idle_opportunity = unit_had_idle_opportunity(
+            history,
+            *id,
+            &unit.kind,
+            g.turn,
+            g.active_routes(unit.owner),
+            g.trade_capacity(unit.owner),
+            route_available,
+        );
         let entry = history
             .unit_still_since
             .entry(*id)
@@ -249,14 +288,11 @@ fn audit_turn(g: &Game, history: &mut History, found: &mut Findings) {
         } else if g.turn - entry.0 >= IDLE_TURNS
             && !unit.fortified
             // Losing Merchant Republic or a temporary policy slot can leave
-            // a Trader waiting behind routes that were already active. It
-            // will take the next slot when one completes; report Traders only
-            // when spare capacity exists and they still cannot find a job.
-            && !trader_is_waiting_for_capacity(
-                &unit.kind,
-                g.active_routes(unit.owner),
-                g.trade_capacity(unit.owner),
-            )
+            // a Trader waiting behind active routes. A slot can then open in
+            // player zero's `begin_turn`, immediately before this round-level
+            // audit but before that AI has acted. Give every Trader one full
+            // turn with capacity and a legal route before calling it idle.
+            && had_idle_opportunity
             && !history.reported_unit.get(id).copied().unwrap_or(false)
         {
             history.reported_unit.insert(*id, true);
@@ -442,8 +478,46 @@ fn audit_result(g: &Game, found: &mut Findings) {
         }
         let cities = g.player_city_ids(player.id).len();
         // Treasury nobody ever spends is the signature of an AI that has run
-        // out of things it knows how to buy.
-        if player.gold > 1_000.0 {
+        // out of things it knows how to buy. Legal unit actions alone are not
+        // enough evidence: a saturated army can expose dozens of affordable
+        // units that would only make the map more crowded. Count military
+        // purchases only while the civilization still has a basic force gap.
+        if treasury_looks_hoarded(player.is_minor, player.gold, player.gold_per_turn) {
+            let mut purchasing = g.clone();
+            purchasing.winner = None;
+            purchasing.current = player.id;
+            let military = purchasing
+                .player_unit_ids(player.id)
+                .into_iter()
+                .filter(|unit| {
+                    purchasing.rules.units[&purchasing.units[unit].kind].class == "military"
+                })
+                .count();
+            let (units, buildings, districts) = purchasing
+                .legal_actions(player.id)
+                .into_iter()
+                .fold((0, 0, 0), |mut counts, action| {
+                    match action {
+                        Action::Buy { unit, currency, .. }
+                            if currency == "gold"
+                                && military < cities.max(1)
+                                && purchasing.rules.units[&unit].class == "military" =>
+                        {
+                            counts.0 += 1
+                        }
+                        Action::BuyBuilding { currency, .. } if currency == "gold" => {
+                            counts.1 += 1
+                        }
+                        Action::BuyDistrict { currency, .. } if currency == "gold" => {
+                            counts.2 += 1
+                        }
+                        _ => {}
+                    }
+                    counts
+                });
+            if units + buildings + districts == 0 {
+                continue;
+            }
             found.symptom(
                 if player.is_minor {
                     "city-state hoards Gold it never spends"
@@ -451,8 +525,8 @@ fn audit_result(g: &Game, found: &mut Findings) {
                     "civilization hoards Gold it never spends"
                 },
                 format!(
-                    "{} finished on {:.0} Gold with {cities} cities",
-                    player.civ, player.gold
+                    "{} finished on {:.0} Gold ({:+.1}/turn) with {cities} cities; useful affordable Gold purchases: {units} units, {buildings} buildings, {districts} districts",
+                    player.civ, player.gold, player.gold_per_turn,
                 ),
             );
         }
@@ -559,7 +633,7 @@ mod tests {
 
     use super::{
         bounded_minor_idle, negotiated_war_ended_early, rapid_recapture_window,
-        redeclared_inside_peace_treaty, trader_is_waiting_for_capacity,
+        redeclared_inside_peace_treaty, treasury_looks_hoarded, unit_had_idle_opportunity, History,
     };
 
     fn concluded_war(kind: &str) -> WarRecord {
@@ -657,10 +731,59 @@ mod tests {
     }
 
     #[test]
-    fn a_trader_waiting_behind_full_capacity_is_not_idle() {
-        assert!(trader_is_waiting_for_capacity("trader", 1, 1));
-        assert!(trader_is_waiting_for_capacity("trader", 2, 1));
-        assert!(!trader_is_waiting_for_capacity("trader", 0, 1));
-        assert!(!trader_is_waiting_for_capacity("builder", 1, 1));
+    fn a_trader_gets_a_real_turn_after_capacity_opens() {
+        let mut history = History::default();
+        assert!(!unit_had_idle_opportunity(
+            &mut history,
+            7,
+            "trader",
+            20,
+            1,
+            1,
+            false,
+        ));
+        assert!(!unit_had_idle_opportunity(
+            &mut history,
+            7,
+            "trader",
+            21,
+            0,
+            1,
+            true,
+        ));
+        assert!(unit_had_idle_opportunity(
+            &mut history,
+            7,
+            "trader",
+            22,
+            0,
+            1,
+            true,
+        ));
+        assert!(!unit_had_idle_opportunity(
+            &mut history,
+            7,
+            "trader",
+            23,
+            0,
+            1,
+            false,
+        ));
+        assert!(unit_had_idle_opportunity(
+            &mut history,
+            8,
+            "builder",
+            20,
+            1,
+            1,
+            false,
+        ));
+    }
+
+    #[test]
+    fn treasury_warning_scales_with_a_major_empires_income() {
+        assert!(treasury_looks_hoarded(false, 8_797.0, 232.4));
+        assert!(!treasury_looks_hoarded(false, 1_409.0, 199.0));
+        assert!(treasury_looks_hoarded(true, 1_340.0, 22.3));
     }
 }

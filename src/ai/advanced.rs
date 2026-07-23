@@ -3819,87 +3819,120 @@ impl AdvancedAi {
         }
     }
 
-    /// Convert a deep treasury into one immediate tempo gain. Candidate
+    /// Convert a deep treasury into immediate tempo gains. Candidate
     /// units, buildings, and Governor-enabled districts reuse the strategic
     /// production evaluator, but are scored at their undiscounted positional
     /// value because a purchase completes now. A strategy-sensitive reserve
     /// protects Great Person patronage, Great Work deals, upgrades, and
     /// emergency reinforcement instead of treating all affordable actions as
-    /// equally spendable.
+    /// equally spendable. Late empires can earn more Gold each turn than one
+    /// purchase consumes, so buy a bounded series and recompute needs after
+    /// every item instead of carrying an ever-growing inert treasury.
     fn advanced_gold_spending(&self, g: &mut Game, pid: usize, plan: &StrategicPlan) -> bool {
-        let city_count = g.player_city_ids(pid).len() as f64;
+        let city_count = g.player_city_ids(pid).len();
         let reserve = match plan.strategy {
-            GrandStrategy::Diplomacy | GrandStrategy::Culture => 300.0 + 75.0 * city_count,
-            GrandStrategy::Expansion => 250.0 + 75.0 * city_count,
-            GrandStrategy::Science => 250.0 + 50.0 * city_count,
-            GrandStrategy::Religion => 150.0 + 50.0 * city_count,
-            GrandStrategy::Conquest | GrandStrategy::Recovery => 75.0 + 25.0 * city_count,
+            GrandStrategy::Diplomacy | GrandStrategy::Culture => {
+                300.0 + 75.0 * city_count as f64
+            }
+            GrandStrategy::Expansion => 250.0 + 75.0 * city_count as f64,
+            GrandStrategy::Science => 250.0 + 50.0 * city_count as f64,
+            GrandStrategy::Religion => 150.0 + 50.0 * city_count as f64,
+            GrandStrategy::Conquest | GrandStrategy::Recovery => {
+                75.0 + 25.0 * city_count as f64
+            }
         };
-        let bank = g.players[pid].gold;
-        let counts = self.counts(g, pid);
-        let mut candidates = Vec::new();
-        for action in g.legal_actions(pid) {
-            let (city, item, currency) = match &action {
-                Action::Buy {
-                    city,
-                    unit,
-                    currency,
-                } => (*city, Item::Unit { unit: unit.clone() }, currency.as_str()),
-                Action::BuyBuilding {
-                    city,
-                    building,
-                    currency,
-                } => (
-                    *city,
-                    Item::Building {
-                        building: building.clone(),
-                    },
-                    currency.as_str(),
-                ),
-                Action::BuyDistrict {
-                    city,
-                    district,
-                    pos,
-                    currency,
-                } => (
-                    *city,
-                    Item::District {
-                        district: district.clone(),
-                        pos: *pos,
-                    },
-                    currency.as_str(),
-                ),
-                _ => continue,
-            };
-            if currency != "gold" {
-                continue;
+        let purchase_limit = city_count.clamp(1, 4);
+        let unit_purchase_limit = if g.players[pid].gold > reserve + 1_000.0 {
+            2
+        } else {
+            1
+        };
+        let mut purchased = false;
+        let mut purchased_units = 0;
+        for _ in 0..purchase_limit {
+            let bank = g.players[pid].gold;
+            let counts = self.counts(g, pid);
+            let mut candidates = Vec::new();
+            for action in g.legal_actions(pid) {
+                let (city, item, currency) = match &action {
+                    Action::Buy {
+                        city,
+                        unit,
+                        currency,
+                    } => (*city, Item::Unit { unit: unit.clone() }, currency.as_str()),
+                    Action::BuyBuilding {
+                        city,
+                        building,
+                        currency,
+                    } => (
+                        *city,
+                        Item::Building {
+                            building: building.clone(),
+                        },
+                        currency.as_str(),
+                    ),
+                    Action::BuyDistrict {
+                        city,
+                        district,
+                        pos,
+                        currency,
+                    } => (
+                        *city,
+                        Item::District {
+                            district: district.clone(),
+                            pos: *pos,
+                        },
+                        currency.as_str(),
+                    ),
+                    _ => continue,
+                };
+                if currency != "gold" {
+                    continue;
+                }
+                if purchased_units >= unit_purchase_limit && matches!(&item, Item::Unit { .. }) {
+                    continue;
+                }
+                let production = g.city_yields(city).production.max(1.0);
+                let turns = g.item_remaining_cost_for_city(pid, city, &item) / production;
+                let production_score = self.production_value(g, pid, city, &item, plan, &counts);
+                if production_score <= -1_000.0 {
+                    continue;
+                }
+                // Long production time can make even a strategically
+                // redundant unit clear the combined purchase score below.
+                // Require the underlying need itself to be meaningful before
+                // converting a deep treasury into more bodies on the map.
+                if matches!(&item, Item::Unit { .. }) && production_score < 120.0 {
+                    continue;
+                }
+                let mut after = g.clone();
+                if after.apply(pid, &action).is_err() {
+                    continue;
+                }
+                let cost = (bank - after.players[pid].gold).max(0.0);
+                if after.players[pid].gold + f64::EPSILON < reserve {
+                    continue;
+                }
+                let positional = production_score * (7.0 + turns.max(1.0));
+                let score = positional + turns.clamp(0.0, 20.0) * 6.0 - cost * 0.30;
+                if score >= 120.0 {
+                    candidates.push((score, std::cmp::Reverse(format!("{action:?}")), action));
+                }
             }
-            let production = g.city_yields(city).production.max(1.0);
-            let turns = g.item_remaining_cost_for_city(pid, city, &item) / production;
-            let production_score = self.production_value(g, pid, city, &item, plan, &counts);
-            if production_score <= -1_000.0 {
-                continue;
+            let best = candidates.into_iter().max_by(|left, right| {
+                left.0
+                    .total_cmp(&right.0)
+                    .then_with(|| left.1.cmp(&right.1))
+            });
+            let Some((_, _, action)) = best else { break };
+            let is_unit = matches!(action, Action::Buy { .. });
+            if g.apply(pid, &action).is_err() {
+                break;
             }
-            let mut after = g.clone();
-            if after.apply(pid, &action).is_err() {
-                continue;
-            }
-            let cost = (bank - after.players[pid].gold).max(0.0);
-            if after.players[pid].gold + f64::EPSILON < reserve {
-                continue;
-            }
-            let positional = production_score * (7.0 + turns.max(1.0));
-            let score = positional + turns.clamp(0.0, 20.0) * 6.0 - cost * 0.30;
-            if score >= 120.0 {
-                candidates.push((score, std::cmp::Reverse(format!("{action:?}")), action));
-            }
+            purchased = true;
+            purchased_units += is_unit as usize;
         }
-        let best = candidates.into_iter().max_by(|left, right| {
-            left.0
-                .total_cmp(&right.0)
-                .then_with(|| left.1.cmp(&right.1))
-        });
-        best.is_some_and(|(_, _, action)| g.apply(pid, &action).is_ok())
+        purchased
     }
 
     fn counts(&self, g: &Game, pid: usize) -> EmpireCounts {
@@ -14302,6 +14335,64 @@ mod tests {
             .buildings
             .contains(&"library".to_string()));
         assert!(game.players[0].gold >= 300.0);
+    }
+
+    #[test]
+    fn deep_treasury_buys_useful_infrastructure_in_multiple_cities() {
+        let mut game = Game::new_full(1, 30, 18, 7_106_001, 160, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let first = game.player_city_ids(0)[0];
+        let anchor = game.cities[&first].pos;
+        let second = found_nearby_test_city(&mut game, 0, anchor);
+        for city in [first, second] {
+            install_ai_test_district(&mut game, city, "campus");
+            game.cities
+                .get_mut(&city)
+                .unwrap()
+                .buildings
+                .extend(["monument".to_string(), "granary".to_string()]);
+        }
+        game.players[0].techs.insert("writing".to_string());
+        game.players[0].gold = 5_000.0;
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Science,
+            target_player: None,
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 2,
+            assessed_turn: game.turn,
+        };
+        let units_before = game.player_unit_ids(0).len();
+        let buildings_before = game
+            .cities
+            .values()
+            .filter(|city| city.owner == 0)
+            .map(|city| city.buildings.len())
+            .sum::<usize>();
+
+        assert!(AdvancedAi::targeting(VictoryTarget::Science)
+            .advanced_gold_spending(&mut game, 0, &plan));
+        let units_after = game.player_unit_ids(0).len();
+        let buildings_after = game
+            .cities
+            .values()
+            .filter(|city| city.owner == 0)
+            .map(|city| city.buildings.len())
+            .sum::<usize>();
+        assert!(
+            units_after - units_before + buildings_after - buildings_before >= 2,
+            "a deep treasury should fund more than one strategic acquisition"
+        );
+        assert!(units_after - units_before <= 2);
+        assert!([first, second].into_iter().any(|city| game.cities[&city]
+            .buildings
+            .contains(&"library".to_string())));
+        assert!(game.players[0].gold >= 350.0);
     }
 
     #[test]
