@@ -709,7 +709,8 @@ const MINOR_SHARE: f64 = 0.25;
 
 /// One seat's slice of the turn budget. Seats divide it in proportion to the
 /// beat they are given, so a whole turn costs `pace_ms` whether it is two
-/// empires or eight with a dozen city-states between them.
+/// empires or eight with a dozen city-states between them. The counts are of
+/// seats that still take a turn — the eliminated are nobody's wait.
 pub fn seat_delay_ms(pace_ms: u64, majors: usize, minors: usize, minor: bool) -> u64 {
     let weight = (majors as f64 + minors as f64 * MINOR_SHARE).max(1.0);
     let share = if minor { MINOR_SHARE } else { 1.0 };
@@ -1228,8 +1229,15 @@ fn auto_step_loop(sh: Arc<Shared>) {
     let mut turn_mark = Instant::now();
     let mut turn_compute_us: u64 = 0;
     let mut unlimited_since = Instant::now();
+    let mut timed_pace = u64::MAX;
     loop {
         let pace = sh.pace_ms.load(Ordering::Relaxed).min(60_000);
+        if pace != timed_pace {
+            // The turn in flight was paced two ways; time the next one whole,
+            // or the readout spends a dozen turns crawling toward the truth.
+            timed_pace = pace;
+            watched_turn = None;
+        }
         if sh.paused.load(Ordering::Relaxed) {
             over_since = None; // pausing resets the restart countdown
             watched_turn = None; // and voids the half-timed turn
@@ -1271,13 +1279,11 @@ fn auto_step_loop(sh: Arc<Shared>) {
                 turn_compute_us += step_started.elapsed().as_micros() as u64;
                 // A turn is one step per seat, so a seat waits for its own
                 // share of the turn budget and the round adds up to the pace.
-                let minors = s
-                    .game
-                    .players
-                    .iter()
-                    .filter(|p| p.is_minor || p.is_barbarian)
-                    .count();
-                let majors = s.game.players.len() - minors;
+                // Only the living take a step: counting the eliminated made a
+                // late game outrun its own pace as the city-states fell.
+                let living = s.game.players.iter().filter(|p| p.alive);
+                let minors = living.clone().filter(|p| p.is_minor || p.is_barbarian).count();
+                let majors = living.count() - minors;
                 let p = &s.game.players[pid];
                 delay = seat_delay_ms(pace, majors, minors, p.is_minor || p.is_barbarian);
                 // The seat that ends the round closes the turn being timed.

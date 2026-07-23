@@ -804,13 +804,11 @@
         </div>
         <div class="speed-row"><span>Watch pace</span>
           <select id="specspeed" title="Wall-clock time for one full game turn">
-            <option value="0">Unlimited · as fast as possible</option>
-            <option value="100">Lightning · 0.1s / turn</option>
-            <option value="500">Blitz · 0.5s / turn</option>
-            <option value="1000" selected>Brisk · 1s / turn</option>
-            <option value="2000">Measured · 2s / turn</option>
-            <option value="4000">Cinematic · 4s / turn</option>
-            <option value="10000">Contemplative · 10s / turn</option>
+            <option value="0">Lightning · as fast as possible</option>
+            <option value="1000" selected>Blitz · 1s / turn</option>
+            <option value="2000">Fast · 2s / turn</option>
+            <option value="4000">Standard · 4s / turn</option>
+            <option value="10000">Slow · 10s / turn</option>
           </select>
         </div>
         <div class="speed-note" id="specpacenote">Measuring turn time…</div>
@@ -1565,16 +1563,17 @@ async function specPoll() {
   finally { specBusy = false; }
 }
 // Polling costs the server real work — a spectator state is the whole world —
-// and at the unlimited pace that work competes with the simulation for the
+// and at the Lightning pace that work competes with the simulation for the
 // machine. Ask less often when the turns are already arriving faster than a
 // viewer can read them.
 (function pollSpec() {
   specPoll().finally(() => setTimeout(pollSpec, specPace() === 0 ? 300 : 100));
 })();
 // Watch pace is a whole-turn budget: "1s / turn" means every seat has moved
-// one second later, whatever the player count. Zero is the unlimited pace —
-// the server takes no wait at all — so its cost is measured, not chosen, and
-// the option carries the machine's own estimate.
+// one second later, whatever the player count. Lightning is zero — the server
+// takes no wait at all — so its cost is measured, not chosen, and the option
+// carries the machine's own estimate.
+let paceRealigned = false;
 function formatTurnTime(ms) {
   if (!(ms > 0)) return "—";
   if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
@@ -1588,13 +1587,15 @@ function specPace() {
 function updatePaceReadout(st) {
   const select = document.getElementById("specspeed");
   if (!select) return;
-  if (st && st.pace !== undefined && +select.value !== st.pace &&
-      [...select.options].some(o => +o.value === st.pace))
-    select.value = String(st.pace);
-  const unlimited = [...select.options].find(o => o.value === "0");
+  if (st && st.pace !== undefined && +select.value !== st.pace) {
+    // A server left on a pace this page no longer offers gets the picked one.
+    if ([...select.options].some(o => +o.value === st.pace)) select.value = String(st.pace);
+    else if (!paceRealigned) { paceRealigned = true; setPace({ms: specPace()}); }
+  }
+  const lightning = [...select.options].find(o => o.value === "0");
   const estimate = st && st.turn_compute_ms;
-  if (unlimited && estimate > 0)
-    unlimited.textContent = `Unlimited · ~${formatTurnTime(estimate)} / turn`;
+  if (lightning && estimate > 0)
+    lightning.textContent = `Lightning · ~${formatTurnTime(estimate)} / turn`;
   const note = document.getElementById("specpacenote");
   if (!note) return;
   const actual = st && st.turn_ms;
@@ -4753,7 +4754,7 @@ function drawSide(force = true) {
   const now = performance.now();
   const pace = specPace();
   // Below a second per turn the panels change faster than they can be read;
-  // repaint them on a human cadence instead. Unlimited (0) is the fastest.
+  // repaint them on a human cadence instead. Lightning (0) is the fastest.
   if (!force && SPEC && pace < 1000 && now - lastSidePaint < 250) return;
   lastSidePaint = now;
   const scroller = document.querySelector(".side-scroll");
