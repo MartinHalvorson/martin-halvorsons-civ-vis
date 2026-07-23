@@ -134,6 +134,12 @@ while ($true) {
         #     the moment the game ends rather than half a minute later.
         if ($null -ne $build -and $build.HasExited) {
             $took = ((Get-Date) - $buildStarted).TotalSeconds
+            # A process object from Start-Process -PassThru does not carry an
+            # exit code until it has been waited on, and reads as a failure
+            # until then - which reported every successful build as broken and
+            # rebuilt the same commit on a loop. HasExited is already true, so
+            # this returns at once and fills the code in.
+            $build.WaitForExit()
             if ($build.ExitCode -eq 0) {
                 Copy-Item "$src\target\release\civvis.exe" "$binRun\civvis-next.exe" -Force
                 Set-Content -Path $stamp -Value $buildHead -Encoding ascii
