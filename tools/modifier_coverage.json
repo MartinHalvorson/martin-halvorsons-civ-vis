@@ -56,7 +56,8 @@
     },
     "ENABLE_UNIT_FAITH_PURCHASE": {
       "status": "implemented",
-      "note": "Faith purchase gating exists for religious units, Valletta, Grand Master's Chapel and Theocracy."
+      "verified": true,
+      "note": "Verified row by row. Theocracy and the Grand Master's Chapel enable Faith purchase for exactly ten land combat classes -- melee, ranged, anti-cavalry, light/heavy cavalry, light/heavy chariot, ranged cavalry, recon and siege. CIVVIS admitted every land military unit, which also let Theocracy Faith-buy a Giant Death Robot; the GDR is its own class outside the list, and is now excluded. The naval and Archaeologist rows are leader traits, and the Spy row is Wu Zetian -- content CIVVIS does not model."
     },
     "ADJUST_TRADE_ROUTE_CAPACITY": {
       "status": "implemented",

@@ -174,6 +174,10 @@ pub struct UnitSpec {
     pub can_formations: bool,
     #[serde(default = "default_true")]
     pub earns_xp: bool,
+    /// Theocracy and the Grand Master's Chapel enable Faith purchase by unit
+    /// class, and the Giant Death Robot is its own class outside that list.
+    #[serde(default = "default_true")]
+    pub faith_purchasable: bool,
     #[serde(default)]
     pub strength: f64,
     #[serde(default)]

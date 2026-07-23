@@ -20993,6 +20993,7 @@ impl Game {
                     let civilian = matches!(utype.as_str(), "builder" | "settler") && monumentality;
                     let land_combat = spec.class == "military"
                         && spec.domain.as_deref().is_none()
+                        && spec.faith_purchasable
                         && faith_land_units;
                     let faith_discount = if civilian { 30.0 } else { 0.0 }
                         + if p.government.as_deref() == Some("theocracy") {
@@ -24439,6 +24440,7 @@ impl Game {
                     && self.dedication_active(pid, "monumentality");
                 let faith_land_combat = spec.class == "military"
                     && spec.domain.as_deref().is_none()
+                    && spec.faith_purchasable
                     && (self.players[pid].government.as_deref() == Some("theocracy")
                         || self
                             .cities

@@ -629,7 +629,7 @@
     "sight": 3,
     "ranged_strength": 120, "anti_air_strength": 90, "anti_air_range": 1, "range": 3, "tech": "robotics", "requires_resource": "uranium", "resource_cost": 1, "resource_maintenance": 3,
     "promotion_class": "melee", "zone_of_control": true, "can_melee": true, "can_ranged": true,
-    "can_formations": false, "earns_xp": false
+    "can_formations": false, "earns_xp": false, "faith_purchasable": false
   },
   "warrior_monk": {
     "class": "military", "cost": 200, "maintenance": 2, "moves": 3, "strength": 40,
