@@ -208,7 +208,7 @@
   /* Floating map HUD */
   #topbar {
     position: absolute; z-index: 5; top: 10px; left: 64px; right: 438px;
-    display: grid; grid-template-columns: 94px repeat(6, minmax(80px, 1fr)); align-items: stretch; gap: 4px;
+    display: grid; grid-template-columns: 104px repeat(6, minmax(80px, 1fr)); align-items: stretch; gap: 4px;
     min-width: 0; padding: 5px; border: 1px solid #4961598c; border-radius: 13px;
     background: #0a1512e0; box-shadow: 0 12px 34px #0008; backdrop-filter: blur(16px) saturate(130%);
     pointer-events: none;
@@ -222,20 +222,28 @@
     color: #b9c8c2; font-size: 9px; font-weight: 900; letter-spacing: .1em; line-height: 1; text-transform: uppercase;
   }
   .victory-turn strong { margin-top: 5px; font-size: 19px; line-height: 1; font-variant-numeric: tabular-nums; }
-  .victory-turn i { margin-top: 5px; overflow: hidden; color: #9aaba5; font-size: 9px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+  /* The spectator line carries the acting civilization and the era, which on
+     one line is always wider than the cell and so was always an ellipsis. The
+     cell is tall enough for two lines, so let it wrap and clamp there instead
+     of truncating the era away every turn. */
+  .victory-turn i {
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    margin-top: 5px; overflow: hidden; color: #9aaba5; font-size: 9px; font-style: normal;
+    line-height: 1.25; overflow-wrap: anywhere;
+  }
   .victory-meter { overflow: hidden; background: #020706b3; box-shadow: inset 0 1px 2px #000b; }
   .victory-meter b { display: block; height: 100%; border-radius: inherit; background: currentColor; }
-  .victory-track { padding: 6px 6px 5px; color: var(--track); border-left: 1px solid #ffffff0b; }
+  .victory-track { padding: 6px 5px 5px; color: var(--track); border-left: 1px solid #ffffff0b; }
   .victory-heading { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; color: var(--track); }
   .victory-heading b { overflow: hidden; color: #dde5e1; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
   .victory-list { display: flex; flex-direction: column; gap: 3px; }
   .victory-entry { min-width: 0; }
-  .victory-line { display: grid; grid-template-columns: 11px 6px minmax(0, 1fr) auto; align-items: center; gap: 3px; min-width: 0; height: 13px; }
+  .victory-line { display: grid; grid-template-columns: 10px 6px minmax(0, 1fr) auto; align-items: center; gap: 3px; min-width: 0; height: 13px; }
   .victory-rank { color: #8b9d96; font-size: 9px; font-weight: 850; line-height: 1; }
   .victory-civ-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--civ); box-shadow: 0 0 5px color-mix(in srgb, var(--civ) 70%, transparent); }
   .victory-civ { overflow: hidden; color: #e6ede9; font-size: 10px; font-weight: 750; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
   .victory-value { color: #c2d0ca; font-size: 10px; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .victory-meter { height: 3px; margin: 0 0 0 23px; border-radius: 3px; }
+  .victory-meter { height: 3px; margin: 0 0 0 22px; border-radius: 3px; }
   #playerhud {
     position: absolute; z-index: 7; top: 10px; right: 12px; width: min(414px, calc(100% - 82px));
     max-height: calc(100% - 238px); overflow-y: auto; pointer-events: auto;
@@ -491,27 +499,27 @@
   .capture-actions button { margin: 0; min-height: 43px; }
 
   @media (max-width: 1360px) {
-    #topbar { right: 438px; grid-template-columns: 68px repeat(6, minmax(50px, 1fr)); }
+    #topbar { right: 438px; grid-template-columns: 92px repeat(6, minmax(62px, 1fr)); }
   }
   @media (max-width: 1100px) {
     #topbar { right: 70px; }
-    #playerhud { top: 82px; }
+    #playerhud { top: 104px; }
   }
   @media (max-width: 980px) {
     #side { width: 320px; min-width: 320px; }
     #ubar { max-width: calc(100% - 70px); }
   }
   @media (max-width: 940px) {
-    #topbar { grid-template-columns: 68px repeat(3, minmax(70px, 1fr)); }
-    #playerhud { top: 148px; }
+    #topbar { grid-template-columns: 92px repeat(3, minmax(70px, 1fr)); }
+    #playerhud { top: 190px; }
   }
   @media (max-width: 720px) {
     body { display: block; }
     #maparea { height: 100%; }
     #side { position: fixed; inset: 72px auto 8px 8px; width: min(390px, calc(100% - 16px)); min-width: 0; height: auto; border: 1px solid #40584f; border-radius: 16px; }
     body.sidebar-hidden #side { width: min(390px, calc(100% - 16px)); transform: translateX(calc(-100% - 16px)); opacity: 0; }
-    #topbar { grid-template-columns: 82px repeat(6, minmax(70px, 1fr)); }
-    #playerhud { top: 82px; right: 12px; max-height: calc(100% - 100px); }
+    #topbar { grid-template-columns: 104px repeat(6, minmax(80px, 1fr)); }
+    #playerhud { top: 104px; right: 12px; max-height: calc(100% - 122px); }
     .minimap-frame { display: none; }
     #zoomctl { left: 12px; bottom: 12px; }
     #ubar { min-width: 0; width: calc(100% - 28px); bottom: 18px; }
@@ -520,8 +528,8 @@
     #tradelist { grid-template-columns: 1fr; padding-inline: 10px; }
   }
   @media (max-width: 620px) {
-    #topbar { grid-template-columns: 68px repeat(3, minmax(70px, 1fr)); }
-    #playerhud { top: 148px; }
+    #topbar { grid-template-columns: 92px repeat(3, minmax(70px, 1fr)); }
+    #playerhud { top: 190px; }
   }
   @media (max-width: 430px) {
     #playerhud { left: 74px; right: 8px; width: auto; }
@@ -3041,14 +3049,26 @@ function draw() {
       const [c1, c2] = EDGE_CORNERS[i];
       const [ax, ay] = corner(x, y, S - 0.7, c1);
       const [bx, by] = corner(x, y, S - 0.7, c2);
-      riverSegments.push([ax, ay, bx, by]);
+      // Bow each reach off its chord. Rivers are the one thing on the map that
+      // is literally flow, and they were the most rigid line on it — six exact
+      // straights per hex, welded end to end, reading as pipework rather than
+      // water. Endpoints stay exact so reaches still meet at shared corners;
+      // only the middle wanders, and which way it wanders comes off the tile
+      // hash, so a long river meanders instead of bulging the same way twice.
+      const hv = hash2(t.pos[0] * 41 + i * 7, t.pos[1] * 47 + i * 11);
+      const dx = bx - ax, dy = by - ay;
+      const len = Math.hypot(dx, dy) || 1;
+      const bow = (hv - 0.5) * len * 0.45;
+      riverSegments.push([ax, ay,
+                          (ax + bx) / 2 - (dy / len) * bow,
+                          (ay + by) / 2 + (dx / len) * bow, bx, by]);
     }
   }
   const strokeRivers = (color, width, alpha) => {
     cx.strokeStyle = color; cx.lineWidth = width; cx.globalAlpha = alpha;
     cx.beginPath();
-    for (const [ax, ay, bx, by] of riverSegments) {
-      cx.moveTo(ax, ay); cx.lineTo(bx, by);
+    for (const [ax, ay, cxp, cyp, bx, by] of riverSegments) {
+      cx.moveTo(ax, ay); cx.quadraticCurveTo(cxp, cyp, bx, by);
     }
     cx.stroke();
   };
@@ -3679,7 +3699,13 @@ function victoryValue(victory, metric) {
       ? `${compactStat(metric.distance)}/${compactStat(metric.distance_target)}ly`
       : `${metric.projects || 0}/${metric.project_target || 4}`;
   }
-  if (victory === "culture") return `${metric.tourists || 0}/${metric.target || 1}`;
+  // Tourist counts run into four digits, and at the topbar's width that value
+  // is wide enough to squeeze the civilization name beside it down to an
+  // ellipsis. Compact it the way the science distance already is; the hover
+  // description still carries the exact figures.
+  if (victory === "culture") {
+    return `${compactStat(metric.tourists || 0)}/${compactStat(metric.target || 1)}`;
+  }
   if (victory === "religious") return `${metric.converted || 0}/${metric.target || 0}`;
   if (victory === "diplomatic") return `${metric.points || 0}/${metric.target || 20}`;
   if (victory === "domination") return `${metric.capitals || 0}/${metric.target || 0}`;
