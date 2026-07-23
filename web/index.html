@@ -1678,11 +1678,51 @@ document.addEventListener("fullscreenchange", () => { wakeCinema(); resize(); })
 const anim = { moves: new Map(), floats: [], sparks: [], deaths: [],
                claims: [], strike: null };
 const facing = new Map(); // unit id -> -1|1 (last horizontal direction)
+const unitHeadings = new Map(); // id -> last world-space direction for camera lead
 let pendingStrike = null;
-function worldXY(p) {
+function unitMapPoint(p, nearX = cam.x) {
   const t = TMAP.get(key(p));
-  const [x, yy] = hexXY(p[0], p[1]);
-  return [x, yy - (t ? elev(t) : 0)];
+  let x = S * SQ3 * (p[0] + p[1] / 2);
+  if (mapWrapsX()) x += Math.round((nearX - x) / WW()) * WW();
+  return {x, y:S * 1.5 * p[1], lift:t ? elev(t) : 0};
+}
+function mapPointToView(point) {
+  const wx = point.x - cam.x, wy = point.y - cam.y;
+  return [COSR * wx - SINR * wy,
+          (SINR * wx + COSR * wy) * YS - (point.lift || 0)];
+}
+function worldXY(p) {
+  return mapPointToView(unitMapPoint(p));
+}
+function sampleUnitMove(mv, now = performance.now()) {
+  const e = Math.min(1, Math.max(0, (now - mv.t0) / mv.dur));
+  const ee = easeIO(e);
+  const legFloat = Math.min(mv.steps - 1e-9, ee * mv.steps);
+  const leg = Math.floor(legFloat), local = legFloat - leg;
+  const from = mv.mapPoints[leg], to = mv.mapPoints[leg + 1];
+  return {
+    e, leg, local,
+    x:from.x + (to.x - from.x) * local,
+    y:from.y + (to.y - from.y) * local,
+    lift:from.lift + (to.lift - from.lift) * local,
+    headingX:to.x - from.x, headingY:to.y - from.y,
+  };
+}
+function cinematicUnitMapPoint(unit, now = performance.now()) {
+  const mv = anim.moves.get(unit.id);
+  const actual = mv ? sampleUnitMove(mv, now) : unitMapPoint(unit.pos);
+  if (mv) unitHeadings.set(unit.id, {x:actual.headingX, y:actual.headingY, at:now});
+  const heading = unitHeadings.get(unit.id);
+  let lead = 0;
+  if (heading) {
+    const age = now - heading.at;
+    lead = age <= 2400 ? .46 : .46 * Math.max(0, 1 - (age - 2400) / 3600);
+  }
+  return {
+    x:actual.x + (heading?.x || 0) * lead,
+    y:actual.y + (heading?.y || 0) * lead,
+    focusX:actual.x, focusY:actual.y,
+  };
 }
 function hexDistUI(a, b) {
   const dq = a[0] - b[0], dr = a[1] - b[1];
@@ -1704,23 +1744,33 @@ function animateDiff(prev, next) {
     const pu = prevU.get(nu.id);
     if (!pu) continue;
     if (pu.pos[0] !== nu.pos[0] || pu.pos[1] !== nu.pos[1]) {
-      const [fx, fy] = worldXY(pu.pos), [tx, ty] = worldXY(nu.pos);
       const cur = anim.moves.get(nu.id);
-      const sx = cur ? cur.x : fx, sy = cur ? cur.y : fy;
       const route = next.movement_paths && next.movement_paths[nu.id];
       // A multi-hex state diff may contain an entire AI turn. Without the
       // authoritative intermediate route, a straight tween can visibly fly
       // across oceans or mountains even though every game step was legal.
       const hasRoute = Array.isArray(route) && route.length > 1;
       if (!hasRoute && hexDistUI(pu.pos, nu.pos) > 1) {
+        const start = unitMapPoint(pu.pos), end = unitMapPoint(nu.pos, start.x);
+        unitHeadings.set(nu.id, {x:end.x - start.x, y:end.y - start.y, at:now});
         anim.moves.delete(nu.id);
       } else {
-        let points = hasRoute ? route.map(worldXY) : [[sx, sy], [tx, ty]];
-        if (cur) points[0] = [sx, sy];
-        const steps = Math.max(1, points.length - 1);
-        anim.moves.set(nu.id, { sx, sy, tx, ty, x: sx, y: sy, points, steps,
+        const positions = hasRoute ? route : [pu.pos, nu.pos];
+        let nearX = cur?.mapX ?? cam.x;
+        const mapPoints = positions.map(pos => {
+          const point = unitMapPoint(pos, nearX);
+          nearX = point.x;
+          return point;
+        });
+        if (cur) mapPoints[0] = {x:cur.mapX, y:cur.mapY, lift:cur.mapLift};
+        const start = mapPoints[0], end = mapPoints[mapPoints.length - 1];
+        const steps = Math.max(1, mapPoints.length - 1);
+        anim.moves.set(nu.id, {mapX:start.x, mapY:start.y, mapLift:start.lift,
+                                mapPoints, steps,
                                 t0: now, dur: 90 + 90 * Math.min(4, steps) });
-        if (Math.abs(tx - sx) > 1) facing.set(nu.id, tx > sx ? 1 : -1);
+        unitHeadings.set(nu.id, {x:end.x - start.x, y:end.y - start.y, at:now});
+        if (Math.abs(end.x - start.x) > 1)
+          facing.set(nu.id, end.x > start.x ? 1 : -1);
       }
     }
     if (nu.hp < pu.hp) {
@@ -2387,6 +2437,7 @@ function queueDirectorCue(cue) {
       kind:tracksUnit ? "character" : "event", subjectUnitId:cue.unitId,
       holdMs:cue.silent ? 3600 : (cue.priority >= 7 ? 6200 : 4300), arrivedAt:0
     };
+    updateCameraFollowChip();
     directorLast = now;
     directorSeen.set(signature, now);
     if (directorSeen.size > 80) {
@@ -2440,6 +2491,7 @@ function beginDirectorAmbientShot(now) {
   if (!cue) { directorAmbientLast = now; return false; }
   directorGoal = {pos:actionViewingAnchor(cue.pos), focus:[...cue.pos], scale:cue.zoom,
                   kind:"portrait", holdMs:5200, arrivedAt:0};
+  updateCameraFollowChip();
   directorAmbientLast = now;
   showDirectorStory(cue);
   return true;
@@ -2457,26 +2509,32 @@ function advanceDirector(now = performance.now()) {
       return false;
     }
   }
+  let trackedSubject = null;
   if (directorGoal.subjectUnitId !== undefined && directorGoal.subjectUnitId !== null) {
     const subject = state.units.find(unit => unit.id === directorGoal.subjectUnitId);
     if (subject) {
       directorGoal.pos = [...subject.pos];
       directorGoal.focus = [...subject.pos];
+      trackedSubject = cinematicUnitMapPoint(subject, now);
     } else {
       directorGoal.subjectUnitId = null;
+      updateCameraFollowChip();
     }
   }
   const dt = Math.max(1, Math.min(80, now - (directorMotionLast || now - 16)));
   directorMotionLast = now;
-  let gx = wrapX(S * SQ3 * (directorGoal.pos[0] + directorGoal.pos[1] / 2));
-  let gy = S * 1.5 * directorGoal.pos[1];
+  let gx = trackedSubject
+    ? trackedSubject.x : wrapX(S * SQ3 * (directorGoal.pos[0] + directorGoal.pos[1] / 2));
+  let gy = trackedSubject ? trackedSubject.y : S * 1.5 * directorGoal.pos[1];
   if (cinemaActive() && directorGoal.focus) {
     // The land-biased viewing anchor may sit a few tiles away from the event.
     // Preserve that richer background, but keep the actual subject clear of
     // the top victory ribbon and the lower-third on every viewport height.
-    let focusX = S * SQ3 * (directorGoal.focus[0] + directorGoal.focus[1] / 2);
-    if (mapWrapsX()) focusX += Math.round((gx - focusX) / WW()) * WW();
-    const focusY = S * 1.5 * directorGoal.focus[1];
+    let focusX = trackedSubject
+      ? trackedSubject.focusX : S * SQ3 * (directorGoal.focus[0] + directorGoal.focus[1] / 2);
+    if (!trackedSubject && mapWrapsX()) focusX += Math.round((gx - focusX) / WW()) * WW();
+    const focusY = trackedSubject
+      ? trackedSubject.focusY : S * 1.5 * directorGoal.focus[1];
     const screenY = area.clientHeight / 2 +
       (SINR * (focusX - gx) + COSR * (focusY - gy)) * YS * directorGoal.scale;
     // City nameplates rise roughly forty pixels above their tile center, so
@@ -2505,6 +2563,7 @@ function advanceDirector(now = performance.now()) {
     if (now - directorGoal.arrivedAt >= directorGoal.holdMs) {
       directorGoal = cinemaActive() && directorGoal.kind !== "survey"
         ? directorSurveyGoal() : null;
+      updateCameraFollowChip();
     }
   } else {
     directorGoal.arrivedAt = 0;
@@ -2776,11 +2835,13 @@ function render(st, recordChronicle = true) {
     animateDiff(sameWorld ? state : null, st);
   } else {
     anim.moves.clear(); anim.floats.length = 0; anim.sparks.length = 0;
+    unitHeadings.clear();
     anim.deaths.length = 0; anim.claims.length = 0;
     anim.strike = null; pendingStrike = null;
     sel = null; selCity = null;
   }
   if (!sameWorld) {
+    unitHeadings.clear();
     directorGoal = null; directorSeen.clear();
     directorAmbientLast = performance.now(); directorPortraitIndex = 0;
     cameraFollowUnitId = null; cameraFollowManual = false;
@@ -3799,6 +3860,30 @@ function drawUnitChar(u, x, y, now, moving) {
 // ring answers "whose is that?" without reading the tunic. Units with movement
 // left keep a bright ring; spent ones fade back, so a glance across the map
 // shows who can still act this turn.
+function cinematicSubjectUnitId() {
+  if (cameraFollowManual) return cameraFollowUnitId;
+  if (DIRECTOR && directorGoal?.kind === "character") return directorGoal.subjectUnitId;
+  return null;
+}
+function drawCinematicSubjectMarker(u, x, y, now) {
+  if (!cinemaActive() || cinematicSubjectUnitId() !== u.id) return;
+  const k = Math.min(UI_K(), 1.7);
+  const pulse = REDUCED_MOTION_QUERY.matches ? .5 : .5 + .5 * Math.sin(now / 520);
+  const r = (18.5 + pulse * 1.8) * k, cy = y + 9 * k;
+  const glow = cx.createRadialGradient(x, cy, 1, x, cy, r);
+  glow.addColorStop(0, pcol(u.owner) + "40");
+  glow.addColorStop(.52, "#f0d58a20");
+  glow.addColorStop(1, "#f0d58a00");
+  cx.save();
+  cx.fillStyle = glow;
+  cx.beginPath(); cx.ellipse(x, cy, r, r * .4, 0, 0, 7); cx.fill();
+  cx.globalAlpha = .5 + pulse * .22;
+  cx.strokeStyle = "#f2db9d"; cx.lineWidth = 1.15 * k;
+  cx.setLineDash([8 * k, 6 * k]);
+  cx.lineDashOffset = REDUCED_MOTION_QUERY.matches ? 0 : -now / 95;
+  cx.beginPath(); cx.ellipse(x, cy, r, r * .4, 0, 0, 7); cx.stroke();
+  cx.restore();
+}
 function drawUnitBase(u, x, y) {
   const spent = u.moves_left !== undefined && u.moves_left <= 0;
   const cy = y + 8.5;
@@ -5307,19 +5392,21 @@ function draw() {
   for (const u of sorted) {
     let [x, y] = worldXY(u.pos);
     let moving = false;
+    let moveSample = null, trailPoints = null;
     const mv = anim.moves.get(u.id);
     if (mv) {
-      const e = Math.min(1, (now - mv.t0) / mv.dur);
-      const ee = easeIO(e);
-      const legFloat = Math.min(mv.steps - 1e-9, ee * mv.steps);
-      const leg = Math.floor(legFloat), local = legFloat - leg;
-      const from = mv.points[leg], to = mv.points[leg + 1];
-      x = from[0] + (to[0] - from[0]) * local;
-      y = from[1] + (to[1] - from[1]) * local
-        - Math.abs(Math.sin(local * Math.PI)) * 2.4; // little hops
-      mv.x = x; mv.y = y; mv.e = e;
+      moveSample = sampleUnitMove(mv, now);
+      const currentPoint = {x:moveSample.x, y:moveSample.y, lift:moveSample.lift};
+      [x, y] = mapPointToView(currentPoint);
+      trailPoints = mv.mapPoints.slice(0, moveSample.leg + 1)
+        .map(mapPointToView);
+      trailPoints.push([x, y]);
+      y -= Math.abs(Math.sin(moveSample.local * Math.PI)) * 2.4; // little hops
+      mv.mapX = moveSample.x; mv.mapY = moveSample.y; mv.mapLift = moveSample.lift;
+      mv.e = moveSample.e;
+      unitHeadings.set(u.id, {x:moveSample.headingX, y:moveSample.headingY, at:now});
       moving = true;
-      if (e >= 1) anim.moves.delete(u.id);
+      if (moveSample.e >= 1) anim.moves.delete(u.id);
     }
     // A comet tail behind anything on the move. Watching a turn resolve, the
     // eye can otherwise only catch whichever unit it happened to be pointed
@@ -5327,19 +5414,25 @@ function draw() {
     // swells then fades over the step so it never becomes permanent clutter.
     if (moving) {
       const c = pcol(u.owner);
-      const g2 = cx.createLinearGradient(mv.sx, mv.sy, x, y);
+      const [trailStartX, trailStartY] = trailPoints[0];
+      const [trailEndX, trailEndY] = trailPoints[trailPoints.length - 1];
+      const g2 = cx.createLinearGradient(trailStartX, trailStartY, trailEndX, trailEndY);
       g2.addColorStop(0, c + "00");
       g2.addColorStop(1, c + "e0");
-      const gk = cx.createLinearGradient(mv.sx, mv.sy, x, y);
+      const gk = cx.createLinearGradient(trailStartX, trailStartY, trailEndX, trailEndY);
       gk.addColorStop(0, "#0d111700");
       gk.addColorStop(1, "#0d1117b0");
       cx.save();
       cx.globalAlpha = 0.75 * Math.sin(mv.e * Math.PI);
       cx.lineCap = "round";
       cx.strokeStyle = gk; cx.lineWidth = 5.4;   // casing, so it reads on sand
-      cx.beginPath(); cx.moveTo(mv.sx, mv.sy + 7); cx.lineTo(x, y + 7); cx.stroke();
+      cx.beginPath();
+      trailPoints.forEach(([px, py], index) => index ? cx.lineTo(px, py + 7) : cx.moveTo(px, py + 7));
+      cx.stroke();
       cx.strokeStyle = g2; cx.lineWidth = 3;
-      cx.beginPath(); cx.moveTo(mv.sx, mv.sy + 7); cx.lineTo(x, y + 7); cx.stroke();
+      cx.beginPath();
+      trailPoints.forEach(([px, py], index) => index ? cx.lineTo(px, py + 7) : cx.moveTo(px, py + 7));
+      cx.stroke();
       cx.restore();
     }
     if (anim.strike && anim.strike.id === u.id) {
@@ -5358,6 +5451,7 @@ function draw() {
     if (cityTiles.has(key(u.pos))) y += 12;
     const rr = 10.5;
     if (beau) {
+      drawCinematicSubjectMarker(u, x, y, now);
       drawUnitBase(u, x, y);
       drawUnitChar(u, x, y, now, moving);
       if (u.survey_count > 1) drawUnitFormationBadge(u, x, y);
@@ -6618,11 +6712,19 @@ function clearCameraInertia() {
 function updateCameraFollowChip() {
   const chip = document.getElementById("cinema-follow");
   if (!chip) return;
-  const unit = state?.units?.find(candidate => candidate.id === cameraFollowUnitId);
-  chip.classList.toggle("active", !!unit && cameraFollowManual);
+  const manual = cameraFollowManual && cameraFollowUnitId !== null;
+  const automatic = !manual && DIRECTOR && directorGoal?.kind === "character" &&
+    directorGoal.subjectUnitId !== undefined && directorGoal.subjectUnitId !== null;
+  const subjectId = manual ? cameraFollowUnitId :
+    (automatic ? directorGoal.subjectUnitId : null);
+  const unit = state?.units?.find(candidate => candidate.id === subjectId);
+  chip.classList.toggle("active", !!unit && (manual || automatic));
   if (!unit) return;
   const owner = state.players[unit.owner];
+  chip.querySelector("span").textContent = manual ? "Following" : "Director follows";
   chip.querySelector("b").textContent = `${owner?.civ || "Unknown"} · ${titleCase(unit.type)}`;
+  chip.querySelector("em").textContent = manual ? "click to release" : "click to take control";
+  chip.title = manual ? "Stop following this unit" : "Take camera control from the director";
 }
 function stopCameraFollow() {
   cameraFollowUnitId = null; cameraFollowManual = false;
@@ -6645,7 +6747,10 @@ function startCameraFollow(unitId) {
   updateCameraFollowChip(); wakeCinema();
   return true;
 }
-document.getElementById("cinema-follow").onclick = () => stopCameraFollow();
+document.getElementById("cinema-follow").onclick = () => {
+  if (cameraFollowManual) stopCameraFollow();
+  else if (DIRECTOR && directorGoal?.kind === "character") setDirector(false);
+};
 
 function cameraTargetFor(pos) {
   let x = S * SQ3 * (pos[0] + pos[1] / 2);
@@ -6754,12 +6859,16 @@ function advanceCameraFollow(now = performance.now()) {
   if (!cameraFollowManual || cameraFollowUnitId === null || dragState) return false;
   const unit = state?.units?.find(candidate => candidate.id === cameraFollowUnitId);
   if (!unit) { stopCameraFollow(); return false; }
-  const [ux, uy] = cameraTargetFor(unit.pos);
+  const subject = cinematicUnitMapPoint(unit, now);
   const desiredScreenY = area.clientHeight * .55;
-  const projectedY = (desiredScreenY - area.clientHeight / 2) /
+  let gx = subject.x, gy = subject.y;
+  const screenY = area.clientHeight / 2 +
+    (SINR * (subject.focusX - gx) + COSR * (subject.focusY - gy)) *
+      YS * cameraFollowScale;
+  const correction = (screenY - desiredScreenY) /
     (Math.max(.25, cameraFollowScale) * YS);
-  const gx = ux - SINR * projectedY;
-  const gy = clampCameraY(uy - COSR * projectedY, cameraFollowScale);
+  gx += SINR * correction;
+  gy = clampCameraY(gy + COSR * correction, cameraFollowScale);
   const dt = Math.max(1, Math.min(80, now - (directorMotionLast || now - 16)));
   const ease = 1 - Math.pow(.025, dt / 1000);
   const dx = gx - cam.x, dy = gy - cam.y;
@@ -6911,6 +7020,7 @@ function setDirector(on) {
     document.getElementById("cinema-story").classList.remove("visible");
   }
   updateDirectorButton();
+  updateCameraFollowChip();
   if (DIRECTOR && SPEC) centerMainLandmass();
 }
 function focusPlayer(pid) {

@@ -2088,6 +2088,10 @@ mod tests {
         );
         assert!(EMBEDDED_INDEX.contains("function advanceCameraFollow(now = performance.now())"));
         assert!(EMBEDDED_INDEX.contains("function startCameraFollow(unitId)"));
+        assert!(EMBEDDED_INDEX.contains("function unitMapPoint(p, nearX = cam.x)"));
+        assert!(EMBEDDED_INDEX.contains("function sampleUnitMove(mv, now = performance.now())"));
+        assert!(EMBEDDED_INDEX.contains("function cinematicUnitMapPoint(unit, now = performance.now())"));
+        assert!(EMBEDDED_INDEX.contains("function drawCinematicSubjectMarker(u, x, y, now)"));
         assert!(EMBEDDED_INDEX.contains("function beginTouchTransform()"));
         assert!(EMBEDDED_INDEX.contains("touch-action: none"));
         assert!(EMBEDDED_INDEX.contains("id=\"cinema-follow\""));
