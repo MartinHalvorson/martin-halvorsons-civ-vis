@@ -2288,16 +2288,14 @@ function drawUnitBase(u, x, y) {
   // nothing behind it — and the map underneath is no longer quiet brown, it is
   // gold fields and colored district terraces. A soft backdrop behind the whole
   // figure keeps a soldier legible standing on a wheat field.
-  cx.drawImage(unitBackdrop(), x - 15, y - 17, 30, 30);
-  cx.save();
-  cx.translate(x, cy); cx.scale(1, 0.42); cx.translate(-x, -cy);
-  const g = cx.createRadialGradient(x, cy, 1, x, cy, 13.5);
-  g.addColorStop(0, "rgba(0,0,0,.40)");
-  g.addColorStop(0.6, "rgba(0,0,0,.20)");
-  g.addColorStop(1, "rgba(0,0,0,0)");
-  cx.fillStyle = g;
-  cx.beginPath(); cx.arc(x, cy, 13.5, 0, 7); cx.fill();
-  cx.restore();
+  // Hold presence as the map zooms out. The plate carries almost all of a
+  // unit's owner color, and drawn at fixed world size it shrank to a couple of
+  // pixels exactly at survey zoom — the range where you most need to read whose
+  // army that is, and where the figure on top is far too small to tell you.
+  // Capped, so a token never swells past the hex it stands on.
+  const k = Math.min(UI_K(), 1.7);
+  cx.drawImage(unitBackdrop(), x - 15 * k, y - 17 * k, 30 * k, 30 * k);
+  cx.drawImage(unitPad(), x - 13.5 * k, cy - 5.7 * k, 27 * k, 11.4 * k);
   // A filled plate in the owner's color carries much further than a rim: at map
   // zoom the figure itself is only a few pixels of tunic, but the plate under
   // it stays an unmistakable blob of empire color. Its shape splits fighting
@@ -2309,7 +2307,7 @@ function drawUnitBase(u, x, y) {
     if (civil) cx.roundRect(x - rx * 0.9, cy - ry, rx * 1.8, ry * 2, ry * 0.72);
     else cx.ellipse(x, cy, rx, ry, 0, 0, 7);
   };
-  plate(9.6, 4.1);
+  plate(9.6 * k, 4.1 * k);
   cx.fillStyle = pcol(u.owner);
   cx.globalAlpha = spent ? 0.5 : 0.9;
   cx.fill();
@@ -2323,15 +2321,14 @@ function drawUnitBase(u, x, y) {
   cx.stroke();
   if (!spent) {   // ready units get a lit rim so they read before spent ones
     cx.strokeStyle = "#ffffff6b"; cx.lineWidth = 1;
-    plate(7.9, 3.0); cx.stroke();
+    plate(7.9 * k, 3.0 * k); cx.stroke();
   }
   // A Corps is two units folded into one and an Army three, which is the
   // difference between a raid and an invasion — and the map said nothing about
   // it. One bar per unit in the formation, under the plate where it clears the
   // health bar above and the shoulder shield beside.
   if (u.formation) {
-    const k = UI_K();                 // hold their size as the map zooms out,
-    const n = u.formation + 1;        // the way the HP bar and type badge do
+    const n = u.formation + 1;        // sized like the HP bar and type badge
     const w = 3.6 * k, gap = 5.0 * k;
     cx.fillStyle = "#f6efdc"; cx.strokeStyle = "#0d1117"; cx.lineWidth = 0.9;
     for (let i = 0; i < n; i++) {
@@ -2778,20 +2775,28 @@ function drawSettlement(c, x, y, beau) {
 // Built once and blitted per unit. A fresh radial gradient for every unit on
 // every frame is a hundred throwaway objects a frame on a busy map, for a
 // shape that never changes — the same reason the water stamps are cached.
-let UNIT_BACKDROP = null;
-function unitBackdrop() {
-  if (UNIT_BACKDROP) return UNIT_BACKDROP;
+function radialSprite(stops) {
   const D = 64;
   const c = document.createElement("canvas");
   c.width = c.height = D;
   const g = c.getContext("2d");
   const rg = g.createRadialGradient(D / 2, D / 2, 1, D / 2, D / 2, D / 2);
-  rg.addColorStop(0, "rgba(8,10,14,.3)");
-  rg.addColorStop(0.55, "rgba(8,10,14,.16)");
-  rg.addColorStop(1, "rgba(8,10,14,0)");
+  for (const [at, col] of stops) rg.addColorStop(at, col);
   g.fillStyle = rg; g.fillRect(0, 0, D, D);
-  UNIT_BACKDROP = c;
   return c;
+}
+let UNIT_BACKDROP = null, UNIT_PAD = null;
+function unitBackdrop() {
+  return UNIT_BACKDROP || (UNIT_BACKDROP = radialSprite([
+    [0, "rgba(8,10,14,.3)"], [0.55, "rgba(8,10,14,.16)"], [1, "rgba(8,10,14,0)"]]));
+}
+// The ground pad was still building a gradient per unit per frame — the same
+// waste the backdrop had, missed because only the backdrop was cached. Drawn
+// from a sprite it is one blit, and squashing happens in the destination rect
+// rather than a save/scale/restore around every unit.
+function unitPad() {
+  return UNIT_PAD || (UNIT_PAD = radialSprite([
+    [0, "rgba(0,0,0,.40)"], [0.6, "rgba(0,0,0,.20)"], [1, "rgba(0,0,0,0)"]]));
 }
 
 // Status marks keep their on-screen size as the map zooms out, so a unit's
