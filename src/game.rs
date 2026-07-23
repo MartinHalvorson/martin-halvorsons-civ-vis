@@ -31726,12 +31726,17 @@ impl Game {
     }
 
     fn established_governor_city(&self, pid: usize, governor: &str) -> Option<u32> {
-        let state = self.players.get(pid)?.governor_roster.get(governor)?;
-        let city = state.city?;
-        let spec = self.rules.governors.get(governor)?;
-        (self.turn >= state.assigned_turn + self.standard_duration(spec.establish_turns)
-            && self.turn >= state.disabled_until)
-            .then_some(city)
+        // Whether a Governor is established is more than a date check — a
+        // displaced one still names a city that is gone or no longer this
+        // player's — so that decision stays in one place.
+        self.governor_established(pid, governor)
+            .then(|| {
+                self.players[pid]
+                    .governor_roster
+                    .get(governor)
+                    .and_then(|state| state.city)
+            })
+            .flatten()
     }
 
     fn amani_city_state_for_effect(&self, pid: usize, effect: &str) -> Option<(u32, usize)> {
