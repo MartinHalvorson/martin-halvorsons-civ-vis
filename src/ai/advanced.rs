@@ -440,10 +440,8 @@ impl AdvancedAi {
         {
             return true;
         }
-        if let Some(threatened) = self.threatened_city(g, pid) {
-            if plan.threatened_city != Some(threatened) {
-                return true;
-            }
+        if plan.threatened_city != self.threatened_city(g, pid) {
+            return true;
         }
         if let Some((rival, counter)) = self.victory_denial(g, pid) {
             let expects_hostile_target = self.campaign_target_legal(g, pid, rival);
@@ -462,18 +460,56 @@ impl AdvancedAi {
             .into_iter()
             .filter_map(|cid| {
                 let city = &g.cities[&cid];
-                let nearby = g
+                let hostile: f64 = g
                     .units
                     .values()
                     .filter(|unit| unit.owner != pid && g.is_at_war(pid, unit.owner))
-                    .map(|unit| g.wdist(city.pos, unit.pos))
-                    .min()
-                    .unwrap_or(i32::MAX);
+                    .filter(|unit| g.wdist(city.pos, unit.pos) <= 6)
+                    .filter(|unit| g.rules.units[unit.kind.as_str()].class == "military")
+                    .map(|unit| {
+                        crate::game::effective_strength(g.unit_strength(unit, false), unit.hp)
+                    })
+                    .sum();
+                if hostile <= 0.0 {
+                    return None;
+                }
+                let friendly = g.city_strength(cid)
+                    + g.units
+                        .values()
+                        .filter(|unit| unit.owner == pid && g.wdist(city.pos, unit.pos) <= 6)
+                        .filter(|unit| g.rules.units[unit.kind.as_str()].class == "military")
+                        .map(|unit| {
+                            crate::game::effective_strength(
+                                g.unit_strength(unit, true),
+                                unit.hp,
+                            )
+                        })
+                        .sum::<f64>();
+                let danger = hostile / friendly.max(1.0);
                 let recently_hit =
                     city.last_attacked > 0 && g.turn.saturating_sub(city.last_attacked) <= 3;
-                (nearby <= 6 || recently_hit).then_some((nearby, city.hp, cid))
+                let wall_max = g.city_max_wall_hp(city);
+                let damaged = city.hp < 200 || city.wall_hp < wall_max;
+                let breached = city.hp < 160
+                    || (wall_max > 0 && city.wall_hp.saturating_mul(2) < wall_max);
+                // A scout or losing skirmisher in the outer city radius is a
+                // tactical contact, not an empire-wide emergency. Recovery is
+                // reserved for a locally competitive force or a damaged city
+                // whose remaining defenders cannot safely absorb another hit.
+                let critical = danger >= 0.90
+                    || (danger >= 0.45 && (breached || (recently_hit && damaged)));
+                critical.then_some((
+                    danger,
+                    (200 - city.hp).max(0) + (wall_max - city.wall_hp).max(0),
+                    cid,
+                ))
             })
-            .min()
+            .max_by(|left, right| {
+                left.0
+                    .total_cmp(&right.0)
+                    .then_with(|| left.1.cmp(&right.1))
+                    .then_with(|| right.2.cmp(&left.2))
+            })
             .map(|(_, _, cid)| cid)
     }
 
@@ -10722,6 +10758,81 @@ mod tests {
             ai.plan_stale(&game, 0),
             "an imminent rival victory must replan now"
         );
+    }
+
+    #[test]
+    fn recovery_requires_material_local_danger_and_ends_when_it_clears() {
+        let mut game = Game::new_full(2, 30, 18, 7_218, 300, 0, false);
+        for pid in 0..2 {
+            game.current = pid;
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        for unit in game.units.keys().copied().collect::<Vec<_>>() {
+            game.remove_unit(unit);
+        }
+        game.current = 0;
+        game.turn = 90;
+        game.at_war.insert((0, 1));
+        let home = game.player_city_ids(0)[0];
+        let home_pos = game.cities[&home].pos;
+        let intruder_pos = game
+            .wdisk(home_pos, 6)
+            .into_iter()
+            .find(|position| {
+                game.wdist(*position, home_pos) == 3 && game.city_at(*position).is_none()
+            })
+            .unwrap();
+        let far_pos = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|position| {
+                game.wdist(*position, home_pos) >= 9 && game.city_at(*position).is_none()
+            })
+            .unwrap();
+        for position in [intruder_pos, far_pos] {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "grassland".to_string();
+            tile.feature = None;
+            tile.hills = false;
+        }
+        for _ in 0..4 {
+            game.spawn_test_unit("modern_armor", 0, far_pos);
+        }
+        let mut intruders = vec![game.spawn_test_unit("warrior", 1, intruder_pos)];
+        let mut ai = AdvancedAi::new();
+
+        assert_eq!(
+            ai.threatened_city(&game, 0),
+            None,
+            "one losing contact in the outer radius must not recall a dominant army"
+        );
+        assert_eq!(ai.assess(&game, 0).strategy, GrandStrategy::Conquest);
+
+        for _ in 0..4 {
+            intruders.push(game.spawn_test_unit("modern_armor", 1, intruder_pos));
+        }
+        assert_eq!(ai.threatened_city(&game, 0), Some(home));
+        let recovery = ai.assess(&game, 0);
+        assert_eq!(recovery.strategy, GrandStrategy::Recovery);
+        assert_eq!(recovery.threatened_city, Some(home));
+
+        ai.plan = Some(recovery);
+        for unit in intruders {
+            game.remove_unit(unit);
+        }
+        assert!(
+            ai.plan_stale(&game, 0),
+            "clearing the emergency must resume the campaign immediately"
+        );
+        assert_eq!(ai.assess(&game, 0).strategy, GrandStrategy::Conquest);
     }
 
     #[test]
