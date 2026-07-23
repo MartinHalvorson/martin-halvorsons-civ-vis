@@ -220,8 +220,11 @@ impl TileGrid {
         Some((row * self.width + col) as usize)
     }
 
+    /// Where a position sits in the tile vector. Callers that keep their own
+    /// per-tile table — a visibility sweep's height cache, say — index it by
+    /// this, so the table is dense and in the same order as the map itself.
     #[inline]
-    fn index_of(&self, pos: Pos) -> Option<usize> {
+    pub fn index_of(&self, pos: Pos) -> Option<usize> {
         let slot = *self.slot.get(self.cell(pos)?)?;
         if slot == EMPTY_SLOT {
             None

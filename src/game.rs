@@ -7344,6 +7344,46 @@ impl Game {
     }
 }
 
+/// Terrain heights for one visibility sweep, indexed by tile.
+///
+/// Working out how tall a hex stands means asking whether it is a mountain,
+/// whether its feature is a Natural Wonder, and whether a City Center or
+/// Encampment looks out from it. Every ray that crosses a hex asks the same
+/// question, and a player's sweep runs a ray from every unit to every tile in
+/// sight, so the same handful of answers were being recomputed thousands of
+/// times a turn. They are pure functions of the map, so the sweep keeps them.
+///
+/// An empty field memoizes nothing, which is what a one-off ray — a combat
+/// line of sight, say — wants: filling a per-tile table costs more than the
+/// two lookups it would save.
+struct HeightField {
+    sight: Vec<i16>,
+    /// Blocker heights for a viewer who sees through woods, and for one who
+    /// does not. Woods are the only thing the two disagree about.
+    open: Vec<i16>,
+    wooded: Vec<i16>,
+}
+
+impl HeightField {
+    const UNKNOWN: i16 = i16::MIN;
+
+    fn none() -> HeightField {
+        HeightField {
+            sight: Vec::new(),
+            open: Vec::new(),
+            wooded: Vec::new(),
+        }
+    }
+
+    fn for_map(tiles: usize) -> HeightField {
+        HeightField {
+            sight: vec![HeightField::UNKNOWN; tiles],
+            open: vec![HeightField::UNKNOWN; tiles],
+            wooded: vec![HeightField::UNKNOWN; tiles],
+        }
+    }
+}
+
 fn bump(p: &mut Player, key: &str) {
     *p.counters.entry(key.to_string()).or_insert(0) += 1;
 }
@@ -17777,13 +17817,19 @@ impl Game {
         self.reveal(owner, pos, sight);
     }
 
+    /// A height table sized to this map, for one visibility sweep.
+    fn height_field(&self) -> HeightField {
+        HeightField::for_map(self.map.tiles.len())
+    }
+
     fn reveal(&mut self, pid: usize, pos: Pos, radius: i32) {
         if pid >= self.players.len() || !self.map.tiles.contains_key(&pos) {
             return;
         }
-        let mut visible = self.player_visibility(pid);
+        let mut heights = self.height_field();
+        let mut visible = self.player_visibility_via(&mut heights, pid);
         let height = self.map.tiles[&pos].hills as i32 + self.district_viewpoint_bonus(pos);
-        visible.extend(self.visible_tiles_from(pos, radius, height, false, false));
+        visible.extend(self.visible_tiles_from(&mut heights, pos, radius, height, false, false));
         self.refresh_visibility_snapshot(pid, visible);
     }
 
@@ -17916,6 +17962,49 @@ impl Game {
             || self.embarkation_facility_at(water_side)
     }
 
+    /// A sight height the sweep has already worked out, or a fresh one.
+    #[inline]
+    fn sight_height_via(&self, heights: &mut HeightField, pos: Pos) -> i32 {
+        let Some(index) = self.map.tiles.index_of(pos) else {
+            return self.sight_height(pos);
+        };
+        if heights.sight.is_empty() {
+            return self.sight_height(pos);
+        }
+        if heights.sight[index] != HeightField::UNKNOWN {
+            return heights.sight[index] as i32;
+        }
+        let height = self.sight_height(pos);
+        heights.sight[index] = height as i16;
+        height
+    }
+
+    #[inline]
+    fn blocker_height_via(
+        &self,
+        heights: &mut HeightField,
+        pos: Pos,
+        see_through_woods: bool,
+    ) -> i32 {
+        let Some(index) = self.map.tiles.index_of(pos) else {
+            return self.blocker_height(pos, see_through_woods);
+        };
+        let cache = if see_through_woods {
+            &mut heights.open
+        } else {
+            &mut heights.wooded
+        };
+        if cache.is_empty() {
+            return self.blocker_height(pos, see_through_woods);
+        }
+        if cache[index] != HeightField::UNKNOWN {
+            return cache[index] as i32;
+        }
+        let height = self.blocker_height(pos, see_through_woods);
+        cache[index] = height as i16;
+        height
+    }
+
     fn sight_height(&self, pos: Pos) -> i32 {
         let t = &self.map.tiles[&pos];
         if t.terrain == "mountain"
@@ -17972,6 +18061,7 @@ impl Game {
     #[allow(clippy::too_many_arguments)]
     fn corridor_is_clear(
         &self,
+        heights: &mut HeightField,
         from: Pos,
         to: Pos,
         distance: i32,
@@ -17997,7 +18087,7 @@ impl Game {
             // A position becomes interior once a further one follows it, and
             // the corridor's own origin is never cover.
             if distinct >= 2 {
-                let blocker = self.blocker_height(previous.unwrap(), see_through_woods);
+                let blocker = self.blocker_height_via(heights, previous.unwrap(), see_through_woods);
                 if blocker > viewer_height && blocker >= target_height {
                     return false;
                 }
@@ -18013,6 +18103,7 @@ impl Game {
     /// corridor is open, matching Civ VI's "half-hidden" hex behavior.
     fn tile_has_visibility_line(
         &self,
+        heights: &mut HeightField,
         from: Pos,
         to: Pos,
         viewer_height: i32,
@@ -18026,11 +18117,12 @@ impl Game {
         if distance == 0 {
             return true;
         }
-        let target_height = self.sight_height(to);
+        let target_height = self.sight_height_via(heights, to);
         [(1e-6, 1e-6, -2e-6), (-1e-6, -1e-6, 2e-6)]
             .into_iter()
             .any(|nudge| {
                 self.corridor_is_clear(
+                    heights,
                     from,
                     unwrapped,
                     distance,
@@ -18072,6 +18164,7 @@ impl Game {
 
     fn visible_tiles_from(
         &self,
+        heights: &mut HeightField,
         from: Pos,
         radius: i32,
         viewer_height: i32,
@@ -18088,14 +18181,26 @@ impl Game {
             let distance = self.wdist(from, target);
             if distance <= radius {
                 if flying
-                    || self.tile_has_visibility_line(from, target, viewer_height, see_through_woods)
+                    || self.tile_has_visibility_line(
+                        heights,
+                        from,
+                        target,
+                        viewer_height,
+                        see_through_woods,
+                    )
                 {
                     visible.insert(target);
                 }
             } else if !flying
                 && distance == radius + 1
-                && self.sight_height(target) > 0
-                && self.tile_has_visibility_line(from, target, viewer_height, see_through_woods)
+                && self.sight_height_via(heights, target) > 0
+                && self.tile_has_visibility_line(
+                    heights,
+                    from,
+                    target,
+                    viewer_height,
+                    see_through_woods,
+                )
             {
                 // Elevated terrain one tile beyond nominal sight is itself
                 // visible when it rises above the intervening terrain.
@@ -18119,7 +18224,7 @@ impl Game {
             } else {
                 0
             };
-        self.tile_has_visibility_line(from, to, attacker_height, false)
+        self.tile_has_visibility_line(&mut HeightField::none(), from, to, attacker_height, false)
     }
 
     fn unit_has_line_of_sight(&self, uid: u32, to: Pos) -> bool {
@@ -18127,7 +18232,13 @@ impl Game {
         if self.promotion_effect(unit, "see_through_woods") > 0.0 && self.wdist(unit.pos, to) == 2 {
             let attacker_height =
                 self.map.tiles[&unit.pos].hills as i32 + self.district_viewpoint_bonus(unit.pos);
-            return self.tile_has_visibility_line(unit.pos, to, attacker_height, true);
+            return self.tile_has_visibility_line(
+                &mut HeightField::none(),
+                unit.pos,
+                to,
+                attacker_height,
+                true,
+            );
         }
         self.has_line_of_sight(unit.pos, to, true)
     }
@@ -18290,6 +18401,10 @@ impl Game {
     /// terrain obstruction; ground and naval units use their data-defined
     /// sight, promotions, elevation, and City Center/Encampment vantage.
     pub fn unit_visible_tiles(&self, uid: u32) -> BTreeSet<Pos> {
+        self.unit_visible_tiles_via(&mut self.height_field(), uid)
+    }
+
+    fn unit_visible_tiles_via(&self, heights: &mut HeightField, uid: u32) -> BTreeSet<Pos> {
         let Some(unit) = self.units.get(&uid) else {
             return BTreeSet::new();
         };
@@ -18298,6 +18413,7 @@ impl Game {
         let viewer_height =
             self.map.tiles[&origin].hills as i32 + self.district_viewpoint_bonus(origin);
         self.visible_tiles_from(
+            heights,
             origin,
             self.unit_sight(uid),
             viewer_height,
@@ -18306,10 +18422,10 @@ impl Game {
         )
     }
 
-    fn base_player_visibility(&self, pid: usize) -> BTreeSet<Pos> {
+    fn base_player_visibility(&self, heights: &mut HeightField, pid: usize) -> BTreeSet<Pos> {
         let mut visible = BTreeSet::new();
         for uid in self.player_unit_ids(pid) {
-            visible.extend(self.unit_visible_tiles(uid));
+            visible.extend(self.unit_visible_tiles_via(heights, uid));
         }
         // Civ VI grants unconditional visibility to every owned border tile
         // and the one-tile ring beyond it, regardless of terrain blockers.
@@ -18345,7 +18461,7 @@ impl Game {
             };
             let height =
                 self.map.tiles[&position].hills as i32 + self.district_viewpoint_bonus(position);
-            visible.extend(self.visible_tiles_from(position, 3, height, false, false));
+            visible.extend(self.visible_tiles_from(heights, position, 3, height, false, false));
         }
         visible
     }
@@ -18380,9 +18496,13 @@ impl Game {
     /// Military Alliance shared vision. Explored/remembered tiles are not
     /// included here.
     pub fn player_visibility(&self, pid: usize) -> BTreeSet<Pos> {
+        self.player_visibility_via(&mut self.height_field(), pid)
+    }
+
+    fn player_visibility_via(&self, heights: &mut HeightField, pid: usize) -> BTreeSet<Pos> {
         let mut visible = BTreeSet::new();
         for viewer in self.visibility_viewers(pid) {
-            visible.extend(self.base_player_visibility(viewer));
+            visible.extend(self.base_player_visibility(heights, viewer));
         }
         visible
     }
