@@ -4456,6 +4456,30 @@ mod maintenance_tests {
     }
 
     #[test]
+    fn giant_death_robot_upgrades_hang_off_the_technologies_that_ship_them() {
+        // Advanced Power Cells fits the Particle Beam Siege Cannon, Cybernetics
+        // grants Enhanced Mobility, Smart Materials the armour plating and
+        // Advanced AI the air defence. Nothing grants it extra healing.
+        let (mut game, city) = one_city();
+        let robot = game.spawn_unit("giant_death_robot", 0, game.cities[&city].pos);
+        let unit = game.units[&robot].clone();
+
+        assert_eq!(game.gdr_siege_bonus(&unit), 0.0);
+        assert!(!game.gdr_full_wall_damage(&unit));
+        let base_moves = game.unit_max_moves(robot);
+
+        game.players[0].techs.insert("cybernetics".to_string());
+        assert_eq!(game.unit_max_moves(robot), base_moves + 3.0);
+        assert_eq!(game.gdr_siege_bonus(&unit), 0.0);
+
+        game.players[0]
+            .techs
+            .insert("advanced_power_cells".to_string());
+        assert_eq!(game.gdr_siege_bonus(&unit), 30.0);
+        assert!(game.gdr_full_wall_damage(&unit));
+    }
+
+    #[test]
     fn recurring_trade_contracts_are_part_of_each_players_budget() {
         let mut game = Game::new_full(2, 24, 16, 73_102, 120, 0, false);
         game.turn = 10;
@@ -8963,11 +8987,6 @@ impl Game {
             }
         } else {
             location.rate()
-                + if unit.kind == "giant_death_robot" {
-                    self.tree_effect(unit.owner, "gdr_heal") as i32
-                } else {
-                    0
-                }
                 + emergency_heal
                 + support_heal
         }
@@ -22264,6 +22283,22 @@ impl Game {
         bonus
     }
 
+    /// Advanced Power Cells fits the Giant Death Robot with the Particle Beam
+    /// Siege Cannon: +30 Ranged Strength against cities and Encampments, and
+    /// those attacks are fully effective against walls rather than half.
+    fn gdr_siege_bonus(&self, unit: &Unit) -> f64 {
+        if unit.kind == "giant_death_robot" {
+            self.tree_effect(unit.owner, "gdr_ranged_vs_district")
+        } else {
+            0.0
+        }
+    }
+
+    fn gdr_full_wall_damage(&self, unit: &Unit) -> bool {
+        unit.kind == "giant_death_robot"
+            && self.tree_effect(unit.owner, "gdr_full_wall_damage") > 0.0
+    }
+
     fn matchup_bonus(&self, uid: u32, opponent: &Unit, attacking: bool) -> f64 {
         let u = &self.units[&uid];
         let spec = &self.rules.units[u.kind.as_str()];
@@ -22685,7 +22720,8 @@ impl Game {
         let spec = self.rules.units[attacker.kind.as_str()].clone();
         let mut attack_base = self.unit_ranged_attack_strength(&attacker)
             + self.vs_bonus(pid, self.cities[&cid].owner)
-            + self.promotion_effect(&attacker, "ranged_vs_district");
+            + self.promotion_effect(&attacker, "ranged_vs_district")
+            + self.gdr_siege_bonus(&attacker);
         if spec.ranged_strength > 0.0 && spec.domain.as_deref() != Some("sea") {
             attack_base -= 17.0;
         }
@@ -23128,6 +23164,7 @@ impl Game {
             let starting_hp = self.cities[&cid].hp;
             let mut att_base = self.unit_ranged_attack_strength(&self.units[&uid])
                 + self.promotion_effect(&self.units[&uid], "ranged_vs_district")
+                + self.gdr_siege_bonus(&self.units[&uid])
                 + self.vs_bonus(pid, self.cities[&cid].owner);
             if spec.ranged_strength > 0.0 && spec.domain.as_deref() != Some("sea") {
                 att_base -= 17.0;
@@ -23135,7 +23172,11 @@ impl Game {
             let att = effective_strength(att_base, self.units[&uid].hp);
             let cs = self.city_strength(cid);
             let dmg = damage(att, cs, &mut self.rng);
-            let mult = if spec.siege { 1.0 } else { 0.5 };
+            let mult = if spec.siege || self.gdr_full_wall_damage(&self.units[&uid]) {
+                1.0
+            } else {
+                0.5
+            };
             self.city_take_damage(cid, dmg, mult, false);
             if starting_hp <= 0 {
                 // Shots after a Bombard attack has depleted the garrison
@@ -24574,7 +24615,12 @@ impl Game {
                     self.encampment_strength(cid),
                     &mut self.rng,
                 );
-                self.encampment_take_damage(cid, dealt, if spec.siege { 1.0 } else { 0.5 }, false);
+                let effectiveness = if spec.siege || self.gdr_full_wall_damage(&attacker) {
+                1.0
+            } else {
+                0.5
+            };
+            self.encampment_take_damage(cid, dealt, effectiveness, false);
                 if self.cities[&cid].encampment_hp <= 0 {
                     self.cities.get_mut(&cid).unwrap().encampment_hp = 1;
                 }

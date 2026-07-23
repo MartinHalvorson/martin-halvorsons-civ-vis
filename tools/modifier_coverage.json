@@ -32,7 +32,8 @@
     },
     "ADJUST_PLAYER_STRENGTH_MODIFIER": {
       "status": "implemented",
-      "note": "Combat Strength modifiers execute from promotions, policy cards, governments, city-state Envoys and wonders (game.rs combat_strength)."
+      "verified": true,
+      "note": "Verified row by row. All 48 promotion Combat Strength amounts CIVVIS models match the shipped values exactly, under CIVVIS' own semantic effect names. The Giant Death Robot's four tech upgrades were attached to the wrong nodes: Advanced Power Cells ships the Particle Beam Siege Cannon and Cybernetics Enhanced Mobility, while CIVVIS had the movement on Advanced Power Cells and invented a healing upgrade on Cybernetics that no shipped row grants. Now corrected. The remaining rows are unit abilities for leaders and city-states outside CIVVIS' roster."
     },
     "ADJUST_UNIT_MOVEMENT": {
       "status": "implemented",
