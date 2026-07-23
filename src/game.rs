@@ -1900,6 +1900,7 @@ mod governor_runtime_tests {
             "pingala",
             city,
             &[
+                "librarian",
                 "connoisseur",
                 "researcher",
                 "grants",
@@ -1982,10 +1983,41 @@ mod governor_runtime_tests {
             .unwrap()
             .promotions
             .remove("curator");
-        assert_eq!(
-            game.tourism_per_turn(0) - without_curator.tourism_per_turn(0),
-            2.0
+        assert!(
+            (game.tourism_per_turn(0) - without_curator.tourism_per_turn(0) - 2.0).abs() < 1e-9
         );
+    }
+
+    #[test]
+    fn first_tier_governor_abilities_cost_a_title() {
+        // Land Acquisition and Librarian are promotions in the shipped tree,
+        // not abilities that arrive with the appointment.
+        let mut game = Game::new_full(1, 24, 16, 91_947, 200, 0, false);
+        let city = found_capital(&mut game, 0);
+        appoint_established(&mut game, 0, "reyna", city, &[]);
+        appoint_established(&mut game, 0, "pingala", city, &[]);
+        for effect in [
+            "border_growth_pct",
+            "incoming_foreign_trade_gold",
+            "science_pct",
+            "culture_pct",
+        ] {
+            assert_eq!(
+                game.governor_effect(0, city, effect),
+                0.0,
+                "{effect} must wait for its promotion"
+            );
+        }
+
+        appoint_established(&mut game, 0, "reyna", city, &["land_acquisition"]);
+        appoint_established(&mut game, 0, "pingala", city, &["librarian"]);
+        assert_eq!(game.governor_effect(0, city, "border_growth_pct"), 20.0);
+        assert_eq!(
+            game.governor_effect(0, city, "incoming_foreign_trade_gold"),
+            3.0
+        );
+        assert_eq!(game.governor_effect(0, city, "science_pct"), 15.0);
+        assert_eq!(game.governor_effect(0, city, "culture_pct"), 15.0);
     }
 
     #[test]
@@ -1999,6 +2031,7 @@ mod governor_runtime_tests {
             "reyna",
             city,
             &[
+                "land_acquisition",
                 "harbormaster",
                 "forestry_management",
                 "tax_collector",

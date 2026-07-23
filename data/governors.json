@@ -45,8 +45,9 @@
   },
   "pingala": {
     "name":"Pingala", "title":"The Educator", "establish_turns":5,
-    "effects":{"loyalty":8,"science_pct":15,"culture_pct":15},
+    "effects":{"loyalty":8},
     "promotions":{
+      "librarian":{"tier":1,"effects":{"science_pct":15,"culture_pct":15},"note":"+15% Science and +15% Culture in this city."},
       "connoisseur":{"tier":1,"effects":{"culture_per_pop":1}},
       "researcher":{"tier":1,"effects":{"science_per_pop":1}},
       "grants":{"tier":2,"requires":["connoisseur","researcher"],"effects":{"great_people_pct":100}},
@@ -56,8 +57,9 @@
   },
   "reyna": {
     "name":"Reyna", "title":"The Financier", "establish_turns":5,
-    "effects":{"loyalty":8,"border_growth_pct":20,"incoming_foreign_trade_gold":3},
+    "effects":{"loyalty":8},
     "promotions":{
+      "land_acquisition":{"tier":1,"effects":{"border_growth_pct":20,"incoming_foreign_trade_gold":3},"note":"Faster border expansion, and Gold from foreign Trade Routes passing through."},
       "harbormaster":{"tier":1,"effects":{"commercial_harbor_adjacency_pct":100}},
       "forestry_management":{"tier":1,"effects":{"unimproved_feature_gold":2,"appeal":1}},
       "tax_collector":{"tier":2,"requires":["harbormaster","forestry_management"],"effects":{"gold_per_pop":2}},
