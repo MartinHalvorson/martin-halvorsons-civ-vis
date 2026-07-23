@@ -1260,6 +1260,7 @@ function chronicle(prev, next) {
              (viewer === null || city.owner === viewer || old.owner === viewer)) {
       const former = (prev.players[old.owner] || {}).civ || "its former ruler";
       addEvent("⚔", `${civ} captured ${city.name} from ${former}.`, next.turn, next);
+    }
     oldCities.delete(city.id);
   }
   for (const city of oldCities.values()) {
