@@ -22,6 +22,7 @@ pub mod server;
 pub mod setup;
 pub mod strategic;
 pub mod valuenet;
+pub mod mods;
 pub mod validate;
 pub mod world;
 

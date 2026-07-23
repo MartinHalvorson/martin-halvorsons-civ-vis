@@ -1,6 +1,7 @@
 //! Ruleset loaded from the shared JSON data files (embedded at compile time).
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 
 fn default_true() -> bool {
     true
@@ -836,51 +837,125 @@ pub struct GoodyRewardSpec {
     pub reward: BTreeMap<String, f64>,
 }
 
+/// Every ruleset file the engine ships, by the name a mod overlay uses.
+pub const DATA_FILES: [(&str, &str); 24] = [
+    ("terrains", include_str!("../data/terrains.json")),
+    ("features", include_str!("../data/features.json")),
+    ("resources", include_str!("../data/resources.json")),
+    ("improvements", include_str!("../data/improvements.json")),
+    ("units", include_str!("../data/units.json")),
+    ("districts", include_str!("../data/districts.json")),
+    ("buildings", include_str!("../data/buildings.json")),
+    ("wonders", include_str!("../data/wonders.json")),
+    ("great_people", include_str!("../data/great_people.json")),
+    ("governors", include_str!("../data/governors.json")),
+    ("projects", include_str!("../data/projects.json")),
+    ("techs", include_str!("../data/techs.json")),
+    ("civics", include_str!("../data/civics.json")),
+    ("governments", include_str!("../data/governments.json")),
+    ("policies", include_str!("../data/policies.json")),
+    ("promotions", include_str!("../data/promotions.json")),
+    ("beliefs", include_str!("../data/beliefs.json")),
+    ("civs", include_str!("../data/civs.json")),
+    ("agendas", include_str!("../data/agendas.json")),
+    ("difficulties", include_str!("../data/difficulties.json")),
+    ("speeds", include_str!("../data/speeds.json")),
+    ("goody_huts", include_str!("../data/goody_huts.json")),
+    ("eras", include_str!("../data/eras.json")),
+    ("tree_effects", include_str!("../data/tree_effects.json")),
+];
+
+/// The ruleset every `Rules::embedded()` call sees. It is the shipped data
+/// until a mod overlay is installed, which can only happen once, before a
+/// game exists. Keeping it here rather than threading a ruleset through every
+/// call site is what lets a save deserialize without knowing about mods.
+static ACTIVE: OnceLock<Rules> = OnceLock::new();
+
 impl Rules {
+    /// The active ruleset — shipped data unless mods were installed.
     pub fn embedded() -> Rules {
+        ACTIVE.get_or_init(Rules::shipped).clone()
+    }
+
+    /// The shipped ruleset, ignoring any installed mods.
+    pub fn shipped() -> Rules {
+        Rules::from_values(Rules::shipped_values()).expect("the shipped ruleset is well formed")
+    }
+
+    /// The shipped data as raw JSON, which is what a mod overlay merges into.
+    pub fn shipped_values() -> BTreeMap<String, serde_json::Value> {
+        DATA_FILES
+            .iter()
+            .map(|(name, text)| {
+                let value = serde_json::from_str(text)
+                    .unwrap_or_else(|error| panic!("shipped {name}.json is malformed: {error}"));
+                (name.to_string(), value)
+            })
+            .collect()
+    }
+
+    /// Install a ruleset as the active one. Fails if a game has already read
+    /// the ruleset, because half a game on one set of rules and half on
+    /// another is not a state worth supporting.
+    pub fn install(rules: Rules) -> Result<(), String> {
+        ACTIVE
+            .set(rules)
+            .map_err(|_| "the ruleset is already in use and cannot be replaced".to_string())
+    }
+
+    /// Build a ruleset from raw JSON, one value per entry in [`DATA_FILES`].
+    pub fn from_values(mut files: BTreeMap<String, serde_json::Value>) -> Result<Rules, String> {
+        fn take<T: serde::de::DeserializeOwned>(
+            files: &mut BTreeMap<String, serde_json::Value>,
+            name: &str,
+        ) -> Result<T, String> {
+            let value = files
+                .remove(name)
+                .ok_or_else(|| format!("ruleset is missing {name}.json"))?;
+            serde_json::from_value(value).map_err(|error| format!("{name}.json: {error}"))
+        }
         let mut rules = Rules {
-            terrains: serde_json::from_str(include_str!("../data/terrains.json")).unwrap(),
-            features: serde_json::from_str(include_str!("../data/features.json")).unwrap(),
-            resources: serde_json::from_str(include_str!("../data/resources.json")).unwrap(),
-            improvements: serde_json::from_str(include_str!("../data/improvements.json")).unwrap(),
-            units: serde_json::from_str(include_str!("../data/units.json")).unwrap(),
-            districts: serde_json::from_str(include_str!("../data/districts.json")).unwrap(),
-            buildings: serde_json::from_str(include_str!("../data/buildings.json")).unwrap(),
-            wonders: serde_json::from_str(include_str!("../data/wonders.json")).unwrap(),
-            great_people: serde_json::from_str(include_str!("../data/great_people.json")).unwrap(),
-            governors: serde_json::from_str(include_str!("../data/governors.json")).unwrap(),
-            projects: serde_json::from_str(include_str!("../data/projects.json")).unwrap(),
-            techs: serde_json::from_str(include_str!("../data/techs.json")).unwrap(),
-            civics: serde_json::from_str(include_str!("../data/civics.json")).unwrap(),
-            governments: serde_json::from_str(include_str!("../data/governments.json")).unwrap(),
-            policies: serde_json::from_str(include_str!("../data/policies.json")).unwrap(),
-            promotions: serde_json::from_str(include_str!("../data/promotions.json")).unwrap(),
-            beliefs: serde_json::from_str(include_str!("../data/beliefs.json")).unwrap(),
-            civs: serde_json::from_str(include_str!("../data/civs.json")).unwrap(),
-            agendas: serde_json::from_str(include_str!("../data/agendas.json")).unwrap(),
-            difficulties: serde_json::from_str(include_str!("../data/difficulties.json")).unwrap(),
-            speeds: serde_json::from_str(include_str!("../data/speeds.json")).unwrap(),
-            goody_huts: serde_json::from_str(include_str!("../data/goody_huts.json")).unwrap(),
-            eras: serde_json::from_str(include_str!("../data/eras.json")).unwrap(),
+            terrains: take(&mut files, "terrains")?,
+            features: take(&mut files, "features")?,
+            resources: take(&mut files, "resources")?,
+            improvements: take(&mut files, "improvements")?,
+            units: take(&mut files, "units")?,
+            districts: take(&mut files, "districts")?,
+            buildings: take(&mut files, "buildings")?,
+            wonders: take(&mut files, "wonders")?,
+            great_people: take(&mut files, "great_people")?,
+            governors: take(&mut files, "governors")?,
+            projects: take(&mut files, "projects")?,
+            techs: take(&mut files, "techs")?,
+            civics: take(&mut files, "civics")?,
+            governments: take(&mut files, "governments")?,
+            policies: take(&mut files, "policies")?,
+            promotions: take(&mut files, "promotions")?,
+            beliefs: take(&mut files, "beliefs")?,
+            civs: take(&mut files, "civs")?,
+            agendas: take(&mut files, "agendas")?,
+            difficulties: take(&mut files, "difficulties")?,
+            speeds: take(&mut files, "speeds")?,
+            goody_huts: take(&mut files, "goody_huts")?,
+            eras: take(&mut files, "eras")?,
         };
-        let effects: TreeEffectsData =
-            serde_json::from_str(include_str!("../data/tree_effects.json")).unwrap();
+        let effects: TreeEffectsData = take(&mut files, "tree_effects")?;
         for (node, values) in effects.techs {
             rules
                 .techs
                 .get_mut(&node)
-                .unwrap_or_else(|| panic!("effects reference missing technology {node}"))
+                .ok_or_else(|| format!("tree_effects.json references missing technology {node}"))?
                 .effects = values;
         }
         for (node, values) in effects.civics {
             rules
                 .civics
                 .get_mut(&node)
-                .unwrap_or_else(|| panic!("effects reference missing civic {node}"))
+                .ok_or_else(|| format!("tree_effects.json references missing civic {node}"))?
                 .effects = values;
         }
         rules.index_tree_unlocks();
-        rules
+        Ok(rules)
     }
 
     /// Build the one authoritative unlock list from each content object's
@@ -947,15 +1022,13 @@ impl Rules {
             } else {
                 &mut self.civics
             };
-            tree.get_mut(&node)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "{0} {1} is gated by missing tree node {node}",
-                        unlock.kind, unlock.id
-                    )
-                })
-                .unlocks
-                .push(unlock);
+            // A gate naming a node that does not exist is a ruleset defect,
+            // and `civvis validate` reports it as one with the file and entry
+            // to fix. Indexing simply skips it: panicking here would turn
+            // every bad mod into a crash instead of a message.
+            if let Some(spec) = tree.get_mut(&node) {
+                spec.unlocks.push(unlock);
+            }
         }
         for spec in self.techs.values_mut().chain(self.civics.values_mut()) {
             spec.unlocks

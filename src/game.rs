@@ -7600,6 +7600,9 @@ pub struct Game {
     pub difficulty: String,
     /// Key into `rules.speeds`. Scales everything bought with a yield.
     pub speed: String,
+    /// Mods this game was created under. A save carries them so a mismatched
+    /// ruleset can be reported rather than silently changing the rules.
+    pub mods: Vec<String>,
     /// Seats played by a person rather than by an agent. Difficulty hands its
     /// bonuses to the AI seats above Prince and to these seats below it; an
     /// all-agent game leaves this empty, which is why headless simulation is
@@ -7669,6 +7672,8 @@ struct GameSer {
     human_seats: BTreeSet<usize>,
     #[serde(default)]
     events: Vec<Event>,
+    #[serde(default)]
+    mods: Vec<String>,
     max_turns: u32,
     turn: u32,
     current: usize,
@@ -7730,6 +7735,7 @@ impl From<GameSer> for Game {
             difficulty: s.difficulty,
             speed: s.speed,
             human_seats: s.human_seats,
+            mods: s.mods,
             events: s.events,
             max_turns: s.max_turns,
             turn: s.turn,
@@ -7849,6 +7855,7 @@ impl From<Game> for GameSer {
             difficulty: g.difficulty,
             speed: g.speed,
             human_seats: g.human_seats,
+            mods: g.mods,
             events: g.events,
             max_turns: g.max_turns,
             turn: g.turn,
@@ -7961,6 +7968,7 @@ impl Game {
             difficulty,
             speed,
             human_seats,
+            mods: crate::mods::active_names(),
             max_turns,
             turn: 1,
             current: 0,
