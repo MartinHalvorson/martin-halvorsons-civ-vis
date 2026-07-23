@@ -7888,6 +7888,10 @@ pub struct TradeRoute {
 #[derive(Clone, Serialize, Deserialize)]
 struct GameSer {
     seed: u64,
+    /// Zero means the save predates persistent last-seen snapshots. Current
+    /// saves must load their memories verbatim so deserialization is pure.
+    #[serde(default)]
+    visibility_memory_version: u8,
     #[serde(default = "default_difficulty")]
     difficulty: String,
     #[serde(default = "default_speed")]
@@ -7958,6 +7962,7 @@ struct GameSer {
 
 impl From<GameSer> for Game {
     fn from(s: GameSer) -> Game {
+        let needs_visibility_backfill = s.visibility_memory_version == 0;
         // Both speed representations exist for save compatibility. Prefer an
         // explicit ruleset speed, except when loading an older map-script save
         // whose absent string field defaulted to Standard.
@@ -8086,11 +8091,12 @@ impl From<GameSer> for Game {
             }
         }
         g.refresh_great_person_offers();
-        // Legacy saves know which tiles were explored but predate last-seen
-        // snapshots. Seed those once from the loaded world, then refresh only
-        // what is currently visible.
-        g.backfill_visibility_memory();
-        g.refresh_all_visibility();
+        if needs_visibility_backfill {
+            // Legacy saves know which tiles were explored but predate
+            // last-seen snapshots. Seed those once from the loaded world.
+            g.backfill_visibility_memory();
+            g.refresh_all_visibility();
+        }
         g
     }
 }
@@ -8099,8 +8105,12 @@ impl From<Game> for GameSer {
     fn from(g: Game) -> GameSer {
         GameSer {
             seed: g.seed,
+            visibility_memory_version: 1,
             difficulty: g.difficulty,
-            speed: g.speed,
+            // `game_speed` is the live, typed setting used by every rules
+            // calculation.  Keep the compatibility string in lockstep so a
+            // save cannot preserve two conflicting speeds.
+            speed: g.game_speed.id().to_string(),
             human_seats: g.human_seats,
             mods: g.mods,
             events: g.events,
@@ -20917,7 +20927,7 @@ impl Game {
     }
 
     pub fn item_cost(&self, item: &Item) -> f64 {
-        self.base_item_cost(item) * self.speed_cost_mult()
+        self.game_speed.scale(self.base_item_cost(item))
     }
 
     fn base_item_cost(&self, item: &Item) -> f64 {
@@ -20951,37 +20961,47 @@ impl Game {
     }
 
     pub fn item_cost_for(&self, pid: usize, item: &Item) -> f64 {
-        let base = self.item_cost(item);
-        let standard = match item {
+        let standard = self.base_item_cost(item);
+        match item {
             Item::Unit { unit } if unit == "settler" => {
-                base + 30.0
-                    * self.players[pid]
-                        .counters
-                        .get("trained:settler")
-                        .copied()
-                        .unwrap_or(0) as f64
+                self.game_speed.scale(
+                    standard
+                        + 30.0
+                            * self.players[pid]
+                                .counters
+                                .get("trained:settler")
+                                .copied()
+                                .unwrap_or(0) as f64,
+                )
             }
             Item::Unit { unit } if unit == "builder" => {
-                base + 4.0
-                    * self.players[pid]
-                        .counters
-                        .get("trained:builder")
-                        .copied()
-                        .unwrap_or(0) as f64
+                self.game_speed.scale(
+                    standard
+                        + 4.0
+                            * self.players[pid]
+                                .counters
+                                .get("trained:builder")
+                                .copied()
+                                .unwrap_or(0) as f64,
+                )
             }
             Item::Project { project } => {
                 let maximum = self.rules.projects[project].cost_progression_max_pct;
                 if maximum <= 0.0 {
-                    base
+                    self.game_speed.scale(standard)
                 } else {
                     // GAME_PROGRESS linearly interpolates from the base to
                     // Param1 percent of base; 1500 therefore caps at 15x.
-                    (base * (1.0 + (maximum / 100.0 - 1.0) * self.game_progress_ratio(pid))).floor()
+                    self.game_speed.scale(
+                        standard
+                            * (1.0
+                                + (maximum / 100.0 - 1.0) * self.game_progress_ratio(pid)),
+                    )
+                    .floor()
                 }
             }
-            _ => base,
-        };
-        self.game_speed.scale(standard)
+            _ => self.item_cost(item),
+        }
     }
 
     /// Return the treasury cost of purchasing an ordinary city building.
@@ -32656,7 +32676,7 @@ impl Game {
                 let science_pct =
                     self.city_building_effect(&self.cities[&cid], "science_per_unit_cost_pct");
                 self.players[pid].research_overflow +=
-                    self.game_speed.scale(self.item_cost(item)) * science_pct / 100.0;
+                    self.item_cost(item) * science_pct / 100.0;
                 if self.rules.units[unit.as_str()].domain.as_deref() == Some("sea")
                     && self.empire_wonder_effect(pid, "duplicate_naval_units") > 0.0
                 {

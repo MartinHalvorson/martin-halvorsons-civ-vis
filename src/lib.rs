@@ -373,7 +373,9 @@ mod tests {
         }
         let legacy: Game = serde_json::from_value(raw).unwrap();
         assert_eq!(legacy.difficulty, "prince");
-        assert_eq!(legacy.speed, "standard");
+        // The typed speed field predates the compatibility ruleset string and
+        // remains authoritative when that string is absent.
+        assert_eq!(legacy.speed, "epic");
         assert!(legacy.human_seats.is_empty());
     }
 
