@@ -4456,6 +4456,34 @@ mod maintenance_tests {
     }
 
     #[test]
+    fn unit_production_cards_only_reach_the_eras_they_ship_for() {
+        // Agoge is an Ancient/Classical card. Before this gate it boosted a
+        // Modern Infantry as readily as a Warrior.
+        let (mut game, city) = one_city();
+        let bonus = |game: &Game, unit: &str| {
+            game.item_prod_mult(
+                0,
+                city,
+                Some(&Item::Unit {
+                    unit: unit.to_string(),
+                }),
+            )
+        };
+        let warrior_before = bonus(&game, "warrior");
+        let infantry_before = bonus(&game, "infantry");
+        game.players[0].policies = ["agoge".to_string()].into_iter().collect();
+        assert_eq!(bonus(&game, "warrior"), warrior_before + 0.5);
+        assert_eq!(bonus(&game, "infantry"), infantry_before);
+
+        // Military First is the Atomic/Information card at the other end.
+        game.players[0].policies = ["military_first".to_string()].into_iter().collect();
+        assert_eq!(bonus(&game, "warrior"), warrior_before);
+        let mechanized_before = bonus(&game, "mechanized_infantry");
+        game.players[0].policies.clear();
+        assert_eq!(bonus(&game, "mechanized_infantry"), mechanized_before - 0.5);
+    }
+
+    #[test]
     fn giant_death_robot_upgrades_hang_off_the_technologies_that_ship_them() {
         // Advanced Power Cells fits the Particle Beam Siege Cannon, Cybernetics
         // grants Enhanced Mobility, Smart Materials the armour plating and
@@ -9027,6 +9055,32 @@ impl Game {
             .sum()
     }
 
+    /// The era a unit belongs to, taken from the node that unlocks it. Unit
+    /// Production policy cards are gated on it: Agoge boosts Ancient and
+    /// Classical infantry, not every Infantry ever built.
+    pub(crate) fn unit_era(&self, unit: &str) -> usize {
+        let spec = &self.rules.units[unit];
+        if let Some(tech) = spec.tech.as_deref() {
+            return self.rules.techs.get(tech).map(|t| t.era).unwrap_or(0);
+        }
+        if let Some(civic) = spec.civic.as_deref() {
+            return self.rules.civics.get(civic).map(|c| c.era).unwrap_or(0);
+        }
+        0
+    }
+
+    /// Sums a policy effect over the cards whose era window admits `era`.
+    fn policy_effect_for_unit(&self, pid: usize, effect: &str, unit: &str) -> f64 {
+        let era = self.unit_era(unit);
+        self.players[pid]
+            .policies
+            .iter()
+            .filter_map(|name| self.rules.policies.get(name))
+            .filter(|spec| spec.unit_eras.is_empty() || spec.unit_eras.contains(&era))
+            .filter_map(|spec| spec.effects.get(effect))
+            .sum()
+    }
+
     pub fn tile_purchase_cost(&self, pid: usize, base: f64) -> f64 {
         base * (1.0 - self.policy_effect(pid, "tile_purchase_discount_pct") / 100.0)
     }
@@ -12969,7 +13023,7 @@ impl Game {
                         / 100.0;
                 }
                 if spec.domain.as_deref() == Some("sea") {
-                    bonus += self.policy_effect(pid, "naval_production_pct") / 100.0;
+                    bonus += self.policy_effect_for_unit(pid, "naval_production_pct", unit) / 100.0;
                     bonus += self
                         .city_building_effect(&self.cities[&cid], "naval_unit_production_pct")
                         / 100.0;
@@ -12988,19 +13042,19 @@ impl Game {
                         / 100.0;
                 }
                 if spec.domain.as_deref() == Some("air") {
-                    bonus += self.policy_effect(pid, "air_production_pct") / 100.0;
+                    bonus += self.policy_effect_for_unit(pid, "air_production_pct", unit) / 100.0;
                 }
                 if spec.cavalry {
-                    bonus += self.policy_effect(pid, "cavalry_production_pct") / 100.0;
+                    bonus += self.policy_effect_for_unit(pid, "cavalry_production_pct", unit) / 100.0;
                 }
                 if spec.class == "support" {
-                    bonus += self.policy_effect(pid, "support_production_pct") / 100.0;
+                    bonus += self.policy_effect_for_unit(pid, "support_production_pct", unit) / 100.0;
                 }
                 if matches!(
                     spec.promotion_class.as_str(),
                     "melee" | "anti_cavalry" | "ranged"
                 ) {
-                    bonus += self.policy_effect(pid, "infantry_production_pct") / 100.0;
+                    bonus += self.policy_effect_for_unit(pid, "infantry_production_pct", unit) / 100.0;
                 }
                 if spec.promotion_class == "anti_cavalry" {
                     bonus += self.empire_wonder_effect(pid, "anti_cavalry_production_pct") / 100.0;

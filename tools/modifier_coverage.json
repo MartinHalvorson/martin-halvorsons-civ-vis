@@ -121,7 +121,8 @@
     },
     "ADJUST_UNIT_TAG_ERA_PRODUCTION": {
       "status": "implemented",
-      "note": "Policy cards granting Production toward a unit class of an era; the dominant policy-card shape."
+      "verified": true,
+      "note": "Verified row by row. The amounts and class groupings were already right, but the effect's whole point is the era window and CIVVIS ignored it: Agoge boosted a Modern Infantry as readily as a Warrior, and every one of the nine cards stacked across all nine eras. Each card now carries its shipped window -- Agoge 0-1, Feudal Contract 2-3, Grande Armee 4-5, Military First 6-7, Chivalry 0-4, Lightning Warfare 5-7, Defense of the Motherland 5-7, Strategic Air Force 6-7, International Waters 0-7 -- checked against the era of the node that unlocks the unit. Letters of Marque, Patriotic War and Finest Hour are cards CIVVIS does not carry."
     },
     "ADJUST_CITY_YIELD_MODIFIER": {
       "status": "implemented",

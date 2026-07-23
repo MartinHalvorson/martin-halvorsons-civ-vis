@@ -690,6 +690,11 @@ pub struct PolicySpec {
     /// Numeric, data-driven policy primitives consumed by the game engine.
     #[serde(default)]
     pub effects: BTreeMap<String, f64>,
+    /// Unit-Production cards apply only to units of these eras. Agoge boosts
+    /// Ancient and Classical infantry and nothing later; an empty list means
+    /// the card is not era-gated.
+    #[serde(default)]
+    pub unit_eras: Vec<usize>,
 }
 
 /// A stock unit-promotion node. Effects are numeric flags so rules data can
