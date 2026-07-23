@@ -28,6 +28,11 @@ EVOLVE_THREADS="${EVOLVE_THREADS:-8}"
 # faster than that, the revive check below kills it and starts another, which
 # never finishes either - a loop that shows a black screen rather than a game.
 LAUNCH_GRACE_SEC="${LAUNCH_GRACE_SEC:-12}"
+# How long a game is left alone before a newer build may cut it short. Short
+# enough that what is on screen is current code; long enough that a match gets
+# somewhere before it is replaced.
+MIN_GAME_SEC="${MIN_GAME_SEC:-120}"
+last_game_start=0
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$repo"
@@ -76,6 +81,7 @@ start_gui() {
     ( cd "$bin_run" && nohup ./civvis-gui play --spectate --no-open --port "$PORT" \
         >"$repo/civvis-play.log" 2>"$repo/civvis-play.err.log" & )
     last_launch=$(date +%s)
+    last_game_start=$(date +%s)
     say "gui launched on :$PORT"
 }
 
@@ -221,20 +227,29 @@ while true; do
     # Older binaries predate /status; fall back so a swap onto one still finds
     # its way to the next game.
     [ -z "$state" ] && state="$(curl -fsS -m 5 "http://localhost:$PORT/state" 2>/dev/null || true)"
-    if [ -n "$state" ] && ! printf '%s' "$state" | grep -q '"winner":null'; then
-        if [ -f "$bin_run/civvis-next" ]; then
-            pkill -f "civvis-gui play" >/dev/null 2>&1 || true
-            pkill -f "civvis-evolve evolve" >/dev/null 2>&1 || true
-            sleep 1
-            promote_staged
-            start_gui
-            # Evolve is deliberately not restarted here; the revive check
-            # brings it back once the server is listening, so the new game
-            # gets the machine to itself while it generates its map.
-            say "swapped to latest build between games"
-        else
-            deal_next_game
-        fi
+    decided=0
+    [ -n "$state" ] && ! printf '%s' "$state" | grep -q '"winner":null' && decided=1
+    mature=0
+    [ $(( $(date +%s) - last_game_start )) -ge "$MIN_GAME_SEC" ] && mature=1
+    # Waiting for a decision before adopting a new build left the game on
+    # screen several commits stale: a game runs minutes and commits land every
+    # minute or two. A staged build is taken up once the current game has had
+    # a fair run, so what is being watched is the newest code that compiled.
+    if [ -f "$bin_run/civvis-next" ] && { [ "$decided" -eq 1 ] || [ "$mature" -eq 1 ]; }; then
+        pkill -f "civvis-gui play" >/dev/null 2>&1 || true
+        pkill -f "civvis-evolve evolve" >/dev/null 2>&1 || true
+        sleep 1
+        promote_staged
+        start_gui
+        # Evolve is deliberately not restarted here; the revive check brings
+        # it back once the server is listening, so the new game gets the
+        # machine to itself while it generates its map.
+        last_game_start=$(date +%s)
+        if [ "$decided" -eq 1 ]; then say "swapped to latest build between games"
+        else say "swapped to latest build mid-game"; fi
+    elif [ "$decided" -eq 1 ]; then
+        deal_next_game
+        last_game_start=$(date +%s)
     fi
     sleep "$POLL_SEC"
 done

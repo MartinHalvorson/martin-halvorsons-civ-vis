@@ -164,6 +164,11 @@ Log "supervisor started (port $Port, poll ${PollSec}s, git every ${GitSec}s)"
 $lastGit = [DateTime]::MinValue
 $LaunchGraceSec = 12
 $lastLaunch = (Get-Date).AddSeconds(-$LaunchGraceSec)
+# How long a game is left alone before a newer build may cut it short. Short
+# enough that what is on screen is current code; long enough that a match gets
+# somewhere before it is replaced.
+$MinGameSec = 120
+$lastGameStart = Get-Date
 # The running compiler, when there is one. Only ever one at a time.
 $build = $null
 $buildHead = ""
@@ -290,21 +295,31 @@ while ($true) {
             # still finds its way to the next game.
             try { $st = Invoke-RestMethod "http://localhost:$Port/state" -TimeoutSec 5 } catch {}
         }
-        if (($null -ne $st) -and ($null -ne $st.winner)) {
-            if (Test-Path "$binRun\civvis-next.exe") {
-                Get-Process civvis-gui -ErrorAction SilentlyContinue | Stop-Process -Force
-                Get-Process civvis-evolve -ErrorAction SilentlyContinue | Stop-Process -Force
-                Start-Sleep -Milliseconds 200
-                Promote-Staged | Out-Null
-                Start-Gui
-                # Evolve is deliberately not restarted here. The revive check
-                # brings it back once the server is listening, so the new game
-                # gets the machine to itself while it generates its map.
-                $lastLaunch = Get-Date
-                Log "swapped to latest build between games"
-            } else {
-                Start-NextGame
-            }
+        $decided = ($null -ne $st) -and ($null -ne $st.winner)
+        $staged = Test-Path "$binRun\civvis-next.exe"
+        # Waiting for a decision before adopting a new build meant the game on
+        # screen was routinely several commits stale: a game runs minutes and
+        # commits land every minute or two. A staged build is taken up as soon
+        # as the current game has had a fair run, so what is being watched is
+        # the newest code that compiled rather than the newest at the time the
+        # last game happened to end.
+        $matureEnough = ((Get-Date) - $lastGameStart).TotalSeconds -ge $MinGameSec
+        if ($staged -and ($decided -or $matureEnough)) {
+            Get-Process civvis-gui -ErrorAction SilentlyContinue | Stop-Process -Force
+            Get-Process civvis-evolve -ErrorAction SilentlyContinue | Stop-Process -Force
+            Start-Sleep -Milliseconds 200
+            Promote-Staged | Out-Null
+            Start-Gui
+            # Evolve is deliberately not restarted here. The revive check
+            # brings it back once the server is listening, so the new game
+            # gets the machine to itself while it generates its map.
+            $lastLaunch = Get-Date
+            $lastGameStart = Get-Date
+            Log $(if ($decided) { "swapped to latest build between games" }
+                  else { "swapped to latest build mid-game" })
+        } elseif ($decided) {
+            Start-NextGame
+            $lastGameStart = Get-Date
         }
     } catch {
         Log "supervisor error: $_"
