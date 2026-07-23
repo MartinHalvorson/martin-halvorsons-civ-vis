@@ -3,19 +3,29 @@
     "yields": {
       "production": 1
     },
-    "move_cost": 1
+    "move_cost": 1,
+    "chop": {
+      "production": 20
+    }
   },
   "jungle": {
     "yields": {
       "food": 1
     },
-    "move_cost": 1
+    "move_cost": 1,
+    "chop": {
+      "production": 10,
+      "food": 10
+    }
   },
   "marsh": {
     "yields": {
       "food": 1
     },
-    "move_cost": 1
+    "move_cost": 1,
+    "chop": {
+      "food": 20
+    }
   },
   "floodplains": {
     "yields": {
