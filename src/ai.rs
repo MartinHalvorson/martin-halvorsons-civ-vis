@@ -533,6 +533,61 @@ impl BasicAi {
             })
     }
 
+    fn has_building_family(g: &Game, pid: usize, family: &str) -> bool {
+        g.player_city_ids(pid).into_iter().any(|cid| {
+            g.cities[&cid].buildings.iter().any(|building| {
+                building == family
+                    || g.rules.buildings.get(building).is_some_and(|spec| {
+                        spec.replaces.as_deref() == Some(family)
+                    })
+            })
+        })
+    }
+
+    /// Follow through on the technology unlocked by infrastructure already in
+    /// the empire. Without this, the fixed early-game priority list ends at
+    /// Machinery and the fallback can keep taking whichever late branch the
+    /// rules map happens to return first. In a completed spectator game that
+    /// let a Market-owning city-state reach Electricity while permanently
+    /// skipping Stirrups -> Banking, leaving more than 4,000 Gold with no Bank
+    /// to buy. Replacement Markets and Banks count as their base families.
+    fn economic_research_goal(g: &Game, pid: usize) -> Option<&'static str> {
+        let player = &g.players[pid];
+        if Self::has_building_family(g, pid, "market") && !player.techs.contains("banking") {
+            return Some("banking");
+        }
+        if Self::has_building_family(g, pid, "bank") && !player.techs.contains("economics") {
+            return Some("economics");
+        }
+        None
+    }
+
+    fn research_step_toward(
+        g: &Game,
+        avail: &[String],
+        goal: Option<&str>,
+    ) -> Option<String> {
+        goal.and_then(|goal| {
+            avail
+                .iter()
+                .find(|tech| tech.as_str() == goal)
+                .cloned()
+                .or_else(|| {
+                    avail
+                        .iter()
+                        .filter(|tech| Self::tech_leads_to(g, tech, goal))
+                        .min_by(|a, b| {
+                            g.rules.techs[*a]
+                                .cost
+                                .partial_cmp(&g.rules.techs[*b].cost)
+                                .unwrap()
+                                .then(a.cmp(b))
+                        })
+                        .cloned()
+                })
+        })
+    }
+
     /// Navigation is treated as a capability chain rather than an incidental
     /// unit unlock. Coastal empires first launch ships, then unlock general
     /// embarkation and harbors, and finally cross ocean once expansion has had
@@ -1407,26 +1462,18 @@ impl BasicAi {
         if g.players[pid].research.is_none() {
             let avail = g.available_techs(pid);
             if !avail.is_empty() {
-                let water_pick = Self::water_research_goal(g, pid).and_then(|goal| {
-                    avail
-                        .iter()
-                        .find(|tech| tech.as_str() == goal)
-                        .cloned()
-                        .or_else(|| {
-                            avail
-                                .iter()
-                                .filter(|tech| Self::tech_leads_to(g, tech, goal))
-                                .min_by(|a, b| {
-                                    g.rules.techs[*a]
-                                        .cost
-                                        .partial_cmp(&g.rules.techs[*b].cost)
-                                        .unwrap()
-                                        .then(a.cmp(b))
-                                })
-                                .cloned()
-                        })
-                });
+                let water_pick = Self::research_step_toward(
+                    g,
+                    &avail,
+                    Self::water_research_goal(g, pid),
+                );
+                let economic_pick = Self::research_step_toward(
+                    g,
+                    &avail,
+                    Self::economic_research_goal(g, pid),
+                );
                 let pick = water_pick
+                    .or(economic_pick)
                     .or_else(|| {
                         TECH_PRIORITY
                             .iter()
@@ -5398,6 +5445,37 @@ mod tests {
         let ai = BasicAi::new();
         ai.research(&mut g, 0);
         assert_eq!(g.players[0].research.as_deref(), Some("sailing"));
+    }
+
+    #[test]
+    fn market_city_states_finish_the_banking_branch_before_late_era_fallbacks() {
+        let mut g = Game::new_full(1, 20, 14, 18878401, 250, 0, false);
+        let settler = g
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|id| g.units[id].kind == "settler")
+            .unwrap();
+        g.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let cid = g.player_city_ids(0)[0];
+        g.players[0].is_minor = true;
+        g.cities
+            .get_mut(&cid)
+            .unwrap()
+            .buildings
+            .push("market".to_string());
+        grant_tech_with_prerequisites(&mut g, 0, "education");
+        g.players[0].techs.insert("sailing".to_string());
+        g.players[0].research = None;
+
+        assert_eq!(BasicAi::economic_research_goal(&g, 0), Some("banking"));
+        assert!(g.available_techs(0).iter().any(|tech| tech == "stirrups"));
+        BasicAi::new().research(&mut g, 0);
+        assert_eq!(g.players[0].research.as_deref(), Some("stirrups"));
+
+        g.players[0].techs.insert("stirrups".to_string());
+        g.players[0].research = None;
+        BasicAi::new().research(&mut g, 0);
+        assert_eq!(g.players[0].research.as_deref(), Some("banking"));
     }
 
     #[test]
