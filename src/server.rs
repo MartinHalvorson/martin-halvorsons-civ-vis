@@ -2232,10 +2232,18 @@ mod tests {
         let terrain_texture = EMBEDDED_INDEX
             .split("function drawTerrainTexture")
             .nth(1)
-            .and_then(|tail| tail.split("function drawAtlasFeatureCell").next())
+            .and_then(|tail| tail.split("function drawTerrainBlend").next())
             .expect("terrain material renderer");
-        assert!(terrain_texture.contains("drawFeathered(t, x, y"));
+        assert!(terrain_texture.contains("drawContinuousTerrain(t, x, y"));
         assert!(!terrain_texture.contains("hexPath(x, y"));
+        let terrain_blend = EMBEDDED_INDEX
+            .split("function drawTerrainBlend")
+            .nth(1)
+            .and_then(|tail| tail.split("function drawAtlasFeatureCell").next())
+            .expect("terrain transition renderer");
+        assert!(terrain_blend.contains("drawFeathered(t, x, y"));
+        assert!(EMBEDDED_INDEX.contains("function drawContinuousTerrain(t, x, y, alpha)"));
+        assert!(EMBEDDED_INDEX.contains("cx.createPattern(c, \"repeat\")"));
 
         let mountain_drawer = EMBEDDED_INDEX
             .split("function drawMountainSprite")

@@ -3421,7 +3421,35 @@ function shade(hex, f) {
 // radial mask turns that crop into a broad dab rather than a hex-shaped decal.
 // The dabs are allowed to overlap compatible neighboring faces below, making
 // grass into a field and ocean into a body of water instead of a tile set.
-const BIOME_STAMPS = {};
+const BIOME_STAMPS = {}, BIOME_PATTERNS = {};
+function biomePattern(terrain) {
+  if (BIOME_PATTERNS[terrain]) return BIOME_PATTERNS[terrain];
+  if (!ATLAS_READY) return null;
+  const [col, row] = ATLAS_CELL[terrain];
+  const cw = TERRAIN_ATLAS.naturalWidth / 4;
+  const ch = TERRAIN_ATLAS.naturalHeight / 2;
+  const inset = 2, D = 224;
+  const c = document.createElement("canvas");
+  c.width = c.height = D * 2;
+  const g = c.getContext("2d");
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high";
+  // Mirror the photographic swatch at every repeat edge. Repetition is broad
+  // enough to read as material variation, and mirroring makes it continuous
+  // instead of introducing a new square seam every few tiles.
+  const paint = (dx, dy, flipX, flipY) => {
+    g.save();
+    g.translate(dx + (flipX ? D : 0), dy + (flipY ? D : 0));
+    g.scale(flipX ? -1 : 1, flipY ? -1 : 1);
+    g.drawImage(TERRAIN_ATLAS, col * cw + inset, row * ch + inset,
+                cw - inset * 2, ch - inset * 2, 0, 0, D, D);
+    g.restore();
+  };
+  paint(0, 0, false, false); paint(D, 0, true, false);
+  paint(0, D, false, true); paint(D, D, true, true);
+  BIOME_PATTERNS[terrain] = cx.createPattern(c, "repeat");
+  return BIOME_PATTERNS[terrain];
+}
+
 function biomeStamp(terrain, variant) {
   const id = terrain + variant;
   if (BIOME_STAMPS[id]) return BIOME_STAMPS[id];
@@ -3475,10 +3503,38 @@ function drawFeathered(t, x, y, alpha) {
 
 const isWater = t => t.terrain === "coast" || t.terrain === "ocean";
 
+function drawContinuousTerrain(t, x, y, alpha) {
+  const pattern = biomePattern(t.terrain);
+  if (!pattern) return;
+  const worldX = S * SQ3 * (t.pos[0] + t.pos[1] / 2);
+  const worldY = S * 1.5 * t.pos[1];
+  cx.save();
+  hexPath(x, y, S + 0.45); cx.clip();
+  // Return from projected view coordinates to a stable world-material space.
+  // Adjacent cells of one biome then sample adjacent pixels even while the
+  // camera pans, yaws, or tilts; the texture no longer restarts at each center.
+  cx.translate(x, y);
+  cx.transform(COSR, SINR * YS, -SINR, COSR * YS, 0, 0);
+  cx.translate(-worldX, -worldY);
+  cx.globalAlpha = alpha;
+  cx.fillStyle = pattern;
+  cx.fillRect(worldX - S * 1.4, worldY - S * 1.4, S * 2.8, S * 2.8);
+  cx.restore();
+}
+
 function drawTerrainTexture(t, x, y) {
   if (!ATLAS_READY || !ATLAS_CELL[t.terrain]) return;
+  drawContinuousTerrain(t, x, y,
+    isWater(t) ? 0.90 : (t.terrain === "snow" ? 0.84 : 0.88));
+}
+
+function drawTerrainBlend(t, x, y) {
+  if (!ATLAS_READY || !ATLAS_CELL[t.terrain]) return;
+  // Low-opacity neighboring dabs soften a change of biome without destroying
+  // its geography. The coherent pattern above carries the material; these are
+  // transition paint, not one opaque sprite per tile.
   drawFeathered(t, x, y,
-    isWater(t) ? 0.88 : (t.terrain === "snow" ? 0.78 : 0.84));
+    isWater(t) ? 0.44 : (t.terrain === "snow" ? 0.34 : 0.40));
 }
 
 function drawAtlasFeatureCell(atlas, columns, rows, cell, t, x, y, options = {}) {
@@ -3503,8 +3559,12 @@ function drawAtlasFeatureCell(atlas, columns, rows, cell, t, x, y, options = {})
   cx.imageSmoothingEnabled = true;
   cx.imageSmoothingQuality = "high";
   cx.globalAlpha = options.alpha === undefined ? 0.95 : options.alpha;
-  cx.translate(x, y - S * (options.lift === undefined ? 0.08 : options.lift));
-  if (options.rotate !== false) cx.rotate(Math.floor(hv * 2) * Math.PI);
+  const drift = options.drift || 0;
+  const driftX = (hash2(t.pos[0] * 47 + 5, t.pos[1] * 53 + 3) - 0.5) * S * drift * 2;
+  const driftY = (hash2(t.pos[0] * 59 + 7, t.pos[1] * 61 + 11) - 0.5) * S * drift * 1.2;
+  cx.translate(x + driftX,
+               y + driftY - S * (options.lift === undefined ? 0.08 : options.lift));
+  if (options.rotate !== false) cx.rotate(hv * Math.PI * 2);
   if (options.flip !== false && hash2(t.pos[0] * 13, t.pos[1] * 17) > 0.5) cx.scale(-1, 1);
   cx.drawImage(atlas, sx, sy, sw, sh,
                -width / 2, -height / 2, width, height);
@@ -3531,7 +3591,7 @@ function drawFeatureSprite(t, x, y) {
     const footprint = blendedTileFootprint(t, x, y, neighbor =>
       featureBlendKind(neighbor.feature) === baseFeature);
     drawAtlasFeatureCell(FEATURE_ATLAS, 4, 1, [baseCol, 0], t, x, y,
-      {scale: knit, width:2.12, height:2.04, cropY:0.5, footprint,
+      {scale: knit, width:2.12, height:2.04, cropY:0.5, footprint, drift:0.13,
        alpha: burnt ? 0.48 : (baseFeature === "forest" || baseFeature === "jungle" ? 0.96 : 0.94)});
     return true;
   }
@@ -3539,18 +3599,24 @@ function drawFeatureSprite(t, x, y) {
   if (!ENVIRONMENT_FEATURE_ATLAS_READY || !cell) return false;
   const volcano = t.feature === "volcano";
   const cropY = cell[1] ? 0.35 : (t.feature === "geothermal_fissure" ? 0.48 : 0.84);
+  let connected = 0;
+  for (const direction of DIRS) {
+    const neighbor = nbrTile(t.pos, direction);
+    if (neighbor && featureBlendKind(neighbor.feature) === baseFeature) connected++;
+  }
   const footprint = blendedTileFootprint(t, x, y, neighbor =>
     featureBlendKind(neighbor.feature) === baseFeature);
   drawAtlasFeatureCell(ENVIRONMENT_FEATURE_ATLAS, 4, 2, cell, t, x, y, {
-    width: volcano ? 2.02 : 2.08,
-    height: volcano ? 2.18 : 2.0,
+    width: volcano ? 2.02 : 2.14,
+    height: volcano ? 2.18 : 2.06,
     lift: volcano ? 0.34 : 0.02,
-    scale: 1,
+    scale: volcano ? 1 : 1 + connected * 0.022,
     alpha: t.feature === "ice" ? 0.98 : 0.95,
     rotate: !volcano,
     flip: !volcano,
     upright: volcano,
     footprint,
+    drift: volcano ? 0 : 0.12,
     squareCrop: !volcano,
     cropY
   });
@@ -4953,7 +5019,7 @@ function draw() {
     // Slightly overlap adjacent top faces so antialiasing cannot expose the
     // backdrop between them. Texture and lighting are painted in a separate
     // pass below; resetting a gradient inside every hex was itself a grid.
-    hexPath(x, y, S + 0.85);
+    hexPath(x, y, beau ? S + 0.85 : S + 0.6);
     if (beau) {
       cx.fillStyle = shade(base, 0.98);
     } else {
@@ -4962,14 +5028,23 @@ function draw() {
     cx.fill();
     if (!beau) { hexPath(x, y); cx.strokeStyle = "#00000038"; cx.lineWidth = 1; cx.stroke(); }
   }
-  // Atlas material is a map-wide layer. Painting all structural faces first
-  // means a later tile cannot erase the soft edge that its neighbor extended
-  // across their shared boundary.
+  // Atlas material is a map-wide layer. Paint every coherent material first,
+  // then all of the transition dabs; a later tile's hard-clipped material can
+  // no longer erase a neighbor's soft contribution at their shared boundary.
+  for (const t of tiles) {
+    const [x, y0] = hexXY(t.pos[0], t.pos[1]);
+    const y = y0 - elev(t);
+    if (beau) drawTerrainTexture(t, x, y);
+  }
+  for (const t of tiles) {
+    const [x, y0] = hexXY(t.pos[0], t.pos[1]);
+    const y = y0 - elev(t);
+    if (beau) drawTerrainBlend(t, x, y);
+  }
   for (const t of tiles) {
     const [x, y0] = hexXY(t.pos[0], t.pos[1]);
     const y = y0 - elev(t);
     const water = isWater(t);
-    if (beau) drawTerrainTexture(t, x, y);
     if (beau && water) { // specular glints travel over the photographic swell
       const ph = hash2(t.pos[0], t.pos[1]);
       if (ph > 0.55) {
@@ -4983,6 +5058,15 @@ function draw() {
         cx.fill();
         cx.globalAlpha = 1;
       }
+    }
+    // Preserve the strategic view's stronger per-cell ownership wash. Cinema
+    // uses the single territory layer below so neighboring faces remain one
+    // landscape; strategic mode intentionally keeps tile identity explicit.
+    if (!beau && t.owner !== null && t.owner !== undefined) {
+      hexPath(x, y, S + 0.15);
+      cx.globalAlpha = 0.11;
+      cx.fillStyle = pcol(t.owner);
+      cx.fill();
     }
     // Unit presence gets a quiet local wash. Territory has its own continuous
     // layer below the border network, so it is not painted twice here.
