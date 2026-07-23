@@ -592,14 +592,49 @@ const FEAT_ICON = { forest:"🌲", jungle:"🌴", marsh:"🌾", oasis:"🏝" };
 const RES_ICON = { wheat:"🌾", cattle:"🐄", sheep:"🐑", stone:"🪨", deer:"🦌",
                    fish:"🐟", bananas:"🍌", horses:"🐎", iron:"⚒️", silk:"🧵",
                    wine:"🍷", salt:"🧂" };
-const UNIT_ICON = { settler:"🏳", builder:"🔨", scout:"👁", warrior:"⚔",
-                    slinger:"🪃", archer:"🏹", spearman:"↑", swordsman:"⚔",
-                    horseman:"🐎", catapult:"☄", crossbowman:"🏹", pikeman:"↑",
-                    knight:"♞", musketman:"⁋", galley:"⛵", quadrireme:"⛵",
-                    caravel:"⛵", frigate:"⛵", privateer:"☠", ironclad:"🚢",
-                    battleship:"🚢", submarine:"◆", destroyer:"🚢",
-                    aircraft_carrier:"▰", missile_cruiser:"🚢",
-                    nuclear_submarine:"◆" };
+// One symbol per unit in data/units.json — the production medallion and the
+// strategic-view discs both read from here, and a unit without an entry falls
+// back to its first letter, which tells you nothing. Grouped by promotion
+// class so a line reads as a family at a glance.
+const UNIT_ICON = {
+  // civilians & specialists
+  settler:"🏕", builder:"🔨", trader:"🐫", naturalist:"🏞", archaeologist:"🏺",
+  rock_band:"🎸", spy:"🕵",
+  // religious
+  missionary:"🕊", apostle:"✝", guru:"☯", inquisitor:"🔥", warrior_monk:"🥋",
+  // support
+  battering_ram:"🪵", siege_tower:"🏗", military_engineer:"🛠",
+  observation_balloon:"🎈", medic:"✚", supply_convoy:"📦", anti_air_gun:"🔺",
+  mobile_sam:"📡", drone:"🛰",
+  // recon
+  scout:"👁", skirmisher:"🪃", ranger:"🌿", spec_ops:"🥷",
+  // melee
+  warrior:"⚔", swordsman:"🗡", man_at_arms:"🛡", musketman:"💂",
+  line_infantry:"🎖", infantry:"🪖", mechanized_infantry:"🚚",
+  // anti-cavalry
+  spearman:"🔱", pikeman:"🚧", pike_and_shot:"⚜", at_crew:"🧨", modern_at:"⛔",
+  // light cavalry
+  horseman:"🐎", courser:"🐴", cavalry:"🏇", helicopter:"🚁",
+  // heavy cavalry
+  heavy_chariot:"☸", knight:"♞", cuirassier:"♘", tank:"🚜", modern_armor:"🚙",
+  // ranged
+  slinger:"🪨", archer:"🏹", crossbowman:"🎯", field_cannon:"💣",
+  machine_gun:"🔫",
+  // siege
+  catapult:"☄", trebuchet:"🌠", bombard:"💥", artillery:"🎆",
+  rocket_artillery:"🚀",
+  // air & orbital
+  biplane:"🪁", fighter:"✈", jet_fighter:"🛫", bomber:"🛩", jet_bomber:"🛬",
+  giant_death_robot:"🤖",
+  // naval melee / ranged / raider / carrier
+  galley:"🛶", caravel:"🧭", ironclad:"🚢", destroyer:"⚓",
+  quadrireme:"⛵", frigate:"⛴", battleship:"🛳", missile_cruiser:"⚡",
+  privateer:"☠", submarine:"🐋", nuclear_submarine:"☢",
+  aircraft_carrier:"🛥",
+  // civilization uniques
+  legion:"🎺", hoplite:"Ω", eagle_warrior:"🦅", war_cart:"🐂",
+  pitati_archer:"🪶", maryannu_chariot_archer:"☥", saka_horse_archer:"🎠",
+  crouching_tiger:"🐅" };
 const BLDG_ICON = { monument:"🗿", granary:"🌾", walls:"🧱", medieval_walls:"🧱",
                     shrine:"⛩", library:"📜", market:"⚖", barracks:"🛡",
                     lighthouse:"🗼", amphitheater:"🎭", aqueduct:"⛲", arena:"🎪",
@@ -1627,6 +1662,26 @@ function drawUnitBase(u, x, y) {
   }
 }
 
+// Civ 6 hangs a small flag off each unit carrying its icon, because a drawn
+// figure at map scale reads as "somebody's soldier" and nothing more. Same
+// badge glyph the production medallion uses, so a unit looks the same coming
+// off the queue as it does standing on the map.
+function drawUnitBadge(u, x, y) {
+  const k = 1 / Math.min(1, Math.max(cam.scale, 0.5));  // as the HP bar does:
+  const br = 6.4 * k;                                   // stays legible far out
+  const bx = x + 9.5 * k, by = y + 1;
+  cx.save();                                   // ambient text state is shared
+  cx.fillStyle = "#10151de8";
+  cx.beginPath(); cx.arc(bx, by, br, 0, 7); cx.fill();
+  cx.strokeStyle = pcol(u.owner); cx.lineWidth = 1.5;
+  cx.beginPath(); cx.arc(bx, by, br, 0, 7); cx.stroke();
+  cx.fillStyle = "#f0ead8";
+  cx.font = (8 * k).toFixed(1) + "px 'Segoe UI Symbol', 'Segoe UI Emoji', sans-serif";
+  cx.textAlign = "center"; cx.textBaseline = "middle";
+  cx.fillText(UNIT_ICON[u.type] || u.type[0].toUpperCase(), bx, by + 0.3);
+  cx.restore();
+}
+
 function draw() {
   if (!state) return;
   const beau0 = VIEW === "cinematic";
@@ -2051,29 +2106,29 @@ function draw() {
         cx.fillStyle = "#59aee1"; cx.fillRect(bx, statusY, tw * wallFraction, 3);
         statusY += 4;
       }
-      // keyed off data presence, not seat 0 — spectate frames rotate the
-      // observed seat, and an owner gate makes the bar blink with it
+      // Production lives in the medallion alone — one circle on the plate's
+      // right edge carries both what is being built (glyph) and how far along
+      // it is (ring). The old bar under the plate said the same thing a second
+      // time and crowded the health/wall bars, which are the only strips left.
+      // Keyed off data presence, not seat 0 — spectate frames rotate the
+      // observed seat, and an owner gate makes it blink with them.
       if (c.queue && c.queue.length && c.queue_cost) {
-        cx.fillStyle = "#0d1117"; cx.fillRect(bx, statusY, tw, 3);
-        cx.fillStyle = "#e09050";
-        cx.fillRect(bx, statusY, tw * Math.min(1, c.production / c.queue_cost), 3);
-        // production medallion on the right edge of the plate (civ-style):
-        // glyph = what's being built, ring = progress toward it
         const it = c.queue[0];
-        const mx = bx + tw + 7, my = by + 8, mr = 8.5;
-        cx.fillStyle = "#1c2418ee";
+        const mx = bx + tw + 8, my = by + 8, mr = 9.5;
+        cx.fillStyle = "#1c2418f2";
         cx.beginPath(); cx.arc(mx, my, mr, 0, 7); cx.fill();
-        cx.strokeStyle = "#0d1117"; cx.lineWidth = 2.2;
+        cx.strokeStyle = "#0d1117"; cx.lineWidth = 2.6;   // unfilled track
         cx.beginPath(); cx.arc(mx, my, mr, 0, 7); cx.stroke();
         const frac = Math.max(0, Math.min(1, c.production / c.queue_cost));
         if (frac > 0) {
-          cx.strokeStyle = "#e09050";
+          cx.strokeStyle = "#e09050"; cx.lineCap = "round";
           cx.beginPath();
           cx.arc(mx, my, mr, -Math.PI / 2, -Math.PI / 2 + frac * 2 * Math.PI);
           cx.stroke();
+          cx.lineCap = "butt";
         }
         cx.fillStyle = it.district ? (DISTRICT_COLOR[it.district] || "#f0ead8") : "#f0ead8";
-        cx.font = "9px sans-serif";
+        cx.font = "10px 'Segoe UI Symbol', 'Segoe UI Emoji', sans-serif";
         cx.fillText(prodGlyph(it), mx, my + 0.5);
       }
     }
@@ -2112,6 +2167,7 @@ function draw() {
     if (beau) {
       drawUnitBase(u, x, y);
       drawUnitChar(u, x, y, now, moving);
+      drawUnitBadge(u, x, y);
       if (u.fortified) {
         // A compact shield at the shoulder. The old ring was wider than the
         // unit itself and read as a selection highlight rather than a state.
@@ -2142,7 +2198,8 @@ function draw() {
       if (civ) cx.roundRect(x - rr, y - rr, rr * 2, rr * 2, 5);
       else cx.arc(x, y, rr, 0, 7);
       cx.stroke();
-      cx.fillStyle = "#10151d"; cx.font = "11px 'Segoe UI Symbol', sans-serif";
+      cx.fillStyle = "#10151d";
+      cx.font = "11px 'Segoe UI Symbol', 'Segoe UI Emoji', sans-serif";
       cx.fillText(UNIT_ICON[u.type] || u.type[0].toUpperCase(), x, y + 0.5);
       cx.globalAlpha = 1;
     }
