@@ -9792,7 +9792,7 @@ impl Game {
                                     .and_then(|t| self.rules.techs.get(t))
                                     .map(|t| t.era)
                                     .unwrap_or(0),
-                                name.clone(),
+                                (*name).clone(),
                             )
                         })
                         .map(|(name, _)| name.clone());
@@ -28353,7 +28353,6 @@ impl Game {
             }
         }
         let fallout_until = self.turn.saturating_add(spec.fallout_duration);
-        let blast_radius = spec.blast_radius;
         *self.players[pid]
             .counters
             .entry(device_key.to_string())

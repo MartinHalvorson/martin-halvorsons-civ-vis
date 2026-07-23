@@ -83,7 +83,7 @@ pub fn obs_tensor(g: &Game, pid: usize) -> ObsTensor {
         let (col, row) = hex::axial_to_offset(canon.0, canon.1);
         row as usize * w + col as usize
     };
-    let mut put = |data: &mut Vec<f32>, name: &str, pos: Pos, value: f32| {
+    let put = |data: &mut Vec<f32>, name: &str, pos: Pos, value: f32| {
         let slot = plane(name) * w * h + index_of(pos);
         if value > data[slot] {
             data[slot] = value;
@@ -202,7 +202,7 @@ fn global_block(g: &Game, pid: usize, vis: &BTreeSet<Pos>) -> (Vec<f32>, Vec<Str
     let p = &g.players[pid];
     let mut names: Vec<String> = Vec::new();
     let mut out: Vec<f32> = Vec::new();
-    let mut push = |names: &mut Vec<String>, out: &mut Vec<f32>, n: &str, v: f32| {
+    let push = |names: &mut Vec<String>, out: &mut Vec<f32>, n: &str, v: f32| {
         names.push(n.to_string());
         out.push(v);
     };
