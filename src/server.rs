@@ -174,7 +174,10 @@ impl ChronicleSnapshot {
             .values()
             .filter(|unit| game.rules.units[unit.kind.as_str()].class == "military")
             .map(|unit| {
-                combat_owners.entry(unit.pos).or_default().insert(unit.owner);
+                combat_owners
+                    .entry(unit.pos)
+                    .or_default()
+                    .insert(unit.owner);
                 (unit.id, unit.owner)
             })
             .collect();
@@ -298,12 +301,7 @@ impl ChronicleState {
         let wars = game
             .at_war
             .iter()
-            .map(|&(first, second)| {
-                (
-                    (first, second),
-                    ChronicleWar::new(first, second),
-                )
-            })
+            .map(|&(first, second)| ((first, second), ChronicleWar::new(first, second)))
             .collect();
         Self {
             districts: completed_districts(game),
@@ -395,10 +393,7 @@ fn chronicle_world_events(
     new_buildings.sort_by_key(|((city, building), _)| (*city, building.as_str()));
     for ((city_id, building), owner) in new_buildings {
         if chronicle.buildings.insert(building.clone()) {
-            let city = after
-                .cities
-                .get(city_id)
-                .map(|city| city.name.as_str());
+            let city = after.cities.get(city_id).map(|city| city.name.as_str());
             events.push(json!({
                 "type": "building_first", "player": owner,
                 "building": building, "city": city, "turn": turn,
@@ -526,17 +521,14 @@ fn chronicle_world_events(
     }) {
         if let Some(owners) = before.combat_owners.get(&target) {
             targeted_opponents.extend(owners.iter().copied().filter(|owner| {
-                *owner != actor
-                    && active_wars.contains(&chronicle_war_pair(actor, *owner))
+                *owner != actor && active_wars.contains(&chronicle_war_pair(actor, *owner))
             }));
         }
     }
     let enemy_losers: BTreeSet<_> = lost_units
         .keys()
         .copied()
-        .filter(|owner| {
-            *owner != actor && active_wars.contains(&chronicle_war_pair(actor, *owner))
-        })
+        .filter(|owner| *owner != actor && active_wars.contains(&chronicle_war_pair(actor, *owner)))
         .collect();
     let actor_opponent = if targeted_opponents.len() == 1 {
         targeted_opponents.first().copied()
@@ -940,13 +932,8 @@ impl Session {
         let before = ChronicleSnapshot::capture(&self.game);
         let (player, actions) = self.step();
         let after = ChronicleSnapshot::capture(&self.game);
-        let world_events = chronicle_world_events(
-            &before,
-            &after,
-            player,
-            &actions,
-            &mut self.chronicle,
-        );
+        let world_events =
+            chronicle_world_events(&before, &after, player, &actions, &mut self.chronicle);
         SpectatorStep {
             player,
             actions,
@@ -1316,13 +1303,12 @@ fn handle(stream: &mut TcpStream, session: &mut Session) {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{
-        chronicle_world_events, new_game_params, request_path, ChronicleSnapshot, Params, Session,
-        EMBEDDED_INDEX,
+        chronicle_world_events, new_game_params, request_path, ChronicleSnapshot, ChronicleState,
+        Params, Session, EMBEDDED_INDEX,
     };
     use crate::game::{Action, VictoryConditions};
     use crate::setup::{GameSpeed, MapScript};
     use serde_json::json;
-    use std::collections::BTreeSet;
 
     fn current() -> Params {
         Params {
