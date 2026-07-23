@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd service for the CIVVIS spectator loop on macOS (the fleet's Mac hosts).
+
+  The loop plays the latest origin/main build to a decision, keeps the result on
+  screen for a few seconds, then deals the next game on the freshest build it
+  managed to compile while the last one was still running - so the screen is
+  always at most one game behind production. See docs/SPECTATOR_DEPLOY.md.
+
+  Install (replace the four __PLACEHOLDER__ paths first):
+    cp deploy/com.civvis.spectator.plist ~/Library/LaunchAgents/
+    launchctl load  -w ~/Library/LaunchAgents/com.civvis.spectator.plist
+    launchctl start com.civvis.spectator
+  Watch:  tail -f <deploy-checkout>/spectator-supervisor.log
+  Stop:   launchctl unload -w ~/Library/LaunchAgents/com.civvis.spectator.plist
+
+  KeepAlive relaunches it if it ever exits; the supervisor's own per-port lock
+  keeps a relaunch from ever fighting a live instance. RunAtLoad starts it at
+  login. os.execv keeps the same PID on macOS, so self-updates never trip
+  launchd's crash tracking.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.civvis.spectator</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PYTHON3__</string>
+    <string>__DEPLOY_CHECKOUT__/tools/spectator_supervisor.py</string>
+    <string>--port</string><string>8765</string>
+    <string>--players</string><string>6</string>
+    <string>--width</string><string>74</string>
+    <string>--height</string><string>46</string>
+    <string>--city-states</string><string>8</string>
+    <string>--turns</string><string>300</string>
+    <string>--map</string><string>continents</string>
+    <string>--speed</string><string>standard</string>
+    <string>--cooldown</string><string>8</string>
+    <string>--no-open</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__DEPLOY_CHECKOUT__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd starts with a minimal PATH; cargo/git must be findable. -->
+    <key>PATH</key>
+    <string>__HOME__/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>__DEPLOY_CHECKOUT__/spectator-service.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__DEPLOY_CHECKOUT__/spectator-service.err.log</string>
+</dict>
+</plist>
