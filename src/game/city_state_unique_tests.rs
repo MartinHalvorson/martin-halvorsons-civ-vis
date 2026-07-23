@@ -363,18 +363,18 @@ fn final_patch_envoy_thresholds_follow_active_building_tiers() {
     );
 
     game.players[0].envoys = vec![(scientific, 1)];
-    assert_close(game.envoy_yields(0, &game.cities[&city]).science, 4.0);
+    assert_close(game.envoy_yields(0, &game.cities[&city]).science, 2.0);
     game.players[0].envoys = vec![(scientific, 3)];
-    assert_close(game.envoy_yields(0, &game.cities[&city]).science, 8.0);
+    assert_close(game.envoy_yields(0, &game.cities[&city]).science, 6.0);
     game.players[0].envoys = vec![(scientific, 6)];
-    assert_close(game.envoy_yields(0, &game.cities[&city]).science, 14.0);
+    assert_close(game.envoy_yields(0, &game.cities[&city]).science, 12.0);
 
     game.cities
         .get_mut(&city)
         .unwrap()
         .pillaged_buildings
         .insert("library".to_string());
-    assert_close(game.envoy_yields(0, &game.cities[&city]).science, 12.0);
+    assert_close(game.envoy_yields(0, &game.cities[&city]).science, 11.0);
 }
 
 #[test]
@@ -401,11 +401,11 @@ fn trade_envoys_double_each_independent_commercial_and_harbor_tier() {
     );
 
     game.players[0].envoys = vec![(trade, 1)];
-    assert_close(game.envoy_yields(0, &game.cities[&city]).gold, 8.0);
+    assert_close(game.envoy_yields(0, &game.cities[&city]).gold, 6.0);
     game.players[0].envoys = vec![(trade, 3)];
-    assert_close(game.envoy_yields(0, &game.cities[&city]).gold, 16.0);
+    assert_close(game.envoy_yields(0, &game.cities[&city]).gold, 18.0);
     game.players[0].envoys = vec![(trade, 6)];
-    assert_close(game.envoy_yields(0, &game.cities[&city]).gold, 34.0);
+    assert_close(game.envoy_yields(0, &game.cities[&city]).gold, 36.0);
 }
 
 #[test]
@@ -431,7 +431,7 @@ fn production_envoys_obey_unit_and_infrastructure_queues() {
     game.cities.get_mut(&city).unwrap().queue = vec![Item::Unit {
         unit: "warrior".to_string(),
     }];
-    assert_close(game.envoy_yields(0, &game.cities[&city]).production, 14.0);
+    assert_close(game.envoy_yields(0, &game.cities[&city]).production, 12.0);
     game.cities.get_mut(&city).unwrap().queue = vec![Item::Building {
         building: "granary".to_string(),
     }];
@@ -448,7 +448,7 @@ fn production_envoys_obey_unit_and_infrastructure_queues() {
     .into_iter()
     .map(str::to_string)
     .collect();
-    assert_close(game.envoy_yields(0, &game.cities[&city]).production, 14.0);
+    assert_close(game.envoy_yields(0, &game.cities[&city]).production, 12.0);
     game.cities.get_mut(&city).unwrap().queue = vec![Item::Unit {
         unit: "warrior".to_string(),
     }];

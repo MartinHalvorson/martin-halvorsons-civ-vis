@@ -12718,23 +12718,16 @@ impl Game {
         if n <= 0 || !Self::envoy_production_applies(kind, city.queue.first()) {
             return Yields::default();
         }
-        // Shipped amounts: the first two building tiers pay 2 whatever the
-        // city-state type, the third pays 3, and the Diplomatic Quarter pair
-        // pays 2 then 3 -- with Trade doubling everything except the building
-        // tiers themselves. That fits every row in the database: Library,
-        // Market, Amphitheater, Shrine, University, Bank and Temple all at 2;
-        // Research Lab, Broadcast Center and the worship buildings at 3 with
-        // the Seaport at 6; Consulate 2/4 and Chancery 3/6.
         let scale = if kind == "trade" { 2.0 } else { 1.0 };
         let mut amount = 0.0;
         if n >= 1 {
             if self.city_has_palace(city) {
-                amount += 2.0 * scale;
+                amount += scale;
             }
-            amount += 2.0 * self.envoy_tier_building_count(city, kind, 1) as f64;
+            amount += scale * self.envoy_tier_building_count(city, kind, 1) as f64;
         }
         if n >= 3 {
-            amount += 2.0 * self.envoy_tier_building_count(city, kind, 2) as f64;
+            amount += 2.0 * scale * self.envoy_tier_building_count(city, kind, 2) as f64;
             if self.city_has_active_building_family(city, "consulate") {
                 amount += 2.0 * scale;
             }

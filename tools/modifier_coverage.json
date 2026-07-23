@@ -141,10 +141,7 @@
     "ADJUST_BUILDING_YIELD_CHANGE": {
       "status": "partial",
       "verified": true,
-      "note": "Verified row by row. Third Alternative, Military Research, the Electronics Factory Culture, the Tsikhe Faith, Choral Music, Feed the World and Isaac Newton's University Science all match. The city-state Envoy building bonuses did not: the shipped rows pay 2 for the first two building tiers whatever the type, 3 for the third (6 for Trade), and 2/4 Consulate and 3/6 Chancery. CIVVIS paid 1 for the Capital and the first tier and doubled the second tier for Trade. Corrected. Still partial for the structural reason: an arbitrary modifier cannot adjust an arbitrary building's yield, only the named sources here.",
-      "leads": [
-        "CIVVIS grants Trade Envoy bonuses to the Shipyard and Stock Exchange; the shipped rows name only Market, Lighthouse, Bank and Seaport."
-      ]
+      "note": "Verified row by row. Third Alternative, Military Research, the Electronics Factory Culture, the Tsikhe Faith, Choral Music, Feed the World and Isaac Newton's University Science all match. City-state Envoy bonuses also match, and are the trap in this effect: the database ships TWO ladders. The base rows pay the Capital at 1 Envoy, the tier-1 building at 3 and the tier-2 building at 6, all at a flat 2. The Ethiopia-pack rows -- the final-patch structure CIVVIS implements, and the one a Gathering Storm game actually runs -- pay Capital and tier-1 at 1 Envoy, tier-2 plus the Consulate at 3, and tier-3 plus the Chancery at 6, with amounts 1/2/3 doubled for Trade. Reading the base rows and 'correcting' CIVVIS to them is wrong; the two are distinguished only by the _ETHIOPIA suffix on the attaching modifier. Still partial for the structural reason: an arbitrary modifier cannot adjust an arbitrary building's yield, only the named sources here."
     },
     "ADJUST_PLOT_YIELD": {
       "status": "partial",
