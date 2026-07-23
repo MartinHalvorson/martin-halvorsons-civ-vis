@@ -60,7 +60,7 @@ runtime. The text surface belongs in the mod loader, not in the hot path.
 | 9 | Mod folders overlaid on the base ruleset at load | **Adopted** | `--mods`, see [MODS.md](MODS.md) |
 | 10 | Dev console for state inspection/mutation | Adopt next | GUI console + `civvis console` |
 | 11 | Civilopedia generated from the ruleset | **Adopted** | `civvis pedia`, `GET /pedia`, **P** in the GUI |
-| 12 | Unit automation + autoplay for the human seat | Adopt next | reuse `AdvancedAi` per-unit |
+| 12 | Autoplay for the human seat | **Adopted** | `POST /autoplay`, **A** in the GUI; per-unit automation still open |
 | 13 | Deprecation table + auto-updater for mod data | Note | when the data format stabilizes |
 | 14 | Translation pipeline, libGDX UI, Android packaging | **Skip** | wrong shape for a headless engine |
 | 15 | Multiplayer via dumb file server | Skip for now | our clients are agents, not phones |
@@ -210,6 +210,25 @@ One small discipline came out of building it: links are only emitted to pages
 that exist. Unique buildings belonging to civilizations the ruleset has not
 defined — the ones `civvis validate` warns about — name their owner without
 offering a dead link, and a test asserts every link resolves.
+
+### 12. Autoplay — adopted, automation deferred
+
+Unciv offers two related things: automating one unit — a Worker that improves
+tiles on its own — and autoplaying a whole turn. We took the second and left
+the first.
+
+Autoplay was nearly free. The human seat already has an agent built for it in
+every game and nothing was asking it, so **A** now plays one turn and
+**Shift+A** ten. It is worth having for the two reasons Unciv gives: skipping a
+game that is already decided, and watching how the agent would play the
+position you are in.
+
+Per-unit automation is not free, and the reason is worth recording. Our `Ai`
+trait is whole-turn — `take_turn(&mut Game, pid)` — while Unciv's automation is
+built per unit from the start, in `WorkerAutomation` and `UnitAutomation`.
+Adding "act with this unit only" means restructuring `AdvancedAi` around a
+unit-level entry point, which is a change to the agent rather than a GUI
+feature, and belongs in the AI track.
 
 ### 14 & 15. What we are not taking
 

@@ -36,7 +36,7 @@ baseline with optional game modes excluded.
 
 `tools/modifier_coverage.json` holds those judgements with a reason each.
 They are seeded by reading the engine for each effect family and are mostly
-**not** yet verified row by row (453 rows are, so far) — an `implemented` entry is a claim to be checked, and
+**not** yet verified row by row (568 rows are, so far) — an `implemented` entry is a claim to be checked, and
 checking them is the next step. Anything absent from the file counts as
 unmodelled, so newly shipped content raises the backlog rather than hiding.
 
@@ -73,7 +73,7 @@ expressed without building the interpreter.
    the entry `verified`, and demote whatever does not hold. The report prints
    verified rows against covered rows, so the ratchet is visible.
 
-   Eight are done so far (453 of 1,165 covered rows), and seven of them found
+   Ten are done so far (568 of 1,165 covered rows), and seven of them found
    real divergences:
 
    - a city's Commercial Hub or Harbor granted no Trade Route at all, and
@@ -90,10 +90,21 @@ expressed without building the interpreter.
    - every unit-Production policy card ignored its era window, so Agoge
      boosted a Modern Infantry as readily as a Warrior.
 
-   Seven errors in eight effects is the argument for running the pass to the
+   Seven errors in ten effects is the argument for running the pass to the
    end:
    the seeded statuses were inspection judgements, and inspection is not
    finding these.
+
+   **Read the condition, not just the amount.** The database ships more than
+   one ruleset. City-state Envoy bonuses exist twice over: base-game rows that
+   pay the Capital at 1 Envoy and the tier-1 building at 3, and Ethiopia-pack
+   rows -- the final-patch structure a Gathering Storm game actually runs --
+   that pay Capital *and* tier-1 at 1. They are distinguished only by an
+   `_ETHIOPIA` suffix on the `ATTACH_MODIFIER` that binds them. Reading the
+   base amounts alone, I "corrected" a correct implementation and had to
+   revert it. `--effect` now prints each row's resolved requirement set for
+   exactly this reason, and the loader honours `Delete` on attachment tables
+   so a detached modifier stops reading as live.
 
    `ADJUST_CITY_FREE_POWER` is the clean case and shows the shape: fifteen
    rows, of which twelve execute with the shipped amounts (Geothermal Plant 4,

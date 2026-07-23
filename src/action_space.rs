@@ -15,7 +15,7 @@ use crate::Pos;
 
 /// Every `Action` discriminant, in a stable order. Appending is safe;
 /// reordering invalidates trained policies.
-pub const KINDS: [&str; 73] = [
+pub const KINDS: [&str; 74] = [
     "move", "move_to", "attack", "ranged", "found_city", "improve",
     "found_corporation", "move_product", "contribute_project",
     "contribute_district", "perform_concert", "pillage", "repair_improvement",
@@ -23,7 +23,8 @@ pub const KINDS: [&str; 73] = [
     "buy_building", "buy_district", "research", "civic", "declare_war",
     "declare_war_with_casus_belli", "make_peace", "denounce", "propose_deal",
     "accept_deal", "reject_deal", "trade", "congress_vote", "assign_spy",
-    "spy_mission", "promote_spy", "choose_dedication", "fortify", "promote",
+    "spy_mission", "promote_spy", "choose_dedication", "fortify", "upgrade_unit",
+    "promote",
     "combine_units", "link_units", "unlink_units", "government", "slot_policy",
     "unslot_policy", "trade_route", "send_envoy", "levy_military",
     "recruit_great_person", "patronize_great_person", "choose_pantheon",
@@ -86,6 +87,7 @@ pub fn kind_name(action: &Action) -> &'static str {
         Action::PromoteSpy { .. } => "promote_spy",
         Action::ChooseDedication { .. } => "choose_dedication",
         Action::Fortify { .. } => "fortify",
+        Action::UpgradeUnit { .. } => "upgrade_unit",
         Action::Promote { .. } => "promote",
         Action::CombineUnits { .. } => "combine_units",
         Action::LinkUnits { .. } => "link_units",
@@ -144,6 +146,7 @@ pub fn target_tile(g: &Game, action: &Action) -> Option<Pos> {
         | Action::RepairImprovement { unit }
         | Action::CoastalRaid { unit, .. }
         | Action::Fortify { unit }
+        | Action::UpgradeUnit { unit }
         | Action::Promote { unit, .. }
         | Action::Spread { unit }
         | Action::PerformConcert { unit } => g.units.get(unit).map(|u| u.pos),
@@ -226,6 +229,7 @@ fn acting_unit(action: &Action) -> Option<u32> {
         | Action::PriorityTarget { unit, .. }
         | Action::Upgrade { unit, .. }
         | Action::Fortify { unit }
+        | Action::UpgradeUnit { unit }
         | Action::Promote { unit, .. }
         | Action::Spread { unit }
         | Action::PerformConcert { unit } => Some(*unit),

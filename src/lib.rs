@@ -1646,7 +1646,7 @@ mod tests {
     #[test]
     fn natural_wonders_and_support_units() {
         let g = Game::new_full(2, 26, 16, 3, 60, 0, false);
-        // wonders generate and impassable ones block movement
+        // Wonders generate; Crater Lake is the passable one-tile exception.
         let nw: Vec<_> = g
             .map
             .tiles
@@ -1665,7 +1665,7 @@ mod tests {
             .values()
             .find(|t| t.feature.as_deref() == Some("crater_lake"))
         {
-            assert!(!g.rules.is_passable(t));
+            assert!(g.rules.is_passable(t));
         }
         // battering ram lets melee hit ancient walls at full strength
         let mut g = Game::new_full(2, 24, 16, 9, 60, 0, false);

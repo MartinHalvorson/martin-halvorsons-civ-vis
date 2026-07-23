@@ -37,7 +37,8 @@
     },
     "ADJUST_UNIT_MOVEMENT": {
       "status": "implemented",
-      "note": "Movement grants execute from promotions, support units and tree_effects (embarked_movement, adjacent_movement)."
+      "verified": true,
+      "note": "Verified row by row with conditions resolved. Advanced Engines, Commando, Helmsman, Pursuit, Redeploy, Swift Keel each grant 1 and Roadies 4, all matching, and the Giant Death Robot's Enhanced Mobility grants 3 from Cybernetics. The rest are leader and city-state abilities, Commemorations, Emergencies and the Letters of Marque card, none of which CIVVIS carries."
     },
     "ADJUST_UNIT_EXPERIENCE_MODIFIER": {
       "status": "implemented",
@@ -145,7 +146,11 @@
     },
     "ADJUST_PLOT_YIELD": {
       "status": "partial",
-      "note": "Improvement tech and civic upgrades execute through tree_effects, and named wonder and belief plot effects execute; arbitrary plot-yield grants do not."
+      "verified": false,
+      "note": "Partly checked. Liang's City Park Culture and Fishery Production match. Egypt's Sphinx was missing both of its conditional yields -- +1 Culture on Floodplains and +2 Faith next to a Wonder -- now added. Still partial: arbitrary plot-yield grants have no general path.",
+      "leads": [
+        "LUMBER_MILL_RIVERADJACENCY_PRODUCTION fires on PLOT_ADJACENT_TO_RIVER, is attached to IMPROVEMENT_LUMBER_MILL in the Gathering Storm load order and is never detached. That reads as 2 base + 1 on rivers, against CIVVIS' flat 2. But Gathering Storm also raised the base from 1 to 2, so the shipped rows are equally consistent with the river bonus having been folded into the base and left attached as dead data. File reading cannot separate those; an in-game observation of a riverside Lumber Mill can. Do not change it before that."
+      ]
     },
     "GRANT_ABILITY": {
       "status": "partial",

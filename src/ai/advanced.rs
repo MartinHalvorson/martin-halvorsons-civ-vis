@@ -832,14 +832,20 @@ impl AdvancedAi {
         // the dangerous 3/4 state (75%); the next conversion simply ended the
         // game.  Treat a founder controlling at least two civilizations and
         // needing only one more as an immediate interrupt.
-        let religious_match_point = if pressure.strategy == GrandStrategy::Religion {
+        let (religious_warning, religious_match_point) = if pressure.strategy
+            == GrandStrategy::Religion
+        {
             let (converted, living) = self.religious_conversion_tally(g, rival);
-            converted >= 2 && converted < living && converted + 1 >= living
+            (
+                converted >= 2 && converted < living,
+                converted >= 2 && converted < living && converted + 1 >= living,
+            )
         } else {
-            false
+            (false, false)
         };
         if !religious_match_point
-            && (pressure.progress < 78 || pressure.progress < own_progress + 15)
+            && ((!religious_warning && pressure.progress < 78)
+                || pressure.progress < own_progress + 15)
         {
             return None;
         }
@@ -3458,6 +3464,9 @@ impl AdvancedAi {
         let Some(religion) = g.players[pid].religion.clone() else {
             return;
         };
+        let match_point_defense = self
+            .victory_denial(g, pid)
+            .is_some_and(|(_, counter)| counter == GrandStrategy::Religion);
         let count_units = |kind: &str| {
             g.units
                 .values()
@@ -3544,7 +3553,8 @@ impl AdvancedAi {
                 continue;
             };
             let price = spec.cost * 2.0;
-            if g.players[pid].faith < price + 80.0 {
+            let reserve = if match_point_defense { 0.0 } else { 80.0 };
+            if g.players[pid].faith < price + reserve {
                 continue;
             }
             let cities = g.player_city_ids(pid);
@@ -8651,7 +8661,6 @@ impl Ai for AdvancedAi {
         // Keep the mature ancillary systems: governments, policies, beliefs,
         // religions, and envoys. Research is already selected.
         self.base.research(g, pid);
-        self.base.upgrades(g, pid);
         self.strategic_government(g, pid, plan.strategy);
         self.base.corporations(g, pid);
         self.advanced_products(g, pid, plan.strategy);
@@ -8725,6 +8734,7 @@ impl Ai for AdvancedAi {
         if self.victory_planning {
             self.advanced_command_actions(g, pid, &plan);
         }
+        BasicAi::upgrade_units(g, pid);
         self.advanced_units(g, pid, &plan);
         self.resolve_city_dispositions(g, pid, plan.strategy);
         if g.winner.is_none() && g.current == pid {
