@@ -1,6 +1,6 @@
 //! Zero-dependency local HTTP server for the human-vs-AI browser GUI.
 //! Endpoints: GET / (page), GET /state, GET /save, GET /rules, GET /pedia,
-//! POST /action, POST /step, POST /view, POST /autoplay,
+//! POST /action, POST /step, POST /autoplay, POST /view,
 //! POST /spectator-status, POST /new, POST /supervisor-new.
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -1754,7 +1754,14 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("if (!fullMapSpectator && (SPEC || govs.length"));
         assert!(EMBEDDED_INDEX.contains(".sort((a, b) => b.score - a.score || a.id - b.id)"));
         assert!(EMBEDDED_INDEX.contains("class=\"diplomacy-rank\">#${rank}"));
-        assert!(EMBEDDED_INDEX.contains("#side {\n    order: -1;"));
+        // The sidebar sits left of the map. Match the declaration rather than
+        // its formatting, so restyling the block cannot fail the rule.
+        let side_rule = EMBEDDED_INDEX
+            .split_once("#side {")
+            .and_then(|(_, rest)| rest.split_once('}'))
+            .map(|(rule, _)| rule)
+            .unwrap_or_default();
+        assert!(side_rule.contains("order: -1"));
         assert!(EMBEDDED_INDEX.contains("<strong>${state.turn}</strong>"));
         assert!(!EMBEDDED_INDEX.contains("${state.turn}/${maxTurns}"));
     }

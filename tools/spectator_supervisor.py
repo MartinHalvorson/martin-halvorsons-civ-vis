@@ -31,7 +31,8 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 
-ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(os.environ.get("CIVVIS_DEPLOY_ROOT", str(SCRIPT_ROOT))).expanduser().resolve()
 SOURCE_ROOT = Path(
     os.environ.get(
         "CIVVIS_SUPERVISOR_SOURCE",
@@ -682,8 +683,14 @@ def start_server(
     open_browser: bool,
     resume: Path | None = None,
 ) -> subprocess.Popen[str]:
+    # The server prefers loose web/ files in its working directory over the
+    # page embedded in the executable. Starting in the shared checkout would
+    # pair a canonical engine with whichever UI a development session is
+    # editing, recreating the cross-machine mismatch at the presentation layer.
     process = subprocess.Popen(
-        server_command(port, settings, open_browser, resume), cwd=ROOT, text=True
+        server_command(port, settings, open_browser, resume),
+        cwd=RUNTIME_BINARY.parent,
+        text=True,
     )
     detail = f", resuming {resume.name}" if resume is not None else ""
     log(f"started PID {process.pid} on port {port} ({settings['players']} players{detail})")

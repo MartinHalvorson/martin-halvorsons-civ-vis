@@ -50,28 +50,20 @@
     "impassable": true
   },
   "burning_forest": {
-    "yields": {
-      "production": 1
-    },
-    "move_cost": 2
+    "yields": {},
+    "move_cost": 1
   },
   "burnt_forest": {
-    "yields": {
-      "production": 1
-    },
-    "move_cost": 2
+    "yields": {},
+    "move_cost": 1
   },
   "burning_jungle": {
-    "yields": {
-      "food": 1
-    },
-    "move_cost": 2
+    "yields": {},
+    "move_cost": 1
   },
   "burnt_jungle": {
-    "yields": {
-      "food": 1
-    },
-    "move_cost": 2
+    "yields": {},
+    "move_cost": 1
   },
   "oasis": {
     "yields": {
@@ -91,7 +83,8 @@
       "faith": 5,
       "science": 1
     },
-    "natural_wonder": true
+    "natural_wonder": true,
+    "impassable": true
   },
   "pantanal": {
     "yields": {

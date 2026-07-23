@@ -118,6 +118,9 @@ TABLE_KEYS = {
     "Eras": "EraType",
     "GreatPersonIndividuals": "GreatPersonIndividualType",
     "GlobalParameters": "Name",
+    "WMDs": "WeaponType",
+    "Maps": "MapSizeType",
+    "Happinesses": "HappinessType",
     "Building_YieldChanges": ("BuildingType", "YieldType"),
     "Building_GreatPersonPoints": ("BuildingType", "GreatPersonClassType"),
     "Building_GreatWorks": ("BuildingType", "GreatWorkSlotType"),
@@ -145,7 +148,8 @@ FILE_PATTERN = re.compile(
     r"^(Expansion[12]_)?"
     r"(Units|Technologies|Civics|Buildings|Districts|Terrains|Features|Resources"
     r"|Improvements|Policies|Governments|Beliefs|UnitPromotions|Projects|GreatWorks"
-    r"|GoodyHuts|Eras|GreatPeople(?:_[A-Za-z]+)?|GlobalParameters)"
+    r"|GoodyHuts|Eras|GreatPeople(?:_[A-Za-z]+)?|GlobalParameters|WMDs|Maps"
+    r"|Happinesses|Alliances)"
     r"(_Major)?\.xml$",
     re.IGNORECASE,
 )
@@ -592,16 +596,21 @@ def project_resources(database: Database) -> dict[str, dict]:
     projected = {}
     for row in database.rows("Resources"):
         name = slug(row["ResourceType"], "RESOURCE_")
-        bases, _, _, _ = collapse_terrains(terrains.get(name, []))
+        bases, flat_land, hills, _ = collapse_terrains(terrains.get(name, []))
         entry = {
             "class": RESOURCE_CLASSES.get(row.get("ResourceClassType"), "?"),
             "yields": yields.get(name, {}),
             "terrain": bases,
+            # Some(true): hills-only spawns (Sheep); Some(false): flat-only
+            # (grains); None: either form, or a sea/feature-placed resource.
+            "hills": True if hills and not flat_land else (False if flat_land and not hills else None),
             # Placement on features CIVVIS does not model at all (volcanic
             # soil) is tracked by the Features table's missing-entry count,
             # not as noise on every resource.
             "feature": features.get(name, set()) & civvis_features,
         }
+        if entry["class"] == "artifact":
+            entry["hills"] = None  # dig sites spawn where history happened
         if row.get("PrereqTech"):
             entry["tech"] = slug(row["PrereqTech"], "TECH_")
         if row.get("PrereqCivic"):
@@ -902,7 +911,8 @@ ENGINE_PARAMETERS = {
     "CULTURE_COST_FIRST_PLOT": 10,  # border growth: 10 + 6 * plots^1.3
     "CULTURE_COST_LATER_PLOT_MULTIPLIER": 6,
     "CULTURE_COST_LATER_PLOT_EXPONENT": 1.3,
-    "BARBARIAN_CAMP_MAX_PER_MAJOR_CIV": 3,  # spawn cadence differs; camp count comparable
+    "BARBARIAN_CAMP_MINIMUM_DISTANCE_CITY": 4,  # game.rs spawn_camp
+    "BARBARIAN_CAMP_MINIMUM_DISTANCE_ANOTHER_CAMP": 7,
 }
 
 
@@ -917,6 +927,78 @@ def project_parameters(database: Database) -> dict[str, dict]:
 
 def ours_parameters() -> dict[str, dict]:
     return {name: {"value": value} for name, value in ENGINE_PARAMETERS.items()}
+
+
+# The engine's six stock map profiles (src/setup.rs) next to the shipped
+# Maps rows. City-state and religion counts live in front-end config, not
+# the gameplay database, so only these five columns are comparable.
+ENGINE_MAP_SIZES = {
+    "duel": {"width": 44, "height": 26, "players": 2, "natural_wonders": 2, "continents": 1},
+    "tiny": {"width": 60, "height": 38, "players": 4, "natural_wonders": 3, "continents": 2},
+    "small": {"width": 74, "height": 46, "players": 6, "natural_wonders": 4, "continents": 3},
+    "standard": {"width": 84, "height": 54, "players": 8, "natural_wonders": 5, "continents": 4},
+    "large": {"width": 96, "height": 60, "players": 10, "natural_wonders": 6, "continents": 5},
+    "huge": {"width": 106, "height": 66, "players": 12, "natural_wonders": 7, "continents": 6},
+}
+
+# The engine's amenity bands (game.rs amenity_yield_mult_for /
+# amenity_growth_mult), spelled the way the Happinesses table spells them.
+ENGINE_HAPPINESS = {
+    "ecstatic": {"growth": 20, "yields": 20},
+    "happy": {"growth": 10, "yields": 10},
+    "content": {"growth": 0, "yields": 0},
+    "displeased": {"growth": -15, "yields": -10},
+    "unhappy": {"growth": -30, "yields": -20},
+    "unrest": {"growth": -100, "yields": -30},
+    "revolt": {"growth": -100, "yields": -40},
+}
+
+
+def project_maps(database: Database) -> dict[str, dict]:
+    projected = {}
+    for row in database.rows("Maps"):
+        projected[slug(row["MapSizeType"], "MAPSIZE_")] = {
+            "width": number(row.get("GridWidth")),
+            "height": number(row.get("GridHeight")),
+            "players": number(row.get("DefaultPlayers")),
+            "natural_wonders": number(row.get("NumNaturalWonders")),
+            "continents": number(row.get("Continents")),
+        }
+    return projected
+
+
+def project_happiness(database: Database) -> dict[str, dict]:
+    projected = {}
+    for row in database.rows("Happinesses"):
+        projected[slug(row["HappinessType"], "HAPPINESS_")] = {
+            "growth": number(row.get("GrowthModifier")),
+            "yields": number(row.get("NonFoodYieldModifier")),
+        }
+    return projected
+
+
+def project_wmds(database: Database) -> dict[str, dict]:
+    projected = {}
+    for row in database.rows("WMDs"):
+        projected[slug(row["WeaponType"], "WMD_")] = {
+            "blast_radius": number(row.get("BlastRadius")),
+            "fallout_duration": number(row.get("FalloutDuration")),
+            "icbm_strike_range": number(row.get("ICBMStrikeRange")),
+            "maintenance": number(row.get("Maintenance")),
+        }
+    return projected
+
+
+def ours_wmds() -> dict[str, dict]:
+    return {
+        name: {
+            "blast_radius": entry.get("blast_radius", 0),
+            "fallout_duration": entry.get("fallout_duration", 0),
+            "icbm_strike_range": entry.get("icbm_strike_range", 0),
+            "maintenance": entry.get("maintenance", 0),
+        }
+        for name, entry in load_ours("wmds").items()
+    }
 
 
 def project_eras(database: Database) -> dict[str, dict]:
@@ -1372,6 +1454,10 @@ ENGINE_FEATURE_DEFENSE = {  # game.rs tile_defense_bonus
     "forest": 3,
     "jungle": 3,
     "reef": 3,
+    "burning_forest": 3,
+    "burning_jungle": 3,
+    "burnt_forest": 3,
+    "burnt_jungle": 3,
     "marsh": -2,
     "floodplains": -2,
     "grassland_floodplains": -2,
@@ -1423,6 +1509,7 @@ def ours_resources() -> dict[str, dict]:
             "yields": {k: v for k, v in entry.get("yields", {}).items() if v},
             "terrain": lakes_are_coast(set(entry.get("terrain", []))),
             "feature": set(entry.get("feature", [])),
+            "hills": entry.get("hills"),
         }
         for key in ("tech", "civic", "improvement"):
             if entry.get(key):
@@ -1743,6 +1830,9 @@ def main() -> int:
         ("Eras", ours_eras(), project_eras(database)),
         ("GreatPeople", ours_great_people(), project_great_people(database)),
         ("GlobalParameters", ours_parameters(), project_parameters(database)),
+        ("Maps", dict(ENGINE_MAP_SIZES), project_maps(database)),
+        ("Happinesses", dict(ENGINE_HAPPINESS), project_happiness(database)),
+        ("WMDs", ours_wmds(), project_wmds(database)),
         ("Terrains", ours_terrains(), project_terrains(database)),
         ("Features", ours_features(), project_features(database)),
         ("Resources", ours_resources(), project_resources(database)),

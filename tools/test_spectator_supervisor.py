@@ -417,28 +417,6 @@ class SourceSnapshotTests(unittest.TestCase):
 
 
 class RecoveryTests(unittest.TestCase):
-    def test_successor_detection_closes_the_cooldown_restart_race(self):
-        finished = {"server_instance": 7, "seed": 11, "winner": 2}
-        self.assertFalse(supervisor.successor_started(None, 7, 11))
-        self.assertFalse(supervisor.successor_started(finished, 7, 11))
-        self.assertTrue(
-            supervisor.successor_started({**finished, "winner": None}, 7, 11)
-        )
-        self.assertTrue(
-            supervisor.successor_started({**finished, "seed": 12}, 7, 11)
-        )
-
-    def test_successor_grace_observes_the_server_owned_restart(self):
-        finished = {"server_instance": 7, "seed": 11, "winner": 2}
-        successor = {"server_instance": 7, "seed": 12, "winner": None}
-        with patch.object(
-            supervisor, "read_state", side_effect=[finished, successor]
-        ):
-            self.assertEqual(
-                supervisor.wait_for_successor(8766, 7, 11, timeout=0.2),
-                successor,
-            )
-
     @staticmethod
     def supervisor_args(**overrides):
         values = {
@@ -464,6 +442,28 @@ class RecoveryTests(unittest.TestCase):
         }
         values.update(overrides)
         return SimpleNamespace(**values)
+
+    def test_successor_detection_closes_the_cooldown_restart_race(self):
+        finished = {"server_instance": 7, "seed": 11, "winner": 2}
+        self.assertFalse(supervisor.successor_started(None, 7, 11))
+        self.assertFalse(supervisor.successor_started(finished, 7, 11))
+        self.assertTrue(
+            supervisor.successor_started({**finished, "winner": None}, 7, 11)
+        )
+        self.assertTrue(
+            supervisor.successor_started({**finished, "seed": 12}, 7, 11)
+        )
+
+    def test_successor_grace_observes_the_server_owned_restart(self):
+        finished = {"server_instance": 7, "seed": 11, "winner": 2}
+        successor = {"server_instance": 7, "seed": 12, "winner": None}
+        with patch.object(
+            supervisor, "read_state", side_effect=[finished, successor]
+        ):
+            self.assertEqual(
+                supervisor.wait_for_successor(8766, 7, 11, timeout=0.2),
+                successor,
+            )
 
     def test_manual_restart_uses_existing_runtime_without_building(self):
         requested = {
@@ -573,6 +573,20 @@ class RecoveryTests(unittest.TestCase):
         build.assert_called_once_with()
         start.assert_called_once_with(8766, requested, False)
 
+    def test_busy_server_detection_distinguishes_compute_from_idle(self):
+        process = SimpleNamespace(pid=321)
+        with patch.object(
+            supervisor,
+            "command",
+            return_value=SimpleNamespace(returncode=0, stdout=" 99.7\n"),
+        ):
+            self.assertTrue(supervisor.process_busy(process, None))
+        with patch.object(
+            supervisor,
+            "command",
+            return_value=SimpleNamespace(returncode=0, stdout="  0.0\n"),
+        ):
+            self.assertFalse(supervisor.process_busy(process, None))
     def test_active_compute_has_no_default_wall_clock_kill(self):
         self.assertFalse(
             supervisor.unavailable_recovery_due(
@@ -657,6 +671,34 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(
             command[command.index("--victories") + 1],
             "science,culture,domination",
+        )
+
+    def test_server_starts_beside_the_promoted_binary_not_the_shared_web_tree(self):
+        settings = {
+            "players": 4,
+            "width": 60,
+            "height": 38,
+            "city_states": 6,
+            "turns": 500,
+            "map": "pangaea",
+            "speed": "standard",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory) / "promoted" / "civvis"
+            process = SimpleNamespace(pid=123)
+            with (
+                patch.object(supervisor, "RUNTIME_BINARY", runtime),
+                patch.object(
+                    supervisor, "server_command", return_value=[str(runtime), "play"]
+                ),
+                patch.object(
+                    supervisor.subprocess, "Popen", return_value=process
+                ) as popen,
+            ):
+                self.assertIs(supervisor.start_server(8766, settings, False), process)
+
+        popen.assert_called_once_with(
+            [str(runtime), "play"], cwd=runtime.parent, text=True
         )
 
     def test_checkpoint_write_is_atomic_and_finished_saves_are_not_resumed(self):

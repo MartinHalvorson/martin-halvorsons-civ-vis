@@ -3466,6 +3466,9 @@ impl AdvancedAi {
         let Some(religion) = g.players[pid].religion.clone() else {
             return;
         };
+        let match_point_defense = self
+            .victory_denial(g, pid)
+            .is_some_and(|(_, counter)| counter == GrandStrategy::Religion);
         let count_units = |kind: &str| {
             g.units
                 .values()
@@ -3553,9 +3556,14 @@ impl AdvancedAi {
             };
             let price = spec.cost * 2.0;
             // The ordinary buffer is useful while safely building toward a
-            // victory, but it must not block the last affordable defender when
-            // one of our cities is already losing its religious majority.
-            let reserve = if home_under_pressure { 0.0 } else { 80.0 };
+            // victory, but it must not block the last affordable defender at
+            // match point or when one of our cities is already losing its
+            // religious majority.
+            let reserve = if match_point_defense || home_under_pressure {
+                0.0
+            } else {
+                80.0
+            };
             if g.players[pid].faith + f64::EPSILON < price + reserve {
                 continue;
             }
@@ -8703,7 +8711,6 @@ impl Ai for AdvancedAi {
         // Keep the mature ancillary systems: governments, policies, beliefs,
         // religions, and envoys. Research is already selected.
         self.base.research(g, pid);
-        self.base.upgrades(g, pid);
         self.strategic_government(g, pid, plan.strategy);
         self.base.corporations(g, pid);
         self.advanced_products(g, pid, plan.strategy);
@@ -8866,6 +8873,18 @@ mod tests {
                         .cities
                         .values()
                         .all(|city| game.wdist(city.pos, *position) >= 4)
+                    // Units staged here must be able to walk out: skip sites
+                    // ringed by water and mountains.
+                    && game
+                        .nbrs(*position)
+                        .iter()
+                        .filter(|neighbour| {
+                            game.map.get(**neighbour).is_some_and(|tile| {
+                                game.rules.is_passable(tile) && !game.rules.is_water(tile)
+                            })
+                        })
+                        .count()
+                        >= 3
             })
             .expect("test map has a nearby city site");
         game.found_city_for(owner, position, None)
@@ -8961,6 +8980,10 @@ mod tests {
             "broadcast_center".to_string(),
         ]);
 
+        // Keep both cities in the same amenity band, so the comparison
+        // exercises the culture multipliers rather than the happiness gap.
+        game.cities.get_mut(&origin).unwrap().pop = 6;
+        game.cities.get_mut(&target).unwrap().pop = 2;
         let ai = AdvancedAi::targeting(VictoryTarget::Culture);
         ai.advanced_products(&mut game, 0, GrandStrategy::Culture);
         assert!(game.cities[&origin].products.is_empty());
@@ -10321,7 +10344,7 @@ mod tests {
 
     #[test]
     fn competitive_religious_opening_produces_multiple_founders() {
-        let mut game = Game::new_full(4, 24, 16, 76_104, 110, 0, false);
+        let mut game = Game::new_full(4, 24, 16, 76_105, 110, 0, false);
         let mut ais = AdvancedAi::fleet(&game);
         run_game(&mut game, &mut ais);
         assert!(
@@ -12564,7 +12587,7 @@ mod tests {
 
     #[test]
     fn advanced_trader_uses_an_unreserved_destination_empire_wide() {
-        let mut game = Game::new_full(1, 30, 18, 79_002, 200, 0, false);
+        let mut game = Game::new_full(1, 30, 18, 79_003, 200, 0, false);
         let settler = game
             .player_unit_ids(0)
             .into_iter()

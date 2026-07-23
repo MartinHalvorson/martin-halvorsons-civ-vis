@@ -1,0 +1,4 @@
+{
+  "nuclear_device": {"blast_radius": 1, "fallout_duration": 10, "icbm_strike_range": 12, "maintenance": 14},
+  "thermonuclear_device": {"blast_radius": 2, "fallout_duration": 20, "icbm_strike_range": 15, "maintenance": 16}
+}

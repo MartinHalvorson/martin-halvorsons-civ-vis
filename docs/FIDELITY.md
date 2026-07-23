@@ -165,14 +165,34 @@ GlobalParameters, but the per-Production factor lives in the executable. The
 engine charges the community-documented `10 + 2 × Production difference`,
 which reproduces the in-game prices those two parameters bracket.
 
+**Sixth wave (bands, maps, routes, spawns):** `Happinesses`, `Maps`, `WMDs`
+and more of `GlobalParameters` join the audit — 25 tables at zero unwaived
+divergences. The finds: the amenity bands were wrong twice over (thresholds
+from an invented ≥5 tier, values from the base game the expansions
+rebalance — the shipped ladder is +20/+10/0/−15/−30/−100 growth and
++20/+10/0/−10/−20/−30/−40 non-food); roads now follow the shipped route
+ladder (1 MP until Industrial-era routes at 0.75, Modern at 0.5) and bridge
+rivers with Classical-era (medieval) routes instead of a technology;
+resource map placement follows the union rule with hills-only (Sheep,
+Copper, Iron, Coal, Diamonds) and flat-only (grains) forms honored — a
+regression where feature-listed resources became feature-*only* is fixed;
+barbarian camps keep the shipped placement floors (4 from cities, 7 from
+camps); nuclear device stats live in `data/wmds.json` with maintenance
+charged from data; the Cultural Heritage Inspiration now fires via a
+full-museum theming proxy; and Gilgamesh aside, the six map-size profiles
+and the alliance-leveling timeline verified exact.
+
 ### Next inside phase 1
 
-Known simplifications not yet expressed in data: hills-only resource spawns
-(Sheep), civic-gated valid terrain (farms on Hills at Civil Engineering),
-feature-based map placement of resources (Fish on Reef rows), wonders'
-widening `Building_ValidFeatures` rows (Petra on Floodplains), theming (the
-Cultural Heritage Inspiration trigger is data-correct but inert), barbarian
-camp spawn cadence (odds/boldness model), and the meteor-strike goody site.
+Known simplifications not yet expressed in data: civic-gated valid terrain
+(farms on Hills at Civil Engineering, already era-exact through
+`tree_effects`' hill_farms), wonders' widening `Building_ValidFeatures`
+rows (CIVVIS is the permissive side there), true per-work theming (the
+proxy counts full museums), barbarian camp spawn cadence (the odds/boldness
+model is DLL-side; placement floors and distances are exact), WMD delivery
+(stats are data, the strike action awaits), the meteor-strike goody site,
+and roads staying unleveled per tile (the world era stands in for the route
+its traders lay).
 
 ## Phase 2 (measured): the modifier engine
 

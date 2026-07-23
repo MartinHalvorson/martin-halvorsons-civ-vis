@@ -990,7 +990,8 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(g.city_yields(cid).production, base_prod + 1.0);
+        // Urban Planning's +1 Production, scaled by the Happy amenity band.
+        assert!((g.city_yields(cid).production - base_prod - 1.0 * 1.1).abs() < 1e-9);
         // second economic card cannot fit (no wildcard slots in chiefdom)
         assert!(g
             .apply(
@@ -1390,10 +1391,11 @@ mod tests {
         g.apply(0, &Action::SendEnvoy { player: minor }).unwrap();
         assert_eq!(g.envoys_at(0, minor), 1);
         let after = g.city_yields(cap);
+        // Non-food envoy yields carry the Happy amenity band.
         let expected = if g.players[minor].civ == "Zanzibar" {
-            2.0
+            2.0 * 1.1
         } else {
-            1.0
+            1.1
         };
         let delta = after.total() - before.total();
         assert!(
@@ -1505,7 +1507,7 @@ mod tests {
             .buildings
             .push("shrine".to_string());
         let after = g.city_yields(cid).culture;
-        assert!((after - before - 2.0).abs() < 1e-9);
+        assert!((after - before - 2.0 * 1.1).abs() < 1e-9);
         // missionary spread converts a foreign city
         let religion = g.players[0].religion.clone().unwrap();
         let s1 = g
@@ -1604,7 +1606,7 @@ mod tests {
         round(&mut g);
         assert_eq!(g.players[0].gp_claimed.get("scientist"), Some(&1));
         assert_eq!(g.players[0].boosted_techs, boosts_before);
-        assert_eq!(g.city_yields(cid).science - science_before, 1.0);
+        assert!((g.city_yields(cid).science - science_before - 1.0 * 1.1).abs() < 1e-9);
         // The global market advances to the next named Scientist rather than
         // fabricating a generic doubled threshold.
         assert_eq!(

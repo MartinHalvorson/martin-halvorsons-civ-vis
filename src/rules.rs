@@ -112,6 +112,10 @@ pub struct ResourceSpec {
     pub terrain: Vec<String>,
     #[serde(default)]
     pub feature: Vec<String>,
+    /// Some(true) for hills-only spawns (Sheep), Some(false) for flat-only
+    /// (Wheat, Rice, Maize, Bananas), None when either form works.
+    #[serde(default)]
+    pub hills: Option<bool>,
     /// Empty for luxuries no tile improvement works (Toys, Jeans, Perfume,
     /// Cosmetics — manufactured, never map-placed).
     #[serde(default)]
@@ -248,7 +252,7 @@ pub struct UnitSpec {
     /// The unit this one becomes when upgraded for Gold, from the shipped
     /// `UnitUpgrades` table. A civilization's unique replacement stands in for
     /// the base unit whenever it owns one.
-    #[serde(default)]
+    #[serde(default, alias = "upgrades_to")]
     pub upgrade_to: Option<String>,
     /// The shipped `MandatoryObsoleteTech`. Once its owner researches this,
     /// the unit can no longer be trained or purchased; existing copies live on
@@ -826,6 +830,17 @@ pub struct Rules {
     pub goody_huts: BTreeMap<String, BTreeMap<String, GoodyRewardSpec>>,
     /// Per-era constants from the shipped Eras table, keyed by ERA_NAMES.
     pub eras: BTreeMap<String, EraSpec>,
+    /// The shipped WMDs table. Blast radius, fallout and ICBM range await a
+    /// delivery mechanic; the per-turn Gold maintenance is charged today.
+    pub wmds: BTreeMap<String, WmdSpec>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct WmdSpec {
+    pub blast_radius: i32,
+    pub fallout_duration: u32,
+    pub icbm_strike_range: i32,
+    pub maintenance: f64,
 }
 
 /// The shipped per-era ladder: Great Person recruitment base cost, embarked
@@ -853,7 +868,7 @@ pub struct GoodyRewardSpec {
 }
 
 /// Every ruleset file the engine ships, by the name a mod overlay uses.
-pub const DATA_FILES: [(&str, &str); 24] = [
+pub const DATA_FILES: [(&str, &str); 25] = [
     ("terrains", include_str!("../data/terrains.json")),
     ("features", include_str!("../data/features.json")),
     ("resources", include_str!("../data/resources.json")),
@@ -877,6 +892,7 @@ pub const DATA_FILES: [(&str, &str); 24] = [
     ("speeds", include_str!("../data/speeds.json")),
     ("goody_huts", include_str!("../data/goody_huts.json")),
     ("eras", include_str!("../data/eras.json")),
+    ("wmds", include_str!("../data/wmds.json")),
     ("tree_effects", include_str!("../data/tree_effects.json")),
 ];
 
@@ -953,6 +969,7 @@ impl Rules {
             speeds: take(&mut files, "speeds")?,
             goody_huts: take(&mut files, "goody_huts")?,
             eras: take(&mut files, "eras")?,
+            wmds: take(&mut files, "wmds")?,
         };
         let effects: TreeEffectsData = take(&mut files, "tree_effects")?;
         for (node, values) in effects.techs {

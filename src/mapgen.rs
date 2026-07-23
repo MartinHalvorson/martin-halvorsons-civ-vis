@@ -604,18 +604,20 @@ pub fn generate_with_script(
             continue;
         }
         if rng.chance(0.13) {
+            let hills = wm.tiles[&pos].hills;
             let valid: Vec<String> = rules
                 .resources
                 .iter()
                 .filter(|(_, s)| {
-                    if !s.feature.is_empty() {
-                        feature
-                            .as_ref()
-                            .map(|f| s.feature.contains(f))
-                            .unwrap_or(false)
-                    } else {
-                        s.terrain.contains(&terrain)
-                    }
+                    // The shipped placement is a union: a listed feature on
+                    // the tile, or a listed terrain on a featureless tile —
+                    // and hills-only spawns (Sheep) respect the tile's form.
+                    let by_feature = feature
+                        .as_ref()
+                        .map(|f| s.feature.contains(f))
+                        .unwrap_or(false);
+                    let by_terrain = feature.is_none() && s.terrain.contains(&terrain);
+                    (by_feature || by_terrain) && s.hills.is_none_or(|want| want == hills)
                 })
                 .map(|(name, _)| name.clone())
                 .collect();

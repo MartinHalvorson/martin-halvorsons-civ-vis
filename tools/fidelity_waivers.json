@@ -119,6 +119,18 @@
       "entry": "repair_outer_defenses",
       "field": "cost",
       "reason": "The database stores 0: the real repair cost is computed from accumulated wall damage. CIVVIS prices the project symbolically at 1 and scales by damage the same way."
+    },
+    {
+      "table": "Features",
+      "entry": "volcano",
+      "field": "impassable",
+      "reason": "The shipped volcano feature rides impassable mountain terrain; CIVVIS marks the feature itself impassable so a volcano blocks movement wherever it stands."
+    },
+    {
+      "table": "Features",
+      "entry": "crater_lake",
+      "field": "impassable",
+      "reason": "The shipped row is Lake=true - a water plot land units cannot enter. CIVVIS has no per-feature lake flag and spells the same rule as impassable."
     }
   ]
 }

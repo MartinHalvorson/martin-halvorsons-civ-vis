@@ -1077,17 +1077,21 @@ mod belief_runtime_tests {
         );
 
         game.players[0].religion_beliefs = vec!["choral_music".to_string()];
-        assert_eq!(
-            game.city_yields(cities[0]).culture - worked_culture(&game),
-            baseline_yields.culture - baseline_worked_culture + 6.0
+        assert!(
+            (game.city_yields(cities[0]).culture - worked_culture(&game)
+                - (baseline_yields.culture - baseline_worked_culture + 6.0 * 1.1))
+                .abs()
+                < 1e-9
         );
 
         game.players[0].religion_beliefs = vec!["work_ethic".to_string()];
         let holy_site_adjacency = game.district_yields("holy_site", holy_site).faith;
         assert!(holy_site_adjacency >= 1.0);
-        assert_eq!(
-            game.city_yields(cities[0]).production,
-            baseline_yields.production + holy_site_adjacency
+        assert!(
+            (game.city_yields(cities[0]).production
+                - (baseline_yields.production + holy_site_adjacency * 1.1))
+                .abs()
+                < 1e-9
         );
 
         let baseline_amenities = game.city_local_amenities(&game.cities[&cities[0]]);
@@ -1107,7 +1111,7 @@ mod belief_runtime_tests {
         game.players[0].religion_beliefs.clear();
         let baseline_route_gold = game.city_yields(cities[0]).gold;
         game.players[0].religion_beliefs = vec!["religious_community".to_string()];
-        assert_eq!(game.city_yields(cities[0]).gold, baseline_route_gold + 6.0);
+        assert!((game.city_yields(cities[0]).gold - baseline_route_gold - 6.0 * 1.1).abs() < 1e-9);
     }
 
     /// Civ VI grants a majority religion only above half of a city's Citizens,
@@ -1551,9 +1555,12 @@ mod governor_runtime_tests {
             .unwrap()
             .promotions
             .remove("industrialist");
-        assert_eq!(
-            game.city_yields(city).production - without_industrialist.city_yields(city).production,
-            2.0
+        assert!(
+            (game.city_yields(city).production
+                - without_industrialist.city_yields(city).production
+                - 2.0 * 1.1)
+                .abs()
+                < 1e-9
         );
 
         let source_position = game
@@ -1606,9 +1613,12 @@ mod governor_runtime_tests {
             .unwrap()
             .promotions
             .remove("vertical_integration");
-        assert_eq!(
-            game.city_yields(city).production - without_integration.city_yields(city).production,
-            6.0
+        assert!(
+            (game.city_yields(city).production
+                - without_integration.city_yields(city).production
+                - 6.0 * 1.1)
+                .abs()
+                < 1e-9
         );
     }
 
@@ -1689,9 +1699,10 @@ mod governor_runtime_tests {
         set_district(&mut game, city, campus, "campus");
         let mut without_moksha = game.clone();
         without_moksha.players[0].governor_roster.clear();
-        assert_eq!(
-            game.city_yields(city).faith - without_moksha.city_yields(city).faith,
-            2.0
+        assert!(
+            (game.city_yields(city).faith - without_moksha.city_yields(city).faith - 2.0 * 1.1)
+                .abs()
+                < 1e-9
         );
 
         let inquisitor = game.spawn_test_unit("inquisitor", 0, center);
@@ -2772,11 +2783,8 @@ mod strategic_resource_tests {
         // Rome replaces Swordsmen with Legions; use a civilization without a
         // unique melee replacement so this scenario isolates resource payment.
         game.players[0].civ = "Egypt".to_string();
-        // The helper grants the whole technology tree, which retires both
-        // units this scenario trains. Give back the two eras that matter.
-        for tech in ["gunpowder", "replaceable_parts"] {
-            game.players[0].techs.remove(tech);
-        }
+        game.players[0].techs.clear();
+        game.players[0].techs.insert("iron_working".to_string());
         let city = game.player_city_ids(0)[0];
         let swordsman = Item::Unit {
             unit: "swordsman".to_string(),
@@ -3756,7 +3764,7 @@ mod specialist_tests {
             .push("library".to_string());
         assert_eq!(game.city_citizen_plan(city).specialists, vec!["campus"]);
         let after_library = game.city_yields(city);
-        assert_eq!(after_library.science - before.science, 4.0);
+        assert!((after_library.science - before.science - 4.0 * 1.1).abs() < 1e-9);
 
         game.cities
             .get_mut(&city)
@@ -4497,25 +4505,36 @@ mod maintenance_tests {
             tile.improvement = None;
         }
         let robot = game.spawn_unit("giant_death_robot", 0, game.cities[&city].pos);
-        assert_eq!(game.city_yields(city).gold, 5.0);
-        assert_eq!(game.unit_gold_maintenance(0), 15.0);
+        let escort = game.spawn_unit(
+            "giant_death_robot",
+            0,
+            *game.cities[&city]
+                .owned_tiles
+                .iter()
+                .find(|pos| **pos != game.cities[&city].pos)
+                .unwrap(),
+        );
+        assert!((game.city_yields(city).gold - 5.0 * 1.1).abs() < 1e-9);
+        assert_eq!(game.unit_gold_maintenance(0), 30.0);
 
         game.players[0].gold = 0.0;
         game.begin_turn(0);
         assert_eq!(game.players[0].gold, 0.0);
-        assert_eq!(game.players[0].gold_per_turn, -10.0);
-        assert_eq!(game.players[0].bankruptcy_amenity_penalty, 1);
+        assert_eq!(game.players[0].gold_per_turn, -24.5);
+        assert_eq!(game.players[0].bankruptcy_amenity_penalty, 2);
+        // one maintained unit disbands per -10 quantum: both robots go
         assert!(!game.units.contains_key(&robot));
+        assert!(!game.units.contains_key(&escort));
 
         let observed = crate::obs::observation(&game, 0);
-        assert_eq!(observed["me"]["gold_per_turn"], serde_json::json!(-10.0));
+        assert_eq!(observed["me"]["gold_per_turn"], serde_json::json!(-24.5));
         assert_eq!(
             observed["me"]["bankruptcy_amenity_penalty"],
-            serde_json::json!(1)
+            serde_json::json!(2)
         );
         assert_eq!(
             observed["players"][0]["gold_per_turn"],
-            serde_json::json!(-10.0)
+            serde_json::json!(-24.5)
         );
     }
 
@@ -4651,12 +4670,14 @@ mod government_runtime_tests {
     }
 
     fn assert_yield_delta(actual: Yields, baseline: Yields, expected: f64) {
+        // These capitals sit in the Happy amenity band, which scales every
+        // non-food yield by 10% on top of the tested effect.
         assert!((actual.food - baseline.food - expected).abs() < 1e-9);
-        assert!((actual.production - baseline.production - expected).abs() < 1e-9);
-        assert!((actual.gold - baseline.gold - expected).abs() < 1e-9);
-        assert!((actual.science - baseline.science - expected).abs() < 1e-9);
-        assert!((actual.culture - baseline.culture - expected).abs() < 1e-9);
-        assert!((actual.faith - baseline.faith - expected).abs() < 1e-9);
+        assert!((actual.production - baseline.production - expected * 1.1).abs() < 1e-9);
+        assert!((actual.gold - baseline.gold - expected * 1.1).abs() < 1e-9);
+        assert!((actual.science - baseline.science - expected * 1.1).abs() < 1e-9);
+        assert!((actual.culture - baseline.culture - expected * 1.1).abs() < 1e-9);
+        assert!((actual.faith - baseline.faith - expected * 1.1).abs() < 1e-9);
     }
 
     #[test]
@@ -4810,9 +4831,9 @@ mod government_runtime_tests {
             .insert("political_philosophy".to_string());
         game.do_appoint_governor(0, "pingala", city).unwrap();
         let baseline = without_government(&game);
-        assert_eq!(
-            game.city_yields(city).faith,
-            baseline.city_yields(city).faith + 1.0
+        assert!(
+            (game.city_yields(city).faith - baseline.city_yields(city).faith - 1.0 * 1.1).abs()
+                < 1e-9
         );
     }
 
@@ -4837,7 +4858,9 @@ mod government_runtime_tests {
         game.do_appoint_governor(0, "pingala", city).unwrap();
         let baseline = without_government(&game);
         assert!(
-            (game.city_yields(city).production - baseline.city_yields(city).production - 1.2).abs()
+            (game.city_yields(city).production - baseline.city_yields(city).production
+                - 1.2 * 1.1)
+                .abs()
                 < 1e-9
         );
     }
@@ -4866,11 +4889,11 @@ mod government_runtime_tests {
         let destination_yields = game.city_yields(destination);
         let destination_baseline = baseline.city_yields(destination);
         assert_eq!(origin_yields.food, origin_baseline.food + 4.0);
-        assert_eq!(origin_yields.production, origin_baseline.production + 4.0);
+        assert!((origin_yields.production - origin_baseline.production - 4.0 * 1.1).abs() < 1e-9);
         assert_eq!(destination_yields.food, destination_baseline.food + 4.0);
-        assert_eq!(
-            destination_yields.production,
-            destination_baseline.production + 4.0
+        assert!(
+            (destination_yields.production - destination_baseline.production - 4.0 * 1.1).abs()
+                < 1e-9
         );
 
         game.players[0].alliances.clear();
@@ -4878,13 +4901,18 @@ mod government_runtime_tests {
         game.players[1].is_minor = true;
         game.players[0].envoys.push((1, 3));
         let baseline = without_government(&game);
-        assert_eq!(
-            game.city_yields(origin).production,
-            baseline.city_yields(origin).production + 4.0
+        assert!(
+            (game.city_yields(origin).production - baseline.city_yields(origin).production
+                - 4.0 * 1.1)
+                .abs()
+                < 1e-9
         );
-        assert_eq!(
-            game.city_yields(destination).production,
-            baseline.city_yields(destination).production + 4.0
+        assert!(
+            (game.city_yields(destination).production
+                - baseline.city_yields(destination).production
+                - 4.0 * 1.1)
+                .abs()
+                < 1e-9
         );
 
         game.players[1].is_minor = false;
@@ -5056,10 +5084,13 @@ mod government_runtime_tests {
             game.city_local_amenities(&game.cities[&city]),
             baseline.city_local_amenities(&baseline.cities[&city]) + 2
         );
-        // The two government Amenities lift the city from Content into the
-        // Happy band, so every yield gains the band's 10% on top.
+        // The two government Amenities can lift the city a happiness band, so
+        // compare the yields with each side's own band factored out.
+        let band = |g: &Game| Game::amenity_yield_mult_for(g.city_amenity_surplus(&g.cities[&city]));
         assert!(
-            (game.city_yields(city).culture - baseline.city_yields(city).culture * 1.1).abs()
+            (game.city_yields(city).culture / band(&game)
+                - baseline.city_yields(city).culture / band(&baseline))
+            .abs()
                 < 1e-9
         );
         let warrior = game
@@ -5078,8 +5109,8 @@ mod government_runtime_tests {
         install_test_district(&mut game, city, "campus");
         let baseline = without_government(&game);
         assert!(
-            (game.city_yields(city).culture
-                - (baseline.city_yields(city).culture + 2.0) * 1.1)
+            (game.city_yields(city).culture / band(&game)
+                - (baseline.city_yields(city).culture / band(&baseline) + 2.0))
                 .abs()
                 < 1e-9
         );
@@ -5497,10 +5528,10 @@ mod district_building_wonder_runtime_tests {
 
         assert!(game.complete_item(0, city, &dar_e_mehr));
         assert_eq!(game.cities[&city].building_eras["dar_e_mehr"], 2);
-        assert_eq!(game.city_yields(city).faith, baseline + 3.0);
+        assert!((game.city_yields(city).faith - baseline - 3.0 * 1.1).abs() < 1e-9);
 
         game.world_era = 5;
-        assert_eq!(game.city_yields(city).faith, baseline + 6.0);
+        assert!((game.city_yields(city).faith - baseline - 6.0 * 1.1).abs() < 1e-9);
         game.cities
             .get_mut(&city)
             .unwrap()
@@ -5517,12 +5548,12 @@ mod district_building_wonder_runtime_tests {
             },
         ));
         assert_eq!(game.cities[&city].building_eras["dar_e_mehr"], 5);
-        assert_eq!(game.city_yields(city).faith, baseline + 3.0);
+        assert!((game.city_yields(city).faith - baseline - 3.0 * 1.1).abs() < 1e-9);
 
         game.world_era = 7;
         let restored: Game = serde_json::from_str(&serde_json::to_string(&game).unwrap()).unwrap();
         assert_eq!(restored.cities[&city].building_eras["dar_e_mehr"], 5);
-        assert_eq!(restored.city_yields(city).faith, baseline + 5.0);
+        assert!((restored.city_yields(city).faith - baseline - 5.0 * 1.1).abs() < 1e-9);
     }
 
     #[test]
@@ -8750,10 +8781,12 @@ impl Game {
             {
                 continue;
             }
+            // The shipped placement floors: 4 tiles from any city, 7 from
+            // another camp.
             if self.cities.values().any(|c| self.wdist(*pos, c.pos) < 4) {
                 continue;
             }
-            if self.barb_camps.keys().any(|cp| self.wdist(*pos, *cp) < 4) {
+            if self.barb_camps.keys().any(|cp| self.wdist(*pos, *cp) < 7) {
                 continue;
             }
             cands.push(*pos);
@@ -9357,7 +9390,9 @@ impl Game {
         let target = self.unit_upgrade_target(pid, kind)?;
         let from = self.rules.units.get(kind)?.cost;
         let spec = self.rules.units.get(&target)?;
-        let gold = (10.0 + 2.0 * (spec.cost - from).max(0.0)).max(15.0);
+        let gold = self
+            .game_speed
+            .scale((10.0 + 2.0 * (spec.cost - from).max(0.0)).max(15.0));
         let (gold, resources) = self.upgrade_costs(pid, gold, spec.resource_cost);
         Some((target, gold, resources))
     }
@@ -9367,7 +9402,12 @@ impl Game {
     /// material.
     pub fn unit_gold_upgrade_offer(&self, pid: usize, uid: u32) -> Option<(String, f64, f64)> {
         let unit = self.units.get(&uid)?;
-        if unit.owner != pid || unit.acted || unit.moves_left <= 0.0 {
+        if unit.owner != pid
+            || unit.acted
+            || unit.moves_left <= 0.0
+            || self.is_embarked(unit)
+            || self.noncombat_action_blocked_by_zoc(uid)
+        {
             return None;
         }
         let territory = self
@@ -9378,6 +9418,7 @@ impl Game {
             .and_then(|city| self.cities.get(&city))
             .map(|city| city.owner)?;
         let friendly = territory == pid
+            || self.suzerain_of(territory) == Some(pid)
             || self.players[pid]
                 .alliances
                 .get(&territory)
@@ -9385,7 +9426,19 @@ impl Game {
         if !friendly {
             return None;
         }
-        let (target, gold, resources) = self.unit_upgrade_price(pid, &unit.kind)?;
+        let (target, base_gold, base_resources) = self.unit_upgrade_price(pid, &unit.kind)?;
+        let gold = base_gold
+            * match unit.formation {
+                0 => 1.0,
+                1 => 1.5,
+                _ => 2.0,
+            };
+        let resources = base_resources
+            * match unit.formation {
+                0 => 1.0,
+                1 => 2.0,
+                _ => 3.0,
+            };
         if self.players[pid].gold + f64::EPSILON < gold {
             return None;
         }
@@ -9450,6 +9503,21 @@ impl Game {
         unit.attacks_left = 0;
         unit.fortified = false;
         unit.fortify_turns = 0;
+        let target_spec = &self.rules.units[target.as_str()];
+        if target_spec.class == "military" {
+            let best = self.players[pid]
+                .counters
+                .entry("strongest_unit_built".to_string())
+                .or_insert(0);
+            *best = (*best).max(target_spec.strength.round() as i64);
+            if target_spec.ranged_strength > 0.0 {
+                let best_ranged = self.players[pid]
+                    .counters
+                    .entry("strongest_ranged_built".to_string())
+                    .or_insert(0);
+                *best_ranged = (*best_ranged).max(target_spec.ranged_strength.round() as i64);
+            }
+        }
         self.note(
             pid,
             "War",
@@ -13997,7 +14065,7 @@ impl Game {
         if self.is_embarked(u) {
             // Embarked strength climbs the shipped era ladder: 10 in the
             // Ancient era up to 55 from the Atomic era on.
-            let era = crate::rules::ERA_NAMES[self.world_era.min(8)];
+            let era = crate::rules::ERA_NAMES[self.player_era(u.owner).min(8)];
             return self.rules.eras[era].embarked_strength
                 + self.unit_formation_bonus(u)
                 + if defending {
@@ -15327,10 +15395,12 @@ impl Game {
         Self::amenity_yield_mult_for(self.city_amenity_surplus(city))
     }
 
+    /// The shipped Happinesses non-food yield bands as the expansions leave
+    /// them: Ecstatic +20% down to Revolt -40%.
     fn amenity_yield_mult_for(surplus: i64) -> f64 {
-        if surplus >= 5 {
+        if surplus >= 3 {
             1.20
-        } else if surplus >= 3 {
+        } else if surplus >= 1 {
             1.10
         } else if surplus >= 0 {
             1.0
@@ -15345,10 +15415,12 @@ impl Game {
         }
     }
 
+    /// The shipped Happinesses growth bands: Ecstatic +20%, Happy +10%,
+    /// Displeased -15%, Unhappy -30%, no growth from Unrest down.
     fn amenity_growth_mult(surplus: i64) -> f64 {
-        if surplus >= 5 {
+        if surplus >= 3 {
             1.20
-        } else if surplus >= 3 {
+        } else if surplus >= 1 {
             1.10
         } else if surplus >= 0 {
             1.0
@@ -16252,7 +16324,17 @@ impl Game {
             let modern_bridge = self.map.tiles[&from].wonder.as_deref()
                 == Some("golden_gate_bridge")
                 || tile.wonder.as_deref() == Some("golden_gate_bridge");
-            cost = cost.min(if modern_bridge { 0.5 } else { 1.0 });
+            // The shipped route ladder: roads cost 1 MP until Industrial-era
+            // routes (0.75), then Modern (0.5). CIVVIS roads are unleveled,
+            // so the world era stands in for the route the era's traders lay.
+            let route = if self.world_era >= 5 {
+                0.5
+            } else if self.world_era >= 4 {
+                0.75
+            } else {
+                1.0
+            };
+            cost = cost.min(if modern_bridge { 0.5 } else { route });
         }
         if self.rules.units[unit.kind.as_str()].class == "religious"
             && unit.religion.as_deref().is_some_and(|religion| {
@@ -16264,10 +16346,10 @@ impl Game {
         if self.crosses_river(from, to)
             && self.map.tiles[&from].road
             && tile.road
-            && self.players[unit.owner]
-                .techs
-                .contains("military_engineering")
+            && self.world_era >= 1
         {
+            // Medieval roads bridge rivers, and traders lay them from the
+            // Classical era on (the shipped route's PrereqEra).
             cost -= 2.0;
         }
         if self.promotion_effect(unit, "woods_move_cost") > 0.0
@@ -21431,7 +21513,6 @@ impl Game {
         let spec = self.rules.units.get(&target)?;
         (spec.buildable && self.unlocked(pid, &spec.tech, &spec.civic)).then_some(target)
     }
-
     /// Unit production rules without the recursive obsolescence check. The
     /// resource credit is used only while automatically migrating an existing
     /// queue whose already-committed material can be refunded atomically.
@@ -21455,10 +21536,8 @@ impl Game {
         if !spec.buildable || !self.unlocked(pid, &spec.tech, &spec.civic) {
             return false;
         }
-        if check_obsolete {
-            if self.unit_is_obsolete(pid, unit) {
-                return false;
-            }
+        if check_obsolete && self.unit_is_obsolete(pid, unit) {
+            return false;
         }
         if unit == "spy" {
             let existing = self.spies.values().filter(|spy| spy.owner == pid).count();
@@ -22122,64 +22201,6 @@ impl Game {
         actions
     }
 
-    fn unit_upgrade_territory_is_friendly(&self, pid: usize, position: Pos) -> bool {
-        self.map
-            .get(position)
-            .and_then(|tile| tile.owner_city)
-            .and_then(|city| self.cities.get(&city))
-            .is_some_and(|city| city.owner == pid || self.suzerain_of(city.owner) == Some(pid))
-    }
-
-    /// Return the exact target, Gold, and optional strategic-resource payment
-    /// for a legal one-step upgrade. Units and formations use the stock
-    /// 100%/150%/200% Gold and 1x/2x/3x resource scaling.
-    fn unit_upgrade_offer(
-        &self,
-        pid: usize,
-        uid: u32,
-    ) -> Option<(String, f64, Option<(String, f64)>)> {
-        let unit = self.units.get(&uid)?;
-        if unit.owner != pid
-            || unit.moves_left <= 0.0
-            || self.is_embarked(unit)
-            || self.noncombat_action_blocked_by_zoc(uid)
-            || !self.unit_upgrade_territory_is_friendly(pid, unit.pos)
-        {
-            return None;
-        }
-        let target = self.unit_upgrade_target(pid, &unit.kind)?;
-        let source_spec = &self.rules.units[unit.kind.as_str()];
-        let target_spec = &self.rules.units[target.as_str()];
-        let gold_multiplier = match unit.formation {
-            0 => 1.0,
-            1 => 1.5,
-            _ => 2.0,
-        };
-        let resource_multiplier = match unit.formation {
-            0 => 1.0,
-            1 => 2.0,
-            _ => 3.0,
-        };
-        let base_gold = self
-            .game_speed
-            .scale((10.0 + 2.0 * (target_spec.cost - source_spec.cost).max(0.0)) * gold_multiplier);
-        let base_resource = target_spec.resource_cost * resource_multiplier;
-        let (gold, resources) = self.upgrade_costs(pid, base_gold, base_resource);
-        if self.players[pid].gold + f64::EPSILON < gold {
-            return None;
-        }
-        let resource = target_spec
-            .requires_resource
-            .as_ref()
-            .map(|name| (name.clone(), resources));
-        if resource.as_ref().is_some_and(|(name, amount)| {
-            *amount > 0.0 && self.strategic_stockpile(pid, name) + f64::EPSILON < *amount
-        }) {
-            return None;
-        }
-        Some((target, gold, resource))
-    }
-
     pub(crate) fn legal_unit_upgrade_actions(&self, pid: usize) -> Vec<Action> {
         if self.winner.is_some()
             || self.current != pid
@@ -22190,8 +22211,8 @@ impl Game {
         self.player_unit_ids(pid)
             .into_iter()
             .filter_map(|unit| {
-                self.unit_upgrade_offer(pid, unit)
-                    .map(|(to, _, _)| Action::Upgrade { unit, to })
+                self.unit_gold_upgrade_offer(pid, unit)
+                    .map(|_| Action::UpgradeUnit { unit })
             })
             .collect()
     }
@@ -22745,9 +22766,6 @@ impl Game {
             let u = self.units[&uid].clone();
             if self.unit_can_fortify(&u) && u.moves_left > 0.0 && !u.fortified {
                 acts.push(Action::Fortify { unit: uid });
-            }
-            if self.unit_gold_upgrade_offer(pid, uid).is_some() {
-                acts.push(Action::UpgradeUnit { unit: uid });
             }
         }
         for cid in self.player_city_ids(pid) {
@@ -23675,7 +23693,10 @@ impl Game {
             bonus += 3.0;
         }
         match t.feature.as_deref() {
-            Some("forest" | "jungle" | "reef") => bonus += 3.0,
+            Some(
+                "forest" | "jungle" | "reef" | "burning_forest" | "burning_jungle"
+                | "burnt_forest" | "burnt_jungle",
+            ) => bonus += 3.0,
             Some(
                 "marsh" | "floodplains" | "grassland_floodplains" | "plains_floodplains"
                 | "pantanal",
@@ -26885,48 +26906,13 @@ impl Game {
     }
 
     fn do_upgrade(&mut self, pid: usize, uid: u32, requested: &str) -> Result<(), String> {
-        let (target, gold, resource) = self
-            .unit_upgrade_offer(pid, uid)
+        let (target, _, _) = self
+            .unit_gold_upgrade_offer(pid, uid)
             .ok_or_else(|| "unit cannot upgrade here or the cost is unaffordable".to_string())?;
         if target != requested {
             return Err(format!("unit upgrades to {target}, not {requested}"));
         }
-        self.players[pid].gold -= gold;
-        if let Some((name, amount)) = resource {
-            let stock = self.strategic_stockpile(pid, &name);
-            self.players[pid]
-                .strategic_resources
-                .insert(name, stock - amount);
-        }
-        let target_spec = &self.rules.units[target.as_str()];
-        let charges = target_spec.charges;
-        if target_spec.class == "military" {
-            let best = self.players[pid]
-                .counters
-                .entry("strongest_unit_built".to_string())
-                .or_insert(0);
-            *best = (*best).max(target_spec.strength.round() as i64);
-            if target_spec.ranged_strength > 0.0 {
-                let best_ranged = self.players[pid]
-                    .counters
-                    .entry("strongest_ranged_built".to_string())
-                    .or_insert(0);
-                *best_ranged = (*best_ranged).max(target_spec.ranged_strength.round() as i64);
-            }
-        }
-        let unit = self.units.get_mut(&uid).unwrap();
-        unit.kind = target;
-        unit.charges = charges;
-        unit.moves_left = 0.0;
-        unit.attacks_left = 0;
-        unit.moved = false;
-        unit.acted = true;
-        unit.fortified = false;
-        unit.fortify_turns = 0;
-        unit.zoc_stopped = false;
-        unit.air_patrol = false;
-        unit.air_patrol_pos = None;
-        Ok(())
+        self.do_upgrade_unit(pid, uid)
     }
 
     /// Return the resulting formation size if these two units may combine.
@@ -27793,7 +27779,8 @@ impl Game {
             .copied()
             .unwrap_or(0)
             .max(0) as f64;
-        (14.0 * nuclear + 16.0 * thermonuclear)
+        (self.rules.wmds["nuclear_device"].maintenance * nuclear
+            + self.rules.wmds["thermonuclear_device"].maintenance * thermonuclear)
             * (1.0 - self.policy_effect(pid, "nuclear_maintenance_discount_pct") / 100.0)
     }
 
@@ -31690,6 +31677,9 @@ impl Game {
         if let Some((node, first)) = completed_tech {
             self.note(pid, "Science", format!("Researched {}", pretty(&node)), None);
             self.apply_tree_completion(pid, true, &node, first);
+            for city in self.player_city_ids(pid) {
+                self.modernize_unit_queue(pid, city);
+            }
             self.drop_obsolete_production(pid);
         }
         let civic = self.players[pid].civic.clone();
@@ -32069,6 +32059,25 @@ impl Game {
                     || trig.starts_with("trained:")
                 {
                     counter(trig) >= n
+                } else if trig == "themed_buildings" {
+                    // CIVVIS great works have no per-work era/creator, so a
+                    // museum counts as themed when its three slots are full.
+                    let housed = self.housed_great_works_with_extra(pid, None);
+                    cities
+                        .iter()
+                        .filter(|c| {
+                            let works = housed.get(&c.id);
+                            (c.buildings.iter().any(|b| b == "art_museum")
+                                && works.is_some_and(|w| {
+                                    w.get("art").copied().unwrap_or(0) >= 3
+                                }))
+                                || (c.buildings.iter().any(|b| b == "archaeological_museum")
+                                    && works.is_some_and(|w| {
+                                        w.get("artifact").copied().unwrap_or(0) >= 3
+                                    }))
+                        })
+                        .count() as i64
+                        >= n
                 } else if let Some(d) = trig.strip_prefix("district_appeal:") {
                     cities.iter().any(|c| {
                         c.districts.iter().any(|(have, pos)| {
@@ -34326,10 +34335,7 @@ mod combat_scenarios {
         game.players[0].techs.insert("archery".to_string());
         game.players[0].gold = 59.0;
         let slinger = game.spawn_test_unit("slinger", 0, home);
-        let action = Action::Upgrade {
-            unit: slinger,
-            to: "archer".to_string(),
-        };
+        let action = Action::UpgradeUnit { unit: slinger };
 
         assert!(!game.legal_unit_upgrade_actions(0).contains(&action));
         game.players[0].gold = 60.0;
@@ -34337,9 +34343,15 @@ mod combat_scenarios {
         assert!(!game.legal_unit_upgrade_actions(0).contains(&action));
         game.map.tiles.get_mut(&home).unwrap().owner_city = Some(city);
         assert!(game.legal_unit_upgrade_actions(0).contains(&action));
-        assert_eq!(game.unit_upgrade_offer(0, slinger).unwrap().1, 60.0);
+        assert_eq!(
+            game.unit_gold_upgrade_offer(0, slinger).unwrap().1,
+            60.0
+        );
         game.game_speed = GameSpeed::Online;
-        assert_eq!(game.unit_upgrade_offer(0, slinger).unwrap().1, 30.0);
+        assert_eq!(
+            game.unit_gold_upgrade_offer(0, slinger).unwrap().1,
+            30.0
+        );
         game.game_speed = GameSpeed::Standard;
 
         {
@@ -34377,10 +34389,7 @@ mod combat_scenarios {
         let warrior = game.spawn_test_unit("warrior", 0, home);
         game.units.get_mut(&warrior).unwrap().formation = 2;
 
-        let action = Action::Upgrade {
-            unit: warrior,
-            to: "swordsman".to_string(),
-        };
+        let action = Action::UpgradeUnit { unit: warrior };
         assert!(game.legal_unit_upgrade_actions(0).contains(&action));
         game.apply(0, &action).unwrap();
         assert_eq!(game.units[&warrior].kind, "swordsman");
@@ -34398,10 +34407,7 @@ mod combat_scenarios {
         game.players[0].techs.insert("archery".to_string());
         game.players[0].gold = 80.0;
         let slinger = game.spawn_test_unit("slinger", 0, home);
-        let action = Action::Upgrade {
-            unit: slinger,
-            to: "pitati_archer".to_string(),
-        };
+        let action = Action::UpgradeUnit { unit: slinger };
 
         assert_eq!(
             game.unit_upgrade_target(0, "slinger").as_deref(),
@@ -34433,7 +34439,7 @@ mod combat_scenarios {
             .insert(Game::item_progress_key(&archer), 7.0);
         game.players[0]
             .techs
-            .extend(["archery", "machinery"].into_iter().map(str::to_string));
+            .extend(["archery".to_string(), "machinery".to_string()]);
 
         assert!(!game.can_produce(0, city, &slinger));
         assert!(game.can_produce(0, city, &archer));
@@ -37071,6 +37077,7 @@ mod combat_scenarios {
 
         let warrior = g.spawn_unit("warrior", 0, coast);
         assert!(g.is_embarked(&g.units[&warrior]));
+        // Embarked strength follows the shipped per-era ladder.
         assert_eq!(g.unit_strength(&g.units[&warrior], true), 10.0);
         g.world_era = 1;
         assert_eq!(g.unit_strength(&g.units[&warrior], true), 15.0);
@@ -39039,11 +39046,13 @@ mod victory_conditions {
     fn gathering_storm_happiness_bands_apply_exact_growth_and_yield_modifiers() {
         let cases = [
             (5, 1.20, 1.20),
-            (3, 1.10, 1.10),
+            (3, 1.20, 1.20),
+            (1, 1.10, 1.10),
             (0, 1.00, 1.00),
             (-2, 0.90, 0.85),
             (-4, 0.80, 0.70),
             (-6, 0.70, 0.00),
+            (-7, 0.60, 0.00),
             (-7, 0.60, 0.00),
         ];
         for (surplus, yields, growth) in cases {
@@ -39435,7 +39444,7 @@ mod great_work_tests {
             .counters
             .insert("great_work:artifact".to_string(), 0);
         let culture_without_artifacts = game.city_yields(city).culture;
-        assert!((culture_with_artifacts - culture_without_artifacts - 9.0).abs() < 1e-9);
+        assert!((culture_with_artifacts - culture_without_artifacts - 9.0 * 1.1).abs() < 1e-9);
         game.players[0]
             .counters
             .insert("great_work:artifact".to_string(), 3);
@@ -40893,11 +40902,12 @@ mod district_mechanics {
         });
         let base_origin = routed.city_yields(first);
         let base_destination = routed.city_yields(second);
+        // The Happy amenity band scales these non-food route yields by 10%.
         for (kind, outbound, inbound) in [
-            ("research", 2.0, 1.0),
-            ("cultural", 2.0, 1.0),
-            ("economic", 4.0, 2.0),
-            ("religious", 2.0, 1.0),
+            ("research", 2.2, 1.1),
+            ("cultural", 2.2, 1.1),
+            ("economic", 4.4, 2.2),
+            ("religious", 2.2, 1.1),
         ] {
             let mut allied = routed.clone();
             install_alliance(&mut allied, 0, 1, kind, 1, 0.0);
@@ -41383,9 +41393,12 @@ mod district_mechanics {
         without_reward.players[2]
             .counters
             .remove("emergency_gold_per_envoy");
-        assert_eq!(
-            game.city_yields(member_capital).gold,
-            without_reward.city_yields(member_capital).gold + 3.0
+        assert!(
+            (game.city_yields(member_capital).gold
+                - without_reward.city_yields(member_capital).gold
+                - 3.0 * 1.1)
+                .abs()
+                < 1e-9
         );
     }
 

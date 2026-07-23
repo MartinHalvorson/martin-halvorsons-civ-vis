@@ -18,7 +18,8 @@
     "feature": [
       "floodplains",
       "grassland_floodplains",
-      "plains_floodplains"
+      "plains_floodplains",
+      "volcanic_soil"
     ]
   },
   "fishery": {
@@ -81,6 +82,9 @@
       "plains",
       "snow",
       "tundra"
+    ],
+    "feature": [
+      "volcanic_soil"
     ]
   },
   "quarry": {
@@ -324,6 +328,9 @@
       "plains",
       "snow",
       "tundra"
+    ],
+    "feature": [
+      "volcanic_soil"
     ]
   },
   "airstrip": {
@@ -339,6 +346,9 @@
       "plains",
       "snow",
       "tundra"
+    ],
+    "feature": [
+      "volcanic_soil"
     ]
   },
   "missile_silo": {
@@ -351,6 +361,9 @@
       "plains",
       "snow",
       "tundra"
+    ],
+    "feature": [
+      "volcanic_soil"
     ]
   },
   "mountain_tunnel": {
@@ -435,6 +448,9 @@
       "plains",
       "snow",
       "tundra"
+    ],
+    "feature": [
+      "volcanic_soil"
     ]
   },
   "nubian_pyramid": {
@@ -524,7 +540,8 @@
       "grassland_floodplains",
       "jungle",
       "marsh",
-      "plains_floodplains"
+      "plains_floodplains",
+      "volcanic_soil"
     ],
     "terrain": [
       "desert",
