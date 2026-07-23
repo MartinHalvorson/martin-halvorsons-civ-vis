@@ -300,7 +300,7 @@ fn evaluate_all(pop: &[Weights], opponents: &[Weights], cfg: &EvoCfg, gen: u32) 
     })
 }
 
-fn mutate(w: &Weights, rng: &mut Rng, bounds: &[(f64, f64)]) -> Weights {
+pub(crate) fn mutate(w: &Weights, rng: &mut Rng, bounds: &[(f64, f64)]) -> Weights {
     let mut v = w.to_vec();
     for (i, g) in v.iter_mut().enumerate() {
         let (lo, hi) = bounds[i];
@@ -314,7 +314,7 @@ fn mutate(w: &Weights, rng: &mut Rng, bounds: &[(f64, f64)]) -> Weights {
     Weights::from_vec(&v)
 }
 
-fn crossover(a: &Weights, b: &Weights, rng: &mut Rng) -> Weights {
+pub(crate) fn crossover(a: &Weights, b: &Weights, rng: &mut Rng) -> Weights {
     let (va, vb) = (a.to_vec(), b.to_vec());
     let v: Vec<f64> = va
         .iter()

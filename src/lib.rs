@@ -12,6 +12,7 @@ pub mod evolve;
 pub mod fractal;
 pub mod game;
 pub mod hex;
+pub mod league;
 pub mod mapgen;
 pub mod neural;
 pub mod obs;

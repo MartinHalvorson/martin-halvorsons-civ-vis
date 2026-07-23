@@ -4,6 +4,7 @@ target/
 .pytest_cache/
 civvis-play*.log
 evolved/
+league/
 *.log
 target-tools/
 bin-run/

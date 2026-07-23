@@ -449,6 +449,35 @@ fn main() {
                 }
             }
         }
+        "league" => {
+            let players = arg(&args, "--players", 4);
+            let cfg = civvis::league::LeagueCfg {
+                rounds: arg(&args, "--rounds", 10) as u32,
+                games_per_round: arg(&args, "--games", 16) as u32,
+                players_per_game: players as usize,
+                width: auto_dimension(&args, "--width", players, true),
+                height: auto_dimension(&args, "--height", players, false),
+                max_turns: arg(&args, "--turns", 250) as u32,
+                num_city_states: auto_cs(&args, players),
+                seed: arg(&args, "--seed", 1) as u64,
+                jobs: jobs_arg(&args),
+                dir: arg_text(&args, "--dir", "league"),
+                evolve_every: arg(&args, "--evolve-every", 4) as u32,
+                max_pop: arg(&args, "--pop", 12) as usize,
+                verbose: !args.iter().any(|a| a == "--quiet"),
+            };
+            if args.iter().any(|a| a == "--standings") {
+                match civvis::league::load_league(&cfg.dir) {
+                    Some(league) => print!("{}", civvis::league::standings(&league)),
+                    None => {
+                        eprintln!("no league at {}/league.json", cfg.dir);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                civvis::league::run_league(&cfg);
+            }
+        }
         "evolve" => {
             let players = arg(&args, "--players", 4);
             civvis::evolve::evolve(&civvis::evolve::EvoCfg {
@@ -557,7 +586,7 @@ fn main() {
         }
         _ => {
             println!(
-                "usage: civvis <simulate|soak|benchmark|tournament|play|evolve|validate|pedia> \
+                "usage: civvis <simulate|soak|benchmark|tournament|league|play|evolve|validate|pedia> \
                       [--players N] [--seed N] [--turns N] [--width N] [--height N] \
                       [--city-states N] [--games N] [--ais a,b] [--port N] [--no-open] \
                       [--map pangaea|continents|small_continents|inland_sea] \
