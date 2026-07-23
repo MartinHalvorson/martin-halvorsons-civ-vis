@@ -3904,22 +3904,49 @@ impl BasicAi {
         radius: i32,
     ) -> Option<(Pos, f64)> {
         let from = g.units[&uid].pos;
-        let mut candidates: Vec<(f64, Pos)> = g
+        let mut candidates: Vec<(Pos, f64)> = g
             .wdisk(from, radius)
             .into_iter()
             .filter(|pos| self.valid_settle_site(g, pid, *pos))
             .map(|pos| {
                 let score =
                     self.settle_value(g, pos) - self.w.settle_dist * g.wdist(from, pos) as f64;
-                (score, pos)
+                (pos, score)
             })
             .collect();
-        candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap().then(a.1.cmp(&b.1)));
-        candidates
-            .into_iter()
-            .take(40)
-            .find(|(_, pos)| *pos == from || g.route_step(uid, *pos, 0).is_some())
-            .map(|(score, pos)| (pos, score))
+        candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap().then(a.0.cmp(&b.0)));
+        Self::first_reachable_settle_site(g, uid, &candidates)
+    }
+
+    /// Keep reachability checks bounded without assuming the forty most
+    /// valuable geometric sites contain a usable one. Before embarkation an
+    /// attractive offshore landmass can fill that entire prefix while an
+    /// ordinary site on the settler's own landmass ranks just below it. Test
+    /// candidates in batches: the multi-goal flood cheaply rejects a wholly
+    /// disconnected batch, and individual routes preserve value ordering in
+    /// the first batch that contains any reachable site.
+    fn first_reachable_settle_site(
+        g: &Game,
+        uid: u32,
+        candidates: &[(Pos, f64)],
+    ) -> Option<(Pos, f64)> {
+        let from = g.units.get(&uid)?.pos;
+        for batch in candidates.chunks(40) {
+            let contains_current = batch.iter().any(|(pos, _)| *pos == from);
+            if !contains_current {
+                let goals: HashSet<Pos> = batch.iter().map(|(pos, _)| *pos).collect();
+                if g.route_step_to_any(uid, &goals).is_none() {
+                    continue;
+                }
+            }
+            if let Some(candidate) = batch
+                .iter()
+                .find(|(pos, _)| *pos == from || g.route_step(uid, *pos, 0).is_some())
+            {
+                return Some(*candidate);
+            }
+        }
+        None
     }
 
     fn settler_step(&mut self, g: &mut Game, pid: usize, uid: u32) -> bool {
@@ -6101,6 +6128,111 @@ mod tests {
         assert!(ai.settler_step(&mut game, 0, settler));
         assert_eq!(ai.settler_targets.get(&settler), Some(&target));
         assert_ne!(game.units[&settler].pos, source);
+    }
+
+    #[test]
+    fn settler_search_looks_past_an_unreachable_high_value_prefix() {
+        let mut game = Game::new_full(1, 30, 18, 91_005, 120, 0, false);
+        let founding_settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        let source = game.units[&founding_settler].pos;
+        for tile in game.map.tiles.values_mut() {
+            tile.terrain = "coast".to_string();
+            tile.feature = None;
+            tile.hills = false;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.district = None;
+            tile.wonder = None;
+            tile.owner_city = None;
+            tile.cliff_edges = [false; 6];
+        }
+        game.map.tiles.get_mut(&source).unwrap().terrain = "desert".to_string();
+        game.apply(
+            0,
+            &Action::FoundCity {
+                unit: founding_settler,
+            },
+        )
+        .unwrap();
+
+        let target = game
+            .wdisk(source, 4)
+            .into_iter()
+            .filter(|position| game.wdist(source, *position) == 4)
+            .min()
+            .expect("the source has a site four tiles away");
+        let mut corridor = vec![source];
+        let mut cursor = source;
+        while cursor != target {
+            cursor = game
+                .nbrs(cursor)
+                .into_iter()
+                .filter(|next| game.wdist(*next, target) < game.wdist(cursor, target))
+                .min()
+                .expect("a direct corridor reaches the target");
+            corridor.push(cursor);
+        }
+        for position in &corridor {
+            game.map.tiles.get_mut(position).unwrap().terrain = "desert".to_string();
+        }
+
+        let island_center = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .max_by_key(|position| (game.wdist(source, *position), *position))
+            .expect("the map has a distant island center");
+        let island: Vec<Pos> = game
+            .wdisk(island_center, 5)
+            .into_iter()
+            .filter(|position| {
+                game.wdist(source, *position) >= 9
+                    && corridor
+                        .iter()
+                        .all(|land| game.wdist(*land, *position) >= 2)
+            })
+            .collect();
+        assert!(island.len() > 40);
+        for position in island {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "grassland".to_string();
+            tile.feature = Some("forest".to_string());
+            tile.hills = true;
+        }
+
+        let settler = game.spawn_test_unit("settler", 0, source);
+        let ai = BasicAi::new();
+        let mut ranked: Vec<(Pos, f64)> = game
+            .wdisk(source, game.map.width + game.map.height)
+            .into_iter()
+            .filter(|position| ai.valid_settle_site(&game, 0, *position))
+            .map(|position| {
+                let score = ai.settle_value(&game, position)
+                    - ai.w.settle_dist * game.wdist(source, position) as f64;
+                (position, score)
+            })
+            .collect();
+        ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap().then(a.0.cmp(&b.0)));
+        assert!(ranked
+            .iter()
+            .take(40)
+            .all(|(position, _)| game.route_step(settler, *position, 0).is_none()));
+
+        assert_eq!(
+            ai.best_reachable_settle_site(
+                &game,
+                0,
+                settler,
+                game.map.width + game.map.height,
+            )
+            .map(|(position, _)| position),
+            Some(target),
+        );
     }
 
     #[test]

@@ -6601,10 +6601,8 @@ impl AdvancedAi {
         radius: i32,
     ) -> Option<(Pos, f64)> {
         let from = g.units[&uid].pos;
-        self.settle_sites(g, pid, from, radius)
-            .into_iter()
-            .take(40)
-            .find(|(pos, _)| *pos == from || g.route_step(uid, *pos, 0).is_some())
+        let candidates = self.settle_sites(g, pid, from, radius);
+        BasicAi::first_reachable_settle_site(g, uid, &candidates)
     }
 
     fn advanced_settler_step(&mut self, g: &mut Game, pid: usize, uid: u32) -> bool {
