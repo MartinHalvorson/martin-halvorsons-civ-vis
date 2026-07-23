@@ -295,7 +295,14 @@ def load_database(install: Path) -> Database:
 
 # CIVVIS spells a handful of identifiers without the game's article. These are
 # naming choices, not rules divergences, so the audit resolves them.
-ALIASES = {"the_wheel": "wheel"}
+ALIASES = {
+    "the_wheel": "wheel",
+    # Wonders CIVVIS names in the order the Civilopedia does. Without these
+    # three the audit silently compares nothing for them.
+    "halicarnassus_mausoleum": "mausoleum_at_halicarnassus",
+    "statue_liberty": "statue_of_liberty",
+    "university_sankore": "university_of_sankore",
+}
 
 
 def slug(game_type: str, prefix: str) -> str:

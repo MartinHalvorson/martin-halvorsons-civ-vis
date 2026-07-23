@@ -204,6 +204,10 @@ pub struct UnitSpec {
     /// class, and the Giant Death Robot is its own class outside that list.
     #[serde(default = "default_true")]
     pub faith_purchasable: bool,
+    /// Extra Movement when the unit begins its turn on clear terrain -- flat,
+    /// with no Woods, Rainforest or Hills. The Chariot line carries it.
+    #[serde(default)]
+    pub clear_terrain_start_movement: f64,
     #[serde(default)]
     pub strength: f64,
     #[serde(default)]

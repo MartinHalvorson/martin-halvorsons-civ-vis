@@ -536,6 +536,7 @@
   },
   "heavy_chariot": {
     "class": "military", "cost": 65, "maintenance": 1, "moves": 2, "strength": 28,
+    "clear_terrain_start_movement": 1,
     "tech": "wheel", "cavalry": true, "promotion_class": "heavy_cavalry", "zone_of_control": true,
     "upgrade_to": "knight",
     "obsolete_tech": "combustion"

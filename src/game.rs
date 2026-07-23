@@ -2145,6 +2145,29 @@ mod governor_runtime_tests {
     }
 
     #[test]
+    fn the_chariot_line_rolls_faster_on_clear_ground() {
+        let mut game = Game::new_full(1, 24, 16, 91_995, 200, 0, false);
+        let city = found_capital(&mut game, 0);
+        let site = game.nbrs(game.cities[&city].pos)[0];
+        {
+            let tile = game.map.tiles.get_mut(&site).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.hills = false;
+        }
+        let chariot = game.spawn_unit("heavy_chariot", 0, site);
+        let base = game.rules.units["heavy_chariot"].moves;
+        assert_eq!(game.unit_max_moves(chariot), base + 1.0);
+
+        // Woods, Rainforest and Hills all stop it.
+        game.map.tiles.get_mut(&site).unwrap().feature = Some("forest".to_string());
+        assert_eq!(game.unit_max_moves(chariot), base);
+        game.map.tiles.get_mut(&site).unwrap().feature = None;
+        game.map.tiles.get_mut(&site).unwrap().hills = true;
+        assert_eq!(game.unit_max_moves(chariot), base);
+    }
+
+    #[test]
     fn rationalism_pays_in_halves_not_a_flat_double() {
         let mut game = Game::new_full(1, 24, 16, 91_989, 200, 0, false);
         let city = found_capital(&mut game, 0);
@@ -17954,6 +17977,16 @@ impl Game {
         }
         if u.kind == "giant_death_robot" {
             moves += self.tree_effect(u.owner, "gdr_movement");
+        }
+        if spec.clear_terrain_start_movement > 0.0
+            && self.map.get(u.pos).is_some_and(|tile| {
+                !tile.hills
+                    && !matches!(tile.feature.as_deref(), Some("forest" | "jungle"))
+                    && self.rules.is_passable(tile)
+                    && !self.rules.is_water(tile)
+            })
+        {
+            moves += spec.clear_terrain_start_movement;
         }
         if self.dedication_active(u.owner, "monumentality")
             && matches!(u.kind.as_str(), "builder" | "settler")

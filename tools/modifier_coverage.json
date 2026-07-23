@@ -190,6 +190,11 @@
       "status": "implemented",
       "verified": true,
       "note": "Rationalism, Free Market, Grand Opera and Simultaneum each ship twice. The base rows double a named building's yield outright; the Gathering Storm rows replace that with two conditional halves, +50% where the city has 15 Population and +50% where the district already earns 4 of that yield from adjacency, which is what the Gathering Storm description states. CIVVIS carried the flat double -- strictly stronger than the shipped card in every city that meets neither condition, which early on is all of them."
+    },
+    "ADJUST_UNIT_CLEAR_TERRAIN_START_MOVEMENT": {
+      "status": "implemented",
+      "verified": true,
+      "note": "The Heavy Chariot gains 1 Movement when it begins its turn on clear terrain -- flat, no Woods, Rainforest or Hills. CIVVIS had the unit at a flat 2 Movement with no such clause. The Light Chariot carries the same rule at 2, on a unit CIVVIS does not model."
     }
   }
 }
