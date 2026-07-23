@@ -8875,7 +8875,12 @@ impl Ai for AdvancedAi {
         }
         self.faith_building_spending(g, pid, plan.strategy);
         self.military_faith_spending(g, pid, &plan);
-        if self.victory_target.is_some() {
+        // Live spectator majors choose an adaptive plan instead of carrying
+        // an explicit `victory_target`. Give both modes the same strategic
+        // purchase pass; otherwise the adaptive agents are limited to the
+        // baseline building/unit buyer and can carry thousands of Gold past
+        // an immediately affordable plan-critical district.
+        if self.victory_planning {
             self.advanced_gold_spending(g, pid, &plan);
         }
         self.strategic_policies(g, pid, plan.strategy);
@@ -8952,6 +8957,7 @@ impl Ai for AdvancedAi {
 mod tests {
     use super::*;
     use crate::ai::run_game;
+    use crate::game::GovernorState;
 
     fn found_test_city(game: &mut Game, pid: usize) -> u32 {
         let position = game
@@ -12778,6 +12784,54 @@ mod tests {
         assert!(game.cities[&city]
             .buildings
             .contains(&"library".to_string()));
+        assert!(game.players[0].gold >= 300.0);
+    }
+
+    #[test]
+    fn adaptive_turn_uses_its_live_plan_for_gold_purchases() {
+        let mut game = Game::new_full(1, 20, 14, 7_107, 160, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = game.player_city_ids(0)[0];
+        game.turn = 10;
+        game.players[0].techs.insert("writing".to_string());
+        game.players[0].gold = 10_000.0;
+        game.players[0].governor_roster.insert(
+            "reyna".to_string(),
+            GovernorState {
+                city: Some(city),
+                assigned_turn: 0,
+                disabled_until: 0,
+                promotions: BTreeSet::from(["contractor".to_string()]),
+            },
+        );
+        assert!(game.legal_actions(0).iter().any(|action| matches!(
+            action,
+            Action::BuyDistrict { district, currency, .. }
+                if district == "campus" && currency == "gold"
+        )));
+
+        let mut ai = AdvancedAi::new();
+        ai.base.book_pos = 4;
+        ai.plan = Some(StrategicPlan {
+            strategy: GrandStrategy::Science,
+            target_player: None,
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 1,
+            assessed_turn: game.turn,
+        });
+
+        ai.take_turn(&mut game, 0);
+
+        assert!(
+            game.cities[&city].districts.contains_key("campus"),
+            "an adaptive Science plan should convert surplus Gold into its Campus immediately"
+        );
         assert!(game.players[0].gold >= 300.0);
     }
 
