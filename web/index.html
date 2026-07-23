@@ -1238,14 +1238,14 @@ function shade(hex, f) {
 // Paint an AI-authored, photographic material sample onto the world plane.
 // Each tile takes a deterministic crop from its biome swatch, so neighboring
 // tiles share a visual language without producing an obvious repeated stamp.
-// Open water should read as one moving surface, not a field of hexagons. Each
-// water sprite is built once with a soft radial edge, so the stamps overlap
-// and cross-fade into their neighbors instead of butting at a hard seam. A
-// few variants keep the swell from looking obviously repeated.
-const WATER_STAMPS = {};
-function waterStamp(terrain, variant) {
+// A continuous biome should read as one surface, not a field of hexagons. Each
+// sprite is built once with a soft radial edge, so the stamps overlap and
+// cross-fade into their neighbors instead of butting at a hard seam. A few
+// variants keep the material from looking obviously repeated.
+const BIOME_STAMPS = {};
+function biomeStamp(terrain, variant) {
   const id = terrain + variant;
-  if (WATER_STAMPS[id]) return WATER_STAMPS[id];
+  if (BIOME_STAMPS[id]) return BIOME_STAMPS[id];
   if (!ATLAS_READY) return null;
   const [col, row] = ATLAS_CELL[terrain];
   const cw = TERRAIN_ATLAS.naturalWidth / 4;
@@ -1267,39 +1267,51 @@ function waterStamp(terrain, variant) {
   rg.addColorStop(0.62, "rgba(0,0,0,.94)");
   rg.addColorStop(1, "rgba(0,0,0,0)");
   g.fillStyle = rg; g.fillRect(0, 0, D, D);
-  WATER_STAMPS[id] = c;
+  BIOME_STAMPS[id] = c;
   return c;
 }
 
-// Sea interior gets a generous overlap so the feathered edges fully cover each
-// other and no seam survives; a tile touching land stays inside its own hex so
-// the coastline and its beach seam keep their definition.
-function drawWaterTexture(t, x, y) {
-  const st = waterStamp(t.terrain,
+// Paint a feathered sprite that overlaps its neighbors. 1.5·S is the smallest
+// overlap that still carries full alpha past every hex corner, so neighbors
+// cover each other with no seam and no wasted fill; the sprite's own alpha
+// already reaches zero inside its corners, so a blended tile needs no clip at
+// all. A tile on the edge of its biome stays fenced inside its own hex.
+function drawFeathered(t, x, y, blended, alpha) {
+  const st = biomeStamp(t.terrain,
     Math.floor(hash2(t.pos[0] * 7 + 1, t.pos[1] * 13 + 5) * 4));
   if (!st) return;
-  let open = true;
-  for (let i = 0; i < 6 && open; i++) {
-    const n = nbrTile(t.pos, DIRS[i]);
-    if (!n || (n.terrain !== "coast" && n.terrain !== "ocean")) open = false;
-  }
-  // 1.5·S is the smallest overlap that still carries full alpha past every hex
-  // corner, so neighbors cover each other with no seam and no wasted fill. The
-  // sprite's own alpha already reaches zero inside its corners, so open water
-  // needs no clip at all — only a tile touching land has to be fenced in.
-  const R = open ? S * 1.5 : S + 2.4;
+  const R = blended ? S * 1.5 : S + 2.4;
   cx.save();
-  if (!open) { hexPath(x, y, R); cx.clip(); }
-  cx.globalAlpha = 0.95;
+  if (!blended) { hexPath(x, y, R); cx.clip(); }
+  cx.globalAlpha = alpha;
   cx.translate(x, y);
   cx.transform(COSR, SINR * YS, -SINR, COSR * YS, 0, 0);
   cx.drawImage(st, -R, -R, R * 2, R * 2);
   cx.restore();
 }
 
+const isWater = t => t.terrain === "coast" || t.terrain === "ocean";
+
+// Only open sea is blended. Feathering was tried for land too — same terrain,
+// same relief, so terrain and hill boundaries would have stayed crisp — but on
+// a generated map barely five land tiles in a thousand have six matching
+// neighbors, so it bought nothing and cost a branch. Land seams are also far
+// milder than water ones were: grass and sand are visually uniform, so a
+// mismatched crop reads as texture, while the sea's directional swell made
+// every seam obvious.
+function openSea(t) {
+  if (!isWater(t)) return false;
+  for (let i = 0; i < 6; i++) {
+    const n = nbrTile(t.pos, DIRS[i]);
+    if (!n || !isWater(n)) return false;
+  }
+  return true;
+}
+
 function drawTerrainTexture(t, x, y) {
   if (!ATLAS_READY || !ATLAS_CELL[t.terrain]) return;
-  if (t.terrain === "coast" || t.terrain === "ocean") return drawWaterTexture(t, x, y);
+  const water = isWater(t);
+  if (water) return drawFeathered(t, x, y, openSea(t), 0.95);
   const [col, row] = ATLAS_CELL[t.terrain];
   const cw = TERRAIN_ATLAS.naturalWidth / 4;
   const ch = TERRAIN_ATLAS.naturalHeight / 2;
@@ -1310,7 +1322,6 @@ function drawTerrainTexture(t, x, y) {
   const hy = hash2(t.pos[0] * 29 + col * 13, t.pos[1] * 11 + row * 37);
   const sx = col * cw + 1 + hx * marginX;
   const sy = row * ch + 1 + hy * marginY;
-  const water = t.terrain === "coast" || t.terrain === "ocean";
 
   cx.save();
   hexPath(x, y, S + 0.25); cx.clip();
@@ -1931,9 +1942,17 @@ function draw() {
       continue;
     }
     if (t.hills && beau) {
-      // soft rolling rises in the terrain's own color (Civ 6 style)
+      // Soft rolling rises in the terrain's own color (Civ 6 style). Their
+      // placement comes from the tile hash: the same three mounds at the same
+      // three offsets in every hex read as a stamped pattern and put the grid
+      // straight back into a run of hill country.
       const base = TERRAIN[t.terrain] || "#888";
-      for (const [hx, hy, hw2, hh2] of [[-8, -3, 13, 8], [7, -7, 11.5, 7], [1, 4, 14.5, 8.5]]) {
+      const hh = hash2(t.pos[0] * 31 + 5, t.pos[1] * 23 + 9);
+      const jit = i => (hash2(t.pos[0] * 7 + i * 13, t.pos[1] * 11 + i * 5) - 0.5);
+      for (const [hx, hy, hw2, hh2] of [
+        [-8 + jit(1) * 7, -3 + jit(2) * 5, 12 + hh * 3, 7.5 + jit(3) * 1.6],
+        [7 + jit(4) * 6, -7 + jit(5) * 4, 11 + hh * 2.5, 6.8 + jit(6) * 1.4],
+        [1 + jit(7) * 7, 4 + jit(8) * 3, 13.5 + hh * 3, 8.2 + jit(9) * 1.5]]) {
         cx.fillStyle = shade(base, 0.72); // deep shadow base
         cx.beginPath(); cx.ellipse(x + hx, y + hy + 2.4, hw2, hh2, 0, Math.PI, 0);
         cx.fill();
@@ -1954,15 +1973,18 @@ function draw() {
       cx.arc(x + 6, y - 7, 6.5, Math.PI, 0); cx.stroke();
     }
     if (t.terrain === "desert" && !t.feature && beau) {
-      // dune ridges: light crest over shadow
+      // Dune ridges: light crest over shadow, placed and swept from the tile
+      // hash so a sand sea drifts instead of repeating one stamp per hex.
       cx.lineWidth = 1.6;
-      for (const [dx2, dy2, r2] of [[-5, 3, 9], [7, -4, 7]]) {
+      for (let d = 0; d < 2; d++) {
+        const h1 = hash2(t.pos[0] * 17 + d * 29, t.pos[1] * 19 + d * 7);
+        const h2 = hash2(t.pos[0] * 11 + d * 3, t.pos[1] * 13 + d * 23);
+        const dx2 = -9 + h1 * 18, dy2 = -6 + h2 * 12, r2 = 6.5 + h1 * 3.5;
+        const a0 = Math.PI * (1.06 + h2 * 0.22), a1 = a0 + Math.PI * (0.6 + h1 * 0.2);
         cx.strokeStyle = "#00000022";
-        cx.beginPath(); cx.arc(x + dx2, y + dy2 + 1.2, r2, Math.PI * 1.15, Math.PI * 1.85);
-        cx.stroke();
+        cx.beginPath(); cx.arc(x + dx2, y + dy2 + 1.2, r2, a0, a1); cx.stroke();
         cx.strokeStyle = "#fff3d455";
-        cx.beginPath(); cx.arc(x + dx2, y + dy2, r2, Math.PI * 1.15, Math.PI * 1.85);
-        cx.stroke();
+        cx.beginPath(); cx.arc(x + dx2, y + dy2, r2, a0, a1); cx.stroke();
       }
     }
     if (beau && drawFeatureSprite(t, x, y)) {
@@ -2193,9 +2215,30 @@ function draw() {
       x = mv.sx + (mv.tx - mv.sx) * ee;
       y = mv.sy + (mv.ty - mv.sy) * ee
         - Math.abs(Math.sin(e * Math.PI * mv.steps)) * 2.4; // little hops
-      mv.x = x; mv.y = y;
+      mv.x = x; mv.y = y; mv.e = e;
       moving = true;
       if (e >= 1) anim.moves.delete(u.id);
+    }
+    // A comet tail behind anything on the move. Watching a turn resolve, the
+    // eye can otherwise only catch whichever unit it happened to be pointed
+    // at; a trail in the owner's color says who went where after the fact, and
+    // swells then fades over the step so it never becomes permanent clutter.
+    if (moving) {
+      const c = pcol(u.owner);
+      const g2 = cx.createLinearGradient(mv.sx, mv.sy, x, y);
+      g2.addColorStop(0, c + "00");
+      g2.addColorStop(1, c + "e0");
+      const gk = cx.createLinearGradient(mv.sx, mv.sy, x, y);
+      gk.addColorStop(0, "#0d111700");
+      gk.addColorStop(1, "#0d1117b0");
+      cx.save();
+      cx.globalAlpha = 0.75 * Math.sin(mv.e * Math.PI);
+      cx.lineCap = "round";
+      cx.strokeStyle = gk; cx.lineWidth = 5.4;   // casing, so it reads on sand
+      cx.beginPath(); cx.moveTo(mv.sx, mv.sy + 7); cx.lineTo(x, y + 7); cx.stroke();
+      cx.strokeStyle = g2; cx.lineWidth = 3;
+      cx.beginPath(); cx.moveTo(mv.sx, mv.sy + 7); cx.lineTo(x, y + 7); cx.stroke();
+      cx.restore();
     }
     if (anim.strike && anim.strike.id === u.id) {
       const st2 = anim.strike;
