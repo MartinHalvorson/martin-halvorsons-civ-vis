@@ -175,6 +175,16 @@
     "CITY_GRANT_RANDOM_RESOURCE_PRODUCT": {
       "status": "partial",
       "note": "Products and Corporations exist and are capped and movable, but the project-completion random grant is not wired."
+    },
+    "ADJUST_TRADE_ROUTE_YIELD_FOR_INTERNATIONAL": {
+      "status": "implemented",
+      "verified": true,
+      "note": "E-Commerce pays 10 Gold and 5 Production on international routes; CIVVIS carried the superseded base-game rows of 5 Gold and 2 Production on every route. Trade yields can now be declared international-only."
+    },
+    "ADJUST_UNIT_PILLAGE_IMPROVEMENT_MODIFIER": {
+      "status": "implemented",
+      "verified": true,
+      "note": "Raid and Total War multiply pillage yields by 2 -- the shipped Amount is a multiplier, not a percentage. CIVVIS read it as +50%."
     }
   }
 }

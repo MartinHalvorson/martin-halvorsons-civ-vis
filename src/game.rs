@@ -2118,6 +2118,37 @@ mod governor_runtime_tests {
     }
 
     #[test]
+    fn finest_hour_and_the_pillage_cards_pay_what_they_ship_with() {
+        let mut game = Game::new_full(1, 24, 16, 91_983, 200, 0, false);
+        let city = found_capital(&mut game, 0);
+        let air = |game: &Game, unit: &str| {
+            game.item_prod_mult(
+                0,
+                city,
+                Some(&Item::Unit {
+                    unit: unit.to_string(),
+                }),
+            )
+        };
+        let bomber = air(&game, "bomber");
+        let jet = air(&game, "jet_bomber");
+        game.players[0].policies = ["finest_hour".to_string()].into_iter().collect();
+        // Modern and Atomic air units only. The Jet Bomber is Information era
+        // and stays outside the window.
+        assert_eq!(air(&game, "bomber"), bomber + 0.5);
+        assert_eq!(air(&game, "jet_bomber"), jet);
+
+        // Raid and Total War double pillage yields rather than adding half.
+        for card in ["raid", "total_war"] {
+            assert_eq!(
+                game.rules.policies[card].effects["pillage_yield_pct"],
+                100.0,
+                "{card} doubles pillage yields"
+            );
+        }
+    }
+
+    #[test]
     fn unique_improvements_pay_their_conditional_clauses() {
         let mut game = Game::new_full(1, 24, 16, 91_977, 200, 0, false);
         let city = found_capital(&mut game, 0);
@@ -20720,6 +20751,12 @@ impl Game {
                 rys.gold += self.policy_effect(city.owner, "trade_gold");
                 rys.food += self.policy_effect(city.owner, "trade_food");
                 rys.production += self.policy_effect(city.owner, "trade_production");
+                if !domestic {
+                    // E-Commerce pays only on international routes.
+                    rys.gold += self.policy_effect(city.owner, "international_trade_gold");
+                    rys.production +=
+                        self.policy_effect(city.owner, "international_trade_production");
+                }
                 rys.science += self.policy_effect(city.owner, "trade_science");
                 rys.culture += self.policy_effect(city.owner, "trade_culture");
                 rys.faith += self.policy_effect(city.owner, "trade_faith");
