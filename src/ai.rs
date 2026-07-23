@@ -2924,9 +2924,9 @@ impl BasicAi {
             .collect();
         dpri.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         for (family, _) in dpri {
-            if family == "holy_site"
-                && g.players[pid].religion.is_none()
-                && g.cities.values().any(|other| {
+            if family == "holy_site" && g.players[pid].religion.is_none() {
+                let prophet_race_closed = g.religions_founded() >= g.max_religions();
+                let site_reserved = g.cities.values().any(|other| {
                     other.owner == pid
                         && (other
                             .districts
@@ -2937,15 +2937,17 @@ impl BasicAi {
                                 Some(Item::District { district, .. })
                                     if g.district_family(district) == "holy_site"
                             ))
-                })
-            {
+                });
                 // One active Holy Site is enough to contest the finite
                 // Prophet race. Before a religion exists, duplicating it in
                 // every newly founded city sacrifices settlers, campuses, and
                 // basic infrastructure while adding points too late to change
-                // the current recruitment. Founders may expand their faith
-                // network normally once this opening race is resolved.
-                continue;
+                // the current recruitment. Once every religion is founded,
+                // even the first site can no longer win a Prophet slot.
+                // Founders may expand their faith network normally.
+                if prophet_race_closed || site_reserved {
+                    continue;
+                }
             }
             if g.city_has_district_family(&g.cities[&cid], family) {
                 continue;
@@ -5081,6 +5083,41 @@ mod tests {
             Item::District { ref district, .. }
                 if game.district_family(district) == "holy_site"
         ));
+    }
+
+    #[test]
+    fn religionless_empire_skips_holy_site_after_prophet_slots_close() {
+        let mut game = Game::new_full(4, 30, 18, 91_774, 120, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler })
+            .unwrap();
+        let city = game.player_city_ids(0)[0];
+        game.players[0].techs.insert("astrology".to_string());
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("monument".to_string());
+        for player in 1..=game.max_religions() {
+            game.players[player].religion = Some(format!("Claimed Faith {player}"));
+        }
+        assert_eq!(game.religions_founded(), game.max_religions());
+
+        let choice = BasicAi::new()
+            .pick_item(&game, 0, city, 1, 1, 1, 1, 10, 5, 5, 5)
+            .expect("the city has non-religious development available");
+        assert!(
+            !matches!(
+                choice,
+                Item::District { ref district, .. }
+                    if game.district_family(district) == "holy_site"
+            ),
+            "a closed Prophet race must not consume a district slot: {choice:?}"
+        );
     }
 
     #[test]
