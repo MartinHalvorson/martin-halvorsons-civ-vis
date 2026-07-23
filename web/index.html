@@ -255,9 +255,39 @@
   }
   .victory-meter { overflow: hidden; background: #020706b3; box-shadow: inset 0 1px 2px #000b; }
   .victory-meter b { display: block; height: 100%; border-radius: inherit; background: currentColor; }
-  .victory-track { padding: 6px 4px 5px; color: var(--track); border-left: 1px solid #ffffff0b; }
+  /* Two of the races are really two races at once — the technology tree and
+     the launches that follow it, the culture a civilization keeps and the
+     tourism it exports — so those rows split their meter down the middle. */
+  .victory-meter.split {
+    display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 4px;
+    height: 4px; overflow: visible; background: none; box-shadow: none;
+  }
+  .victory-half {
+    height: 3px; overflow: hidden; border-radius: 3px;
+    background: #020706b3; box-shadow: inset 0 1px 2px #000b;
+  }
+  .victory-dots { display: flex; align-items: center; gap: 3px; }
+  .victory-dots i {
+    width: 4px; height: 4px; border-radius: 50%; background: #02070699;
+    box-shadow: inset 0 0 0 1px #ffffff2b;
+  }
+  .victory-dots i.on { background: currentColor; box-shadow: 0 0 4px currentColor; }
+  .victory-track {
+    container-type: inline-size; padding: 6px 4px 5px; color: var(--track);
+    border-left: 1px solid #ffffff0b;
+  }
   .victory-heading { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; color: var(--track); }
   .victory-heading b { overflow: hidden; color: #dde5e1; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+  /* Score is decided at the turn limit, so the limit belongs in its heading. */
+  .victory-heading em {
+    margin-left: auto; color: #9aaba5; font-size: 9px; font-style: normal;
+    font-variant-numeric: tabular-nums; letter-spacing: 0; white-space: nowrap;
+  }
+  /* In a narrow window the tracks are barely wider than their own headings,
+     and the word and the count together left "S. 31/500". The crown and the
+     last place in the ribbon name this track well enough on their own, so
+     below that width the count keeps the room and the word steps out. */
+  @container (max-width: 96px) { .victory-heading.with-cap b { display: none; } }
   .victory-list { display: flex; flex-direction: column; gap: 3px; }
   .victory-entry { min-width: 0; }
   /* The rows are already printed in rank order, so the leading "#1/#2/#3"
@@ -4089,11 +4119,46 @@ function victoryMetric(player, victory) {
   return player.victories?.[victory] || { progress: 0 };
 }
 
+// The turn limit decides the score victory, and a game can be set to run
+// without one.
+function turnCapLabel() {
+  const cap = +state.max_turns;
+  return cap > 0 && cap < 100000 ? String(cap) : "∞";
+}
+
+// The meter under each civilization. Most races are one number against one
+// target; science and culture are two, and are drawn as two half-width
+// meters — the technology tree beside the four space-race launches, the
+// culture a civilization keeps at home beside the tourism it sends abroad.
+function victoryMeter(victory, metric, progress) {
+  const bar = pct => `<b style="width:${Math.max(0, Math.min(100, pct))}%"></b>`;
+  if (victory === "science") {
+    const total = Math.max(1, +metric.tech_total || 1);
+    const launches = +metric.project_target || 4;
+    const done = +metric.projects || 0;
+    const dots = Array.from({ length: launches },
+      (_, i) => `<i${i < done ? ' class="on"' : ""}></i>`).join("");
+    return `<div class="victory-meter split"><span class="victory-half">` +
+      `${bar(100 * (+metric.techs || 0) / total)}</span>` +
+      `<span class="victory-dots">${dots}</span></div>`;
+  }
+  if (victory === "culture") {
+    const leader = Math.max(1, +metric.leading_domestic || 0);
+    return `<div class="victory-meter split">` +
+      `<span class="victory-half">${bar(100 * (+metric.domestic || 0) / leader)}</span>` +
+      `<span class="victory-half">${bar(progress)}</span></div>`;
+  }
+  return `<div class="victory-meter">${bar(progress)}</div>`;
+}
+
 function victoryValue(victory, metric) {
   if (victory === "science") {
+    // The launches are the dots beside this number, so the number itself is
+    // the tree they all wait on — until the last ship is away and the only
+    // thing left moving is the distance to the exoplanet.
     return metric.projects >= metric.project_target
       ? `${compactStat(metric.distance)}/${compactStat(metric.distance_target)}ly`
-      : `${metric.projects || 0}/${metric.project_target || 4}`;
+      : `${metric.techs || 0}/${metric.tech_total || 0}`;
   }
   // Tourist counts run into four digits, and at the topbar's width that value
   // is wide enough to squeeze the civilization name beside it down to an
@@ -4110,14 +4175,22 @@ function victoryValue(victory, metric) {
 
 function victoryDescription(victory, metric) {
   if (victory === "science") {
+    const tree = `${metric.techs || 0} of ${metric.tech_total || 0} technologies researched`;
+    const launches = `${metric.projects || 0} of ${metric.project_target || 4} space-race missions launched`;
     return metric.projects >= metric.project_target
-      ? `${compactStat(metric.distance)} of ${compactStat(metric.distance_target)} light-years travelled`
-      : `${metric.projects || 0} of ${metric.project_target || 4} space-race missions completed`;
+      ? `${tree} · ${compactStat(metric.distance)} of ${compactStat(metric.distance_target)} light-years travelled`
+      : `${tree} · ${launches}`;
   }
-  if (victory === "culture") return `${metric.tourists || 0} of ${metric.target || 1} visiting tourists needed`;
+  if (victory === "culture") {
+    return `${metric.domestic || 0} domestic tourists of their own culture · ` +
+      `${metric.tourists || 0} of ${metric.target || 1} visiting tourists needed`;
+  }
   if (victory === "religious") return `${metric.converted || 0} of ${metric.target || 0} civilizations converted`;
   if (victory === "diplomatic") return `${metric.points || 0} of ${metric.target || 20} victory points`;
-  if (victory === "domination") return `${metric.capitals || 0} of ${metric.target || 0} foreign capitals controlled`;
+  if (victory === "domination") {
+    return `${metric.capitals || 0} of ${metric.target || 0} original capitals controlled, ` +
+      `their own counted`;
+  }
   return `${compactStat(metric.points || 0)} points · meter is relative to the score leader`;
 }
 
@@ -4135,18 +4208,33 @@ function drawTopbar() {
     const ranked = [...contenders]
       .sort((a, b) => {
         const am = victoryMetric(a, track.id), bm = victoryMetric(b, track.id);
-        return (+bm.progress || 0) - (+am.progress || 0) || b.score - a.score || a.id - b.id;
+        // Science progress only moves once the launches start, so for the
+        // whole first half of a game the three names shown were the score
+        // leaders. The tree the meter draws breaks that tie instead; no
+        // other race carries a technology count.
+        return (+bm.progress || 0) - (+am.progress || 0)
+          || (+bm.techs || 0) - (+am.techs || 0)
+          || b.score - a.score || a.id - b.id;
       })
       .slice(0, 3);
+    // Score is settled when the turns run out, so its heading says how many
+    // of them are left to play.
+    const cap = track.id === "score"
+      ? `<em>${state.turn}/${turnCapLabel()}</em>`
+      : "";
+    const headTitle = cap
+      ? ` title="Score · turn ${state.turn} of ${turnCapLabel()}, when the score decides it"`
+      : "";
     return `<section class="victory-track" style="--track:${track.color}" aria-label="${track.label} victory leaders">` +
-      `<div class="victory-heading"><span>${track.icon}</span><b>${track.label}</b></div>` +
+      `<div class="victory-heading${cap ? " with-cap" : ""}"${headTitle}>` +
+      `<span>${track.icon}</span><b>${track.label}</b>${cap}</div>` +
       `<div class="victory-list">` + ranked.map((player, index) => {
         const metric = victoryMetric(player, track.id);
         const progress = Math.max(0, Math.min(100, +metric.progress || 0));
         return `<div class="victory-entry" style="--civ:${pcol(player.id)}" title="#${index + 1} ${player.civ}: ${victoryDescription(track.id, metric)}">` +
           `<div class="victory-line"><span class="victory-civ-dot"></span>` +
           `<span class="victory-civ">${player.civ}</span><span class="victory-value">${victoryValue(track.id, metric)}</span></div>` +
-          `<div class="victory-meter"><b style="width:${progress}%"></b></div></div>`;
+          victoryMeter(track.id, metric, progress) + `</div>`;
       }).join("") + `</div></section>`;
   }).join("");
   document.getElementById("topbar").innerHTML =
