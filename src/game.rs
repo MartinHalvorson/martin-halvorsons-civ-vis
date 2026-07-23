@@ -32598,6 +32598,14 @@ impl Game {
             .filter(|(voter, (choice, _))| {
                 proposal.eligible.contains(voter)
                     && Self::congress_choice_parts(choice) == ("A", "support")
+                    // Eligibility is captured when the Special Session is
+                    // convened, but diplomacy keeps moving while ballots are
+                    // open. A supporter can sign peace with the target before
+                    // the result resolves; the binding treaty must keep that
+                    // civilization out of the resulting coalition.
+                    && self
+                        .peace_treaty_until(**voter, proposal.target)
+                        .is_none()
             })
             .map(|(voter, _)| *voter)
             .collect();
@@ -44059,6 +44067,25 @@ mod district_mechanics {
             .unwrap();
         game.do_congress_vote(3, &resolution, "A:support", 1)
             .unwrap();
+
+        // A Special Session can remain open after an eligible supporter has
+        // settled with the target. Resolving the old ballot must not reopen
+        // that pair's war inside the newly signed treaty.
+        let mut treaty = game.clone();
+        let closes = treaty.congress.as_ref().unwrap().closes;
+        treaty
+            .peace_treaties
+            .insert(pair(0, 3), closes + treaty.standard_duration(10));
+        treaty.turn = closes;
+        treaty.process_congress();
+        assert_eq!(
+            treaty.active_emergencies[0].members,
+            [2].into_iter().collect()
+        );
+        assert!(treaty.is_at_war(0, 2));
+        assert!(!treaty.is_at_war(0, 3));
+        assert!(treaty.peace_treaty_until(0, 3).is_some());
+
         game.at_war.insert(pair(2, 3));
         game.turn = game.congress.as_ref().unwrap().closes;
         game.process_congress();
