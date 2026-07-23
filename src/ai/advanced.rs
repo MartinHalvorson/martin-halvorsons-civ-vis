@@ -1728,7 +1728,16 @@ impl AdvancedAi {
                 .government
                 .as_deref()
                 .map_or(0, policy_capacity);
-            if returning && policy_capacity(&government) <= current_capacity {
+            let choice_capacity = policy_capacity(&government);
+            // A newly tried government is free, but dropping from a mature
+            // eight-slot government to a six-slot faith or military stopgap
+            // invites an expensive return as soon as the adaptive plan moves
+            // again. Never give up policy capacity; among equal-capacity
+            // governments a first adoption remains free, while a repeat is
+            // still blocked by the Anarchy guard below.
+            if choice_capacity < current_capacity
+                || (returning && choice_capacity == current_capacity)
+            {
                 return;
             }
             let _ = g.apply(pid, &Action::Government { government });
@@ -13423,6 +13432,30 @@ mod tests {
                 .past_governments
                 .contains("classical_republic"),
             "the baseline selector must not install a throwaway government before the strategic one"
+        );
+    }
+
+    #[test]
+    fn adaptive_government_does_not_create_anarchy_by_downgrading_first() {
+        let mut game = Game::new_full(2, 18, 10, 79_017, 200, 0, false);
+        game.players[0].civics.extend([
+            "class_struggle".to_string(),
+            "reformed_church".to_string(),
+        ]);
+        game.players[0].government = Some("communism".to_string());
+        game.players[0]
+            .past_governments
+            .insert("communism".to_string());
+        game.players[0].faith = 1_000.0;
+
+        AdvancedAi::new().strategic_government(&mut game, 0, GrandStrategy::Conquest);
+
+        assert_eq!(game.players[0].government.as_deref(), Some("communism"));
+        assert_eq!(game.players[0].anarchy_turns, 0);
+        assert!(game.players[0].pending_government.is_none());
+        assert!(
+            !game.players[0].past_governments.contains("theocracy"),
+            "a free first adoption is still a downgrade when it discards two policy slots"
         );
     }
 
