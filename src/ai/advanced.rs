@@ -3356,7 +3356,7 @@ impl AdvancedAi {
     /// engine now assigns from the purchase city (stock rule).
     fn religious_defense(&self, g: &mut Game, pid: usize, threat: &str) {
         if g.players[pid].religion.is_some() {
-            self.religious_spending(g, pid, true);
+            self.religious_spending(g, pid, false);
             return;
         }
         let defenders = g
@@ -3389,7 +3389,26 @@ impl AdvancedAi {
         }
     }
 
-    fn religious_spending(&self, g: &mut Game, pid: usize, emergency: bool) {
+    fn city_needs_religious_support(
+        g: &Game,
+        pid: usize,
+        city: &crate::game::City,
+        religion: &str,
+    ) -> bool {
+        if city.owner != pid {
+            return false;
+        }
+        let own = city.pressure.get(religion).copied().unwrap_or(0.0);
+        let rival = city
+            .pressure
+            .iter()
+            .filter(|(faith, _)| faith.as_str() != religion)
+            .map(|(_, pressure)| *pressure)
+            .fold(0.0_f64, f64::max);
+        g.city_religion(city) != Some(religion) || (rival > 0.0 && rival * 2.0 >= own)
+    }
+
+    fn religious_spending(&self, g: &mut Game, pid: usize, offensive: bool) {
         let Some(religion) = g.players[pid].religion.clone() else {
             return;
         };
@@ -3403,62 +3422,53 @@ impl AdvancedAi {
         let apostles = count_units("apostle");
         let gurus = count_units("guru");
         let inquisitors = count_units("inquisitor");
-        let core_lost = g
+        let defensive_targets = g
             .player_city_ids(pid)
-            .iter()
-            .any(|city| g.city_religion(&g.cities[city]) != Some(religion.as_str()));
-        let home_under_pressure = g.player_city_ids(pid).into_iter().any(|cid| {
-            let city = &g.cities[&cid];
-            let own = city.pressure.get(&religion).copied().unwrap_or(0.0);
-            let rival = city
-                .pressure
-                .iter()
-                .filter(|(faith, _)| faith.as_str() != religion)
-                .map(|(_, pressure)| *pressure)
-                .fold(0.0_f64, f64::max);
-            rival > 0.0 && rival * 2.0 >= own
-        });
-        let inquisition = g.players[pid]
+            .into_iter()
+            .filter(|cid| Self::city_needs_religious_support(g, pid, &g.cities[cid], &religion))
+            .count();
+        let home_under_pressure = defensive_targets > 0;
+        let inquisition_launched = g.players[pid]
             .counters
             .get("inquisition")
             .copied()
             .unwrap_or(0)
             > 0;
-        let spread_targets = g
-            .cities
-            .values()
-            .filter(|city| {
-                !g.is_at_war(pid, city.owner) && g.city_religion(city) != Some(religion.as_str())
-            })
-            .count();
+        let spread_targets = defensive_targets
+            + usize::from(offensive)
+                * g.cities
+                    .values()
+                    .filter(|city| {
+                        city.owner != pid
+                            && !g.is_at_war(pid, city.owner)
+                            && g.city_religion(city) != Some(religion.as_str())
+                    })
+                    .count();
         // A small circulating corps is enough: every Missionary has several
         // spreads, and replacements can be bought as charges are consumed.
         // Scaling gently with live targets preserves a religious push without
         // allowing one faith purchase every turn to fill the map.
         let missionary_cap = if spread_targets == 0 {
-            usize::from(emergency) * 2
-        } else {
+            0
+        } else if offensive {
             (2 + spread_targets.div_ceil(4)).min(6)
+        } else {
+            (1 + defensive_targets.div_ceil(2)).min(2)
         };
-        let apostle_cap = 2;
-        let guru_cap = usize::from(apostles > 0);
-        let inquisitor_cap = if (core_lost || home_under_pressure) && inquisition {
+        let apostle_cap = if offensive { 2 } else { 0 };
+        let guru_cap = usize::from(offensive && apostles > 0);
+        let inquisitor_cap = if home_under_pressure && inquisition_launched {
             2
         } else {
             0
         };
-        let priorities: &[&str] = if emergency
-            && (core_lost || home_under_pressure)
-            && inquisition
+        let priorities: &[&str] = if home_under_pressure
+            && inquisition_launched
             && inquisitors < 2
         {
-            &["inquisitor", "missionary", "apostle", "guru"]
-        } else if emergency && core_lost {
-            // An Apostle can launch the inquisition; if it is unaffordable,
-            // immediately fall through to the cheaper reconversion unit.
-            &["apostle", "missionary", "guru", "inquisitor"]
-        } else if emergency {
-            &["missionary", "apostle", "guru", "inquisitor"]
+            &["inquisitor", "apostle", "missionary", "guru"]
+        } else if !offensive {
+            &["missionary", "inquisitor"]
         } else if apostles < 2 {
             &["apostle", "missionary", "guru"]
         } else if gurus < 1 {
@@ -3488,7 +3498,7 @@ impl AdvancedAi {
                 continue;
             };
             let price = spec.cost * 2.0;
-            if !emergency && g.players[pid].faith < price + 80.0 {
+            if g.players[pid].faith < price + 80.0 {
                 continue;
             }
             let cities = g.player_city_ids(pid);
@@ -6168,11 +6178,17 @@ impl AdvancedAi {
             return false;
         };
         let current = g.units[&uid].pos;
+        let offensive =
+            self.victory_target.is_none() || self.victory_target == Some(VictoryTarget::Religion);
         let mut targets: Vec<(i32, std::cmp::Reverse<u32>, Pos)> = g
             .cities
             .values()
             .filter(|city| {
-                !g.is_at_war(pid, city.owner) && g.city_religion(city) != Some(religion.as_str())
+                Self::city_needs_religious_support(g, pid, city, &religion)
+                    || (offensive
+                        && city.owner != pid
+                        && !g.is_at_war(pid, city.owner)
+                        && g.city_religion(city) != Some(religion.as_str()))
             })
             .map(|city| {
                 let own_pressure = city.pressure.get(&religion).copied().unwrap_or(0.0);
@@ -8578,6 +8594,9 @@ impl Ai for AdvancedAi {
         self.base.corporations(g, pid);
         self.advanced_products(g, pid, plan.strategy);
         self.advanced_great_people(g, pid, plan.strategy);
+        if self.victory_planning {
+            self.religious_spending(g, pid, plan.strategy == GrandStrategy::Religion);
+        }
         self.faith_building_spending(g, pid, plan.strategy);
         self.military_faith_spending(g, pid, &plan);
         if self.victory_target.is_some() {
@@ -8600,11 +8619,7 @@ impl Ai for AdvancedAi {
             // policy in paired evaluation.
             if self.victory_planning && plan.strategy == GrandStrategy::Religion {
                 self.religious_production(g, pid);
-                let emergency = self
-                    .victory_denial(g, pid)
-                    .is_some_and(|(_, counter)| counter == GrandStrategy::Religion);
-                self.religious_spending(g, pid, emergency);
-            } else if self.victory_planning {
+            } else if self.victory_planning && g.players[pid].religion.is_none() {
                 // Every other strategy still defends its homeland: a rival's
                 // religious victory needs a majority in every living major,
                 // and before this pass non-religion civilizations never spent
@@ -10435,6 +10450,37 @@ mod tests {
     }
 
     #[test]
+    fn nonreligious_strategy_reinforces_its_founded_faith_before_conversion() {
+        let mut game = Game::new_full(2, 30, 18, 7_634, 200, 0, false);
+        for pid in 0..2 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.current = pid;
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        game.current = 0;
+        game.players[0].religion = Some("Our Faith".to_string());
+        let home = game.player_city_ids(0)[0];
+        game.cities.get_mut(&home).unwrap().pressure.extend([
+            ("Our Faith".to_string(), 1_000.0),
+            ("Rival Faith".to_string(), 600.0),
+        ]);
+        assert_eq!(game.city_religion(&game.cities[&home]), Some("Our Faith"));
+        let missionary = game.spawn_test_unit("missionary", 0, game.cities[&home].pos);
+        game.units.get_mut(&missionary).unwrap().religion = Some("Our Faith".to_string());
+        let before = game.cities[&home].pressure["Our Faith"];
+
+        assert!(AdvancedAi::targeting(VictoryTarget::Science)
+            .advanced_missionary_step(&mut game, 0, missionary));
+        assert!(game.cities[&home].pressure["Our Faith"] > before);
+        assert_eq!(game.units[&missionary].charges, 2);
+    }
+
+    #[test]
     fn missionary_routes_to_spread_range_around_a_mountain_detour() {
         let mut game = Game::new_full(2, 30, 18, 7_633, 200, 0, false);
         for pid in 0..2 {
@@ -11938,6 +11984,7 @@ mod tests {
         install_ai_test_district(&mut game, home, "holy_site");
         game.cities.get_mut(&home).unwrap().buildings =
             vec!["shrine".to_string(), "temple".to_string()];
+        game.players[0].techs.insert("astrology".to_string());
         game.players[0].civics.insert("theology".to_string());
         game.players[0].religion = Some("Our Faith".to_string());
         game.players[0].faith = 10_000.0;
@@ -11965,9 +12012,62 @@ mod tests {
         }
         let before_units = game.player_unit_ids(0).len();
         let before_faith = game.players[0].faith;
-        AdvancedAi::new().religious_spending(&mut game, 0, false);
+        AdvancedAi::new().religious_spending(&mut game, 0, true);
         assert_eq!(game.player_unit_ids(0).len(), before_units);
         assert_eq!(game.players[0].faith, before_faith);
+    }
+
+    #[test]
+    fn nonreligious_strategy_buys_defense_only_when_its_home_is_pressured() {
+        let mut game = Game::new_full(2, 30, 18, 7_106, 200, 0, false);
+        for pid in 0..2 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.current = pid;
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        game.current = 0;
+        let home = game.player_city_ids(0)[0];
+        let foreign = game.player_city_ids(1)[0];
+        install_ai_test_district(&mut game, home, "holy_site");
+        game.cities.get_mut(&home).unwrap().buildings =
+            vec!["shrine".to_string(), "temple".to_string()];
+        game.players[0].techs.insert("astrology".to_string());
+        game.players[0].civics.insert("theology".to_string());
+        game.players[0].religion = Some("Our Faith".to_string());
+        game.players[0].faith = 1_000.0;
+        game.cities.get_mut(&home).unwrap().pressure.extend([
+            ("Our Faith".to_string(), 1_000.0),
+            ("Rival Faith".to_string(), 600.0),
+        ]);
+        game.cities
+            .get_mut(&foreign)
+            .unwrap()
+            .pressure
+            .insert("Rival Faith".to_string(), 1_000.0);
+
+        let ai = AdvancedAi::targeting(VictoryTarget::Science);
+        let mut safe = game.clone();
+        safe.cities
+            .get_mut(&home)
+            .unwrap()
+            .pressure
+            .insert("Rival Faith".to_string(), 100.0);
+        let safe_units = safe.player_unit_ids(0).len();
+        ai.religious_spending(&mut safe, 0, false);
+        assert_eq!(safe.player_unit_ids(0).len(), safe_units);
+
+        let before_units = game.player_unit_ids(0).len();
+        ai.religious_spending(&mut game, 0, false);
+        assert_eq!(game.player_unit_ids(0).len(), before_units + 1);
+        assert!(game
+            .units
+            .values()
+            .any(|unit| unit.owner == 0 && unit.kind == "missionary"));
     }
 
     #[test]
