@@ -1341,7 +1341,7 @@ function waitForSupervisedSuccessor(finishedInstance, finishedSeed) {
     supervisorReconnectTimer = null;
     supervisorReconnectBusy = true;
     try {
-      const successor = await fetchJSON("/state", {}, 3000);
+      const successor = await fetchJSON("/state", {cache: "no-store"}, 3000);
       if (supervisedSuccessorChanged(successor, finishedInstance, finishedSeed)) {
         reloadForSupervisedWorld(successor.server_instance, successor.seed);
         return;
@@ -1752,6 +1752,12 @@ function render(st, recordChronicle = true) {
   const w = document.getElementById("winner");
   if (st.winner !== null && st.winner !== undefined) {
     const p = st.players[st.winner];
+    // A normal supervised victory needs the same resilient handoff watcher as
+    // the explicit restart buttons. The regular viewer poll can be caught in
+    // a request to the process that is being replaced, leaving the completed
+    // map visible until that request times out (or the page is refreshed).
+    if (SPEC && st.supervised)
+      waitForSupervisedSuccessor(st.server_instance, st.seed);
     w.style.display = "block";
     w.innerHTML = (SPEC ? "🏆 " + p.civ + " wins!" : st.winner === 0 ? "🏆 Victory!" : "💀 Defeat") +
       "<br><span class='small'>" + p.civ + " wins by " + st.victory_type +

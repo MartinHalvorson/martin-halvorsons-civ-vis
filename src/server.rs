@@ -1675,6 +1675,10 @@ mod tests {
         assert!(
             EMBEDDED_INDEX.contains("waitForSupervisedSuccessor(finishedInstance, finishedSeed)")
         );
+        assert!(EMBEDDED_INDEX.contains(
+            "waitForSupervisedSuccessor(st.server_instance, st.seed)"
+        ));
+        assert!(EMBEDDED_INDEX.contains("fetchJSON(\"/state\", {cache: \"no-store\"}, 3000)"));
         assert!(EMBEDDED_INDEX.contains("st.seed !== state.seed"));
         assert!(!EMBEDDED_INDEX.contains("id=\"head-newgame\""));
         assert!(EMBEDDED_INDEX.contains("spectate: gameMode === \"ai_sim\""));
