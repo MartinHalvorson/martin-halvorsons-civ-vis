@@ -991,6 +991,39 @@ mod belief_runtime_tests {
     }
 
     #[test]
+    fn barbarian_camps_field_half_the_leaders_technology() {
+        let mut game = Game::new_full(2, 24, 16, 91_805, 200, 0, true);
+        // Ancient leaders: the camps make do with tech-free units.
+        let ancient = game.barbarian_unit_pool();
+        assert!(ancient.contains(&"warrior".to_string()));
+        assert!(!ancient.contains(&"musketman".to_string()));
+
+        // A leader deep in the tree arms the camps with gunpowder, and the
+        // pool never fields sea, air, support, or unique units.
+        let ranked: Vec<String> = {
+            let mut ranked: Vec<(&String, &crate::rules::TechSpec)> =
+                game.rules.techs.iter().collect();
+            ranked.sort_by(|a, b| {
+                (a.1.era, a.1.cost as i64, a.0).cmp(&(b.1.era, b.1.cost as i64, b.0))
+            });
+            ranked.iter().map(|(name, _)| (*name).clone()).collect()
+        };
+        for tech in ranked.iter().take(70) {
+            game.players[0].techs.insert(tech.clone());
+        }
+        let industrial = game.barbarian_unit_pool();
+        assert!(
+            industrial.contains(&"musketman".to_string()),
+            "half of seventy techs must include gunpowder: {industrial:?}"
+        );
+        for unit in &industrial {
+            let spec = &game.rules.units[unit.as_str()];
+            assert!(spec.unique_to.is_none());
+            assert!(!matches!(spec.domain.as_deref(), Some("sea") | Some("air")));
+        }
+    }
+
+    #[test]
     fn great_work_pieces_track_counters_through_grants_moves_and_deals() {
         let (mut game, _cities) = game_with_capitals(91_803);
         let tally = |game: &Game, pid: usize, kind: &str| {
@@ -9284,6 +9317,47 @@ impl Game {
         }
     }
 
+    /// The shipped rule: Barbarians fight with half the leading
+    /// civilization's technology (BARBARIAN_TECH_PERCENT). Rank the tech
+    /// tree the way research walks it and give the camps everything the
+    /// first half of the leader's tech count unlocks - muskets and tanks
+    /// included, late enough.
+    pub(crate) fn barbarian_unit_pool(&self) -> Vec<String> {
+        let leader_techs = self
+            .players
+            .iter()
+            .filter(|p| !p.is_minor)
+            .map(|p| p.techs.len())
+            .max()
+            .unwrap_or(0);
+        let mut ranked: Vec<(&String, &crate::rules::TechSpec)> = self.rules.techs.iter().collect();
+        ranked.sort_by(|a, b| {
+            (a.1.era, a.1.cost as i64, a.0).cmp(&(b.1.era, b.1.cost as i64, b.0))
+        });
+        let known: BTreeSet<&str> = ranked
+            .iter()
+            .take(leader_techs * 50 / 100)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        self.rules
+            .units
+            .iter()
+            .filter(|(_, spec)| {
+                spec.class == "military"
+                    && spec.buildable
+                    && spec.unique_to.is_none()
+                    && !matches!(spec.domain.as_deref(), Some("sea") | Some("air"))
+                    && spec.promotion_class != "support"
+                    && spec.civic.is_none()
+                    && spec
+                        .tech
+                        .as_deref()
+                        .is_none_or(|tech| known.contains(tech))
+            })
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+
     fn barbarian_phase(&mut self) {
         let bpid = match self.barb_pid {
             Some(p) => p,
@@ -9301,22 +9375,7 @@ impl Game {
         let alerted = self.barb_alerted_until.len();
         let cap = 2 + 2 * self.barb_camps.len() + 2 * alerted;
         let mut n_barb = self.player_unit_ids(bpid).len();
-        let era = self
-            .players
-            .iter()
-            .filter(|p| !p.is_minor)
-            .map(|p| p.techs.len())
-            .max()
-            .unwrap_or(1);
-        let pool: &[&str] = if era < 8 {
-            &["warrior"]
-        } else if era < 14 {
-            &["warrior", "spearman", "archer"]
-        } else if era < 22 {
-            &["swordsman", "spearman", "archer"]
-        } else {
-            &["swordsman", "crossbowman", "pikeman"]
-        };
+        let pool = self.barbarian_unit_pool();
         let camps: Vec<(Pos, u32)> = self.barb_camps.iter().map(|(p, n)| (*p, *n)).collect();
         for (pos, nxt) in camps {
             if self.turn < nxt || n_barb >= cap {
@@ -9327,11 +9386,22 @@ impl Game {
                 .iter()
                 .any(|(unit, camp)| *camp == pos && self.units.contains_key(unit));
             let utype = if has_scout {
-                pool[self.rng.below(pool.len())]
+                // The shipped spawn samples three random choices and fields
+                // the strongest (BARBARIAN_NUM_RANDOM_UNIT_CHOICES).
+                (0..3)
+                    .map(|_| pool[self.rng.below(pool.len())].clone())
+                    .max_by(|a, b| {
+                        let strength = |kind: &str| {
+                            let spec = &self.rules.units[kind];
+                            spec.strength.max(spec.ranged_strength) as i64
+                        };
+                        strength(a).cmp(&strength(b)).then_with(|| b.cmp(a))
+                    })
+                    .unwrap_or_else(|| "warrior".to_string())
             } else {
-                "scout"
+                "scout".to_string()
             };
-            if let Some(unit) = self.place_new_unit(utype, bpid, pos) {
+            if let Some(unit) = self.place_new_unit(&utype, bpid, pos) {
                 if utype == "scout" {
                     self.barb_scout_homes.insert(unit, pos);
                 }
