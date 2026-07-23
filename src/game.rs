@@ -9262,10 +9262,22 @@ impl Game {
                 .is_some_and(|city| {
                     city.owner == unit.owner || self.suzerain_of(city.owner) == Some(unit.owner)
                 });
-            if friendly || self.promotion_effect(unit, "heal_anywhere") > 0.0 {
+            if friendly {
                 20 + emergency_heal + support_heal
             } else {
-                emergency_heal + support_heal
+                // Auxiliary Ships, Supply Fleet and Supercarrier do not heal a
+                // ship as if it were home: they pay 5 in enemy territory and
+                // 10 in neutral.
+                let promoted = match location {
+                    HealingLocation::EnemyTerritory => {
+                        self.promotion_effect(unit, "heal_enemy_territory")
+                    }
+                    HealingLocation::NeutralTerritory => {
+                        self.promotion_effect(unit, "heal_neutral_territory")
+                    }
+                    _ => 0.0,
+                } as i32;
+                promoted + emergency_heal + support_heal
             }
         } else {
             location.rate()

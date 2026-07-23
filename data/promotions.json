@@ -1,136 +1,1161 @@
 {
-  "ranger": {"class":"recon","tier":1,"effects":{"woods_move_cost":1},"note":"Woods and Rainforest cost 1 Movement."},
-  "alpine": {"class":"recon","tier":1,"effects":{"hills_move_cost":1},"note":"Hills cost 1 Movement."},
-  "sentry": {"class":"recon","tier":2,"requires":["ranger","alpine"],"effects":{"see_through_woods":1}},
-  "guerrilla": {"class":"recon","tier":2,"requires":["ranger","alpine"],"effects":{"move_after_attack":1}},
-  "spyglass": {"class":"recon","tier":3,"requires":["sentry"],"effects":{"sight":1}},
-  "ambush": {"class":"recon","tier":3,"requires":["guerrilla"],"effects":{"combat_all":20}},
-  "camouflage": {"class":"recon","tier":4,"requires":["spyglass","ambush"],"effects":{"camouflage":1}},
-
-  "battlecry": {"class":"melee","tier":1,"effects":{"attack_vs_melee_ranged":7}},
-  "tortoise": {"class":"melee","tier":1,"effects":{"defend_ranged":10}},
-  "commando": {"class":"melee","tier":2,"requires":["battlecry","amphibious"],"effects":{"movement":1,"scale_cliffs":1}},
-  "amphibious": {"class":"melee","tier":2,"requires":["tortoise","commando"],"effects":{"amphibious":1}},
-  "zweihander": {"class":"melee","tier":3,"requires":["commando","amphibious"],"effects":{"vs_anti_cavalry":7}},
-  "urban_warfare": {"class":"melee","tier":3,"requires":["commando","amphibious"],"effects":{"district_melee":10}},
-  "elite_guard": {"class":"melee","tier":4,"requires":["zweihander","urban_warfare"],"effects":{"extra_attacks":1,"move_after_attack":1}},
-
-  "volley": {"class":"ranged","tier":1,"effects":{"ranged_vs_land":5}},
-  "garrison": {"class":"ranged","tier":1,"effects":{"district_defense":10}},
-  "arrow_storm": {"class":"ranged","tier":2,"requires":["volley"],"effects":{"ranged_vs_units":7}},
-  "incendiaries": {"class":"ranged","tier":2,"requires":["garrison"],"effects":{"ranged_vs_district":7}},
-  "suppression": {"class":"ranged","tier":3,"requires":["arrow_storm","incendiaries"],"effects":{"zone_of_control":1}},
-  "emplacement": {"class":"ranged","tier":3,"requires":["arrow_storm","incendiaries"],"effects":{"defend_city_attack":10}},
-  "expert_marksman": {"class":"ranged","tier":4,"requires":["suppression","emplacement"],"effects":{"extra_attacks":1}},
-
-  "echelon": {"class":"anti_cavalry","tier":1,"effects":{"vs_cavalry":5}},
-  "thrust": {"class":"anti_cavalry","tier":1,"effects":{"vs_melee":5}},
-  "square": {"class":"anti_cavalry","tier":2,"requires":["echelon"],"effects":{"support_multiplier":2}},
-  "schiltron": {"class":"anti_cavalry","tier":2,"requires":["thrust"],"effects":{"defend_melee":10}},
-  "redeploy": {"class":"anti_cavalry","tier":3,"requires":["square","schiltron"],"effects":{"movement":1}},
-  "choke_points": {"class":"anti_cavalry","tier":3,"requires":["square","schiltron"],"effects":{"rough_defense":7}},
-  "hold_the_line": {"class":"anti_cavalry","tier":4,"requires":["redeploy","choke_points"],"effects":{"adjacent_vs_cavalry":10}},
-
-  "caparison": {"class":"light_cavalry","tier":1,"effects":{"vs_anti_cavalry":5}},
-  "coursers": {"class":"light_cavalry","tier":1,"effects":{"attack_vs_ranged_siege":5}},
-  "depredation": {"class":"light_cavalry","tier":2,"requires":["caparison"],"effects":{"pillage_cost":1}},
-  "double_envelopment": {"class":"light_cavalry","tier":2,"requires":["coursers"],"effects":{"flanking_multiplier":2}},
-  "spiking_the_guns": {"class":"light_cavalry","tier":3,"requires":["depredation","double_envelopment"],"effects":{"vs_siege":7}},
-  "pursuit": {"class":"light_cavalry","tier":3,"requires":["depredation","double_envelopment"],"effects":{"movement":1}},
-  "escort_mobility": {"class":"light_cavalry","tier":4,"requires":["spiking_the_guns","pursuit"],"effects":{"escort_mobility":1}},
-
-  "charge": {"class":"heavy_cavalry","tier":1,"effects":{"vs_fortified":10}},
-  "barding": {"class":"heavy_cavalry","tier":1,"effects":{"defend_ranged":7}},
-  "marauding": {"class":"heavy_cavalry","tier":2,"requires":["charge","rout"],"effects":{"vs_unit_in_district":7}},
-  "rout": {"class":"heavy_cavalry","tier":2,"requires":["barding","marauding"],"effects":{"vs_damaged":5}},
-  "armor_piercing": {"class":"heavy_cavalry","tier":3,"requires":["marauding"],"effects":{"vs_heavy_cavalry":7}},
-  "reactive_armor": {"class":"heavy_cavalry","tier":3,"requires":["rout"],"effects":{"defend_heavy_anti":7}},
-  "breakthrough": {"class":"heavy_cavalry","tier":4,"requires":["armor_piercing","reactive_armor"],"effects":{"extra_attacks":1}},
-
-  "grape_shot": {"class":"siege","tier":1,"effects":{"siege_vs_land":7}},
-  "crew_weapons": {"class":"siege","tier":1,"effects":{"defend_all":7}},
-  "shrapnel": {"class":"siege","tier":2,"requires":["grape_shot"],"effects":{"siege_vs_land":10}},
-  "shells": {"class":"siege","tier":2,"requires":["crew_weapons"],"effects":{"ranged_vs_district":10}},
-  "advanced_rangefinding": {"class":"siege","tier":3,"requires":["shrapnel","shells"],"effects":{"siege_vs_naval":10}},
-  "expert_crew": {"class":"siege","tier":3,"requires":["shrapnel","shells"],"effects":{"attack_after_move":1}},
-  "forward_observers": {"class":"siege","tier":4,"requires":["advanced_rangefinding","expert_crew"],"effects":{"range":1}},
-
-  "helmsman": {"class":"naval_melee","tier":1,"effects":{"movement":1}},
-  "embolon": {"class":"naval_melee","tier":1,"effects":{"vs_naval":7}},
-  "rutter": {"class":"naval_melee","tier":2,"requires":["helmsman"],"effects":{"sight":1}},
-  "reinforced_hull": {"class":"naval_melee","tier":2,"requires":["embolon"],"effects":{"defend_ranged":10}},
-  "convoy": {"class":"naval_melee","tier":3,"requires":["rutter","reinforced_hull"],"effects":{"formation_combat":10}},
-  "auxiliary_ships": {"class":"naval_melee","tier":3,"requires":["rutter","reinforced_hull"],"effects":{"heal_anywhere":1}},
-  "creeping_attack": {"class":"naval_melee","tier":4,"requires":["convoy","auxiliary_ships"],"effects":{"vs_naval_raider":14}},
-
-  "line_of_battle": {"class":"naval_ranged","tier":1,"effects":{"ranged_vs_naval":7},"note":"+7 Ranged Strength against naval units."},
-  "bombardment": {"class":"naval_ranged","tier":1,"effects":{"ranged_vs_district":7},"note":"+7 Ranged Strength against district defenses."},
-  "preparatory_fire": {"class":"naval_ranged","tier":2,"requires":["line_of_battle"],"effects":{"ranged_vs_land":7},"note":"+7 Ranged Strength against land units."},
-  "rolling_barrage": {"class":"naval_ranged","tier":2,"requires":["bombardment"],"effects":{"ranged_vs_district":10},"note":"+10 Ranged Strength against district defenses."},
-  "supply_fleet": {"class":"naval_ranged","tier":3,"requires":["preparatory_fire","rolling_barrage"],"effects":{"heal_anywhere":1},"note":"May heal outside friendly territory."},
-  "proximity_fuses": {"class":"naval_ranged","tier":3,"requires":["preparatory_fire","rolling_barrage"],"effects":{"defend_air":7},"note":"+7 Combat Strength when defending against air attacks."},
-  "coincidence_rangefinding": {"class":"naval_ranged","tier":4,"requires":["supply_fleet","proximity_fuses"],"effects":{"range":1},"note":"+1 attack range."},
-
-  "boarding": {"class":"naval_raider","tier":1,"effects":{"gold_from_naval_kill_pct":50},"note":"Gain Gold after defeating a naval unit."},
-  "homing_torpedoes": {"class":"naval_raider","tier":2,"effects":{"ranged_vs_naval":10},"note":"+10 Ranged Strength against naval units.","requires":["boarding","swift_keel"]},
-  "loot": {"class":"naval_raider","tier":1,"effects":{"coastal_raid_gold_pct":50},"note":"Gain additional Gold from coastal raids."},
-  "silent_running": {"class":"naval_raider","tier":3,"requires":["homing_torpedoes"],"effects":{"move_after_attack":1},"note":"May move after attacking."},
-  "observation": {"class":"naval_raider","tier":3,"requires":["swift_keel"],"effects":{"sight":1},"note":"+1 sight range."},
-  "wolfpack": {"class":"naval_raider","tier":4,"requires":["observation","silent_running"],"effects":{"extra_attacks":1},"note":"+1 attack per turn."},
-  "swift_keel": {"class":"naval_raider","tier":2,"requires":["homing_torpedoes","loot"],"effects":{"movement":1},"note":"+1 Movement."},
-
-  "flight_deck": {"class":"naval_carrier","tier":1,"effects":{"aircraft_slots":1},"note":"+1 aircraft slot."},
-  "scout_planes": {"class":"naval_carrier","tier":1,"effects":{"sight":1},"note":"+1 sight range."},
-  "hangar_deck": {"class":"naval_carrier","tier":2,"requires":["flight_deck"],"effects":{"aircraft_slots":1},"note":"+1 aircraft slot."},
-  "advanced_engines": {"class":"naval_carrier","tier":2,"requires":["scout_planes","hangar_deck"],"effects":{"movement":1},"note":"+1 Movement."},
-  "folding_wings": {"class":"naval_carrier","tier":3,"requires":["hangar_deck"],"effects":{"aircraft_slots":1},"note":"+1 aircraft slot."},
-  "deck_crews": {"class":"naval_carrier","tier":3,"requires":["advanced_engines","folding_wings"],"effects":{"heal_after_attack":1},"note":"May heal after attacking."},
-  "supercarrier": {"class":"naval_carrier","tier":4,"requires":["folding_wings","deck_crews"],"effects":{"heal_anywhere":1},"note":"May heal outside friendly territory."},
-
-  "dogfighting": {"class":"air_fighter","tier":1,"effects":{"vs_air_fighter":7},"note":"+7 Combat Strength against fighter-class units."},
-  "cockpit_armor": {"class":"air_fighter","tier":1,"effects":{"defend_anti_air":7},"note":"+7 Combat Strength when defending against anti-air."},
-  "interceptor": {"class":"air_fighter","tier":2,"requires":["dogfighting"],"effects":{"vs_air_bomber":7},"note":"+7 Combat Strength against bomber-class units."},
-  "strafe": {"class":"air_fighter","tier":2,"requires":["cockpit_armor"],"effects":{"vs_non_cavalry":17},"note":"+17 Combat Strength against non-cavalry units."},
-  "ground_crews": {"class":"air_fighter","tier":3,"requires":["interceptor"],"effects":{"heal_on_patrol":1},"note":"Heals while patrolling or deployed."},
-  "tank_buster": {"class":"air_fighter","tier":3,"requires":["strafe"],"effects":{"vs_cavalry":17},"note":"+17 Combat Strength against cavalry units."},
-  "drop_tanks": {"class":"air_fighter","tier":4,"requires":["ground_crews","tank_buster"],"effects":{"range":2},"note":"+2 Range."},
-
-  "box_formation": {"class":"air_bomber","tier":1,"effects":{"defend_air_fighter":7},"note":"+7 Combat Strength when defending against fighter-class units."},
-  "evasive_maneuvers": {"class":"air_bomber","tier":1,"effects":{"defend_anti_air":7},"note":"+7 Combat Strength when defending against anti-air."},
-  "torpedo_bomber": {"class":"air_bomber","tier":2,"requires":["box_formation","evasive_maneuvers"],"effects":{"air_vs_naval":17},"note":"+17 Combat Strength against naval units."},
-  "close_air_support": {"class":"air_bomber","tier":2,"requires":["box_formation","evasive_maneuvers"],"effects":{"air_vs_land":12},"note":"+12 Combat Strength against land units."},
-  "tactical_maintenance": {"class":"air_bomber","tier":3,"requires":["torpedo_bomber"],"effects":{"heal_after_attack":1},"note":"May heal after attacking."},
-  "long_range": {"class":"air_bomber","tier":3,"requires":["close_air_support"],"effects":{"range":2},"note":"+2 Range."},
-  "superfortress": {"class":"air_bomber","tier":4,"requires":["tactical_maintenance","long_range"],"effects":{"air_pillage_at_low_health":1},"note":"May air pillage at any health."},
-
-  "album_cover_art": {"class":"rock_band","tier":1,"effects":{"rock_wonder_levels":1},"note":"Performs as if 1 level higher at World Wonders."},
-  "arena_rock": {"class":"rock_band","tier":1,"effects":{"rock_entertainment_levels":2},"note":"Performs as if 2 levels higher at Entertainment Complexes."},
-  "glam_rock": {"class":"rock_band","tier":1,"effects":{"rock_theater_levels":2},"note":"Performs as if 2 levels higher at Theater Squares."},
-  "reggae_rock": {"class":"rock_band","tier":1,"effects":{"rock_water_park_levels":2},"note":"Performs as if 2 levels higher at Water Parks."},
-  "music_festival": {"class":"rock_band","tier":1,"effects":{"rock_nature_venue":1,"rock_nature_levels":1},"note":"May perform at Natural Wonders and National Parks as if 1 level higher."},
-  "space_rock": {"class":"rock_band","tier":1,"effects":{"rock_space_venue":1,"rock_space_levels":1},"note":"May perform at Campuses and Spaceports as if 1 level higher."},
-  "surf_band": {"class":"rock_band","tier":1,"effects":{"rock_surf_venue":1,"rock_surf_levels":1},"note":"May perform at Harbors and Seaside Resorts as if 1 level higher."},
-  "goes_to_11": {"class":"rock_band","tier":1,"effects":{"rock_nearby_tourism_pct":50},"note":"Applies half the concert Tourism to other civilizations within 10 tiles."},
-  "indie": {"class":"rock_band","tier":1,"effects":{"rock_loyalty_loss":40},"note":"The host city loses 40 Loyalty after the concert."},
-  "pop_star": {"class":"rock_band","tier":1,"effects":{"rock_gold_pct":25},"note":"Earn Gold equal to 25% of concert Tourism."},
-  "religious_rock": {"class":"rock_band","tier":1,"effects":{"rock_convert_city":1},"note":"Converts the host city's majority religion to the religion founded by the player."},
-  "roadies": {"class":"rock_band","tier":1,"effects":{"movement":4},"note":"+4 Movement."},
-
-  "debater": {"class":"religious_apostle","tier":1,"effects":{"religious_strength":20},"note":"+20 Religious Strength in theological combat."},
-  "orator": {"class":"religious_apostle","tier":1,"effects":{"religious_charges":2},"note":"May spread Religion 2 extra times."},
-  "translator": {"class":"religious_apostle","tier":1,"effects":{"foreign_spread_pct":200},"note":"Triple strength when spreading to cities of other civilizations."},
-  "proselytizer": {"class":"religious_apostle","tier":1,"effects":{"rival_pressure_removed_pct":75},"note":"Eliminates 75% of other religions' pressure when spreading."},
-  "pilgrim": {"class":"religious_apostle","tier":1,"effects":{"natural_wonder_charges":3},"note":"Gains 3 spreads after moving adjacent to a natural wonder."},
-  "indulgence_vendor": {"class":"religious_apostle","tier":1,"effects":{"gold_per_conversion":100},"note":"Gain Gold when this unit first converts a city."},
-  "martyr": {"class":"religious_apostle","tier":1,"effects":{"relic_on_death":1},"note":"Creates a Relic if defeated in theological combat."},
-  "chaplain": {"class":"religious_apostle","tier":1,"effects":{"adjacent_heal":20},"note":"Adjacent friendly units heal faster."},
-  "heathen_conversion": {"class":"religious_apostle","tier":1,"effects":{"convert_barbarians":1},"note":"Convert adjacent Barbarian units."},
-
-  "shadow_strike": {"class":"warrior_monk","tier":1,"effects":{"flanking_multiplier":2},"note":"Double flanking bonus."},
-  "twilight_veil": {"class":"warrior_monk","tier":1,"effects":{"camouflage":1},"note":"Visible only to adjacent enemy units."},
-  "exploding_palms": {"class":"warrior_monk","tier":2,"requires":["shadow_strike"],"effects":{"combat_all":10},"note":"+10 Combat Strength."},
-  "disciples": {"class":"warrior_monk","tier":2,"requires":["twilight_veil"],"effects":{"religious_pressure_on_kill":250},"note":"Spreads its religion after defeating a unit."},
-  "sweeping_wind": {"class":"warrior_monk","tier":3,"requires":["exploding_palms","disciples"],"effects":{"extra_attacks":1},"note":"+1 attack per turn when Movement allows."},
-  "dancing_crane": {"class":"warrior_monk","tier":3,"requires":["exploding_palms","disciples"],"effects":{"movement":1},"note":"+1 Movement."},
-  "cobra_strike": {"class":"warrior_monk","tier":4,"requires":["sweeping_wind","dancing_crane"],"effects":{"combat_all":15},"note":"+15 Combat Strength."}
+  "ranger": {
+    "class": "recon",
+    "tier": 1,
+    "effects": {
+      "woods_move_cost": 1
+    },
+    "note": "Woods and Rainforest cost 1 Movement."
+  },
+  "alpine": {
+    "class": "recon",
+    "tier": 1,
+    "effects": {
+      "hills_move_cost": 1
+    },
+    "note": "Hills cost 1 Movement."
+  },
+  "sentry": {
+    "class": "recon",
+    "tier": 2,
+    "requires": [
+      "ranger",
+      "alpine"
+    ],
+    "effects": {
+      "see_through_woods": 1
+    }
+  },
+  "guerrilla": {
+    "class": "recon",
+    "tier": 2,
+    "requires": [
+      "ranger",
+      "alpine"
+    ],
+    "effects": {
+      "move_after_attack": 1
+    }
+  },
+  "spyglass": {
+    "class": "recon",
+    "tier": 3,
+    "requires": [
+      "sentry"
+    ],
+    "effects": {
+      "sight": 1
+    }
+  },
+  "ambush": {
+    "class": "recon",
+    "tier": 3,
+    "requires": [
+      "guerrilla"
+    ],
+    "effects": {
+      "combat_all": 20
+    }
+  },
+  "camouflage": {
+    "class": "recon",
+    "tier": 4,
+    "requires": [
+      "spyglass",
+      "ambush"
+    ],
+    "effects": {
+      "camouflage": 1
+    }
+  },
+  "battlecry": {
+    "class": "melee",
+    "tier": 1,
+    "effects": {
+      "attack_vs_melee_ranged": 7
+    }
+  },
+  "tortoise": {
+    "class": "melee",
+    "tier": 1,
+    "effects": {
+      "defend_ranged": 10
+    }
+  },
+  "commando": {
+    "class": "melee",
+    "tier": 2,
+    "requires": [
+      "battlecry",
+      "amphibious"
+    ],
+    "effects": {
+      "movement": 1,
+      "scale_cliffs": 1
+    }
+  },
+  "amphibious": {
+    "class": "melee",
+    "tier": 2,
+    "requires": [
+      "tortoise",
+      "commando"
+    ],
+    "effects": {
+      "amphibious": 1
+    }
+  },
+  "zweihander": {
+    "class": "melee",
+    "tier": 3,
+    "requires": [
+      "commando",
+      "amphibious"
+    ],
+    "effects": {
+      "vs_anti_cavalry": 7
+    }
+  },
+  "urban_warfare": {
+    "class": "melee",
+    "tier": 3,
+    "requires": [
+      "commando",
+      "amphibious"
+    ],
+    "effects": {
+      "district_melee": 10
+    }
+  },
+  "elite_guard": {
+    "class": "melee",
+    "tier": 4,
+    "requires": [
+      "zweihander",
+      "urban_warfare"
+    ],
+    "effects": {
+      "extra_attacks": 1,
+      "move_after_attack": 1
+    }
+  },
+  "volley": {
+    "class": "ranged",
+    "tier": 1,
+    "effects": {
+      "ranged_vs_land": 5
+    }
+  },
+  "garrison": {
+    "class": "ranged",
+    "tier": 1,
+    "effects": {
+      "district_defense": 10
+    }
+  },
+  "arrow_storm": {
+    "class": "ranged",
+    "tier": 2,
+    "requires": [
+      "volley"
+    ],
+    "effects": {
+      "ranged_vs_units": 7
+    }
+  },
+  "incendiaries": {
+    "class": "ranged",
+    "tier": 2,
+    "requires": [
+      "garrison"
+    ],
+    "effects": {
+      "ranged_vs_district": 7
+    }
+  },
+  "suppression": {
+    "class": "ranged",
+    "tier": 3,
+    "requires": [
+      "arrow_storm",
+      "incendiaries"
+    ],
+    "effects": {
+      "zone_of_control": 1
+    }
+  },
+  "emplacement": {
+    "class": "ranged",
+    "tier": 3,
+    "requires": [
+      "arrow_storm",
+      "incendiaries"
+    ],
+    "effects": {
+      "defend_city_attack": 10
+    }
+  },
+  "expert_marksman": {
+    "class": "ranged",
+    "tier": 4,
+    "requires": [
+      "suppression",
+      "emplacement"
+    ],
+    "effects": {
+      "extra_attacks": 1
+    }
+  },
+  "echelon": {
+    "class": "anti_cavalry",
+    "tier": 1,
+    "effects": {
+      "vs_cavalry": 5
+    }
+  },
+  "thrust": {
+    "class": "anti_cavalry",
+    "tier": 1,
+    "effects": {
+      "vs_melee": 5
+    }
+  },
+  "square": {
+    "class": "anti_cavalry",
+    "tier": 2,
+    "requires": [
+      "echelon"
+    ],
+    "effects": {
+      "support_multiplier": 2
+    }
+  },
+  "schiltron": {
+    "class": "anti_cavalry",
+    "tier": 2,
+    "requires": [
+      "thrust"
+    ],
+    "effects": {
+      "defend_melee": 10
+    }
+  },
+  "redeploy": {
+    "class": "anti_cavalry",
+    "tier": 3,
+    "requires": [
+      "square",
+      "schiltron"
+    ],
+    "effects": {
+      "movement": 1
+    }
+  },
+  "choke_points": {
+    "class": "anti_cavalry",
+    "tier": 3,
+    "requires": [
+      "square",
+      "schiltron"
+    ],
+    "effects": {
+      "rough_defense": 7
+    }
+  },
+  "hold_the_line": {
+    "class": "anti_cavalry",
+    "tier": 4,
+    "requires": [
+      "redeploy",
+      "choke_points"
+    ],
+    "effects": {
+      "adjacent_vs_cavalry": 10
+    }
+  },
+  "caparison": {
+    "class": "light_cavalry",
+    "tier": 1,
+    "effects": {
+      "vs_anti_cavalry": 5
+    }
+  },
+  "coursers": {
+    "class": "light_cavalry",
+    "tier": 1,
+    "effects": {
+      "attack_vs_ranged_siege": 5
+    }
+  },
+  "depredation": {
+    "class": "light_cavalry",
+    "tier": 2,
+    "requires": [
+      "caparison"
+    ],
+    "effects": {
+      "pillage_cost": 1
+    }
+  },
+  "double_envelopment": {
+    "class": "light_cavalry",
+    "tier": 2,
+    "requires": [
+      "coursers"
+    ],
+    "effects": {
+      "flanking_multiplier": 2
+    }
+  },
+  "spiking_the_guns": {
+    "class": "light_cavalry",
+    "tier": 3,
+    "requires": [
+      "depredation",
+      "double_envelopment"
+    ],
+    "effects": {
+      "vs_siege": 7
+    }
+  },
+  "pursuit": {
+    "class": "light_cavalry",
+    "tier": 3,
+    "requires": [
+      "depredation",
+      "double_envelopment"
+    ],
+    "effects": {
+      "movement": 1
+    }
+  },
+  "escort_mobility": {
+    "class": "light_cavalry",
+    "tier": 4,
+    "requires": [
+      "spiking_the_guns",
+      "pursuit"
+    ],
+    "effects": {
+      "escort_mobility": 1
+    }
+  },
+  "charge": {
+    "class": "heavy_cavalry",
+    "tier": 1,
+    "effects": {
+      "vs_fortified": 10
+    }
+  },
+  "barding": {
+    "class": "heavy_cavalry",
+    "tier": 1,
+    "effects": {
+      "defend_ranged": 7
+    }
+  },
+  "marauding": {
+    "class": "heavy_cavalry",
+    "tier": 2,
+    "requires": [
+      "charge",
+      "rout"
+    ],
+    "effects": {
+      "vs_unit_in_district": 7
+    }
+  },
+  "rout": {
+    "class": "heavy_cavalry",
+    "tier": 2,
+    "requires": [
+      "barding",
+      "marauding"
+    ],
+    "effects": {
+      "vs_damaged": 5
+    }
+  },
+  "armor_piercing": {
+    "class": "heavy_cavalry",
+    "tier": 3,
+    "requires": [
+      "marauding"
+    ],
+    "effects": {
+      "vs_heavy_cavalry": 7
+    }
+  },
+  "reactive_armor": {
+    "class": "heavy_cavalry",
+    "tier": 3,
+    "requires": [
+      "rout"
+    ],
+    "effects": {
+      "defend_heavy_anti": 7
+    }
+  },
+  "breakthrough": {
+    "class": "heavy_cavalry",
+    "tier": 4,
+    "requires": [
+      "armor_piercing",
+      "reactive_armor"
+    ],
+    "effects": {
+      "extra_attacks": 1
+    }
+  },
+  "grape_shot": {
+    "class": "siege",
+    "tier": 1,
+    "effects": {
+      "siege_vs_land": 7
+    }
+  },
+  "crew_weapons": {
+    "class": "siege",
+    "tier": 1,
+    "effects": {
+      "defend_all": 7
+    }
+  },
+  "shrapnel": {
+    "class": "siege",
+    "tier": 2,
+    "requires": [
+      "grape_shot"
+    ],
+    "effects": {
+      "siege_vs_land": 10
+    }
+  },
+  "shells": {
+    "class": "siege",
+    "tier": 2,
+    "requires": [
+      "crew_weapons"
+    ],
+    "effects": {
+      "ranged_vs_district": 10
+    }
+  },
+  "advanced_rangefinding": {
+    "class": "siege",
+    "tier": 3,
+    "requires": [
+      "shrapnel",
+      "shells"
+    ],
+    "effects": {
+      "siege_vs_naval": 10
+    }
+  },
+  "expert_crew": {
+    "class": "siege",
+    "tier": 3,
+    "requires": [
+      "shrapnel",
+      "shells"
+    ],
+    "effects": {
+      "attack_after_move": 1
+    }
+  },
+  "forward_observers": {
+    "class": "siege",
+    "tier": 4,
+    "requires": [
+      "advanced_rangefinding",
+      "expert_crew"
+    ],
+    "effects": {
+      "range": 1
+    }
+  },
+  "helmsman": {
+    "class": "naval_melee",
+    "tier": 1,
+    "effects": {
+      "movement": 1
+    }
+  },
+  "embolon": {
+    "class": "naval_melee",
+    "tier": 1,
+    "effects": {
+      "vs_naval": 7
+    }
+  },
+  "rutter": {
+    "class": "naval_melee",
+    "tier": 2,
+    "requires": [
+      "helmsman"
+    ],
+    "effects": {
+      "sight": 1
+    }
+  },
+  "reinforced_hull": {
+    "class": "naval_melee",
+    "tier": 2,
+    "requires": [
+      "embolon"
+    ],
+    "effects": {
+      "defend_ranged": 10
+    }
+  },
+  "convoy": {
+    "class": "naval_melee",
+    "tier": 3,
+    "requires": [
+      "rutter",
+      "reinforced_hull"
+    ],
+    "effects": {
+      "formation_combat": 10
+    }
+  },
+  "auxiliary_ships": {
+    "class": "naval_melee",
+    "tier": 3,
+    "requires": [
+      "rutter",
+      "reinforced_hull"
+    ],
+    "effects": {
+      "heal_enemy_territory": 5,
+      "heal_neutral_territory": 10
+    },
+    "note": "Heals outside friendly territory: 5 in enemy, 10 in neutral."
+  },
+  "creeping_attack": {
+    "class": "naval_melee",
+    "tier": 4,
+    "requires": [
+      "convoy",
+      "auxiliary_ships"
+    ],
+    "effects": {
+      "vs_naval_raider": 14
+    }
+  },
+  "line_of_battle": {
+    "class": "naval_ranged",
+    "tier": 1,
+    "effects": {
+      "ranged_vs_naval": 7
+    },
+    "note": "+7 Ranged Strength against naval units."
+  },
+  "bombardment": {
+    "class": "naval_ranged",
+    "tier": 1,
+    "effects": {
+      "ranged_vs_district": 7
+    },
+    "note": "+7 Ranged Strength against district defenses."
+  },
+  "preparatory_fire": {
+    "class": "naval_ranged",
+    "tier": 2,
+    "requires": [
+      "line_of_battle"
+    ],
+    "effects": {
+      "ranged_vs_land": 7
+    },
+    "note": "+7 Ranged Strength against land units."
+  },
+  "rolling_barrage": {
+    "class": "naval_ranged",
+    "tier": 2,
+    "requires": [
+      "bombardment"
+    ],
+    "effects": {
+      "ranged_vs_district": 10
+    },
+    "note": "+10 Ranged Strength against district defenses."
+  },
+  "supply_fleet": {
+    "class": "naval_ranged",
+    "tier": 3,
+    "requires": [
+      "preparatory_fire",
+      "rolling_barrage"
+    ],
+    "effects": {
+      "heal_enemy_territory": 5,
+      "heal_neutral_territory": 10
+    },
+    "note": "Heals outside friendly territory: 5 in enemy, 10 in neutral."
+  },
+  "proximity_fuses": {
+    "class": "naval_ranged",
+    "tier": 3,
+    "requires": [
+      "preparatory_fire",
+      "rolling_barrage"
+    ],
+    "effects": {
+      "defend_air": 7
+    },
+    "note": "+7 Combat Strength when defending against air attacks."
+  },
+  "coincidence_rangefinding": {
+    "class": "naval_ranged",
+    "tier": 4,
+    "requires": [
+      "supply_fleet",
+      "proximity_fuses"
+    ],
+    "effects": {
+      "range": 1
+    },
+    "note": "+1 attack range."
+  },
+  "boarding": {
+    "class": "naval_raider",
+    "tier": 1,
+    "effects": {
+      "gold_from_naval_kill_pct": 50
+    },
+    "note": "Gain Gold after defeating a naval unit."
+  },
+  "homing_torpedoes": {
+    "class": "naval_raider",
+    "tier": 2,
+    "effects": {
+      "ranged_vs_naval": 10
+    },
+    "note": "+10 Ranged Strength against naval units.",
+    "requires": [
+      "boarding",
+      "swift_keel"
+    ]
+  },
+  "loot": {
+    "class": "naval_raider",
+    "tier": 1,
+    "effects": {
+      "coastal_raid_gold_pct": 50
+    },
+    "note": "Gain additional Gold from coastal raids."
+  },
+  "silent_running": {
+    "class": "naval_raider",
+    "tier": 3,
+    "requires": [
+      "homing_torpedoes"
+    ],
+    "effects": {
+      "move_after_attack": 1
+    },
+    "note": "May move after attacking."
+  },
+  "observation": {
+    "class": "naval_raider",
+    "tier": 3,
+    "requires": [
+      "swift_keel"
+    ],
+    "effects": {
+      "sight": 1
+    },
+    "note": "+1 sight range."
+  },
+  "wolfpack": {
+    "class": "naval_raider",
+    "tier": 4,
+    "requires": [
+      "observation",
+      "silent_running"
+    ],
+    "effects": {
+      "extra_attacks": 1
+    },
+    "note": "+1 attack per turn."
+  },
+  "swift_keel": {
+    "class": "naval_raider",
+    "tier": 2,
+    "requires": [
+      "homing_torpedoes",
+      "loot"
+    ],
+    "effects": {
+      "movement": 1
+    },
+    "note": "+1 Movement."
+  },
+  "flight_deck": {
+    "class": "naval_carrier",
+    "tier": 1,
+    "effects": {
+      "aircraft_slots": 1
+    },
+    "note": "+1 aircraft slot."
+  },
+  "scout_planes": {
+    "class": "naval_carrier",
+    "tier": 1,
+    "effects": {
+      "sight": 1
+    },
+    "note": "+1 sight range."
+  },
+  "hangar_deck": {
+    "class": "naval_carrier",
+    "tier": 2,
+    "requires": [
+      "flight_deck"
+    ],
+    "effects": {
+      "aircraft_slots": 1
+    },
+    "note": "+1 aircraft slot."
+  },
+  "advanced_engines": {
+    "class": "naval_carrier",
+    "tier": 2,
+    "requires": [
+      "scout_planes",
+      "hangar_deck"
+    ],
+    "effects": {
+      "movement": 1
+    },
+    "note": "+1 Movement."
+  },
+  "folding_wings": {
+    "class": "naval_carrier",
+    "tier": 3,
+    "requires": [
+      "hangar_deck"
+    ],
+    "effects": {
+      "aircraft_slots": 1
+    },
+    "note": "+1 aircraft slot."
+  },
+  "deck_crews": {
+    "class": "naval_carrier",
+    "tier": 3,
+    "requires": [
+      "advanced_engines",
+      "folding_wings"
+    ],
+    "effects": {
+      "heal_after_attack": 1
+    },
+    "note": "May heal after attacking."
+  },
+  "supercarrier": {
+    "class": "naval_carrier",
+    "tier": 4,
+    "requires": [
+      "folding_wings",
+      "deck_crews"
+    ],
+    "effects": {
+      "heal_enemy_territory": 5,
+      "heal_neutral_territory": 10
+    },
+    "note": "Heals outside friendly territory: 5 in enemy, 10 in neutral."
+  },
+  "dogfighting": {
+    "class": "air_fighter",
+    "tier": 1,
+    "effects": {
+      "vs_air_fighter": 7
+    },
+    "note": "+7 Combat Strength against fighter-class units."
+  },
+  "cockpit_armor": {
+    "class": "air_fighter",
+    "tier": 1,
+    "effects": {
+      "defend_anti_air": 7
+    },
+    "note": "+7 Combat Strength when defending against anti-air."
+  },
+  "interceptor": {
+    "class": "air_fighter",
+    "tier": 2,
+    "requires": [
+      "dogfighting"
+    ],
+    "effects": {
+      "vs_air_bomber": 7
+    },
+    "note": "+7 Combat Strength against bomber-class units."
+  },
+  "strafe": {
+    "class": "air_fighter",
+    "tier": 2,
+    "requires": [
+      "cockpit_armor"
+    ],
+    "effects": {
+      "vs_non_cavalry": 17
+    },
+    "note": "+17 Combat Strength against non-cavalry units."
+  },
+  "ground_crews": {
+    "class": "air_fighter",
+    "tier": 3,
+    "requires": [
+      "interceptor"
+    ],
+    "effects": {
+      "heal_on_patrol": 1
+    },
+    "note": "Heals while patrolling or deployed."
+  },
+  "tank_buster": {
+    "class": "air_fighter",
+    "tier": 3,
+    "requires": [
+      "strafe"
+    ],
+    "effects": {
+      "vs_cavalry": 17
+    },
+    "note": "+17 Combat Strength against cavalry units."
+  },
+  "drop_tanks": {
+    "class": "air_fighter",
+    "tier": 4,
+    "requires": [
+      "ground_crews",
+      "tank_buster"
+    ],
+    "effects": {
+      "range": 2
+    },
+    "note": "+2 Range."
+  },
+  "box_formation": {
+    "class": "air_bomber",
+    "tier": 1,
+    "effects": {
+      "defend_air_fighter": 7
+    },
+    "note": "+7 Combat Strength when defending against fighter-class units."
+  },
+  "evasive_maneuvers": {
+    "class": "air_bomber",
+    "tier": 1,
+    "effects": {
+      "defend_anti_air": 7
+    },
+    "note": "+7 Combat Strength when defending against anti-air."
+  },
+  "torpedo_bomber": {
+    "class": "air_bomber",
+    "tier": 2,
+    "requires": [
+      "box_formation",
+      "evasive_maneuvers"
+    ],
+    "effects": {
+      "air_vs_naval": 17
+    },
+    "note": "+17 Combat Strength against naval units."
+  },
+  "close_air_support": {
+    "class": "air_bomber",
+    "tier": 2,
+    "requires": [
+      "box_formation",
+      "evasive_maneuvers"
+    ],
+    "effects": {
+      "air_vs_land": 12
+    },
+    "note": "+12 Combat Strength against land units."
+  },
+  "tactical_maintenance": {
+    "class": "air_bomber",
+    "tier": 3,
+    "requires": [
+      "torpedo_bomber"
+    ],
+    "effects": {
+      "heal_after_attack": 1
+    },
+    "note": "May heal after attacking."
+  },
+  "long_range": {
+    "class": "air_bomber",
+    "tier": 3,
+    "requires": [
+      "close_air_support"
+    ],
+    "effects": {
+      "range": 2
+    },
+    "note": "+2 Range."
+  },
+  "superfortress": {
+    "class": "air_bomber",
+    "tier": 4,
+    "requires": [
+      "tactical_maintenance",
+      "long_range"
+    ],
+    "effects": {
+      "air_pillage_at_low_health": 1
+    },
+    "note": "May air pillage at any health."
+  },
+  "album_cover_art": {
+    "class": "rock_band",
+    "tier": 1,
+    "effects": {
+      "rock_wonder_levels": 1
+    },
+    "note": "Performs as if 1 level higher at World Wonders."
+  },
+  "arena_rock": {
+    "class": "rock_band",
+    "tier": 1,
+    "effects": {
+      "rock_entertainment_levels": 2
+    },
+    "note": "Performs as if 2 levels higher at Entertainment Complexes."
+  },
+  "glam_rock": {
+    "class": "rock_band",
+    "tier": 1,
+    "effects": {
+      "rock_theater_levels": 2
+    },
+    "note": "Performs as if 2 levels higher at Theater Squares."
+  },
+  "reggae_rock": {
+    "class": "rock_band",
+    "tier": 1,
+    "effects": {
+      "rock_water_park_levels": 2
+    },
+    "note": "Performs as if 2 levels higher at Water Parks."
+  },
+  "music_festival": {
+    "class": "rock_band",
+    "tier": 1,
+    "effects": {
+      "rock_nature_venue": 1,
+      "rock_nature_levels": 1
+    },
+    "note": "May perform at Natural Wonders and National Parks as if 1 level higher."
+  },
+  "space_rock": {
+    "class": "rock_band",
+    "tier": 1,
+    "effects": {
+      "rock_space_venue": 1,
+      "rock_space_levels": 1
+    },
+    "note": "May perform at Campuses and Spaceports as if 1 level higher."
+  },
+  "surf_band": {
+    "class": "rock_band",
+    "tier": 1,
+    "effects": {
+      "rock_surf_venue": 1,
+      "rock_surf_levels": 1
+    },
+    "note": "May perform at Harbors and Seaside Resorts as if 1 level higher."
+  },
+  "goes_to_11": {
+    "class": "rock_band",
+    "tier": 1,
+    "effects": {
+      "rock_nearby_tourism_pct": 50
+    },
+    "note": "Applies half the concert Tourism to other civilizations within 10 tiles."
+  },
+  "indie": {
+    "class": "rock_band",
+    "tier": 1,
+    "effects": {
+      "rock_loyalty_loss": 40
+    },
+    "note": "The host city loses 40 Loyalty after the concert."
+  },
+  "pop_star": {
+    "class": "rock_band",
+    "tier": 1,
+    "effects": {
+      "rock_gold_pct": 25
+    },
+    "note": "Earn Gold equal to 25% of concert Tourism."
+  },
+  "religious_rock": {
+    "class": "rock_band",
+    "tier": 1,
+    "effects": {
+      "rock_convert_city": 1
+    },
+    "note": "Converts the host city's majority religion to the religion founded by the player."
+  },
+  "roadies": {
+    "class": "rock_band",
+    "tier": 1,
+    "effects": {
+      "movement": 4
+    },
+    "note": "+4 Movement."
+  },
+  "debater": {
+    "class": "religious_apostle",
+    "tier": 1,
+    "effects": {
+      "religious_strength": 20
+    },
+    "note": "+20 Religious Strength in theological combat."
+  },
+  "orator": {
+    "class": "religious_apostle",
+    "tier": 1,
+    "effects": {
+      "religious_charges": 2
+    },
+    "note": "May spread Religion 2 extra times."
+  },
+  "translator": {
+    "class": "religious_apostle",
+    "tier": 1,
+    "effects": {
+      "foreign_spread_pct": 200
+    },
+    "note": "Triple strength when spreading to cities of other civilizations."
+  },
+  "proselytizer": {
+    "class": "religious_apostle",
+    "tier": 1,
+    "effects": {
+      "rival_pressure_removed_pct": 75
+    },
+    "note": "Eliminates 75% of other religions' pressure when spreading."
+  },
+  "pilgrim": {
+    "class": "religious_apostle",
+    "tier": 1,
+    "effects": {
+      "natural_wonder_charges": 3
+    },
+    "note": "Gains 3 spreads after moving adjacent to a natural wonder."
+  },
+  "indulgence_vendor": {
+    "class": "religious_apostle",
+    "tier": 1,
+    "effects": {
+      "gold_per_conversion": 100
+    },
+    "note": "Gain Gold when this unit first converts a city."
+  },
+  "martyr": {
+    "class": "religious_apostle",
+    "tier": 1,
+    "effects": {
+      "relic_on_death": 1
+    },
+    "note": "Creates a Relic if defeated in theological combat."
+  },
+  "chaplain": {
+    "class": "religious_apostle",
+    "tier": 1,
+    "effects": {
+      "adjacent_heal": 20
+    },
+    "note": "Adjacent friendly units heal faster."
+  },
+  "heathen_conversion": {
+    "class": "religious_apostle",
+    "tier": 1,
+    "effects": {
+      "convert_barbarians": 1
+    },
+    "note": "Convert adjacent Barbarian units."
+  },
+  "shadow_strike": {
+    "class": "warrior_monk",
+    "tier": 1,
+    "effects": {
+      "flanking_multiplier": 2
+    },
+    "note": "Double flanking bonus."
+  },
+  "twilight_veil": {
+    "class": "warrior_monk",
+    "tier": 1,
+    "effects": {
+      "camouflage": 1
+    },
+    "note": "Visible only to adjacent enemy units."
+  },
+  "exploding_palms": {
+    "class": "warrior_monk",
+    "tier": 2,
+    "requires": [
+      "shadow_strike"
+    ],
+    "effects": {
+      "combat_all": 10
+    },
+    "note": "+10 Combat Strength."
+  },
+  "disciples": {
+    "class": "warrior_monk",
+    "tier": 2,
+    "requires": [
+      "twilight_veil"
+    ],
+    "effects": {
+      "religious_pressure_on_kill": 250
+    },
+    "note": "Spreads its religion after defeating a unit."
+  },
+  "sweeping_wind": {
+    "class": "warrior_monk",
+    "tier": 3,
+    "requires": [
+      "exploding_palms",
+      "disciples"
+    ],
+    "effects": {
+      "extra_attacks": 1
+    },
+    "note": "+1 attack per turn when Movement allows."
+  },
+  "dancing_crane": {
+    "class": "warrior_monk",
+    "tier": 3,
+    "requires": [
+      "exploding_palms",
+      "disciples"
+    ],
+    "effects": {
+      "movement": 1
+    },
+    "note": "+1 Movement."
+  },
+  "cobra_strike": {
+    "class": "warrior_monk",
+    "tier": 4,
+    "requires": [
+      "sweeping_wind",
+      "dancing_crane"
+    ],
+    "effects": {
+      "combat_all": 15
+    },
+    "note": "+15 Combat Strength."
+  }
 }
