@@ -6196,6 +6196,37 @@ mod district_building_wonder_runtime_tests {
     }
 
     #[test]
+    fn a_levy_outliving_its_city_state_disbands_instead_of_stranding() {
+        let (mut game, _city, _position) = one_city(774_406);
+        let minor = game.players.len();
+        game.players.push(Player::new(minor, "Geneva", true));
+        game.players[0].envoys.push((minor, 3));
+        let position = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|position| game.city_at(*position).is_none())
+            .unwrap();
+        let warrior = game.spawn_unit("warrior", minor, position);
+        game.players[0].gold = 100.0;
+        game.do_levy_military(0, minor).unwrap();
+        assert_eq!(game.units[&warrior].owner, 0);
+
+        // The city-state is eliminated while its army is out on loan, so the
+        // elimination that disbands its units never sees this one.
+        game.players[minor].alive = false;
+
+        game.turn += STANDARD_DEAL_TURNS;
+        game.process_levies(0);
+        assert!(
+            !game.units.contains_key(&warrior),
+            "a returning levy cannot be handed to a civilization that no longer \
+             exists; nobody would ever move it off the tile again"
+        );
+    }
+
+    #[test]
     fn secret_society_choice_unlocks_its_replacement_building_and_round_trips() {
         let (mut game, city, position) = one_city(774_405);
         game.players[0].civics.insert("code_of_laws".to_string());
@@ -14542,6 +14573,17 @@ impl Game {
             .map(|(unit, minor)| (unit.id, minor))
             .collect();
         for (unit_id, minor) in expired {
+            // A levy outlives the city-state that raised it: the unit belongs
+            // to the Suzerain while it serves, so elimination -- which disbands
+            // that civilization's army -- never sees it. Handing it back to a
+            // player who no longer exists strands it on the map, because
+            // nobody takes turns for the dead: it would hold its tile and its
+            // zone of control for the rest of the game. The rest of the
+            // city-state's army went with the city-state, and so does this.
+            if !self.players[minor].alive {
+                self.remove_unit(unit_id);
+                continue;
+            }
             let (class, current_pos) = {
                 let unit = self.units.get_mut(&unit_id).unwrap();
                 unit.owner = minor;
