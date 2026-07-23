@@ -1916,6 +1916,26 @@ mod tests {
     }
 
     #[test]
+    fn browser_has_one_restart_action_above_game_settings() {
+        assert!(EMBEDDED_INDEX.contains(
+            "id=\"restart-sim\" title=\"Restart the simulation with the settings selected below\">Restart simulation with selected settings</button>"
+        ));
+        assert_eq!(EMBEDDED_INDEX.matches("id=\"restart-sim\"").count(), 1);
+        assert!(!EMBEDDED_INDEX.contains("id=\"fresh-sim\""));
+        assert!(!EMBEDDED_INDEX.contains("id=\"default-settings\""));
+        assert!(
+            EMBEDDED_INDEX.find("id=\"restart-sim\"")
+                < EMBEDDED_INDEX.find("<span>Game settings</span>")
+        );
+        assert!(EMBEDDED_INDEX.contains("async function restartSimulationWithSelectedSettings()"));
+        assert!(EMBEDDED_INDEX.contains("const payload = newSimulationPayload()"));
+        assert!(EMBEDDED_INDEX.contains("body: JSON.stringify({...payload, mode: \"restart\"})"));
+        assert!(EMBEDDED_INDEX.contains(
+            "document.getElementById(\"restart-sim\").onclick = restartSimulationWithSelectedSettings"
+        ));
+    }
+
+    #[test]
     fn browser_orders_settings_event_log_and_strategy() {
         for players in [2, 4, 6, 8, 10, 12] {
             assert!(
@@ -1960,25 +1980,17 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("AI-only simulation"));
         assert!(EMBEDDED_INDEX.contains("Single player · later"));
         assert!(EMBEDDED_INDEX.contains("Multiplayer · later"));
-        assert!(EMBEDDED_INDEX.contains("class=\"sim-actions\""));
         assert!(EMBEDDED_INDEX.contains(
-            "id=\"restart-sim\" title=\"Restart with the same settings and build\">Restart sim<span class=\"sub\">same settings<br>same build</span>"
+            "id=\"restart-sim\" title=\"Restart the simulation with the settings selected below\">Restart simulation with selected settings</button>"
         ));
+        assert_eq!(EMBEDDED_INDEX.matches("id=\"restart-sim\"").count(), 1);
+        assert!(!EMBEDDED_INDEX.contains("id=\"fresh-sim\""));
+        assert!(!EMBEDDED_INDEX.contains("id=\"default-settings\""));
+        assert!(EMBEDDED_INDEX.contains("async function restartSimulationWithSelectedSettings()"));
+        assert!(EMBEDDED_INDEX.contains("body: JSON.stringify({...payload, mode: \"restart\"})"));
         assert!(EMBEDDED_INDEX.contains(
-            "id=\"fresh-sim\" title=\"Start with the same settings on the most recent build\">New sim<span class=\"sub\">same settings<br>most recent build</span>"
+            "document.getElementById(\"restart-sim\").onclick = restartSimulationWithSelectedSettings"
         ));
-        assert!(EMBEDDED_INDEX.contains(
-            "id=\"default-settings\" title=\"Start with default settings on the most recent build\">New sim<span class=\"sub\">default settings<br>most recent build</span>"
-        ));
-        assert!(
-            EMBEDDED_INDEX.contains("async function startNewSimulation(mode, useDefaults = false)")
-        );
-        assert!(EMBEDDED_INDEX.contains("function restoreDefaultSimulationSettings()"));
-        assert!(EMBEDDED_INDEX.contains(
-            "document.getElementById(\"default-settings\").onclick = () => startNewSimulation(\"fresh_code\", true)"
-        ));
-        assert!(EMBEDDED_INDEX.contains("startNewSimulation(\"restart\")"));
-        assert!(EMBEDDED_INDEX.contains("startNewSimulation(\"fresh_code\")"));
         assert!(EMBEDDED_INDEX.contains("fetchJSON(\"/supervisor-new\""));
         assert!(EMBEDDED_INDEX.contains(
             "function supervisedSuccessorChanged(successor, finishedInstance, finishedSeed)"
@@ -2017,6 +2029,9 @@ mod tests {
         let game_settings = EMBEDDED_INDEX
             .find("id=\"game-settings\"")
             .expect("game settings panel");
+        let restart_settings = EMBEDDED_INDEX
+            .find("id=\"restart-sim\"")
+            .expect("restart simulation button");
         let display_settings = EMBEDDED_INDEX
             .find("id=\"display-settings\"")
             .expect("display settings panel");
@@ -2030,11 +2045,12 @@ mod tests {
             .find("<span>Active strategy</span>")
             .expect("active strategy section");
         assert!(
-            game_settings < display_settings
+            restart_settings < game_settings
+                && game_settings < display_settings
                 && display_settings < event_log
                 && event_log < war_log
                 && war_log < strategy,
-            "left panel should show game settings, display settings, and the two logs first"
+            "left panel should show restart, game settings, display settings, and the two logs first"
         );
         assert!(EMBEDDED_INDEX.contains("<span>Display settings</span>"));
         let observation_setting = EMBEDDED_INDEX
@@ -2157,6 +2173,28 @@ mod tests {
         assert!(side_rule.contains("order: -1"));
         assert!(EMBEDDED_INDEX.contains("<strong>${state.turn}</strong>"));
         assert!(!EMBEDDED_INDEX.contains("${state.turn}/${maxTurns}"));
+    }
+
+    #[test]
+    fn browser_keeps_the_sidebar_brand_only_and_observer_state_in_the_victory_hud() {
+        assert!(EMBEDDED_INDEX.contains("<h1>CIVVIS</h1>"));
+        assert!(EMBEDDED_INDEX.contains(
+            "<div class=\"tagline\">A Civ VI Simulator for AI Strategy Development</div>"
+        ));
+        assert!(EMBEDDED_INDEX.contains("<div class=\"brand-mark\" aria-hidden=\"true\">"));
+        let brand_mark = EMBEDDED_INDEX
+            .split_once(".brand-mark {")
+            .and_then(|(_, rest)| rest.split_once('}'))
+            .map(|(rule, _)| rule)
+            .unwrap_or_default();
+        assert!(brand_mark.contains("width: 52px"));
+        assert!(brand_mark.contains("height: 52px"));
+        assert!(!EMBEDDED_INDEX.contains("id=\"gameidentity\""));
+        assert!(!EMBEDDED_INDEX.contains("class=\"live-badge\""));
+        assert!(EMBEDDED_INDEX.contains("<span class=\"view-state\"><b></b>${viewLabel}</span>"));
+        assert!(
+            EMBEDDED_INDEX.contains("<i><em>${identity.civ}</em><small>${actingLabel}</small></i>")
+        );
     }
 
     #[test]

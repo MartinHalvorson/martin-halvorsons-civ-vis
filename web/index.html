@@ -73,32 +73,25 @@
   body.cinema-mode #side { width: 0; min-width: 0; opacity: 0; pointer-events: none; }
   body.cinema-mode #maparea::before { opacity: 1; }
   .side-head {
-    flex: 0 0 auto; min-height: 110px; padding: 16px 18px 13px; border-bottom: 1px solid var(--line-soft);
+    flex: 0 0 auto; min-height: 88px; padding: 16px 18px 15px; border-bottom: 1px solid var(--line-soft);
     background: linear-gradient(180deg, #172825e8, #101d1be8);
   }
   .brand { display: flex; align-items: center; gap: 10px; }
   .brand-mark {
-    flex: 0 0 auto; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%;
-    color: #172018; font: 700 14px/1 Georgia, serif; letter-spacing: .01em;
+    flex: 0 0 auto; width: 52px; height: 52px; display: grid; place-items: center; border-radius: 50%;
     background: radial-gradient(circle at 35% 30%, #f8dfa1, #c49c4b 62%, #74541e);
     border: 1px solid #f1d48e; box-shadow: 0 0 0 3px #1a2924, 0 7px 18px #0008;
   }
+  .brand-mark svg { width: 38px; height: 38px; fill: none; stroke: #223027; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.55; }
   .brand-copy { min-width: 0; }
   h1 {
     color: var(--gold-bright); font: 600 19px/1.05 Georgia, "Times New Roman", serif;
     letter-spacing: .2em; text-transform: uppercase;
   }
-  .tagline { color: var(--muted); font-size: 9px; letter-spacing: .13em; text-transform: uppercase; margin-top: 5px; }
-  #gameidentity { min-height: 34px; margin-top: 11px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
-  .identity-copy { min-width: 0; }
-  #gameidentity .civ-name { font: 600 15px/1.2 Georgia, serif; color: var(--text); }
-  .identity-meta { margin-top: 2px; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-  .live-badge {
-    display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 999px;
-    color: #a9dcbc; background: #173126; border: 1px solid #2e5b45;
-    font-size: 9px; font-weight: 800; letter-spacing: .13em; text-transform: uppercase;
+  .tagline {
+    max-width: 225px; margin-top: 5px; color: var(--muted); font-size: 9px;
+    letter-spacing: .1em; line-height: 1.35; text-transform: uppercase;
   }
-  .live-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #66d38b; box-shadow: 0 0 0 4px #66d38b1c; }
   /* The deck is a column: the fixed panels take the height they need and the
      two chronicles share whatever is left, so a tall screen reads more
      history rather than more empty parchment. Below the point where the
@@ -126,6 +119,7 @@
     letter-spacing: .18em; text-transform: uppercase;
   }
   .sidebar-section { flex: 0 0 auto; margin: 0 0 10px; }
+  .side-scroll > .restart-settings-action { flex: 0 0 auto; min-height: 44px; margin: 0 0 10px; }
   #eventsec[open], #warsec[open] { display: flex; flex-direction: column; min-height: 0; }
   /* Share the spare height three to two, and never shrink — a shrunk section
      would push its own content past its box and over the panel below instead
@@ -248,7 +242,7 @@
      constant height and the world visible. */
   #playerhud {
     position: absolute; z-index: 7; top: 10px; left: 12px; right: 12px; height: 112px;
-    display: grid; grid-template-columns: 70px minmax(0, 1fr) clamp(340px, 30%, 520px);
+    display: grid; grid-template-columns: 90px minmax(0, 1fr) clamp(340px, 30%, 520px);
     align-items: stretch; gap: 5px; min-width: 0; padding: 5px; overflow: hidden;
     border: 1px solid #526a618f; border-radius: 14px;
     background: linear-gradient(105deg, #091411ed, #0d1a17e6 54%, #0a1512ed);
@@ -276,20 +270,29 @@
   .hud-rail:focus-visible { outline: 1px solid #d7b66a70; outline-offset: -1px; border-radius: 6px; }
   .victory-turn, .victory-track { min-width: 0; border-radius: 8px; }
   .victory-turn {
-    display: flex; flex-direction: column; justify-content: center; padding: 8px 9px;
+    display: flex; flex-direction: column; justify-content: center; padding: 6px 8px;
     color: var(--gold-bright); background: linear-gradient(155deg, #d7b66a19, #d7b66a08);
     border: 1px solid #d7b66a30;
   }
-  .victory-turn span, .victory-heading {
+  .victory-turn > span, .victory-turn .turn-line > span, .victory-heading {
     color: #b9c8c2; font-size: 9px; font-weight: 900; letter-spacing: .1em; line-height: 1; text-transform: uppercase;
   }
-  .victory-turn strong { margin-top: 5px; font-size: 19px; line-height: 1; font-variant-numeric: tabular-nums; }
+  .victory-turn .view-state {
+    display: flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden;
+    color: #a9dcbc; font-size: 8px; letter-spacing: .08em; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .view-state b {
+    width: 5px; height: 5px; flex: 0 0 5px; border-radius: 50%; background: #66d38b;
+    box-shadow: 0 0 0 3px #66d38b1c;
+  }
+  .turn-line { display: flex; align-items: baseline; gap: 5px; margin-top: 4px; }
+  .victory-turn strong { font-size: 19px; line-height: 1; font-variant-numeric: tabular-nums; }
   /* The spectator line carries the acting civilization and the era, which on
      one line is always wider than the cell and so was always an ellipsis. The
      cell is tall enough for two lines, so let it wrap and clamp there instead
      of truncating the era away every turn. */
   .victory-turn i {
-    display: block; margin-top: 5px; overflow: hidden; color: #9aaba5;
+    display: block; margin-top: 4px; overflow: hidden; color: #9aaba5;
     font-size: 9px; font-style: normal; line-height: 1.25;
   }
   .victory-turn i em, .victory-turn i small {
@@ -298,7 +301,7 @@
   }
   .victory-turn i small { color: #71857e; text-transform: capitalize; }
   .code-age {
-    display: block; margin-top: 5px; padding-top: 4px; overflow: hidden;
+    display: block; margin-top: 4px; padding-top: 3px; overflow: hidden;
     color: #baa66f; border-top: 1px solid #d7b66a20;
     font-size: 7px; font-weight: 850; font-variant-numeric: tabular-nums;
     letter-spacing: .07em; line-height: 1; text-transform: uppercase;
@@ -778,9 +781,6 @@
     margin-top: 5px; color: var(--faint); font-size: 8px; font-variant-numeric: tabular-nums;
   }
   .game-speed-note span:last-child { white-space: nowrap; }
-  .sim-actions { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-  #newgame-options .sim-actions button { min-height: 52px; height: auto; padding: 6px 8px; line-height: 1.2; }
-  .sim-actions .sub { display: block; margin-top: 3px; color: var(--muted); font-size: 8px; font-weight: 600; letter-spacing: .04em; }
   .victory-options { grid-column: 1 / -1; padding: 9px 10px 10px; border: 1px solid var(--line-soft); border-radius: 9px; background: #09131080; }
   .victory-options h2 { margin-bottom: 8px; }
   .victory-option-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px 9px; }
@@ -905,7 +905,7 @@
     .ribbon-stat em { font-size: 7px; }
   }
   @media (max-width: 1580px) {
-    #playerhud { grid-template-columns: 64px minmax(0, 1fr) clamp(300px, 32%, 380px); }
+    #playerhud { grid-template-columns: 86px minmax(0, 1fr) clamp(300px, 32%, 380px); }
   }
   @media (max-width: 980px) {
     #side { width: 320px; min-width: 320px; }
@@ -916,14 +916,14 @@
     #maparea { height: 100%; }
     #side { position: fixed; inset: 132px auto 8px 8px; width: min(390px, calc(100% - 16px)); min-width: 0; height: auto; border: 1px solid #40584f; border-radius: 16px; }
     body.sidebar-hidden #side { width: min(390px, calc(100% - 16px)); transform: translateX(calc(-100% - 16px)); opacity: 0; }
-    #playerhud { grid-template-columns: 64px minmax(0, .9fr) minmax(0, 1.1fr); }
+    #playerhud { grid-template-columns: 82px minmax(0, .9fr) minmax(0, 1.1fr); }
     .minimap-frame { display: none; }
     #zoomctl { left: 12px; bottom: 12px; }
     #ubar { min-width: 0; width: calc(100% - 28px); bottom: 18px; }
     #trade { inset: 2% 8px; }
     .trade-balance { display: none; }
     #tradelist { grid-template-columns: 1fr; padding-inline: 10px; }
-    body.cinema-mode #playerhud { top: 24px; width: calc(100% - 24px); grid-template-columns: 58px minmax(0, 1fr); }
+    body.cinema-mode #playerhud { top: 24px; width: calc(100% - 24px); grid-template-columns: 82px minmax(0, 1fr); }
     body.cinema-mode #cinema-chrome { top: auto; right: 12px; bottom: 24px; }
     body.cinema-mode #cinema-story { left: 24px; bottom: 84px; width: calc(100% - 48px); }
     body.cinema-mode #cinema-story .cinema-detail {
@@ -932,13 +932,13 @@
     }
   }
   @media (max-width: 620px) {
-    #playerhud { grid-template-columns: 58px minmax(0, .78fr) minmax(0, 1.22fr); gap: 3px; }
+    #playerhud { grid-template-columns: 78px minmax(0, .78fr) minmax(0, 1.22fr); gap: 3px; }
     .hud-section-heading span:last-child { display: none; }
     .victory-turn { padding-inline: 6px; }
     .victory-turn i { font-size: 8px; }
   }
   @media (max-width: 430px) {
-    #playerhud { top: 8px; left: 8px; right: 8px; grid-template-columns: 54px minmax(0, .68fr) minmax(0, 1.32fr); padding: 4px; }
+    #playerhud { top: 8px; left: 8px; right: 8px; grid-template-columns: 74px minmax(0, .68fr) minmax(0, 1.32fr); padding: 4px; }
     .hud-region { padding-inline: 2px; }
     .diplomacy-card { flex-basis: 286px; grid-template-columns: 31px minmax(76px, .7fr) minmax(155px, 1.45fr); gap: 4px; padding: 4px; }
     .leader-medallion { width: 29px; height: 29px; font-size: 12px; }
@@ -1033,15 +1033,21 @@
 <div id="side">
   <div class="side-head">
     <div class="brand">
-      <div class="brand-mark">VIS</div>
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" focusable="false">
+          <circle cx="16" cy="16" r="12"></circle>
+          <ellipse cx="16" cy="16" rx="5.5" ry="12"></ellipse>
+          <path d="M5.2 16h21.6M7.7 10h16.6M7.7 22h16.6"></path>
+        </svg>
+      </div>
       <div class="brand-copy">
         <h1>CIVVIS</h1>
-        <div class="tagline">AI strategy simulator · Civ VI</div>
+        <div class="tagline">A Civ VI Simulator for AI Strategy Development</div>
       </div>
     </div>
-    <div id="gameidentity"></div>
   </div>
   <div class="side-scroll">
+    <button class="primary restart-settings-action" id="restart-sim" title="Restart the simulation with the settings selected below">Restart simulation with selected settings</button>
     <details class="sidebar-section" data-section="game-settings">
       <summary class="section-label">
         <span class="section-title"><span class="section-icon" aria-hidden="true">⚙</span><span>Game settings</span></span>
@@ -1101,11 +1107,6 @@
             <label class="victory-option"><input type="checkbox" id="victory-domination" checked>Domination</label>
             <label class="victory-option"><input type="checkbox" id="victory-score" checked>Score</label>
           </div>
-        </div>
-        <div class="sim-actions">
-          <button class="primary" id="restart-sim" title="Restart with the same settings and build">Restart sim<span class="sub">same settings<br>same build</span></button>
-          <button id="fresh-sim" title="Start with the same settings on the most recent build">New sim<span class="sub">same settings<br>most recent build</span></button>
-          <button id="default-settings" title="Start with default settings on the most recent build">New sim<span class="sub">default settings<br>most recent build</span></button>
         </div>
       </div>
       </div>
@@ -5897,6 +5898,25 @@ function playerHudOverview() {
   const era = typeof eraRaw === "number"
     ? (ERA_NAMES[eraRaw] || `era ${eraRaw}`)
     : String(eraRaw || "ancient").replaceAll("_", " ");
+  const playerView = SPEC && state.view_player !== null && state.view_player !== undefined;
+  const identity = SPEC ? viewer : state.players[0];
+  const viewLabel = playerView ? "Player view" : SPEC ? "Observing" : "Your empire";
+  const mapName = titleCase(state.map.script || "pangaea");
+  const speedName = titleCase(state.game_speed || "standard");
+  const ruleset = Array.isArray(RULES?.game_profiles)
+    ? RULES.game_profiles.find(candidate => candidate.id === state.game_profile)
+    : null;
+  const rulesetName = ruleset?.name || (state.game_profile === "civ6-tournament"
+    ? "Civ VI · tournament" : "Civ 6.5 · Gathering Storm+");
+  const mapLabel = `${rulesetName} · ${mapName} · ${state.map.size_name || "Custom"} ${state.map.width}×${state.map.height} · ${speedName}`;
+  const profile = spectatorIdentity(identity);
+  const climateLabel = (Number(state.me.global_co2) || 0) !== 0 || Number(eraRaw) >= 4
+    ? `Global lifetime carbon emissions: ${compactStat(state.me.global_co2)} CO₂`
+    : null;
+  const meta = [...profile.details, mapLabel, climateLabel].filter(Boolean).join(" · ");
+  const actingLabel = SPEC && actor.id !== identity.id ? `Acting: ${actor.civ}` : era;
+  const identityContext = `${viewLabel}: ${identity.civ} · ${profile.role} · ${meta}` +
+    (actor.id !== identity.id ? ` · Acting civilization: ${actor.civ}` : "");
   const contenders = state.players.filter(p => p.alive && !p.is_minor && !p.is_barbarian);
   const enabledVictoryTracks = VICTORY_TRACKS
     .filter(track => state.victory_conditions?.[track.id] !== false);
@@ -5937,8 +5957,10 @@ function playerHudOverview() {
   const victoryMinWidth = victoryCount * 84 + Math.max(0, victoryCount - 1) * 2;
   const codeAge = codeAgeIdentity();
   const overview =
-    `<section class="victory-turn" title="Turn ${state.turn}" aria-label="Turn ${state.turn}, ${era}; ${codeAge.label}"><span>Turn</span>` +
-    `<strong>${state.turn}</strong><i>${SPEC ? `<em>◉ ${actor.civ}</em>` : ""}<small>${era}</small></i>` +
+    `<section class="victory-turn" title="${identityContext}" aria-label="${identityContext}; turn ${state.turn}, ${era}; ${codeAge.label}">` +
+    `<span class="view-state"><b></b>${viewLabel}</span>` +
+    `<div class="turn-line"><span>Turn</span><strong>${state.turn}</strong></div>` +
+    `<i><em>${identity.civ}</em><small>${actingLabel}</small></i>` +
     `<small class="code-age" title="${codeAge.title}">${codeAge.label}</small></section>` +
     `<section class="hud-region victory-region" aria-labelledby="victory-race-title">` +
     `<div class="hud-section-heading"><span id="victory-race-title">Victory race</span><span>Top 3 by path</span></div>` +
@@ -5946,26 +5968,6 @@ function playerHudOverview() {
     `<div class="victory-ribbon" style="--victory-columns:${victoryCount};--victory-min-width:${victoryMinWidth}px">` +
     `${victoryTracks}</div></div></section>`;
 
-  const playerView = SPEC && state.view_player !== null && state.view_player !== undefined;
-  const identity = SPEC ? viewer : state.players[0];
-  const mapName = titleCase(state.map.script || "pangaea");
-  const speedName = titleCase(state.game_speed || "standard");
-  const ruleset = Array.isArray(RULES?.game_profiles)
-    ? RULES.game_profiles.find(candidate => candidate.id === state.game_profile)
-    : null;
-  const rulesetName = ruleset?.name || (state.game_profile === "civ6-tournament"
-    ? "Civ VI · tournament" : "Civ 6.5 · Gathering Storm+");
-  const mapLabel = `${rulesetName} · ${mapName} · ${state.map.size_name || "Custom"} ${state.map.width}×${state.map.height} · ${speedName}`;
-  const profile = spectatorIdentity(identity);
-  const climateLabel = (Number(state.me.global_co2) || 0) !== 0 || Number(eraRaw) >= 4
-    ? `Global lifetime carbon emissions: ${compactStat(state.me.global_co2)} CO₂`
-    : null;
-  const meta = [...profile.details, mapLabel, climateLabel].filter(Boolean).join(" · ");
-  document.getElementById("gameidentity").innerHTML =
-    `<div class="identity-copy"><div class="civ-name">${identity.civ}</div>` +
-    `<div class="identity-meta" title="${profile.role} · ${meta}">` +
-    `${profile.role} · ${meta}</div></div>` +
-    `<span class="live-badge">${playerView ? "Player view" : SPEC ? "Observing" : "Your empire"}</span>`;
   return overview;
 }
 
@@ -7709,22 +7711,9 @@ function newSimulationPayload() {
           seed: Math.floor(Math.random() * 1e9), force: true,
           spectate: gameMode === "ai_sim"};
 }
-function restoreDefaultSimulationSettings() {
-  document.getElementById("gamemode").value = "ai_sim";
-  document.getElementById("game-profile").value = "civ6-tournament";
-  document.getElementById("np").value = "4";
-  document.getElementById("maptype").value = "pangaea";
-  setGameSpeed("online");
-  document.getElementById("disaster-intensity").value = "2";
-  for (const track of VICTORY_TRACKS)
-    document.getElementById(`victory-${track.id}`).checked = true;
-  syncGameProfileNote();
-}
 function setNewSimulationBusy(busy) {
   newSimulationBusy = busy;
-  document.getElementById("default-settings").disabled = busy;
   document.getElementById("restart-sim").disabled = busy;
-  document.getElementById("fresh-sim").disabled = busy;
 }
 function showNewSimulationError(error) {
   const errEl = document.getElementById("err");
@@ -7732,17 +7721,12 @@ function showNewSimulationError(error) {
   errEl.style.display = "block";
   setTimeout(() => errEl.style.display = "none", 4000);
 }
-async function startNewSimulation(mode, useDefaults = false) {
+async function restartSimulationWithSelectedSettings() {
   if (newSimulationBusy) return;
   const supervised = !!(state && state.supervised);
-  if (mode === "fresh_code" && !supervised) {
-    showNewSimulationError("fresh code requires the spectator supervisor");
-    return;
-  }
   const wasPaused = specPaused;
   setNewSimulationBusy(true);
   try {
-    if (useDefaults) restoreDefaultSimulationSettings();
     const payload = newSimulationPayload();
     sel = null; selCity = null;
     clearTimeout(specTimer);
@@ -7754,12 +7738,10 @@ async function startNewSimulation(mode, useDefaults = false) {
       reportSpecStatus();
       const requested = await fetchJSON("/supervisor-new", { method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({...payload, mode}) });
+        body: JSON.stringify({...payload, mode: "restart"}) });
       if (requested.error) throw new Error(requested.error);
       const respawn = document.getElementById("respawn");
-      if (respawn) respawn.textContent = mode === "fresh_code"
-        ? `getting most recent build · starting new sim · ${useDefaults ? "default" : "same"} settings`
-        : "restarting sim on existing code";
+      if (respawn) respawn.textContent = "restarting simulation with selected settings";
       waitForSupervisedSuccessor(finishedInstance, finishedSeed);
       return;
     }
@@ -7787,9 +7769,7 @@ async function startNewSimulation(mode, useDefaults = false) {
 }
 document.getElementById("game-profile").onchange = applyGameProfileDefaults;
 document.getElementById("gamespeed").onchange = syncGameSpeedNote;
-document.getElementById("restart-sim").onclick = () => startNewSimulation("restart");
-document.getElementById("fresh-sim").onclick = () => startNewSimulation("fresh_code");
-document.getElementById("default-settings").onclick = () => startNewSimulation("fresh_code", true);
+document.getElementById("restart-sim").onclick = restartSimulationWithSelectedSettings;
 {
   const vs = document.getElementById("viewsel");
   vs.value = VIEW;
