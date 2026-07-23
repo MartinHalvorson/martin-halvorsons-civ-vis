@@ -124,11 +124,16 @@
     },
     "ADJUST_BUILDING_PRODUCTION": {
       "status": "implemented",
-      "note": "Production toward buildings from policies, governors and Great People (item_prod_mult)."
+      "verified": true,
+      "note": "Verified row by row. Limes doubles Castle and Star Fort Production, matching CIVVIS' wall card. Three Governor promotions each pair a headline effect with a Production bonus for one district's buildings, and CIVVIS implemented only the headline: Connoisseur adds 20% to Theater Square buildings alongside its Culture per Population, Divine Architect 20% to Holy Site buildings alongside Faith purchase, and Provision 20% to Industrial Zone buildings alongside settlers not consuming Population. All three now apply.",
+      "leads": [
+        "Liang's Architect (+30% Entertainment Complex and Water Park buildings) and Infrastructure (+30% Government Plaza buildings, Granary, Monument, Sewer, Water Mill) are shipped promotions CIVVIS' Liang tree does not carry under any name."
+      ]
     },
     "ADJUST_PROJECT_PRODUCTION": {
       "status": "implemented",
-      "note": "Production toward projects."
+      "verified": true,
+      "note": "Verified row by row. Space Initiative adds 30% to all five space-race projects, which CIVVIS carries as space_project_production_pct. The remaining rows are Arms Race Proponent's nuclear projects and the Rogue State card, neither of which CIVVIS models."
     },
     "ADJUST_UNIT_TAG_ERA_PRODUCTION": {
       "status": "implemented",

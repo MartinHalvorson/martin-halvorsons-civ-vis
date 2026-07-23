@@ -26,7 +26,7 @@
     "effects":{"loyalty":8,"harvest_pct":50},
     "promotions":{
       "surplus_logistics":{"tier":1,"effects":{"growth_pct":20,"incoming_trade_food":2}},
-      "provision":{"tier":1,"effects":{"settler_no_population":1}},
+      "provision":{"tier":1,"effects":{"settler_no_population":1,"industrial_zone_building_production_pct":20}},
       "industrialist":{"tier":2,"requires":["surplus_logistics"],"effects":{"power_per_resource_bonus":1,"power_plant_production":2}},
       "black_marketeer":{"tier":2,"requires":["provision"],"effects":{"strategic_resource_discount_pct":80}},
       "vertical_integration":{"tier":3,"requires":["industrialist","black_marketeer"],"effects":{"regional_industry_all":1}}
@@ -40,7 +40,7 @@
       "laying_on_of_hands":{"tier":1,"effects":{"unit_heal_full":1}},
       "citadel_of_god":{"tier":2,"requires":["grand_inquisitor","laying_on_of_hands"],"effects":{"ignore_foreign_religious_pressure":1,"building_completion_faith_pct":25}},
       "patron_saint":{"tier":3,"requires":["citadel_of_god"],"effects":{"apostle_extra_promotion":1}},
-      "divine_architect":{"tier":3,"requires":["citadel_of_god"],"effects":{"faith_purchase_districts":1}}
+      "divine_architect":{"tier":3,"requires":["citadel_of_god"],"effects":{"faith_purchase_districts":1,"holy_site_building_production_pct":20}}
     }
   },
   "pingala": {
@@ -48,7 +48,7 @@
     "effects":{"loyalty":8},
     "promotions":{
       "librarian":{"tier":1,"effects":{"science_pct":15,"culture_pct":15},"note":"+15% Science and +15% Culture in this city."},
-      "connoisseur":{"tier":1,"effects":{"culture_per_pop":1}},
+      "connoisseur":{"tier":1,"effects":{"culture_per_pop":1,"theater_square_building_production_pct":20}},
       "researcher":{"tier":1,"effects":{"science_per_pop":1}},
       "grants":{"tier":2,"requires":["connoisseur","researcher"],"effects":{"great_people_pct":100}},
       "space_initiative":{"tier":3,"requires":["grants"],"effects":{"space_project_production_pct":30}},

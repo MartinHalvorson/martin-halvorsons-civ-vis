@@ -1990,6 +1990,46 @@ mod governor_runtime_tests {
     }
 
     #[test]
+    fn governor_promotions_speed_their_district_buildings() {
+        // Connoisseur, Divine Architect and Provision each pair a headline
+        // effect with a Production bonus for one district's buildings.
+        let mut game = Game::new_full(1, 24, 16, 91_951, 200, 0, false);
+        let city = found_capital(&mut game, 0);
+        let sites: Vec<Pos> = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .filter(|position| *position != game.cities[&city].pos)
+            .collect();
+        for (index, district) in ["theater_square", "holy_site", "industrial_zone"]
+            .into_iter()
+            .enumerate()
+        {
+            set_district(&mut game, city, sites[index], district);
+        }
+        let speed = |game: &Game, building: &str| {
+            game.item_prod_mult(
+                0,
+                city,
+                Some(&Item::Building {
+                    building: building.to_string(),
+                }),
+            )
+        };
+        let before = [
+            speed(&game, "amphitheater"),
+            speed(&game, "shrine"),
+            speed(&game, "workshop"),
+        ];
+        appoint_established(&mut game, 0, "pingala", city, &["connoisseur"]);
+        appoint_established(&mut game, 0, "moksha", city, &["divine_architect"]);
+        appoint_established(&mut game, 0, "magnus", city, &["provision"]);
+        assert_eq!(speed(&game, "amphitheater"), before[0] + 0.2);
+        assert_eq!(speed(&game, "shrine"), before[1] + 0.2);
+        assert_eq!(speed(&game, "workshop"), before[2] + 0.2);
+    }
+
+    #[test]
     fn first_tier_governor_abilities_cost_a_title() {
         // Land Acquisition and Librarian are promotions in the shipped tree,
         // not abilities that arrive with the appointment.
@@ -13973,6 +14013,13 @@ impl Game {
                 }) {
                     bonus += self.policy_effect(pid, "military_port_production_pct") / 100.0;
                 }
+                // Several Governor promotions speed the buildings of one
+                // district family alongside their headline effect.
+                bonus += self.governor_effect(
+                    pid,
+                    cid,
+                    &format!("{district}_building_production_pct"),
+                ) / 100.0;
             }
             Some(Item::District { district, .. }) => {
                 bonus += self.governor_effect(pid, cid, "district_production_pct") / 100.0;
