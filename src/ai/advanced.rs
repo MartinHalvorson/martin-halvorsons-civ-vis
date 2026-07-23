@@ -6173,13 +6173,17 @@ impl AdvancedAi {
         value
     }
 
-    fn advanced_missionary_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
+    fn advanced_missionary_step(
+        &self,
+        g: &mut Game,
+        pid: usize,
+        uid: u32,
+        offensive: bool,
+    ) -> bool {
         let Some(religion) = g.players[pid].religion.clone() else {
             return false;
         };
         let current = g.units[&uid].pos;
-        let offensive =
-            self.victory_target.is_none() || self.victory_target == Some(VictoryTarget::Religion);
         let mut targets: Vec<(i32, std::cmp::Reverse<u32>, Pos)> = g
             .cities
             .values()
@@ -6222,7 +6226,7 @@ impl AdvancedAi {
         false
     }
 
-    fn advanced_religious_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
+    fn advanced_religious_step(&self, g: &mut Game, pid: usize, uid: u32, offensive: bool) -> bool {
         let unit = g.units[&uid].clone();
         let religion = unit
             .religion
@@ -6340,7 +6344,7 @@ impl AdvancedAi {
         }
 
         if g.rules.units[unit.kind.as_str()].religious_spread > 0.0 && unit.charges > 0 {
-            return self.advanced_missionary_step(g, pid, uid);
+            return self.advanced_missionary_step(g, pid, uid, offensive);
         }
 
         let target = g
@@ -8288,14 +8292,21 @@ impl AdvancedAi {
                     "naturalist" => self.base.naturalist_step(g, pid, uid),
                     "archaeologist" => self.base.archaeologist_step(g, pid, uid),
                     "trader" => self.advanced_trader_step(g, pid, uid, plan.strategy),
-                    "missionary" if self.victory_planning => {
-                        self.advanced_missionary_step(g, pid, uid)
-                    }
+                    "missionary" if self.victory_planning => self.advanced_missionary_step(
+                        g,
+                        pid,
+                        uid,
+                        plan.strategy == GrandStrategy::Religion,
+                    ),
                     "missionary" => self.base.missionary_step(g, pid, uid),
                     "rock_band" => self.base.rock_band_step(g, pid, uid),
-                    _ if self.victory_planning && class == "religious" => {
-                        self.advanced_religious_step(g, pid, uid)
-                    }
+                    _ if self.victory_planning && class == "religious" => self
+                        .advanced_religious_step(
+                            g,
+                            pid,
+                            uid,
+                            plan.strategy == GrandStrategy::Religion,
+                        ),
                     _ => self.advanced_military_step(g, pid, uid, plan),
                 };
                 if !acted {
@@ -10437,7 +10448,7 @@ mod tests {
         let missionary = game.spawn_test_unit("missionary", 0, game.cities[&home].pos);
         game.units.get_mut(&missionary).unwrap().religion = Some("Our Faith".to_string());
 
-        assert!(AdvancedAi::new().advanced_missionary_step(&mut game, 0, missionary));
+        assert!(AdvancedAi::new().advanced_missionary_step(&mut game, 0, missionary, true));
         assert!(
             game.cities[&home]
                 .pressure
@@ -10475,9 +10486,15 @@ mod tests {
         let before = game.cities[&home].pressure["Our Faith"];
 
         assert!(AdvancedAi::targeting(VictoryTarget::Science)
-            .advanced_missionary_step(&mut game, 0, missionary));
+            .advanced_missionary_step(&mut game, 0, missionary, false));
         assert!(game.cities[&home].pressure["Our Faith"] > before);
         assert_eq!(game.units[&missionary].charges, 2);
+        game.units.get_mut(&missionary).unwrap().moves_left = 4.0;
+        assert!(
+            !AdvancedAi::targeting(VictoryTarget::Science)
+                .advanced_missionary_step(&mut game, 0, missionary, false),
+            "a defensive unit must hold once its home is safe instead of starting a foreign crusade"
+        );
     }
 
     #[test]
@@ -10520,7 +10537,7 @@ mod tests {
         let missionary = game.spawn_test_unit("missionary", 0, start);
         game.units.get_mut(&missionary).unwrap().religion = Some("Our Faith".to_string());
         let ai = AdvancedAi::new();
-        assert!(ai.advanced_missionary_step(&mut game, 0, missionary));
+        assert!(ai.advanced_missionary_step(&mut game, 0, missionary, true));
         assert_eq!(
             game.wdist(game.units[&missionary].pos, target),
             3,
@@ -10532,7 +10549,7 @@ mod tests {
                 break;
             }
             game.units.get_mut(&missionary).unwrap().moves_left = 4.0;
-            assert!(ai.advanced_missionary_step(&mut game, 0, missionary));
+            assert!(ai.advanced_missionary_step(&mut game, 0, missionary, true));
         }
         assert!(
             !game.units.contains_key(&missionary) || game.units[&missionary].charges < 3,
@@ -10556,14 +10573,14 @@ mod tests {
 
         let first = game.spawn_test_unit("apostle", 0, game.cities[&city].pos);
         game.units.get_mut(&first).unwrap().religion = Some("Planned Faith".to_string());
-        assert!(ai.advanced_religious_step(&mut game, 0, first));
+        assert!(ai.advanced_religious_step(&mut game, 0, first, false));
         assert!(game.players[0]
             .religion_beliefs
             .contains(&"wat".to_string()));
 
         let second = game.spawn_test_unit("apostle", 0, game.cities[&city].pos);
         game.units.get_mut(&second).unwrap().religion = Some("Planned Faith".to_string());
-        assert!(ai.advanced_religious_step(&mut game, 0, second));
+        assert!(ai.advanced_religious_step(&mut game, 0, second, false));
         assert_eq!(game.players[0].religion_beliefs.len(), 4);
         assert_eq!(
             game.players[0]
