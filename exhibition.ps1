@@ -65,10 +65,14 @@ while ($true) {
         $evoUp = Get-Process civvis-evolve -ErrorAction SilentlyContinue
         if (-not $evoUp -and (Test-Path "$repo\bin-run\civvis-evolve.exe")) { Start-Evolve }
 
-        # 2. new commits upstream? pull + build + stage (skip if checkout dirty:
-        #    a parallel session is mid-work; retry next round). Building the
-        #    moment commits land is what has the binary ready before the game
-        #    ends, rather than starting a build during the changeover.
+        # 2. keep up with origin/main, then make sure the binaries were built
+        #    from whatever HEAD now is. Triggering the build off "did we just
+        #    pull" alone is not enough: after a restart, a failed build, or a
+        #    hand-staged binary, the checkout can already be current while the
+        #    exe on disk is several commits old, and nothing would ever
+        #    rebuild it. Comparing against the commit that produced the last
+        #    staged build heals all of those. Skip while the checkout is dirty:
+        #    a parallel session is mid-work; retry next round.
         git fetch -q origin main 2>$null
         $local = git rev-parse HEAD
         $remote = git rev-parse origin/main
@@ -79,17 +83,25 @@ while ($true) {
                 git rebase --abort 2>$null
                 Log "pull failed; will retry"
             } else {
-                $head = git rev-parse --short HEAD
-                Log "pulled $head; building"
-                $sw = [Diagnostics.Stopwatch]::StartNew()
-                & $cargo build --release 2>$null | Out-Null
-                $sw.Stop()
-                if ($LASTEXITCODE -eq 0) {
-                    Copy-Item "$repo\target\release\civvis.exe" "$repo\bin-run\civvis-next.exe" -Force
-                    Log ("staged new build in {0:n0}s" -f $sw.Elapsed.TotalSeconds)
-                } else {
-                    Log "build FAILED for $head"
-                }
+                Log "pulled $(git rev-parse --short HEAD)"
+            }
+        }
+        $stamp = "$repo\bin-run\built.commit"
+        $head = git rev-parse HEAD
+        $built = if (Test-Path $stamp) { (Get-Content $stamp -Raw).Trim() } else { "" }
+        if ($head -ne $built -and -not $dirty) {
+            Log "building $(git rev-parse --short HEAD)"
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            & $cargo build --release 2>$null | Out-Null
+            $sw.Stop()
+            if ($LASTEXITCODE -eq 0) {
+                Copy-Item "$repo\target\release\civvis.exe" "$repo\bin-run\civvis-next.exe" -Force
+                Set-Content -Path $stamp -Value $head -Encoding ascii
+                Log ("staged new build in {0:n0}s" -f $sw.Elapsed.TotalSeconds)
+            } else {
+                # Record nothing on failure, so the next round retries rather
+                # than treating a broken commit as already built.
+                Log "build FAILED for $(git rev-parse --short HEAD)"
             }
         }
 
