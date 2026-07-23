@@ -62,6 +62,41 @@ struct History {
     reported_city: BTreeMap<u32, bool>,
 }
 
+fn stalled_settler_context(g: &Game, id: u32) -> String {
+    let unit = &g.units[&id];
+    let pid = unit.owner;
+    let legal_sites: Vec<_> = g
+        .map
+        .tiles
+        .iter()
+        .filter(|(position, tile)| {
+            !g.rules.is_water(tile)
+                && g.rules.is_passable(tile)
+                && !g
+                    .cities
+                    .values()
+                    .any(|city| g.wdist(city.pos, **position) < 4)
+                && tile
+                    .owner_city
+                    .is_none_or(|city| g.cities[&city].owner == pid)
+        })
+        .map(|(position, _)| *position)
+        .collect();
+    let reachable = legal_sites
+        .iter()
+        .filter(|position| **position == unit.pos || g.route_step(id, **position, 0).is_some())
+        .count();
+    format!(
+        "; at {:?}, cities={}, legal_sites={}, reachable={}, shipbuilding={}, linked={:?}",
+        unit.pos,
+        g.player_city_ids(pid).len(),
+        legal_sites.len(),
+        reachable,
+        g.players[pid].techs.contains("shipbuilding"),
+        unit.linked_to,
+    )
+}
+
 fn audit_turn(g: &Game, history: &mut History, found: &mut Findings) {
     for (id, unit) in &g.units {
         if unit.hp <= 0 || unit.hp > 100 {
@@ -103,11 +138,16 @@ fn audit_turn(g: &Game, history: &mut History, found: &mut Findings) {
             && !history.reported_unit.get(id).copied().unwrap_or(false)
         {
             history.reported_unit.insert(*id, true);
+            let context = if unit.kind == "settler" {
+                stalled_settler_context(g, *id)
+            } else {
+                String::new()
+            };
             found.symptom(
                 format!("{} sits still {IDLE_TURNS}+ turns", unit.kind),
                 format!(
-                    "unit {id} ({}) of {} unmoved since turn {}",
-                    unit.kind, g.players[unit.owner].civ, entry.0
+                    "unit {id} ({}) of {} unmoved since turn {}{context}",
+                    unit.kind, g.players[unit.owner].civ, entry.0,
                 ),
             );
         }

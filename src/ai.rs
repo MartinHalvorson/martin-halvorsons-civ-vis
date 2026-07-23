@@ -1927,7 +1927,7 @@ impl BasicAi {
     }
 
     fn cities(&mut self, g: &mut Game, pid: usize) {
-        let mut settlers = 0;
+        let mut settlers: usize = 0;
         let mut builders = 0;
         let mut traders = 0;
         let mut siege_support = 0;
@@ -1979,6 +1979,69 @@ impl BasicAi {
                             }
                         }
                     }
+                }
+            }
+        }
+        // Settlement races can invalidate the final site after a Settler was
+        // queued but before it finishes. Revalidate the queue every turn and
+        // bank its progress behind a useful replacement instead of completing
+        // a civilian that can never found a city.
+        if settlers > 0 && !self.has_practical_settle_site(g, pid) {
+            for cid in &city_ids {
+                if !matches!(
+                    g.cities[cid].queue.first(),
+                    Some(Item::Unit { unit }) if unit == "settler"
+                ) {
+                    continue;
+                }
+                let replacement = self.pick_item(
+                    g,
+                    pid,
+                    *cid,
+                    n_cities,
+                    settlers.saturating_sub(1),
+                    builders,
+                    traders,
+                    siege_support,
+                    military,
+                    melee,
+                    ranged,
+                );
+                let Some(item) = replacement else { continue };
+                if g
+                    .apply(
+                        pid,
+                        &Action::Produce {
+                            city: *cid,
+                            item: item.clone(),
+                        },
+                    )
+                    .is_err()
+                {
+                    continue;
+                }
+                settlers = settlers.saturating_sub(1);
+                match &item {
+                    Item::Unit { unit } if unit == "builder" => builders += 1,
+                    Item::Unit { unit } if unit == "trader" => traders += 1,
+                    Item::Unit { unit }
+                        if unit == "battering_ram" || unit == "siege_tower" =>
+                    {
+                        siege_support += 1
+                    }
+                    Item::Unit { unit } => {
+                        let spec = &g.rules.units[unit.as_str()];
+                        if spec.class == "military" {
+                            military += 1;
+                            if spec.is_melee_capable() {
+                                melee += 1;
+                            }
+                            if spec.has_ranged_attack() {
+                                ranged += 1;
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -2046,6 +2109,9 @@ impl BasicAi {
                         continue; // "pass" gene: fall back to evaluation
                     }
                     let name = OPENING_MENU[i];
+                    if name == "settler" && !self.has_practical_settle_site(g, pid) {
+                        continue;
+                    }
                     let item = if name == "monument" {
                         Item::Building {
                             building: name.to_string(),
@@ -2645,6 +2711,7 @@ impl BasicAi {
             && settlers == 0
             && (n_cities as f64) < self.w.city_target
             && (g.turn as f64) < self.w.settler_stop_turn
+            && self.has_practical_settle_site(g, pid)
             && self.buy_gold_unit(g, pid, city_ids, "settler", reserve)
         {
             return true;
@@ -2863,6 +2930,7 @@ impl BasicAi {
             && settlers == 0
             && (city_pop as f64) >= self.w.settler_min_pop
             && (g.turn as f64) < self.w.settler_stop_turn
+            && self.has_practical_settle_site(g, pid)
         {
             return Some(Item::Unit {
                 unit: "settler".to_string(),
@@ -3490,6 +3558,52 @@ impl BasicAi {
                 .is_none_or(|cid| g.cities[&cid].owner == pid)
     }
 
+    fn has_practical_settle_site(&self, g: &Game, pid: usize) -> bool {
+        let shipbuilding = g.players[pid].techs.contains("shipbuilding");
+        let cartography = g.players[pid].techs.contains("cartography");
+        // Before embarkation, a city only commits to a site close enough to
+        // survive an ordinary settlement race. Existing settlers still use
+        // the full path search below, but producing one for a site more than
+        // eight steps away routinely loses the site after paying Population.
+        let max_steps = if shipbuilding {
+            g.map.width + g.map.height
+        } else {
+            8
+        };
+        let mut frontier: Vec<(Pos, i32)> = g
+            .player_city_ids(pid)
+            .into_iter()
+            .map(|city| (g.cities[&city].pos, 0))
+            .collect();
+        let mut seen: HashSet<Pos> = frontier.iter().map(|(position, _)| *position).collect();
+        while let Some((position, steps)) = frontier.pop() {
+            if self.valid_settle_site(g, pid, position) {
+                return true;
+            }
+            if steps >= max_steps {
+                continue;
+            }
+            for next in g.nbrs(position) {
+                if seen.contains(&next) {
+                    continue;
+                }
+                let Some(tile) = g.map.get(next) else { continue };
+                if !g.rules.is_passable(tile)
+                    || (g.rules.is_water(tile) && !shipbuilding)
+                    || (tile.terrain == "ocean" && !cartography)
+                    || g
+                        .city_at(next)
+                        .is_some_and(|city| g.cities[&city].owner != pid)
+                {
+                    continue;
+                }
+                seen.insert(next);
+                frontier.push((next, steps + 1));
+            }
+        }
+        false
+    }
+
     fn best_reachable_settle_site(
         &self,
         g: &Game,
@@ -3532,11 +3646,16 @@ impl BasicAi {
                 6
             };
             let local = self.best_reachable_settle_site(g, pid, uid, local_radius);
-            let global = g.players[pid]
-                .techs
-                .contains("shipbuilding")
-                .then(|| g.map.width + g.map.height)
-                .and_then(|radius| self.best_reachable_settle_site(g, pid, uid, radius));
+            // Search distant land even before embarkation. The pathfinder
+            // itself rejects disconnected islands; tying the wider search to
+            // Shipbuilding stranded settlers whose only site was farther than
+            // the local radius on the same landmass.
+            let global = self.best_reachable_settle_site(
+                g,
+                pid,
+                uid,
+                g.map.width + g.map.height,
+            );
             match (local, global) {
                 (Some(local), Some(global)) if global.1 > local.1 + 4.0 => Some(global),
                 (Some(local), _) => Some(local),
@@ -5183,6 +5302,50 @@ mod tests {
     }
 
     #[test]
+    fn settler_routes_to_distant_land_before_embarkation() {
+        let mut game = Game::new_full(1, 18, 10, 91_002, 120, 0, false);
+        let founding_settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        let source = game.units[&founding_settler].pos;
+        let target = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .max_by_key(|position| (game.wdist(source, *position), *position))
+            .unwrap();
+        assert!(game.wdist(source, target) > 8);
+        game.apply(
+            0,
+            &Action::FoundCity {
+                unit: founding_settler,
+            },
+        )
+        .unwrap();
+        for (position, tile) in &mut game.map.tiles {
+            tile.feature = None;
+            tile.resource = None;
+            tile.owner_city = None;
+            if *position != source && *position != target {
+                tile.terrain = "mountain".to_string();
+                tile.improvement = Some("mountain_tunnel".to_string());
+            }
+        }
+        game.map.tiles.get_mut(&source).unwrap().terrain = "plains".to_string();
+        game.map.tiles.get_mut(&target).unwrap().terrain = "grassland".to_string();
+        let settler = game.spawn_test_unit("settler", 0, source);
+        let mut ai = BasicAi::new();
+
+        assert!(!ai.has_practical_settle_site(&game, 0));
+        assert!(ai.settler_step(&mut game, 0, settler));
+        assert_eq!(ai.settler_targets.get(&settler), Some(&target));
+        assert_ne!(game.units[&settler].pos, source);
+    }
+
+    #[test]
     fn naval_escorts_link_to_embarked_settlers() {
         let (mut g, source, _) = island_colony_game(1);
         g.players[0]
@@ -5984,6 +6147,67 @@ mod tests {
             Action::BuyBuilding { building, currency, .. }
                 if building == "monument" && currency == "gold"
         )));
+    }
+
+    #[test]
+    fn crowded_world_does_not_produce_or_buy_a_stranded_settler() {
+        let mut game = Game::new_full(1, 20, 14, 320_001, 80, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = game.player_city_ids(0)[0];
+        let center = game.cities[&city].pos;
+        game.cities.get_mut(&city).unwrap().pop = 4;
+        for (position, tile) in &mut game.map.tiles {
+            if *position != center {
+                tile.terrain = "ocean".to_string();
+                tile.feature = None;
+            }
+        }
+        let settler_item = Item::Unit {
+            unit: "settler".to_string(),
+        };
+        assert!(game.can_produce(0, city, &settler_item));
+        let mut ai = BasicAi::new();
+
+        let production = ai.pick_item(&game, 0, city, 1, 0, 1, 1, 0, 2, 1, 1);
+        assert_ne!(
+            production,
+            Some(settler_item.clone()),
+            "the city must not turn Population and Production into a settler with nowhere to settle"
+        );
+
+        game.players[0].gold = 10_000.0;
+        let _ = ai.spend_gold(&mut game, 0, &[city], 0, 1, 1, 2, 1, 1);
+        assert!(game
+            .player_unit_ids(0)
+            .into_iter()
+            .all(|unit| game.units[&unit].kind != "settler"));
+
+        game.apply(
+            0,
+            &Action::Produce {
+                city,
+                item: settler_item.clone(),
+            },
+        )
+        .unwrap();
+        game.cities.get_mut(&city).unwrap().production = 42.0;
+        ai.cities(&mut game, 0);
+        assert!(!matches!(
+            game.cities[&city].queue.first(),
+            Some(Item::Unit { unit }) if unit == "settler"
+        ));
+        assert_eq!(
+            game.cities[&city]
+                .production_progress
+                .get("unit:settler"),
+            Some(&42.0),
+            "the invested Production should remain banked when the queue is redirected"
+        );
     }
 
     #[test]

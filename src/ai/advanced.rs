@@ -5989,11 +5989,12 @@ impl AdvancedAi {
         });
         let target = valid_target.or_else(|| {
             let local = self.best_reachable_settle_site(g, pid, uid, 8);
-            let global = g.players[pid]
-                .techs
-                .contains("shipbuilding")
-                .then(|| g.map.width + g.map.height)
-                .and_then(|radius| self.best_reachable_settle_site(g, pid, uid, radius));
+            let global = self.best_reachable_settle_site(
+                g,
+                pid,
+                uid,
+                g.map.width + g.map.height,
+            );
             match (local, global) {
                 (Some(local), Some(global)) if global.1 > local.1 + 5.0 => Some(global),
                 (Some(local), _) => Some(local),
@@ -6973,6 +6974,7 @@ impl AdvancedAi {
         uid: u32,
         group: &ForceGroup,
         enemies: &[usize],
+        decline_settlers: bool,
     ) -> bool {
         let unit = &g.units[&uid];
         let upos = unit.pos;
@@ -7080,7 +7082,16 @@ impl AdvancedAi {
         let stay = score(g, upos);
         let holding_role_position = g.wdist(upos, target) == preferred_depth;
         let mut best: Option<(f64, Pos)> = None;
-        for pos in g.nbrs(upos).into_iter().filter(|pos| g.can_move(uid, *pos)) {
+        for pos in g.nbrs(upos).into_iter().filter(|pos| {
+            g.can_move(uid, *pos)
+                && !(decline_settlers
+                    && g.units_at(*pos).iter().any(|other| {
+                        let other = &g.units[other];
+                        other.owner != pid
+                            && g.is_at_war(pid, other.owner)
+                            && other.kind == "settler"
+                    }))
+        }) {
             let candidate = score(g, pos);
             if best
                 .map(|(old, old_pos)| candidate > old || (candidate == old && pos < old_pos))
@@ -7112,6 +7123,15 @@ impl AdvancedAi {
             if let Some(pos) = g
                 .route_step(uid, target, stop_range)
                 .filter(|pos| g.can_move(uid, *pos))
+                .filter(|pos| {
+                    !(decline_settlers
+                        && g.units_at(*pos).iter().any(|other| {
+                            let other = &g.units[other];
+                            other.owner != pid
+                                && g.is_at_war(pid, other.owner)
+                                && other.kind == "settler"
+                        }))
+                })
             {
                 if self.base.move_beats_holding(g, uid, score(g, pos), stay) {
                     return g.apply(pid, &Action::Move { unit: uid, to: pos }).is_ok();
@@ -8015,8 +8035,9 @@ impl AdvancedAi {
         } else {
             1
         };
-        let decline_settlers =
-            self.counts(g, pid).settlers > 0 || g.player_city_ids(pid).len() >= plan.desired_cities;
+        let decline_settlers = self.counts(g, pid).settlers > 0
+            || g.player_city_ids(pid).len() >= plan.desired_cities
+            || !self.base.has_practical_settle_site(g, pid);
         let mut best: Option<(f64, Pos, Action)> = None;
         for pos in g.wdisk(unit.pos, radius) {
             if spec.class != "military" {
@@ -8140,7 +8161,14 @@ impl AdvancedAi {
                 .or_else(|| self.base.nearest_enemy(g, pid, uid, &enemies))
         };
         if let Some(orders) = &group {
-            return self.coordinated_tactical_step(g, pid, uid, orders, &enemies);
+            return self.coordinated_tactical_step(
+                g,
+                pid,
+                uid,
+                orders,
+                &enemies,
+                decline_settlers,
+            );
         }
         match campaign {
             Some(target) => self
@@ -12061,6 +12089,71 @@ mod tests {
     }
 
     #[test]
+    fn army_declines_a_captured_settler_when_no_city_site_remains() {
+        let mut game = Game::new_full(2, 20, 14, 71_019, 120, 0, false);
+        for pid in 0..2 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.found_city_for(pid, game.units[&settler].pos, None);
+            game.remove_unit(settler);
+        }
+        for unit in game.units.keys().copied().collect::<Vec<_>>() {
+            game.remove_unit(unit);
+        }
+        let home = game.cities[&game.player_city_ids(0)[0]].pos;
+        let origin = game.nbrs(home)[0];
+        let target = game
+            .nbrs(origin)
+            .into_iter()
+            .find(|position| *position != home && game.wdist(home, *position) <= 2)
+            .unwrap();
+        let city_centers: BTreeSet<Pos> =
+            game.cities.values().map(|city| city.pos).collect();
+        for (position, tile) in &mut game.map.tiles {
+            if ![home, origin, target].contains(position)
+                && !city_centers.contains(position)
+            {
+                tile.terrain = "ocean".to_string();
+                tile.feature = None;
+            }
+        }
+        for position in [origin, target] {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.hills = false;
+        }
+        game.at_war.insert((0, 1));
+        let warrior = game.spawn_test_unit("warrior", 0, origin);
+        let settler = game.spawn_test_unit("settler", 1, target);
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Conquest,
+            target_player: Some(1),
+            target_city: game.player_city_ids(1).first().copied(),
+            threatened_city: None,
+            desired_cities: 4,
+            assessed_turn: game.turn,
+        };
+        let mut ai = AdvancedAi::new();
+        assert!(!ai.base.has_practical_settle_site(&game, 0));
+        let mut direct_capture = game.clone();
+        let capture_result = direct_capture.apply(0, &Action::Move { unit: warrior, to: target });
+        assert!(capture_result.is_ok(), "staged capture was not legal: {capture_result:?}");
+        assert_eq!(direct_capture.units[&settler].owner, 0);
+
+        let _ = ai.advanced_military_step(&mut game, 0, warrior, &plan);
+
+        assert_eq!(
+            game.units.get(&settler).map(|unit| unit.owner),
+            Some(1),
+            "capturing the civilian would create a settler with no legal city site"
+        );
+    }
+
+    #[test]
     fn exact_hybrid_search_uses_melee_to_finish_a_city() {
         let mut game = Game::new_full(2, 24, 16, 71_010, 120, 0, false);
         let rival_origin = game
@@ -13805,7 +13898,7 @@ mod tests {
         };
         let ai = AdvancedAi::new();
         for uid in &army {
-            ai.coordinated_tactical_step(&mut g, 0, *uid, &orders, &[1]);
+            ai.coordinated_tactical_step(&mut g, 0, *uid, &orders, &[1], false);
         }
         let moved = army.iter().filter(|uid| g.units[uid].moved).count();
         assert!(
