@@ -14038,8 +14038,10 @@ impl Game {
         }
     }
 
-    /// Religious victory: your religion is the majority in over half the
-    /// cities of every living major civilization (Civ 6 simplified).
+    /// Religious victory: "make your Religion the predominant Religion for
+    /// every other major civilization in the game" — a majority of each
+    /// rival's cities. The founder's own cities are not part of the test, and
+    /// neither are city-states.
     fn check_religious_victory(&mut self) {
         self.award_religious_unity_envoys();
         if self.winner.is_some() {
@@ -14058,7 +14060,7 @@ impl Game {
                 if team_religions.is_empty() {
                     continue;
                 }
-                let all_opponents_converted = self
+                let opponents: Vec<&Player> = self
                     .players
                     .iter()
                     .filter(|other| {
@@ -14068,7 +14070,9 @@ impl Game {
                             && other.id != p
                             && !self.same_team(p, other.id)
                     })
-                    .all(|other| {
+                    .collect();
+                let all_opponents_converted = !opponents.is_empty()
+                    && opponents.iter().all(|other| {
                         let cities: Vec<&City> = self
                             .cities
                             .values()
@@ -14096,9 +14100,21 @@ impl Game {
                 Some(r) => r.clone(),
                 None => continue,
             };
+            let rivals: Vec<usize> = self
+                .players
+                .iter()
+                .filter(|o| o.alive && !o.is_minor && !o.is_barbarian && o.id != p)
+                .map(|o| o.id)
+                .collect();
+            // Nobody left to convert is a conquest, not a conversion: an empty
+            // list would otherwise satisfy "every other civilization" and hand
+            // the last survivor a religious win in a lobby with domination off.
+            if rivals.is_empty() {
+                continue;
+            }
             let mut all = true;
-            for o in self.players.iter().filter(|o| o.alive && !o.is_minor) {
-                let cities: Vec<&City> = self.cities.values().filter(|c| c.owner == o.id).collect();
+            for o in rivals {
+                let cities: Vec<&City> = self.cities.values().filter(|c| c.owner == o).collect();
                 if cities.is_empty() {
                     all = false; // a civ without cities cannot be converted
                     break;
@@ -43180,10 +43196,57 @@ mod victory_conditions {
             .get_mut(&extra)
             .unwrap()
             .pressure
-            .insert(religion, 100.0);
+            .insert(religion.clone(), 100.0);
         g.check_religious_victory();
         assert_eq!(g.winner, Some(0));
         assert_eq!(g.victory_type.as_deref(), Some("religious"));
+
+        // The Civilopedia asks for "every other major civilization", so the
+        // founder's own cities are not part of the test: losing the home
+        // religion while every rival stays converted still wins.
+        let mut g = game_with_capitals(2, 403, 300);
+        let extra_pos = g
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|pos| g.city_at(*pos).is_none())
+            .unwrap();
+        let extra = g.found_city_for(1, extra_pos, None);
+        g.players[0].religion = Some(religion.clone());
+        let own = g.player_city_ids(0)[0];
+        for city in [g.player_city_ids(1)[0], extra] {
+            g.cities
+                .get_mut(&city)
+                .unwrap()
+                .pressure
+                .insert(religion.clone(), 100.0);
+        }
+        g.cities
+            .get_mut(&own)
+            .unwrap()
+            .pressure
+            .insert("Rival Creed".to_string(), 400.0);
+        assert_ne!(
+            g.city_religion(&g.cities[&own]),
+            Some(religion.as_str()),
+            "the founder's own capital has gone over to another religion"
+        );
+        g.check_religious_victory();
+        assert_eq!(g.winner, Some(0));
+    }
+
+    #[test]
+    fn the_last_civilization_standing_does_not_convert_itself_to_victory() {
+        // An empty opponent list satisfies "every other civilization"
+        // vacuously. Being alone is a conquest, and it must not read as a
+        // conversion in a lobby that has domination switched off.
+        let mut g = game_with_capitals(2, 4_031, 300);
+        g.victory_conditions.domination = false;
+        g.players[0].religion = Some("Test Religion".to_string());
+        g.players[1].alive = false;
+        g.check_religious_victory();
+        assert_eq!(g.winner, None);
     }
 
     #[test]
