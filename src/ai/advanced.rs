@@ -3478,7 +3478,49 @@ impl AdvancedAi {
         g.city_religion(city) != Some(religion) || (rival > 0.0 && rival * 2.0 >= own)
     }
 
+    /// Keep a founded religion's small field corps useful after the adaptive
+    /// planner changes its primary victory strategy. Previously that switch
+    /// made charged Missionaries stop at home and let thousands of Faith sit
+    /// idle. A large surplus may start a secondary campaign, while an active
+    /// spreader keeps it moving after the initial purchase lowers the bank.
+    fn religious_offensive_posture(&self, g: &Game, pid: usize, strategy: GrandStrategy) -> bool {
+        if strategy == GrandStrategy::Religion {
+            return true;
+        }
+        let Some(religion) = g.players[pid].religion.as_deref() else {
+            return false;
+        };
+        let foreign_target = g.cities.values().any(|city| {
+            city.owner != pid
+                && g.players[city.owner].alive
+                && !g.players[city.owner].is_minor
+                && !g.players[city.owner].is_barbarian
+                && !g.is_at_war(pid, city.owner)
+                && g.city_religion(city) != Some(religion)
+        });
+        if !foreign_target {
+            return false;
+        }
+        let active_campaign = g.units.values().any(|unit| {
+            unit.owner == pid
+                && unit.religion.as_deref() == Some(religion)
+                && unit.charges > 0
+                && g.rules.units[unit.kind.as_str()].religious_spread > 0.0
+        });
+        active_campaign || g.players[pid].faith >= g.game_speed.scale(2_000.0)
+    }
+
     fn religious_spending(&self, g: &mut Game, pid: usize, offensive: bool) {
+        self.religious_spending_with_reserve(g, pid, offensive, 80.0);
+    }
+
+    fn religious_spending_with_reserve(
+        &self,
+        g: &mut Game,
+        pid: usize,
+        offensive: bool,
+        ordinary_reserve: f64,
+    ) {
         let Some(religion) = g.players[pid].religion.clone() else {
             return;
         };
@@ -3578,7 +3620,7 @@ impl AdvancedAi {
             let reserve = if match_point_defense || home_under_pressure {
                 0.0
             } else {
-                80.0
+                ordinary_reserve
             };
             if g.players[pid].faith + f64::EPSILON < price + reserve {
                 continue;
@@ -8451,6 +8493,7 @@ impl AdvancedAi {
         } else {
             self.force_groups.clear();
         }
+        let religious_offensive = self.religious_offensive_posture(g, pid, plan.strategy);
         let mut ids = g.player_unit_ids(pid);
         ids.sort_by_key(|uid| {
             let u = &g.units[uid];
@@ -8487,7 +8530,7 @@ impl AdvancedAi {
                         g,
                         pid,
                         uid,
-                        plan.strategy == GrandStrategy::Religion,
+                        religious_offensive,
                     ),
                     "missionary" => self.base.missionary_step(g, pid, uid),
                     "rock_band" => self.base.rock_band_step(g, pid, uid),
@@ -8496,7 +8539,7 @@ impl AdvancedAi {
                             g,
                             pid,
                             uid,
-                            plan.strategy == GrandStrategy::Religion,
+                            religious_offensive,
                         ),
                     _ => self.advanced_military_step(g, pid, uid, plan),
                 };
@@ -8796,7 +8839,17 @@ impl Ai for AdvancedAi {
         self.advanced_products(g, pid, plan.strategy);
         self.advanced_great_people(g, pid, plan.strategy);
         if self.victory_planning {
-            self.religious_spending(g, pid, plan.strategy == GrandStrategy::Religion);
+            let committed = plan.strategy == GrandStrategy::Religion;
+            let offensive = self.religious_offensive_posture(g, pid, plan.strategy);
+            // A secondary campaign spends only the bank above a substantial
+            // reserve, leaving Culture agents able to buy Naturalists or Rock
+            // Bands and every other plan able to react to an emergency.
+            let reserve = if committed {
+                80.0
+            } else {
+                g.game_speed.scale(1_200.0)
+            };
+            self.religious_spending_with_reserve(g, pid, offensive, reserve);
         }
         self.faith_building_spending(g, pid, plan.strategy);
         self.military_faith_spending(g, pid, &plan);
@@ -12476,6 +12529,72 @@ mod tests {
         AdvancedAi::new().religious_spending(&mut game, 0, true);
         assert_eq!(game.player_unit_ids(0).len(), before_units);
         assert_eq!(game.players[0].faith, before_faith);
+    }
+
+    #[test]
+    fn surplus_faith_keeps_a_founded_secondary_campaign_in_motion() {
+        let mut game = Game::new_full(2, 30, 18, 7_115, 200, 0, false);
+        for pid in 0..2 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.current = pid;
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        game.current = 0;
+        let home = game.player_city_ids(0)[0];
+        let target = game.player_city_ids(1)[0];
+        install_ai_test_district(&mut game, home, "holy_site");
+        game.cities.get_mut(&home).unwrap().buildings =
+            vec!["shrine".to_string(), "temple".to_string()];
+        game.players[0].techs.insert("astrology".to_string());
+        game.players[0].civics.insert("theology".to_string());
+        game.players[0].religion = Some("Our Faith".to_string());
+        game.cities
+            .get_mut(&home)
+            .unwrap()
+            .pressure
+            .insert("Our Faith".to_string(), 1_000.0);
+        game.cities
+            .get_mut(&target)
+            .unwrap()
+            .pressure
+            .insert("Rival Faith".to_string(), 1_000.0);
+
+        let ai = AdvancedAi::new();
+        let reserve = game.game_speed.scale(1_200.0);
+        game.players[0].faith = reserve;
+        assert!(!ai.religious_offensive_posture(&game, 0, GrandStrategy::Science));
+
+        game.players[0].faith = game.game_speed.scale(2_000.0);
+        assert!(ai.religious_offensive_posture(&game, 0, GrandStrategy::Science));
+        for _ in 0..3 {
+            ai.religious_spending_with_reserve(&mut game, 0, true, reserve);
+        }
+        assert_eq!(
+            game.units
+                .values()
+                .filter(|unit| unit.owner == 0 && unit.kind == "apostle")
+                .count(),
+            2
+        );
+        assert!(game.players[0].faith + f64::EPSILON >= reserve);
+
+        let missionary = game.spawn_test_unit("missionary", 0, game.cities[&home].pos);
+        game.units.get_mut(&missionary).unwrap().religion = Some("Our Faith".to_string());
+        game.players[0].faith = 0.0;
+        let before = game.wdist(game.units[&missionary].pos, game.cities[&target].pos);
+        let offensive = ai.religious_offensive_posture(&game, 0, GrandStrategy::Science);
+        assert!(
+            offensive,
+            "a charged field unit should sustain the campaign"
+        );
+        assert!(ai.advanced_missionary_step(&mut game, 0, missionary, offensive));
+        let after = game.wdist(game.units[&missionary].pos, game.cities[&target].pos);
+        assert!(after < before, "the secondary Missionary should leave home");
     }
 
     #[test]
