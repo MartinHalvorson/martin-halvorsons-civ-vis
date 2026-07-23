@@ -423,6 +423,7 @@
   #specdirector.active { color: var(--gold-bright); border-color: #b88f45; box-shadow: 0 0 16px #d7b66a24; }
   .speed-row, .view-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; margin-top: 9px; }
   .speed-row span, .view-row span { color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+  .speed-note { margin-top: 5px; color: var(--faint); font-size: 9px; font-variant-numeric: tabular-nums; }
   .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; color: var(--muted); font-size: 10px; cursor: pointer; }
   .setting-row span { display: flex; align-items: center; gap: 7px; }
   .setting-row kbd { margin: 0; }
@@ -752,15 +753,17 @@
           </select>
         </div>
         <div class="speed-row"><span>Watch pace</span>
-          <select id="specspeed">
-            <option value="100" selected>Lightning · 0.1s</option>
-            <option value="250">Blitz · 0.25s</option>
-            <option value="500">Fast · 0.5s</option>
-            <option value="1000">Brisk · 1s</option>
-            <option value="2000">Measured · 2s</option>
-            <option value="4000">Cinematic · 4s</option>
+          <select id="specspeed" title="Wall-clock time for one full game turn">
+            <option value="0">Unlimited · as fast as possible</option>
+            <option value="100">Lightning · 0.1s / turn</option>
+            <option value="500">Blitz · 0.5s / turn</option>
+            <option value="1000" selected>Brisk · 1s / turn</option>
+            <option value="2000">Measured · 2s / turn</option>
+            <option value="4000">Cinematic · 4s / turn</option>
+            <option value="10000">Contemplative · 10s / turn</option>
           </select>
         </div>
+        <div class="speed-note" id="specpacenote">Measuring turn time…</div>
       </div>
       <details class="utility-panel">
         <summary>Keyboard shortcuts</summary>
@@ -1399,7 +1402,7 @@ async function boot() {
     render(await fetchJSON("/state"));
     if (firstLoad) {
       firstLoad = false;
-      if (SPEC) document.getElementById("specspeed").value = "100";
+      if (SPEC) updatePaceReadout(state); // adopt the pace the server is keeping
       scheduleSpec(state);
       reportSpecStatus();
     }
@@ -1502,7 +1505,45 @@ async function specPoll() {
   } catch (e) { /* server hiccup: next poll retries */ }
   finally { specBusy = false; }
 }
-setInterval(specPoll, 100);
+// Polling costs the server real work — a spectator state is the whole world —
+// and at the unlimited pace that work competes with the simulation for the
+// machine. Ask less often when the turns are already arriving faster than a
+// viewer can read them.
+(function pollSpec() {
+  specPoll().finally(() => setTimeout(pollSpec, specPace() === 0 ? 300 : 100));
+})();
+// Watch pace is a whole-turn budget: "1s / turn" means every seat has moved
+// one second later, whatever the player count. Zero is the unlimited pace —
+// the server takes no wait at all — so its cost is measured, not chosen, and
+// the option carries the machine's own estimate.
+function formatTurnTime(ms) {
+  if (!(ms > 0)) return "—";
+  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms >= 100) return `${(ms / 1000).toFixed(2)}s`;
+  return `${(ms / 1000).toFixed(3)}s`;
+}
+function specPace() {
+  const select = document.getElementById("specspeed");
+  return select ? +select.value : 1000;
+}
+function updatePaceReadout(st) {
+  const select = document.getElementById("specspeed");
+  if (!select) return;
+  if (st && st.pace !== undefined && +select.value !== st.pace &&
+      [...select.options].some(o => +o.value === st.pace))
+    select.value = String(st.pace);
+  const unlimited = [...select.options].find(o => o.value === "0");
+  const estimate = st && st.turn_compute_ms;
+  if (unlimited && estimate > 0)
+    unlimited.textContent = `Unlimited · ~${formatTurnTime(estimate)} / turn`;
+  const note = document.getElementById("specpacenote");
+  if (!note) return;
+  const actual = st && st.turn_ms;
+  if (!(actual > 0)) { note.textContent = "Measuring turn time…"; return; }
+  const rate = 1000 / actual;
+  note.textContent = `Now ${formatTurnTime(actual)} per turn · ` +
+    `${rate >= 10 ? Math.round(rate) : rate.toFixed(1)} turns/sec`;
+}
 async function setPace(opts) {
   try {
     render(await fetchJSON("/pace", { method: "POST",
@@ -1722,6 +1763,7 @@ function render(st, recordChronicle = true) {
     document.getElementById("specpause").textContent =
       specPaused ? "▶ Resume" : "⏸ Pause";
   }
+  if (SPEC) updatePaceReadout(st);
   const fullMapSpectator = SPEC && (st.view_player === null || st.view_player === undefined);
   document.getElementById("humanfooter").style.display = SPEC ? "none" : "grid";
   document.getElementById("specbar").style.display = SPEC ? "block" : "none";
@@ -4360,8 +4402,10 @@ function drawWarLog() {
 
 function drawSide(force = true) {
   const now = performance.now();
-  const pace = +(document.getElementById("specspeed") || {}).value || 1000;
-  if (!force && SPEC && pace <= 250 && now - lastSidePaint < 250) return;
+  const pace = specPace();
+  // Below a second per turn the panels change faster than they can be read;
+  // repaint them on a human cadence instead. Unlimited (0) is the fastest.
+  if (!force && SPEC && pace < 1000 && now - lastSidePaint < 250) return;
   lastSidePaint = now;
   const scroller = document.querySelector(".side-scroll");
   const priorScroll = scroller ? scroller.scrollTop : 0;
@@ -5074,7 +5118,7 @@ document.getElementById("specstep").onclick = () => {
   setPace({paused: true}).then(specStep);
 };
 document.getElementById("specspeed").onchange = () => {
-  setPace({ms: +document.getElementById("specspeed").value});
+  setPace({ms: specPace()});
 };
 async function spectatePlayer(player) {
   if (!state || viewChanging) return;

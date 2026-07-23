@@ -682,16 +682,50 @@ fn chronicle_world_events(
 }
 
 /// Server-side exhibition state: in spectate mode a background thread steps
-/// the game at `pace_ms` per major turn and restarts 10s after a victory, so
+/// the game at `pace_ms` per game turn and restarts 10s after a victory, so
 /// games keep running with no browser attached.
+///
+/// `pace_ms` is the budget for a whole turn — every seat taking one step —
+/// rather than for one seat, so the pace a viewer picks means the same wall
+/// time whatever the player count. `0` means unlimited: no artificial wait at
+/// all, the simulation runs as fast as the machine allows.
 pub struct Shared {
     pub session: Mutex<Session>,
     pub pace_ms: AtomicU64,
     pub paused: AtomicBool,
     pub restart_in: AtomicU64, // ms until auto-restart; u64::MAX = not pending
+    /// Measured wall time of a full game turn, including pacing sleeps.
+    pub turn_us: AtomicU64,
+    /// The same turn with the sleeps taken out: what the unlimited pace costs.
+    pub turn_compute_us: AtomicU64,
 }
 
 const RESTART_MS: u64 = 10_000;
+/// The unlimited pace still hands the accept loop a slot this often, so the
+/// page keeps loading state while the stepper saturates a core.
+const UNLIMITED_BREATH_MS: u64 = 100;
+/// Minor civilizations and barbarians take a quarter of a major's slice.
+const MINOR_SHARE: f64 = 0.25;
+
+/// One seat's slice of the turn budget. Seats divide it in proportion to the
+/// beat they are given, so a whole turn costs `pace_ms` whether it is two
+/// empires or eight with a dozen city-states between them.
+pub fn seat_delay_ms(pace_ms: u64, majors: usize, minors: usize, minor: bool) -> u64 {
+    let weight = (majors as f64 + minors as f64 * MINOR_SHARE).max(1.0);
+    let share = if minor { MINOR_SHARE } else { 1.0 };
+    ((pace_ms as f64) * share / weight).round() as u64
+}
+
+/// Smooth a measurement so the reported figure does not flicker turn to turn.
+fn blend(slot: &AtomicU64, sample: u64) {
+    let prior = slot.load(Ordering::Relaxed);
+    let next = if prior == 0 {
+        sample
+    } else {
+        (prior * 3 + sample) / 4
+    };
+    slot.store(next, Ordering::Relaxed);
+}
 
 impl Session {
     fn ai_fleet(game: &Game) -> Vec<Box<dyn Ai + Send>> {
@@ -1182,15 +1216,21 @@ fn new_game_params(current: &Params, request: &Value) -> Params {
 
 fn auto_step_loop(sh: Arc<Shared>) {
     let mut over_since: Option<Instant> = None;
+    let mut watched_turn: Option<u32> = None;
+    let mut turn_mark = Instant::now();
+    let mut turn_compute_us: u64 = 0;
+    let mut unlimited_since = Instant::now();
     loop {
-        let pace = sh.pace_ms.load(Ordering::Relaxed).clamp(20, 60_000);
+        let pace = sh.pace_ms.load(Ordering::Relaxed).min(60_000);
         if sh.paused.load(Ordering::Relaxed) {
             over_since = None; // pausing resets the restart countdown
+            watched_turn = None; // and voids the half-timed turn
             std::thread::sleep(Duration::from_millis(150));
             continue;
         }
         let cadence_started = Instant::now();
-        let mut delay = pace;
+        let delay; // this seat's slice of the turn budget
+        let mut waiting = false; // between games nothing is being simulated
         {
             let mut s = sh.session.lock().unwrap();
             if !s.params.spectate {
@@ -1210,26 +1250,59 @@ fn auto_step_loop(sh: Arc<Shared>) {
                         .wrapping_add(1442695040888963407);
                     *s = Session::new(p);
                     over_since = None;
+                    watched_turn = None;
                     sh.restart_in.store(u64::MAX, Ordering::Relaxed);
                 }
                 delay = 200;
+                waiting = true;
             } else {
                 over_since = None;
                 sh.restart_in.store(u64::MAX, Ordering::Relaxed);
+                let step_started = Instant::now();
                 let (pid, _) = s.step();
+                turn_compute_us += step_started.elapsed().as_micros() as u64;
+                // A turn is one step per seat, so a seat waits for its own
+                // share of the turn budget and the round adds up to the pace.
+                let minors = s
+                    .game
+                    .players
+                    .iter()
+                    .filter(|p| p.is_minor || p.is_barbarian)
+                    .count();
+                let majors = s.game.players.len() - minors;
                 let p = &s.game.players[pid];
-                if p.is_minor || p.is_barbarian {
-                    delay = (pace / 4).max(30); // quick beat for minors
+                delay = seat_delay_ms(pace, majors, minors, p.is_minor || p.is_barbarian);
+                // The seat that ends the round closes the turn being timed.
+                let turn = s.game.turn;
+                if watched_turn != Some(turn) {
+                    if watched_turn.is_some() {
+                        blend(&sh.turn_us, turn_mark.elapsed().as_micros() as u64);
+                        blend(&sh.turn_compute_us, turn_compute_us);
+                    }
+                    watched_turn = Some(turn);
+                    turn_mark = Instant::now();
+                    turn_compute_us = 0;
                 }
             }
         }
+        if pace == 0 && !waiting {
+            // Unlimited: no wait between steps. Yield anyway, and give the
+            // single-threaded accept loop a real slot a few times a second,
+            // or /state would starve behind the session lock.
+            if unlimited_since.elapsed() >= Duration::from_millis(UNLIMITED_BREATH_MS) {
+                unlimited_since = Instant::now();
+                std::thread::sleep(Duration::from_millis(1));
+            } else {
+                std::thread::yield_now();
+            }
+            continue;
+        }
+        unlimited_since = Instant::now();
         // Pace is a start-to-start cadence. Sleeping the full interval after
-        // AI computation made late-game "Lightning · 0.1s" visibly slower
-        // as empires grew. Spend only the remaining frame budget instead.
+        // AI computation made the fast paces visibly slower as empires grew.
+        // Spend only the remaining frame budget instead.
         let elapsed_ms = cadence_started.elapsed().as_millis().min(u64::MAX as u128) as u64;
-        std::thread::sleep(Duration::from_millis(
-            delay.saturating_sub(elapsed_ms).max(1),
-        ));
+        std::thread::sleep(Duration::from_millis(delay.saturating_sub(elapsed_ms).max(1)));
     }
 }
 
@@ -1241,6 +1314,16 @@ fn decorate(o: &mut Value, sh: &Shared) {
     }
     o["pace"] = json!(sh.pace_ms.load(Ordering::Relaxed));
     o["paused"] = json!(sh.paused.load(Ordering::Relaxed));
+    // Both in milliseconds per game turn: what the current pace is actually
+    // delivering, and what it would cost with every wait removed.
+    let measured = sh.turn_us.load(Ordering::Relaxed);
+    let compute = sh.turn_compute_us.load(Ordering::Relaxed);
+    if measured > 0 {
+        o["turn_ms"] = json!(measured as f64 / 1000.0);
+    }
+    if compute > 0 {
+        o["turn_compute_ms"] = json!(compute as f64 / 1000.0);
+    }
 }
 
 fn handle(stream: &mut TcpStream, sh: &Shared) {
@@ -1299,7 +1382,9 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
         }
         ("POST", "/pace") => {
             if let Some(v) = parsed["ms"].as_u64() {
-                sh.pace_ms.store(v.clamp(20, 60_000), Ordering::Relaxed);
+                // 0 is the unlimited pace; anything else is a turn budget.
+                sh.pace_ms.store(v.min(60_000), Ordering::Relaxed);
+                sh.turn_us.store(0, Ordering::Relaxed); // re-measure at the new pace
             }
             if let Some(v) = parsed["paused"].as_bool() {
                 sh.paused.store(v, Ordering::Relaxed);
@@ -1513,12 +1598,35 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{
-        chronicle_world_events, new_game_params, request_path, ChronicleSnapshot, ChronicleState,
-        Params, Session, EMBEDDED_INDEX,
+        chronicle_world_events, new_game_params, request_path, seat_delay_ms, ChronicleSnapshot,
+        ChronicleState, Params, Session, EMBEDDED_INDEX,
     };
     use crate::game::{Action, VictoryConditions};
     use crate::setup::{GameSpeed, MapScript};
     use serde_json::json;
+
+    /// The pace a viewer picks is what a turn costs, so the seats' waits have
+    /// to add back up to it — at any player count, with minors on their
+    /// quarter beat. A per-seat pace made big games crawl at the same label.
+    #[test]
+    fn seat_waits_add_up_to_the_chosen_turn_pace() {
+        for (majors, minors) in [(2, 0), (4, 4), (8, 12), (6, 3)] {
+            for pace in [100, 1_000, 4_000, 10_000] {
+                let round = majors as u64 * seat_delay_ms(pace, majors, minors, false)
+                    + minors as u64 * seat_delay_ms(pace, majors, minors, true);
+                // Each seat rounds to whole milliseconds; nothing beyond that.
+                let allowed = (majors + minors) as u64 / 2 + pace / 100 + 1;
+                let drift = round.abs_diff(pace);
+                assert!(
+                    drift <= allowed,
+                    "{majors}+{minors} seats at {pace}ms spent {round}ms on a turn"
+                );
+            }
+        }
+        // Minors take a quarter of a major's slice, and unlimited never waits.
+        assert_eq!(seat_delay_ms(1_000, 4, 4, false) / 4, seat_delay_ms(1_000, 4, 4, true));
+        assert_eq!(seat_delay_ms(0, 8, 12, false), 0);
+    }
 
     fn current() -> Params {
         Params {
@@ -2271,9 +2379,11 @@ pub fn serve_with_game(port: u16, open_browser: bool, params: Params, game: Opti
     }
     let shared = Arc::new(Shared {
         session: Mutex::new(session),
-        pace_ms: AtomicU64::new(100), // lightning by default
+        pace_ms: AtomicU64::new(1_000), // one second per turn by default
         paused: AtomicBool::new(false),
         restart_in: AtomicU64::new(u64::MAX),
+        turn_us: AtomicU64::new(0),
+        turn_compute_us: AtomicU64::new(0),
     });
     let stepper = shared.clone();
     std::thread::spawn(move || auto_step_loop(stepper));
