@@ -37,7 +37,8 @@
     },
     "ADJUST_UNIT_MOVEMENT": {
       "status": "implemented",
-      "note": "Movement grants execute from promotions, support units and tree_effects (embarked_movement, adjacent_movement)."
+      "verified": true,
+      "note": "Verified row by row with conditions resolved. Advanced Engines, Commando, Helmsman, Pursuit, Redeploy, Swift Keel each grant 1 and Roadies 4, all matching, and the Giant Death Robot's Enhanced Mobility grants 3 from Cybernetics. The rest are leader and city-state abilities, Commemorations, Emergencies and the Letters of Marque card, none of which CIVVIS carries."
     },
     "ADJUST_UNIT_EXPERIENCE_MODIFIER": {
       "status": "implemented",

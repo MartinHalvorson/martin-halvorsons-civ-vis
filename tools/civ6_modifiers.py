@@ -114,7 +114,12 @@ class Modifiers:
                 for node in table:
                     row = fields(node)
                     if "RequirementSetId" in row and "RequirementId" in row:
-                        self.requirement_sets[row["RequirementSetId"]].append(row["RequirementId"])
+                        # Overlays restate the same membership row, so keep
+                        # the set a set rather than reporting each condition
+                        # twice.
+                        members = self.requirement_sets[row["RequirementSetId"]]
+                        if row["RequirementId"] not in members:
+                            members.append(row["RequirementId"])
             elif table.tag.endswith("Modifiers"):
                 # An expansion can detach a modifier it no longer wants. Not
                 # honouring that reports rules the shipped ruleset removed.

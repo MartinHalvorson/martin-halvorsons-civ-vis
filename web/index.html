@@ -2142,6 +2142,188 @@ function drawUnitBase(u, x, y) {
   }
 }
 
+// Below this zoom the fine pass inside a motif — furrows, patchwork, doorways —
+// lands at or under a pixel, so it costs a clip and a dozen strokes per tile to
+// draw nothing anyone can see. A developed empire is mostly improvements, so
+// this is the difference between a survey view that flows and one that stutters.
+const FINE = () => cam.scale >= 0.8;
+
+// Improvements are what turn claimed land into worked land, and of the
+// thirty-five kinds all but three were drawing the same 8×5 brown rectangle —
+// a developed heartland looked no different from wilderness someone had merely
+// drawn a border around. They are painted into the tile rather than badged
+// over it: a farm should read as cultivation from across the map instead of as
+// a label you have to zoom in to identify.
+function drawImprovement(t, x, y) {
+  const imp = t.improvement;
+  cx.save();
+  if (t.pillaged) cx.globalAlpha = 0.62;   // wrecked work, still on the ground
+  cx.lineJoin = "round";
+  // Anything standing up gets a contact shadow, for the same reason units do:
+  // a small motif over photographic terrain reads as a decal until something
+  // roots it. Worked ground — fields, groves, panel arrays — is already flat
+  // against the tile and needs none.
+  if (!(imp === "farm" || imp === "plantation" || imp === "solar_farm")) {
+    cx.fillStyle = "rgba(0,0,0,.24)";
+    cx.beginPath(); cx.ellipse(x, y + 7.6, 11.5, 4, 0, 0, 7); cx.fill();
+  }
+  if (imp === "farm") {
+    // Cultivation should read from across the map, so the field takes most of
+    // the tile and carries its own contrast: on plains and desert a single
+    // gold patch is nearly the color of the ground it sits on.
+    // Size, tilt and crop tone come off the tile hash: identical diamonds in
+    // every hex is the same stamped-motif problem the hills and dunes had.
+    const h1 = hash2(t.pos[0] * 23 + 3, t.pos[1] * 29 + 11);
+    const h2 = hash2(t.pos[0] * 37 + 7, t.pos[1] * 13 + 5);
+    const fw = 13.6 + h1 * 2.6, fh = 8.2 + h2 * 2.2, tilt = (h2 - 0.5) * 2.4;
+    const field = () => {
+      cx.beginPath();
+      cx.moveTo(x - fw, y + 2 + tilt); cx.lineTo(x, y + 2 - fh);
+      cx.lineTo(x + fw, y + 2 - tilt); cx.lineTo(x, y + 2 + fh); cx.closePath();
+    };
+    field();
+    cx.fillStyle = h1 > 0.5 ? "#d8b854" : "#c8b95a";
+    cx.fill();
+    if (!FINE()) { field(); cx.strokeStyle = "#4f4014"; cx.lineWidth = 1.4;
+                   cx.stroke(); cx.restore(); return; }
+    cx.save(); field(); cx.clip();
+    cx.fillStyle = h2 > 0.5 ? "#b99a3c" : "#a89a45";  // second crop, patchwork
+    cx.beginPath();
+    cx.moveTo(x, y - 9); cx.lineTo(x + 17, y + 2); cx.lineTo(x, y + 2);
+    cx.closePath(); cx.fill();
+    cx.beginPath();
+    cx.moveTo(x - 17, y + 2); cx.lineTo(x, y + 2); cx.lineTo(x, y + 13);
+    cx.closePath(); cx.fill();
+    cx.strokeStyle = "#7d6626"; cx.lineWidth = 1;
+    for (let i = -4; i <= 4; i++) {          // furrows follow the long axis
+      cx.beginPath();
+      cx.moveTo(x - 16, y + 3 + i * 2.4); cx.lineTo(x + 16, y - 0.8 + i * 2.4);
+      cx.stroke();
+    }
+    cx.restore();
+    field(); cx.strokeStyle = "#4f4014"; cx.lineWidth = 1.4; cx.stroke();
+  } else if (imp === "pasture") {
+    cx.strokeStyle = "#8a6a3e"; cx.lineWidth = 1.4;
+    cx.strokeRect(x - 11, y - 4, 22, 12);
+    cx.beginPath(); cx.moveTo(x - 11, y + 1.5); cx.lineTo(x + 11, y + 1.5); cx.stroke();
+    cx.fillStyle = "#eae4d4"; cx.strokeStyle = "#4a3722"; cx.lineWidth = 0.8;
+    for (const bx of [-4.5, 4.5]) {
+      cx.beginPath(); cx.ellipse(x + bx, y + 5, 3.1, 2.1, 0, 0, 7);
+      cx.fill(); cx.stroke();
+    }
+  } else if (imp === "plantation") {
+    cx.strokeStyle = "#1d4522"; cx.lineWidth = 0.8;
+    for (let r = 0; r < 2; r++) for (let c2 = 0; c2 < 3; c2++) {
+      cx.fillStyle = r ? "#2f6b34" : "#3f8c44";
+      cx.beginPath();
+      cx.arc(x - 9 + c2 * 9 + r * 4.5, y - 2.5 + r * 7, 3.2, 0, 7);
+      cx.fill(); cx.stroke();
+    }
+  } else if (imp === "camp") {
+    cx.fillStyle = "#a97f4e"; cx.strokeStyle = "#4a3722"; cx.lineWidth = 1.1;
+    cx.beginPath();
+    cx.moveTo(x - 8, y + 7); cx.lineTo(x, y - 6); cx.lineTo(x + 8, y + 7);
+    cx.closePath(); cx.fill(); cx.stroke();
+    cx.fillStyle = "#3c2c1a";
+    cx.beginPath();
+    cx.moveTo(x - 2.2, y + 7); cx.lineTo(x, y - 0.5); cx.lineTo(x + 2.2, y + 7);
+    cx.closePath(); cx.fill();
+  } else if (imp === "quarry") {
+    cx.strokeStyle = "#4c4f55"; cx.lineWidth = 1;
+    for (const [bx, by] of [[-10, 1], [-1.5, -4], [3, 3.5], [-6, 6]]) {
+      cx.fillStyle = "#9aa0a8";
+      cx.beginPath(); cx.roundRect(x + bx, y + by, 8, 5.2, 1.2);
+      cx.fill(); cx.stroke();
+    }
+  } else if (imp === "mine") {
+    cx.fillStyle = "#6b6f77";                       // spoil heap
+    cx.beginPath();
+    cx.moveTo(x - 11, y + 8); cx.lineTo(x - 2, y - 4); cx.lineTo(x + 7, y + 8);
+    cx.closePath(); cx.fill();
+    cx.fillStyle = "#191d23";                       // adit mouth
+    cx.beginPath(); cx.arc(x - 2, y + 8, 3.6, Math.PI, 0); cx.fill();
+    cx.strokeStyle = "#c8a15a"; cx.lineWidth = 1.4; // pit-head timber
+    cx.beginPath(); cx.moveTo(x + 6, y + 8); cx.lineTo(x + 10, y - 3); cx.stroke();
+  } else if (imp === "lumber_mill") {
+    cx.strokeStyle = "#3f2c17"; cx.lineWidth = 0.9; cx.fillStyle = "#8a6033";
+    for (const [lx, ly] of [[-8, 4], [-1, 4], [-4.5, -1.5]]) {
+      cx.beginPath(); cx.arc(x + lx, y + ly, 3.4, 0, 7); cx.fill(); cx.stroke();
+    }
+    cx.fillStyle = "#b9c0c8";                       // saw blade
+    cx.beginPath(); cx.arc(x + 7.5, y + 1.5, 4.2, 0, 7); cx.fill(); cx.stroke();
+  } else if (imp === "fishing_boats" || imp === "fishery" || imp === "seastead") {
+    cx.fillStyle = "#c9b083"; cx.strokeStyle = "#4a3a20"; cx.lineWidth = 1;
+    cx.beginPath();
+    cx.moveTo(x - 9, y + 2); cx.lineTo(x + 9, y + 2);
+    cx.lineTo(x + 5, y + 7); cx.lineTo(x - 5, y + 7); cx.closePath();
+    cx.fill(); cx.stroke();
+    cx.beginPath(); cx.moveTo(x, y + 2); cx.lineTo(x, y - 8); cx.stroke();
+    cx.fillStyle = "#eee7d6";
+    cx.beginPath();
+    cx.moveTo(x + 1, y - 8); cx.lineTo(x + 7, y - 1); cx.lineTo(x + 1, y - 1);
+    cx.closePath(); cx.fill(); cx.stroke();
+  } else if (imp === "oil_well" || imp === "offshore_oil_rig") {
+    cx.strokeStyle = "#33363d"; cx.lineWidth = 1.5;
+    cx.beginPath();
+    cx.moveTo(x - 7, y + 8); cx.lineTo(x, y - 9); cx.lineTo(x + 7, y + 8); cx.stroke();
+    cx.lineWidth = 1.1;
+    cx.beginPath(); cx.moveTo(x - 4.2, y + 2); cx.lineTo(x + 4.2, y + 2); cx.stroke();
+    cx.beginPath(); cx.moveTo(x - 2.2, y - 3); cx.lineTo(x + 2.2, y - 3); cx.stroke();
+  } else if (imp === "wind_farm" || imp === "offshore_wind_farm") {
+    cx.strokeStyle = "#e6ecf4"; cx.lineWidth = 1.7;
+    cx.beginPath(); cx.moveTo(x, y + 8); cx.lineTo(x, y - 4); cx.stroke();
+    cx.lineWidth = 1.4;
+    for (let i = 0; i < 3; i++) {
+      const a = -Math.PI / 2 + i * 2.0944;
+      cx.beginPath(); cx.moveTo(x, y - 4);
+      cx.lineTo(x + Math.cos(a) * 7.5, y - 4 + Math.sin(a) * 7.5); cx.stroke();
+    }
+  } else if (imp === "solar_farm") {
+    cx.fillStyle = "#2b3f6b"; cx.strokeStyle = "#0f1a2e"; cx.lineWidth = 0.9;
+    for (const [sx, sy] of [[-11, 1], [0, 1]]) {
+      cx.beginPath();
+      cx.moveTo(x + sx, y + sy + 4); cx.lineTo(x + sx + 4, y + sy - 2);
+      cx.lineTo(x + sx + 12, y + sy - 2); cx.lineTo(x + sx + 8, y + sy + 4);
+      cx.closePath(); cx.fill(); cx.stroke();
+    }
+  } else if (imp === "fort" || imp === "missile_silo") {
+    cx.fillStyle = "#8d8778"; cx.strokeStyle = "#2e2a22"; cx.lineWidth = 1.1;
+    cx.beginPath();                                  // squat bastion
+    cx.moveTo(x - 10, y + 6); cx.lineTo(x - 6, y - 3); cx.lineTo(x + 6, y - 3);
+    cx.lineTo(x + 10, y + 6); cx.closePath(); cx.fill(); cx.stroke();
+    cx.fillStyle = "#6f6a5d";
+    for (const cxo of [-7, 0, 7]) cx.fillRect(x + cxo - 1.6, y - 6, 3.2, 3.4);
+  } else if (imp === "goody_hut") {
+    cx.fillStyle = "#b8925c"; cx.strokeStyle = "#4a3722"; cx.lineWidth = 1;
+    cx.beginPath(); cx.arc(x, y + 4, 7.5, Math.PI, 0); cx.fill(); cx.stroke();
+    cx.fillStyle = "#f2dfa0";                        // something worth finding
+    cx.beginPath();
+    cx.moveTo(x, y - 9); cx.lineTo(x + 1.7, y - 5.6); cx.lineTo(x + 5, y - 4.6);
+    cx.lineTo(x + 1.7, y - 3.4); cx.lineTo(x, y); cx.lineTo(x - 1.7, y - 3.4);
+    cx.lineTo(x - 5, y - 4.6); cx.lineTo(x - 1.7, y - 5.6);
+    cx.closePath(); cx.fill();
+  } else {
+    // Everything rarer still reads as a built installation rather than a smear
+    // of brown: a walled base with a roof catching the same light as the tiles.
+    cx.strokeStyle = "#241f18"; cx.lineWidth = 1.2;
+    cx.fillStyle = "#8e8474";
+    cx.beginPath(); cx.roundRect(x - 7.5, y - 1, 15, 9, 1.5); cx.fill(); cx.stroke();
+    cx.fillStyle = "#cfc3ab";
+    cx.beginPath();
+    cx.moveTo(x - 10, y - 0.5); cx.lineTo(x, y - 8.5); cx.lineTo(x + 10, y - 0.5);
+    cx.closePath(); cx.fill(); cx.stroke();
+    cx.fillStyle = "#4a4239";                        // doorway, for scale
+    cx.fillRect(x - 1.8, y + 2.4, 3.6, 5.6);
+  }
+  cx.restore();
+  if (t.pillaged) {   // burned out — and worth spotting the turn it happens
+    cx.strokeStyle = "#d8443a"; cx.lineWidth = 2.2; cx.lineCap = "round";
+    cx.beginPath();
+    cx.moveTo(x - 8, y + 7); cx.lineTo(x + 8, y - 7); cx.stroke();
+    cx.lineCap = "butt";
+  }
+}
+
 // Status marks keep their on-screen size as the map zooms out, so a unit's
 // state stays readable at the scale you actually survey an empire at.
 const UI_K = () => 1 / Math.min(1, Math.max(cam.scale, 0.5));
@@ -2571,14 +2753,8 @@ function draw() {
     drawFeatureEffects(t, x, y);
     if (t.improvement === "barbarian_camp" || campSet.has(k)) {
       cx.font = "18px sans-serif"; cx.fillText("⛺", x, y);
-    } else if (t.improvement === "farm") {
-      cx.strokeStyle = "#e8d98055"; cx.lineWidth = 2;
-      for (let i = -1; i <= 1; i++) { cx.beginPath();
-        cx.moveTo(x - 8, y + i * 4 + 2); cx.lineTo(x + 8, y + i * 4 + 2); cx.stroke(); }
-    } else if (t.improvement === "mine") {
-      cx.font = "14px sans-serif"; cx.fillText("⛏", x, y + 5);
     } else if (t.improvement) {
-      cx.fillStyle = "#5a4632"; cx.fillRect(x - 4, y + 5, 8, 5);
+      drawImprovement(t, x, y);
     }
     if (t.resource && (SHOW_ARTIFACT_SITES || !ARTIFACT_RESOURCES.has(t.resource))) {
       // Resource badges are terrain information, not actors, so they sit a
