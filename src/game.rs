@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDequ
 
 use crate::rng::Rng;
 use crate::rules::{AgendaSpec, DifficultySpec, Rules, SpeedSpec, Yields, ERA_NAMES};
+use crate::specmap::SpecMap;
 use crate::setup::{GameSpeed, MapScript, MapSize};
 use crate::world::{DistrictFoundation, RememberedTile, TileMemory, WorldMap};
 use crate::{hex, mapgen, Pos};
@@ -8133,7 +8134,7 @@ pub struct Player {
     #[serde(default)]
     pub governors: Vec<u32>, // city ids with an established governor
     #[serde(default)]
-    pub governor_roster: BTreeMap<String, GovernorState>,
+    pub governor_roster: SpecMap<GovernorState>,
     #[serde(default)]
     pub governor_titles_spent: usize,
     #[serde(default)]
@@ -8248,7 +8249,7 @@ impl Player {
             dedication_choices: 0,
             discovered_natural_wonders: BTreeSet::new(),
             governors: Vec::new(),
-            governor_roster: BTreeMap::new(),
+            governor_roster: SpecMap::new(),
             governor_titles_spent: 0,
             grievances: BTreeMap::new(),
             agenda_view: BTreeMap::new(),

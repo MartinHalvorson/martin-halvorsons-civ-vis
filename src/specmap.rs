@@ -166,6 +166,16 @@ impl<T> SpecMap<T> {
         self.values.iter_mut()
     }
 
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&String, &mut T)> {
+        self.keys.iter().zip(self.values.iter_mut())
+    }
+
+    pub fn clear(&mut self) {
+        self.keys.clear();
+        self.values.clear();
+        self.table.clear();
+    }
+
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = (&String, &T)> + ExactSizeIterator {
         self.keys.iter().zip(self.values.iter())
     }
