@@ -511,6 +511,14 @@ impl TileBits {
         self.words.iter_mut().for_each(|word| *word = 0);
     }
 
+    /// Whether every tile in this set is also in `other`.
+    pub fn is_subset_of(&self, other: &TileBits) -> bool {
+        self.words
+            .iter()
+            .enumerate()
+            .all(|(slot, word)| word & !other.words.get(slot).copied().unwrap_or(0) == 0)
+    }
+
     /// The set members in ascending index order.
     pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
         self.words.iter().enumerate().flat_map(|(slot, word)| {

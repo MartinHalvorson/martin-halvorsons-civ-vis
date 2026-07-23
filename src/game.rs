@@ -9143,6 +9143,10 @@ pub struct Game {
     /// otherwise recompute.
     #[serde(skip)]
     vision: std::cell::RefCell<VisionCache>,
+    /// The state of the world each seat's remembered map was last taken
+    /// under, and the tiles it was taken over. Empty means "assume nothing".
+    #[serde(skip)]
+    remembered_under: Vec<(u64, TileBits)>,
     pub rng: Rng,
     pub seed: u64,
     /// Key into `rules.difficulties`. Prince is the unhandicapped reference.
@@ -9324,6 +9328,7 @@ impl From<GameSer> for Game {
         let mut g = Game {
             rules: Rules::shared(),
             vision: std::cell::RefCell::new(VisionCache::default()),
+            remembered_under: Vec::new(),
             rng: s.rng,
             seed: s.seed,
             difficulty: s.difficulty,
@@ -9610,6 +9615,7 @@ impl Game {
         let mut g = Game {
             rules,
             vision: std::cell::RefCell::new(VisionCache::default()),
+            remembered_under: Vec::new(),
             rng,
             seed,
             difficulty,
@@ -18306,8 +18312,7 @@ impl Game {
             false,
             false,
         ));
-        let visible = self.tiles_of(&visible);
-        self.refresh_visibility_snapshot(pid, visible);
+        self.refresh_visibility_snapshot(pid, &visible);
     }
 
     /// Terrain MP to step between adjacent tiles. The unit-aware wrapper
@@ -19124,8 +19129,8 @@ impl Game {
         if pid >= self.players.len() {
             return;
         }
-        let visible = self.player_visibility(pid);
-        self.refresh_visibility_snapshot(pid, visible);
+        let visible = self.player_vision(&mut self.height_field(), pid);
+        self.refresh_visibility_snapshot(pid, &visible);
     }
 
     /// Whether a player's memory of one tile already matches what is there.
@@ -19146,7 +19151,81 @@ impl Game {
         remembered.owner == owner && &remembered.tile == tile
     }
 
-    fn refresh_visibility_snapshot(&mut self, pid: usize, visible: BTreeSet<Pos>) {
+    /// Everything a seat's remembered map is drawn from.
+    ///
+    /// The snapshot below is idempotent and only ever adds, so taking it
+    /// again over the same world — or over fewer tiles than last time —
+    /// writes nothing. Establishing that is worth doing because merely
+    /// reaching for a seat mutably copies it.
+    fn memory_stamp(&self, pid: usize) -> u64 {
+        let seat = &self.players[pid];
+        let mut key = vision_key(&[
+            self.map.tiles.epoch(),
+            self.turn as u64,
+            self.world_era as u64,
+            seat.explored.len() as u64,
+            seat.remembered_tiles.len() as u64,
+            seat.remembered_cities.len() as u64,
+        ]);
+        for other in self.players.iter() {
+            // A city's outer defenses are read from the trees.
+            key = vision_key(&[key, other.techs.len() as u64, other.civics.len() as u64]);
+        }
+        for city in self.cities.values() {
+            key = vision_key(&[
+                key,
+                city.id as u64,
+                city.owner as u64,
+                city.pos.0 as u64,
+                city.pos.1 as u64,
+                city.pop as u64,
+                city.hp as u64,
+                city.is_capital as u64,
+                city.original_owner as u64,
+                city.captured_from.map_or(u64::MAX, |seat| seat as u64),
+                city.occupied_from.map_or(u64::MAX, |seat| seat as u64),
+                city.wall_hp as u64,
+                city.encampment_hp as u64,
+                city.encampment_wall_hp as u64,
+                city.encampment_pillaged as u64,
+                city.name.len() as u64,
+                city.buildings.len() as u64,
+            ]);
+            // Which religion a city holds is decided by its pressures.
+            for (religion, pressure) in &city.pressure {
+                key = vision_key(&[key, religion.len() as u64, pressure.to_bits()]);
+            }
+        }
+        key
+    }
+
+    fn refresh_visibility_snapshot(&mut self, pid: usize, visible: &TileBits) {
+        if self.remembered_under.len() < self.players.len() {
+            self.remembered_under
+                .resize(self.players.len(), (0, TileBits::default()));
+        }
+        // A move reveals over a wider set than the refresh that follows it, so
+        // the second of the pair is the common case rather than a corner of
+        // one: everything it would record was recorded a moment ago.
+        let stamp = self.memory_stamp(pid);
+        if let Some((under, covered)) = self.remembered_under.get(pid) {
+            if *under == stamp && visible.is_subset_of(covered) {
+                return;
+            }
+        }
+        let taken = visible.clone();
+        let visible: BTreeSet<Pos> = self.tiles_of(visible);
+        self.refresh_visibility_snapshot_inner(pid, &visible);
+        // Record the world as it stands *after* the snapshot: taking one grows
+        // what the seat has explored, which is itself part of the stamp the
+        // next call will compute.
+        let settled = self.memory_stamp(pid);
+        if let Some(slot) = self.remembered_under.get_mut(pid) {
+            *slot = (settled, taken);
+        }
+    }
+
+    fn refresh_visibility_snapshot_inner(&mut self, pid: usize, visible: &BTreeSet<Pos>) {
         let newly_explored: Vec<Pos> = visible
             .difference(&self.players[pid].explored)
             .copied()
@@ -19294,6 +19373,11 @@ impl Game {
                 }
             }
         }
+        // Memory just arrived from somewhere other than a sweep, so no seat's
+        // last snapshot can be assumed to still describe it.
+        self.remembered_under
+            .iter_mut()
+            .for_each(|(stamp, _)| *stamp = 0);
     }
 
     fn backfill_visibility_memory(&mut self) {
