@@ -1879,7 +1879,42 @@ async function specPoll() {
 // one second later, whatever the player count. Lightning is zero — the server
 // takes no wait at all — so its cost is measured, not chosen, and the option
 // carries the machine's own estimate.
+// That estimate is reported below the picker rather than inside it. Writing it
+// into the option made the control unpickable — see updatePaceReadout.
+// A pick also has to outlive the server that received it. Every game is a new
+// process starting at the default second per turn, and the exhibition cycles
+// games all day, so a viewer who chose Lightning was quietly returned to Blitz
+// at the next world. A chosen pace is remembered and handed to whatever server
+// the page finds itself talking to.
+const PACE_KEY = "civvis-watch-pace";
 let paceRealigned = false;
+let paceDisagreed = 0;
+let paceChoice = null;   // the pace the viewer picked, null until they pick one
+let paceAsserted = null; // the server pace we have already answered with a push
+function paceHeldOpen() {
+  const select = document.getElementById("specspeed");
+  return !!select && document.activeElement === select;
+}
+function paceOffered(select, ms) {
+  return [...select.options].some(o => +o.value === ms);
+}
+function rememberPace(ms) {
+  paceChoice = ms;
+  paceAsserted = null;
+  paceDisagreed = 0;
+  try { localStorage.setItem(PACE_KEY, String(ms)); } catch (e) {}
+}
+function restorePace() {
+  const select = document.getElementById("specspeed");
+  if (!select) return;
+  let stored = null;
+  try { stored = localStorage.getItem(PACE_KEY); } catch (e) {}
+  if (stored === null || stored === "") return;
+  const ms = +stored;
+  if (!Number.isFinite(ms) || !paceOffered(select, ms)) return;
+  paceChoice = ms;
+  select.value = String(ms);
+}
 function formatTurnTime(ms) {
   if (!(ms > 0)) return "—";
   if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
@@ -1893,22 +1928,41 @@ function specPace() {
 function updatePaceReadout(st) {
   const select = document.getElementById("specspeed");
   if (!select) return;
-  if (st && st.pace !== undefined && +select.value !== st.pace) {
-    // A server left on a pace this page no longer offers gets the picked one.
-    if ([...select.options].some(o => +o.value === st.pace)) select.value = String(st.pace);
-    else if (!paceRealigned) { paceRealigned = true; setPace({ms: specPace()}); }
+  if (st && st.pace !== undefined) {
+    if (+select.value === st.pace) { paceDisagreed = 0; paceAsserted = null; }
+    else if (paceChoice !== null && paceOffered(select, paceChoice) && !paceHeldOpen()) {
+      // The viewer has said what they want. A server on anything else is a
+      // fresh process on its default, so tell it — once per pace it reports,
+      // which answers a restart without spinning if it will not take the value.
+      select.value = String(paceChoice);
+      if (paceAsserted !== st.pace) { paceAsserted = st.pace; setPace({ms: paceChoice}); }
+    }
+    // Nobody has chosen yet, so the server's pace is the truth — but a poll
+    // already in flight answers with the old one, so wait for it to persist.
+    else if (++paceDisagreed >= 4 && !paceHeldOpen()) {
+      paceDisagreed = 0;
+      // A server left on a pace this page no longer offers gets the picked one.
+      if (paceOffered(select, st.pace)) select.value = String(st.pace);
+      else if (!paceRealigned) { paceRealigned = true; setPace({ms: specPace()}); }
+    }
   }
-  const lightning = [...select.options].find(o => o.value === "0");
-  const estimate = st && st.turn_compute_ms;
-  if (lightning && estimate > 0)
-    lightning.textContent = `Lightning · ~${formatTurnTime(estimate)} / turn`;
+  // Lightning's cost is measured rather than chosen, and it used to be written
+  // into the option itself. Nothing may be written into the option: a browser
+  // dismisses its open dropdown when the options change, and a menu that shuts
+  // ten times a second cannot be picked from. Guarding on focus is not enough,
+  // because the native popup takes focus off the page while it is up. The
+  // estimate belongs on the note below, which is not part of the control.
   const note = document.getElementById("specpacenote");
   if (!note) return;
+  const estimate = st && st.turn_compute_ms;
+  const unlimited = estimate > 0 ? `Lightning ≈ ${formatTurnTime(estimate)} / turn` : "";
   const actual = st && st.turn_ms;
-  if (!(actual > 0)) { note.textContent = "Measuring turn time…"; return; }
-  const rate = 1000 / actual;
-  note.textContent = `Now ${formatTurnTime(actual)} per turn · ` +
-    `${rate >= 10 ? Math.round(rate) : rate.toFixed(1)} turns/sec`;
+  const now = actual > 0
+    ? `Now ${formatTurnTime(actual)} per turn · ` +
+      `${1000 / actual >= 10 ? Math.round(1000 / actual) : (1000 / actual).toFixed(1)} turns/sec`
+    : "Measuring turn time…";
+  const text = unlimited && +select.value !== 0 ? `${now} · ${unlimited}` : now;
+  if (note.textContent !== text) note.textContent = text;
 }
 async function setPace(opts) {
   try {
@@ -6801,8 +6855,10 @@ document.getElementById("specstep").onclick = () => {
   setPace({paused: true}).then(specStep);
 };
 document.getElementById("specspeed").onchange = () => {
-  setPace({ms: specPace()});
+  rememberPace(specPace()); // the pick outranks any state already in flight
+  setPace({ms: paceChoice});
 };
+restorePace();
 async function spectatePlayer(player) {
   if (!state || viewChanging) return;
   viewChanging = true;
