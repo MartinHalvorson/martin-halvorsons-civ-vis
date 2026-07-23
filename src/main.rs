@@ -64,11 +64,23 @@ fn arg_toggle(args: &[String], key: &str, default: bool) -> bool {
 
 fn auto_cs(args: &[String], players: i64) -> usize {
     let cs = arg(args, "--city-states", -1);
-    if cs >= 0 {
-        cs as usize
-    } else {
-        MapSize::for_players(players.max(1) as usize).default_city_states
+    if cs < 0 {
+        return MapSize::for_players(players.max(1) as usize).default_city_states;
     }
+    // The engine seats only as many city-states as the ruleset has distinct
+    // identities for, because each one owns a unique Suzerain bonus and two
+    // seats sharing a name would share it. Asking for more used to be clamped
+    // in silence, which turns a pinned lobby setting into a different game
+    // than the one that was set up.
+    let named = civvis::game::CITY_STATE_NAMES.len();
+    if cs as usize > named {
+        eprintln!(
+            "--city-states {cs} exceeds the {named} city-states the ruleset carries; \
+             each owns a unique Suzerain bonus, so the extra seats cannot be filled"
+        );
+        std::process::exit(2);
+    }
+    cs as usize
 }
 
 fn auto_dimension(args: &[String], key: &str, players: i64, width: bool) -> i32 {
