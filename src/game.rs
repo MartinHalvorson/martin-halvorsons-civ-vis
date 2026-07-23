@@ -687,11 +687,152 @@ mod corporation_tests {
     }
 }
 
+/// A natural wonder is permanent terrain in Civ VI. The generator draws a
+/// fixed number of them per map size, and nothing a player does afterwards
+/// removes one — so the count a map starts with is the count it ends with.
+#[cfg(test)]
+mod natural_wonder_permanence_tests {
+    use super::*;
+
+    /// A capital with a natural wonder on a workable neighbour, plus a Builder
+    /// standing on it. The wonder sits on grassland so that a Farm would be a
+    /// legal siting were the tile ordinary — that is exactly the case that was
+    /// erasing wonders mid-game.
+    fn wonder_beside_capital() -> (Game, u32, Pos) {
+        let mut game = Game::new_full(1, 24, 16, 51_207, 200, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        let city = game.found_city_for(0, game.units[&settler].pos, None);
+        let site = game
+            .nbrs(game.cities[&city].pos)
+            .into_iter()
+            .find(|position| {
+                game.map.tiles[position].owner_city == Some(city)
+                    && !game.rules.is_water(&game.map.tiles[position])
+            })
+            .expect("the capital works at least one land neighbour");
+        {
+            let tile = game.map.tiles.get_mut(&site).unwrap();
+            tile.terrain = "grassland".to_string();
+            tile.hills = false;
+            tile.feature = Some("pantanal".to_string());
+            tile.resource = None;
+            tile.improvement = None;
+        }
+        (game, city, site)
+    }
+
+    #[test]
+    fn no_builder_improvement_may_cover_a_natural_wonder() {
+        let (mut game, _city, site) = wonder_beside_capital();
+        game.players[0].techs.insert("irrigation".to_string());
+        let builder = game.spawn_unit("builder", 0, site);
+
+        // The same tile without its wonder takes a Farm, so the refusal below
+        // is about the wonder and not about the terrain or the tech.
+        game.map.tiles.get_mut(&site).unwrap().feature = None;
+        assert!(game
+            .valid_improvements(0, site)
+            .contains(&"farm".to_string()));
+
+        game.map.tiles.get_mut(&site).unwrap().feature = Some("pantanal".to_string());
+        assert_eq!(
+            game.valid_improvements(0, site),
+            Vec::<String>::new(),
+            "a natural wonder tile offers a Builder nothing"
+        );
+        assert!(game
+            .apply(
+                0,
+                &Action::Improve {
+                    unit: builder,
+                    improvement: "farm".to_string(),
+                },
+            )
+            .is_err());
+        assert_eq!(
+            game.map.tiles[&site].feature.as_deref(),
+            Some("pantanal"),
+            "the wonder is still standing"
+        );
+    }
+
+    #[test]
+    fn a_national_park_still_encloses_a_natural_wonder_without_clearing_it() {
+        // The park fixture already builds four owned, park-legal tiles.
+        let (mut game, city, positions) = super::national_park_tests::controlled_park_game();
+        let wonder_tile = positions[1];
+        game.map.tiles.get_mut(&wonder_tile).unwrap().feature = Some("crater_lake".to_string());
+        assert!(
+            game.valid_national_park_site(0, &positions),
+            "Civ VI parks are the one improvement allowed over a natural wonder"
+        );
+        assert!(game
+            .valid_improvements(0, positions[0])
+            .contains(&"national_park".to_string()));
+
+        let naturalist = game.spawn_unit("naturalist", 0, positions[0]);
+        assert!(game
+            .apply(
+                0,
+                &Action::Improve {
+                    unit: naturalist,
+                    improvement: "national_park".to_string(),
+                },
+            )
+            .is_ok());
+        assert_eq!(
+            game.map.tiles[&wonder_tile].improvement.as_deref(),
+            Some("national_park")
+        );
+        assert_eq!(
+            game.map.tiles[&wonder_tile].feature.as_deref(),
+            Some("crater_lake"),
+            "the park leaves the wonder in place"
+        );
+        assert!(game.cities.contains_key(&city));
+    }
+
+    #[test]
+    fn no_city_may_be_founded_on_a_natural_wonder() {
+        let (mut game, _city, site) = wonder_beside_capital();
+        // Far enough from the capital that only the wonder can refuse it.
+        let distant = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|position| {
+                game.wdist(*position, game.cities.values().next().unwrap().pos) >= 5
+                    && !game.rules.is_water(&game.map.tiles[position])
+                    && game.rules.is_passable(&game.map.tiles[position])
+            })
+            .expect("the map has room for a second city");
+        {
+            let tile = game.map.tiles.get_mut(&distant).unwrap();
+            tile.terrain = "grassland".to_string();
+            tile.feature = None;
+            tile.hills = false;
+        }
+        let settler = game.spawn_unit("settler", 0, distant);
+        assert!(game.can_found_city(settler), "an ordinary site is legal");
+
+        game.map.tiles.get_mut(&distant).unwrap().feature = Some("uluru".to_string());
+        assert!(!game.can_found_city(settler));
+        assert!(game.apply(0, &Action::FoundCity { unit: settler }).is_err());
+        assert_eq!(game.map.tiles[&distant].feature.as_deref(), Some("uluru"));
+        assert_eq!(game.map.tiles[&site].feature.as_deref(), Some("pantanal"));
+    }
+}
+
 #[cfg(test)]
 mod national_park_tests {
     use super::*;
 
-    fn controlled_park_game() -> (Game, u32, [Pos; 4]) {
+    pub(super) fn controlled_park_game() -> (Game, u32, [Pos; 4]) {
         let mut game = Game::new_full(1, 24, 16, 91_741, 200, 0, false);
         let settler = game
             .player_unit_ids(0)
@@ -20985,7 +21126,9 @@ impl Game {
     pub fn can_found_city(&self, uid: u32) -> bool {
         let u = &self.units[&uid];
         let t = &self.map.tiles[&u.pos];
-        if self.rules.is_water(t) || !self.rules.is_passable(t) {
+        // Founding clears the centre tile's feature, so a Settler standing on
+        // a natural wonder would erase it. Civ VI blocks the site outright.
+        if self.rules.is_water(t) || !self.rules.is_passable(t) || self.tile_is_natural_wonder(t) {
             return false;
         }
         for c in self.cities.values() {
@@ -23780,6 +23923,18 @@ impl Game {
                 && self.suzerain_of(territory_owner) == Some(pid))
     }
 
+    /// Whether a tile carries one of the map's natural wonders. Districts,
+    /// world wonders and city sites all have to leave those tiles alone, and
+    /// so does every Builder improvement bar the National Park.
+    pub fn tile_is_natural_wonder(&self, tile: &crate::world::Tile) -> bool {
+        tile.feature.as_ref().is_some_and(|feature| {
+            self.rules
+                .features
+                .get(feature.as_str())
+                .is_some_and(|spec| spec.natural_wonder)
+        })
+    }
+
     pub fn valid_improvements(&self, pid: usize, pos: Pos) -> Vec<String> {
         let t = match self.map.get(pos) {
             Some(t) => t,
@@ -23794,8 +23949,16 @@ impl Game {
         {
             return vec![];
         }
-        if let Some(excavation) = self.valid_excavation(pid, pos) {
-            return vec![excavation];
+        // A natural wonder is permanent terrain in Civ VI: nothing a Builder
+        // can do removes or covers one. Without this the map quietly loses
+        // wonders as the game runs, because a Farm sites itself on the
+        // Pantanal's grassland or Uluru's desert like any other tile and
+        // clears the feature on the way in.
+        let natural_wonder = self.tile_is_natural_wonder(t);
+        if !natural_wonder {
+            if let Some(excavation) = self.valid_excavation(pid, pos) {
+                return vec![excavation];
+            }
         }
         let oc = match t.owner_city {
             Some(oc) => oc,
@@ -23819,6 +23982,12 @@ impl Game {
                 {
                     out.push(name.clone());
                 }
+                continue;
+            }
+            // A National Park may enclose a natural wonder — and leaves its
+            // feature standing — so it is checked above this line. Nothing
+            // else may.
+            if natural_wonder {
                 continue;
             }
             if name == "industry" {

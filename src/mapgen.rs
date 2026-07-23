@@ -421,6 +421,17 @@ pub fn generate_with_script(
     // footprint of each modeled wonder. Multi-tile wonders are grown as a
     // connected cluster so discovery, adjacency and yields operate on every
     // constituent tile rather than on a single representative hex.
+    //
+    // The stock generator also spreads them out: `NaturalWonderGenerator`
+    // rejects a candidate plot that sits too near a wonder it has already
+    // drawn, so no two of them ever share a border and a single region never
+    // collects the map's whole allowance. Two wonders that prefer the same
+    // biome — Yosemite and Mount Everest both want mountains — otherwise
+    // settle onto the same range and read as one oversized feature. The
+    // separation is a preference, not a quota: it is relaxed one ring at a
+    // time down to `MIN_WONDER_SEPARATION` before a wonder is allowed to
+    // place unconstrained, so a cramped map still receives its full count.
+    let mut placed_wonder_tiles: Vec<Pos> = Vec::new();
     let mut wonder_names = [
         "great_barrier_reef",
         "crater_lake",
@@ -465,13 +476,16 @@ pub fn generate_with_script(
                 _ => false,
             }
         };
-        let mut cands: Vec<Pos> = wm
-            .tiles
-            .iter()
-            .filter(|(_, t)| preferred(t))
-            .map(|(p, _)| *p)
-            .collect();
-        let cluster_from = |anchor: Pos, preferred_only: bool| {
+        // A tile is far enough from the wonders already drawn when every one
+        // of their tiles is at least `separation` hexes away. `separation`
+        // of 1 is no constraint at all, which is what the final unconstrained
+        // attempt uses.
+        let far_enough = |position: Pos, separation: i32| {
+            placed_wonder_tiles
+                .iter()
+                .all(|placed| hex::wdistance(position, *placed, width) >= separation)
+        };
+        let cluster_from = |anchor: Pos, preferred_only: bool, separation: i32| {
             let mut cluster = vec![anchor];
             while cluster.len() < footprint {
                 let mut frontier: Vec<Pos> = cluster
@@ -480,6 +494,7 @@ pub fn generate_with_script(
                     .map(|position| hex::canon(position, width))
                     .filter(|position| wm.tiles.contains_key(position))
                     .filter(|position| !cluster.contains(position))
+                    .filter(|position| far_enough(*position, separation))
                     .filter(|position| {
                         let tile = &wm.tiles[position];
                         if preferred_only {
@@ -504,32 +519,58 @@ pub fn generate_with_script(
             }
             Some(cluster)
         };
-        let mut footprint_tiles = None;
-        while !cands.is_empty() && footprint_tiles.is_none() {
-            let index = rng.below(cands.len());
-            let anchor = cands.swap_remove(index);
-            footprint_tiles = cluster_from(anchor, true);
-        }
+        let preferred_sites: Vec<Pos> = wm
+            .tiles
+            .iter()
+            .filter(|(_, t)| preferred(t))
+            .map(|(p, _)| *p)
+            .collect();
         // Very unusual seeds can lack a large enough preferred biome. Keep
         // the correct footprint and map-size count by shaping an otherwise
         // empty connected region into the wonder's terrain family.
-        if footprint_tiles.is_none() {
-            cands = wm
-                .tiles
+        let shaped_sites: Vec<Pos> = wm
+            .tiles
+            .iter()
+            .filter(|(_, t)| {
+                ((*wonder == "great_barrier_reef" && t.terrain == "coast")
+                    || (*wonder != "great_barrier_reef"
+                        && !matches!(t.terrain.as_str(), "ocean" | "coast")))
+                    && t.feature.is_none()
+                    && t.resource.is_none()
+            })
+            .map(|(p, _)| *p)
+            .collect();
+        // Sites are tried in order of how far each one departs from the ideal:
+        // the wonder's own biome at the widest spacing, then narrower rings,
+        // then the shaped fallback down the same ladder. Rewriting a region
+        // into the wonder's terrain is the larger departure of the two, so the
+        // whole preferred ladder is exhausted first. Dropping the separation
+        // altogether is worse than either and comes last, once no pool can
+        // seat this wonder `MIN_WONDER_SEPARATION` hexes from its neighbours.
+        let pools = [(&preferred_sites, true), (&shaped_sites, false)];
+        let mut attempts: Vec<(&Vec<Pos>, bool, i32)> = Vec::new();
+        for (sites, preferred_only) in pools {
+            for separation in (MIN_WONDER_SEPARATION..=PREFERRED_WONDER_SEPARATION).rev() {
+                attempts.push((sites, preferred_only, separation));
+            }
+        }
+        for (sites, preferred_only) in pools {
+            attempts.push((sites, preferred_only, 1));
+        }
+        let mut footprint_tiles = None;
+        for (sites, preferred_only, separation) in attempts {
+            let mut cands: Vec<Pos> = sites
                 .iter()
-                .filter(|(_, t)| {
-                    ((*wonder == "great_barrier_reef" && t.terrain == "coast")
-                        || (*wonder != "great_barrier_reef"
-                            && !matches!(t.terrain.as_str(), "ocean" | "coast")))
-                        && t.feature.is_none()
-                        && t.resource.is_none()
-                })
-                .map(|(p, _)| *p)
+                .copied()
+                .filter(|position| far_enough(*position, separation))
                 .collect();
             while !cands.is_empty() && footprint_tiles.is_none() {
                 let index = rng.below(cands.len());
                 let anchor = cands.swap_remove(index);
-                footprint_tiles = cluster_from(anchor, false);
+                footprint_tiles = cluster_from(anchor, preferred_only, separation);
+            }
+            if footprint_tiles.is_some() {
+                break;
             }
         }
         if let Some(cluster) = footprint_tiles {
@@ -542,6 +583,7 @@ pub fn generate_with_script(
                 tile.feature = Some((*wonder).into());
                 tile.resource = None;
                 tile.improvement = None;
+                placed_wonder_tiles.push(position);
             }
         }
     }
@@ -740,6 +782,15 @@ pub fn generate_with_script(
     }
     (wm, spawns)
 }
+
+/// Hexes the generator tries to keep between any two natural wonders, and the
+/// floor it will not go below while a spacing-respecting site still exists.
+/// `NaturalWonderGenerator` spreads the stock roster over the whole map rather
+/// than letting two of them share a mountain range or a reef; the floor of 3
+/// is the part that matters most, because it is what stops a pair from reading
+/// as one oversized feature.
+const PREFERRED_WONDER_SEPARATION: i32 = 6;
+const MIN_WONDER_SEPARATION: i32 = 3;
 
 /// World Age, which the stock scripts pass to every elevation percentile.
 /// Continents.lua's "normal" is 3; a younger world raises more mountains.
@@ -2183,6 +2234,75 @@ mod river_tests {
                 );
             }
             assert_eq!(reached, tiles, "{wonder} must be contiguous");
+        }
+    }
+
+    /// Civ VI's natural wonder allowance is a per-map-size row, not a range,
+    /// and `NaturalWonderGenerator` keeps the ones it draws apart. Both halves
+    /// matter to a player: a map short of its allowance is missing content it
+    /// paid a whole biome for, and two wonders sharing a mountain range read
+    /// on screen as one oversized feature rather than two discoveries.
+    #[test]
+    fn every_map_size_draws_its_full_wonder_allowance_well_spaced() {
+        let rules = Rules::embedded();
+        for size in CIV6_MAP_SIZES.iter() {
+            for script in [
+                MapScript::Pangaea,
+                MapScript::Continents,
+                MapScript::SmallContinents,
+                MapScript::InlandSea,
+            ] {
+                for seed in 0..3u64 {
+                    let mut rng = Rng::new(seed);
+                    let (world, _) = generate_with_script(
+                        &rules,
+                        size.width,
+                        size.height,
+                        size.default_players,
+                        size.default_city_states,
+                        size.natural_wonders,
+                        size.continents,
+                        script,
+                        &mut rng,
+                    );
+                    let mut footprints: BTreeMap<String, Vec<Pos>> = BTreeMap::new();
+                    for (position, tile) in world.tiles.iter() {
+                        if let Some(feature) = &tile.feature {
+                            if rules.features[feature.as_str()].natural_wonder {
+                                footprints
+                                    .entry(feature.clone())
+                                    .or_default()
+                                    .push(*position);
+                            }
+                        }
+                    }
+                    let where_ = format!("{} {script:?} seed {seed}", size.id);
+                    assert_eq!(
+                        footprints.len(),
+                        size.natural_wonders,
+                        "{where_} placed {:?}",
+                        footprints.keys().collect::<Vec<_>>()
+                    );
+                    let names: Vec<&String> = footprints.keys().collect();
+                    for (index, first) in names.iter().enumerate() {
+                        for second in &names[index + 1..] {
+                            let gap = footprints[*first]
+                                .iter()
+                                .flat_map(|left| {
+                                    footprints[*second]
+                                        .iter()
+                                        .map(move |right| hex::wdistance(*left, *right, size.width))
+                                })
+                                .min()
+                                .unwrap();
+                            assert!(
+                                gap >= MIN_WONDER_SEPARATION,
+                                "{where_}: {first} and {second} are only {gap} hexes apart"
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 }
