@@ -2306,14 +2306,44 @@ function drawCaptureChoice() {
 }
 
 // ---------------------------------------------------------------- renderer
-function hexPath(x, y, s) {
-  s = s || S;
-  cx.beginPath();
+function appendHexPath(x, y, s) {
   for (let i = 0; i < 6; i++) {
     const [px, py] = corner(x, y, s, i);
     i ? cx.lineTo(px, py) : cx.moveTo(px, py);
   }
   cx.closePath();
+}
+function hexPath(x, y, s) {
+  s = s || S;
+  cx.beginPath();
+  appendHexPath(x, y, s);
+}
+
+// Atlas art has one geometric contract with the board. Ground art is clipped
+// to the exact top face (or the union of faces for a multi-tile landmark).
+// Upright art gets only the vertical screen-space extrusion above that same
+// footprint, so a peak may stand tall without its base wandering sideways
+// across an unrelated tile. Keeping this in one path builder prevents each
+// atlas from inventing a slightly different, screen-aligned approximation.
+function tileArtPath(footprint, upright = false, headroom = 2.8) {
+  cx.beginPath();
+  for (const point of footprint) {
+    appendHexPath(point.x, point.y, S + 0.25);
+    if (!upright) continue;
+    const corners = Array.from({length:6}, (_, i) => corner(point.x, point.y, S + 0.25, i));
+    const minX = Math.min(...corners.map(p => p[0]));
+    const maxX = Math.max(...corners.map(p => p[0]));
+    cx.rect(minX, point.y - S * headroom, maxX - minX, S * headroom);
+  }
+}
+
+function tileArtBounds(footprint) {
+  const corners = footprint.flatMap(point =>
+    Array.from({length:6}, (_, i) => corner(point.x, point.y, S + 0.25, i)));
+  return {
+    minX:Math.min(...corners.map(p => p[0])), maxX:Math.max(...corners.map(p => p[0])),
+    minY:Math.min(...corners.map(p => p[1])), maxY:Math.max(...corners.map(p => p[1]))
+  };
 }
 // prism side walls: true 3D behavior — an edge's wall is drawn only when it
 // faces the viewer, and its brightness comes from the world-fixed sun, so
@@ -2603,16 +2633,28 @@ function drawAtlasFeatureCell(atlas, columns, rows, cell, t, x, y, options = {})
   const cw = atlas.naturalWidth / columns, ch = atlas.naturalHeight / rows;
   const hv = hash2(t.pos[0] * 41 + cell[0] * 7, t.pos[1] * 43 + cell[1] * 11);
   const scale = (options.scale || 1) * (options.vary === false ? 1 : 0.9 + hv * 0.16);
-  const width = S * (options.width || 2.04) * scale;
-  const height = S * (options.height || 1.55) * scale;
+  const width = (options.widthPx || S * (options.width || 2.04)) * scale;
+  const height = (options.heightPx || S * (options.height || 1.9)) * scale;
+  const footprint = options.footprint || [{x, y}];
+  let sx = cell[0] * cw, sy = cell[1] * ch, sw = cw, sh = ch;
+  // Generated atlas cells reserve generous top/bottom transparency. Cropping
+  // the tall cell to its square working area keeps the cutout's original
+  // proportions instead of stretching it sideways to fill a hex.
+  if (options.squareCrop !== false && ch > cw) {
+    const cropY = Math.max(0, Math.min(1, options.cropY === undefined ? 0.5 : options.cropY));
+    sy += (ch - cw) * cropY;
+    sh = cw;
+  }
   cx.save();
+  tileArtPath(footprint, !!options.upright, options.headroom || 2.8);
+  cx.clip();
   cx.imageSmoothingEnabled = true;
   cx.imageSmoothingQuality = "high";
   cx.globalAlpha = options.alpha === undefined ? 0.95 : options.alpha;
   cx.translate(x, y - S * (options.lift === undefined ? 0.08 : options.lift));
   if (options.rotate !== false) cx.rotate(Math.floor(hv * 2) * Math.PI);
   if (options.flip !== false && hash2(t.pos[0] * 13, t.pos[1] * 17) > 0.5) cx.scale(-1, 1);
-  cx.drawImage(atlas, cell[0] * cw, cell[1] * ch, cw, ch,
+  cx.drawImage(atlas, sx, sy, sw, sh,
                -width / 2, -height / 2, width, height);
   cx.restore();
 }
@@ -2623,14 +2665,10 @@ function drawFeatureSprite(t, x, y) {
   const baseCol = FEATURE_CELL[baseFeature];
   if (FEATURE_ATLAS_READY && baseCol !== undefined) {
     const burnt = t.feature === "burnt_forest" || t.feature === "burnt_jungle";
-    // A wood drew one clump per hex, and the clump stopped short of its own
-    // edges — so a forest read as a row of separate bushes with bare ground
-    // ringing each one, the same way the sea read as hexagons before its
-    // stamps were made to overlap. Canopy now grows with how much woodland
-    // surrounds the tile: a lone stand stays a stand, while a tile deep inside
-    // a forest pushes its crowns past the boundary until they interlock with
-    // the neighbours' and the hex edge stops existing. Natural wonders already
-    // scale by cluster size for the same reason.
+    // Dense neighboring woods still receive a fuller canopy, but every crown
+    // is clipped back to the owning top face. That preserves the visual mass
+    // of a forest without making the edge trees appear to belong to the next
+    // terrain or resource tile.
     let knit = 1;
     if (WOODLAND.has(t.feature)) {
       let n = 0;
@@ -2638,41 +2676,53 @@ function drawFeatureSprite(t, x, y) {
         const q = nbrTile(t.pos, DIRS[i]);
         if (q && WOODLAND.has(q.feature)) n++;
       }
-      knit = 1 + 0.075 * n;   // full knit only when every neighbour is trees
+      knit = 1 + 0.035 * n;
     }
     drawAtlasFeatureCell(FEATURE_ATLAS, 4, 1, [baseCol, 0], t, x, y,
-      {scale: knit,
+      {scale: knit, width:2.08, height:2.0, cropY:0.5,
        alpha: burnt ? 0.48 : (baseFeature === "forest" || baseFeature === "jungle" ? 0.96 : 0.94)});
     return true;
   }
   const cell = ENVIRONMENT_FEATURE_CELL[t.feature];
   if (!ENVIRONMENT_FEATURE_ATLAS_READY || !cell) return false;
   const volcano = t.feature === "volcano";
+  const cropY = cell[1] ? 0.35 : (t.feature === "geothermal_fissure" ? 0.48 : 0.84);
   drawAtlasFeatureCell(ENVIRONMENT_FEATURE_ATLAS, 4, 2, cell, t, x, y, {
-    width: volcano ? 2.32 : 2.06,
-    height: volcano ? 2.08 : 1.62,
-    lift: volcano ? 0.31 : 0.08,
-    scale: volcano ? 1.05 : 1,
+    width: volcano ? 2.02 : 2.08,
+    height: volcano ? 2.18 : 2.0,
+    lift: volcano ? 0.34 : 0.02,
+    scale: 1,
     alpha: t.feature === "ice" ? 0.98 : 0.95,
     rotate: !volcano,
-    flip: !volcano
+    flip: !volcano,
+    upright: volcano,
+    squareCrop: !volcano,
+    cropY
   });
   return true;
 }
 
-function drawNaturalWonderSprite(feature, t, x, y, clusterSize) {
+function drawNaturalWonderSprite(feature, t, x, y, footprint) {
   const cell = NATURAL_WONDER_CELL[feature];
   if (!NATURAL_WONDER_ATLAS_READY || !cell) return false;
-  const scale = 1 + Math.min(0.34, Math.max(0, clusterSize - 1) * 0.12);
+  const tall = feature === "mount_everest" || feature === "yosemite" || feature === "pamukkale";
+  const bounds = tileArtBounds(footprint);
+  const footprintWidth = bounds.maxX - bounds.minX;
+  const footprintHeight = bounds.maxY - bounds.minY;
   drawAtlasFeatureCell(NATURAL_WONDER_ATLAS, 4, 2, cell, t, x, y, {
-    width: 2.62,
-    height: 2.02,
-    lift: feature === "mount_everest" || feature === "yosemite" ? 0.38 : 0.14,
-    scale,
+    widthPx: footprintWidth * (tall ? 1.04 : 1.12),
+    heightPx: tall ? Math.max(footprintHeight * 1.45, S * 2.45) : footprintHeight * 1.12,
+    lift: tall ? 0.38 : 0,
+    scale: 1,
     alpha: 0.99,
     rotate: false,
     flip: false,
-    vary: false
+    vary: false,
+    footprint,
+    upright: tall,
+    squareCrop: !tall,
+    cropY: cell[1] ? 0.45 : 0.8,
+    headroom: 3.2
   });
   return true;
 }
@@ -2757,8 +2807,9 @@ function drawFeatureEffects(t, x, y) {
 }
 
 // Multi-tile natural wonders are one landmark, not a repeated stamp. Group
-// connected feature tiles and paint a single larger cutout at their projected
-// center; the deepest member owns the draw call for correct painter ordering.
+// connected feature tiles and paint one cutout at their projected center,
+// clipped to the exact union of the member faces. The deepest member owns the
+// draw call for correct painter ordering.
 function buildNaturalWonderPlacements(tiles) {
   const placements = new Map(), visited = new Set();
   for (const tile of tiles) {
@@ -2783,7 +2834,8 @@ function buildNaturalWonderPlacements(tiles) {
     const centerY = points.reduce((sum, point) => sum + point.y, 0) / points.length;
     const owner = points.reduce((deepest, point) => point.y > deepest.y ? point : deepest);
     placements.set(key(owner.member.pos), {
-      feature:tile.feature, tile:owner.member, x:centerX, y:centerY, size:cluster.length
+      feature:tile.feature, tile:owner.member, x:centerX, y:centerY,
+      footprint:points.map(point => ({x:point.x, y:point.y}))
     });
   }
   return placements;
@@ -2831,9 +2883,15 @@ function drawMountainSprite(t, x, y) {
   // the height jitter below still varies hex to hex.
   const hv = hash2(Math.floor(t.pos[0] / 3) * 31, Math.floor(t.pos[1] / 3) * 37);
   const col = polar ? (hv > 0.3 ? 1 : 0) : (hv > 0.62 ? 2 : 0);
-  const scale = 0.92 + hash2(t.pos[0] * 7, t.pos[1] * 5) * 0.14;
-  const w = S * 2.55 * scale, h = S * 2.0 * scale;
+  // Geology stays regional, but silhouette does not. Mirroring and independent
+  // width/height variation break the telltale row of identical peaks without
+  // mixing snow, granite, and sandstone inside one connected massif.
+  const shapeX = hash2(t.pos[0] * 7 + 3, t.pos[1] * 5 + 11);
+  const shapeY = hash2(t.pos[0] * 17 + 5, t.pos[1] * 13 + 7);
+  const w = S * (1.9 + shapeX * 0.18), h = S * (1.92 + shapeY * 0.24);
+  const flip = hash2(t.pos[0] * 29 + 1, t.pos[1] * 31 + 9) > 0.5;
   cx.save();
+  tileArtPath([{x, y}], true, 3.0); cx.clip();
   // The massif throws its shadow away from the world sun, so a range's shadow
   // swings around it as the camera yaws instead of sitting in the same place on
   // the screen forever. Cinematic throws it further, which is most of what
@@ -2846,8 +2904,10 @@ function drawMountainSprite(t, x, y) {
   cx.fill();
   cx.imageSmoothingEnabled = true;
   cx.imageSmoothingQuality = "high";
+  cx.translate(x, y);
+  if (flip) cx.scale(-1, 1);
   cx.drawImage(MOUNTAIN_ATLAS, col * cw, 0, cw, ch,
-               x - w / 2, y - h + S * 0.34, w, h);
+               -w / 2, -h + S * 0.34, w, h);
   cx.restore();
   return true;
 }
@@ -4106,7 +4166,7 @@ function draw() {
       if (placement) {
         if (beau) {
           drawNaturalWonderSprite(placement.feature, placement.tile,
-                                  placement.x, placement.y, placement.size);
+                                  placement.x, placement.y, placement.footprint);
         } else {
           cx.fillStyle = "#f0ce62";
           cx.beginPath(); cx.arc(placement.x, placement.y, 10, 0, Math.PI * 2); cx.fill();

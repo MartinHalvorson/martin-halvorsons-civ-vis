@@ -2181,6 +2181,36 @@ mod tests {
     }
 
     #[test]
+    fn browser_keeps_atlas_art_on_its_owning_tile_footprint() {
+        let atlas_drawer = EMBEDDED_INDEX
+            .split("function drawAtlasFeatureCell")
+            .nth(1)
+            .and_then(|tail| tail.split("function drawFeatureSprite").next())
+            .expect("shared atlas feature renderer");
+        assert!(atlas_drawer.contains("tileArtPath(footprint"));
+        assert!(atlas_drawer.contains("cx.clip()"));
+
+        let mountain_drawer = EMBEDDED_INDEX
+            .split("function drawMountainSprite")
+            .nth(1)
+            .and_then(|tail| tail.split("function tri(").next())
+            .expect("mountain sprite renderer");
+        assert!(mountain_drawer.contains("tileArtPath([{x, y}], true"));
+        assert!(mountain_drawer.contains("cx.clip()"));
+
+        let wonder_placement = EMBEDDED_INDEX
+            .split("function buildNaturalWonderPlacements")
+            .nth(1)
+            .and_then(|tail| tail.split("function drawTileYields").next())
+            .expect("natural wonder footprint builder");
+        assert!(wonder_placement.contains("footprint:points.map"));
+        assert!(EMBEDDED_INDEX.contains("placement.footprint"));
+
+        assert!(!EMBEDDED_INDEX.contains("const w = S * 2.55"));
+        assert!(!EMBEDDED_INDEX.contains("width: volcano ? 2.32"));
+    }
+
+    #[test]
     fn instance_tagged_spectator_url_routes_to_the_embedded_page() {
         assert_eq!(request_path("/"), "/");
         assert_eq!(request_path("/?instance=9232"), "/");
