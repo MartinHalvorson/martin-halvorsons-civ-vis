@@ -49,10 +49,28 @@ this is the flag that pins it:
 | Start Era: Ancient | default |
 | All Game Modes: DISABLED | default; `--game-modes apocalypse,secret_societies` opts back in |
 | Duplicate Civs and Leaders: ALLOWED | seats past the eighth reuse the roster |
-| Start Position: Balanced | not ported — see the gaps table below |
-| World Age / Temperature / Rainfall / Sea Level | not exposed by the generator |
+| Start Position: Balanced | **not ported, and not a default** — see below |
+| Temperature / Rainfall / Sea Level: Standard | not exposed by the generator; these three are at their defaults, so the gap is expressiveness rather than divergence |
+| World Age: New | **not a default either**, and the setting no longer exists in current Civ VI — see below |
 | Turn Timer: MPH Dynamic · Turn Mode: Simultaneous | out of scope: sequential engine |
 | No Gold or strategic-resource trading, no military alliances | referee policy, not a rule |
+
+### The two map lines are not defaults
+
+Every other unreproduced line above sits at its stock value, so a CIVVIS game
+differs from a CPL game only in what it cannot *say*. Two do not, and they are
+the reason a CIVVIS map is not a CPL map:
+
+- **Start Position: Balanced.** The stock generator places starts and then
+  normalizes them; CIVVIS has fairness spacing but not that normalization. This
+  is the gap that matters most competitively, because it is the one that decides
+  whether two seats are playing the same game.
+- **World Age: New.** More Hills — community measurement puts it as high as +75%
+  — with a mixed effect on Mountains. **Do not implement `--world-age`:** the
+  setting was removed from Civ VI and replaced by separate Mountain Level and
+  Hill Level controls, so porting it would be porting a feature the game no
+  longer has. If this line is ever closed, close it as those two controls, and
+  re-read CPL's published lobby first — it may simply predate the change.
 
 For a stock 4v4 match, which is a teamers lobby and so plays without
 barbarians:
