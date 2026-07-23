@@ -2940,10 +2940,17 @@ function drawImprovement(t, x, y) {
 // place growth showed. A settlement is built from its population now: more
 // houses, taller ones, packed wider. Watching a city thicken over a game is
 // one of the few places the map can show the clock running.
+// How wide a town of this size sprawls. Anything that has to stand clear of a
+// settlement asks this rather than guessing a constant — a guess sized against
+// a small city grazes a large one, which is exactly what happened to the spy
+// marker once cities started growing.
+function settlementSpread(pop) {
+  return 8.5 + Math.min(7, Math.sqrt(Math.max(1, pop || 1)) * 1.9);
+}
 function drawSettlement(c, x, y, beau) {
   const pop = Math.max(1, c.pop || 1);
   const n = Math.max(3, Math.min(11, 2 + Math.round(Math.sqrt(pop) * 2)));
-  const spread = 8.5 + Math.min(7, Math.sqrt(pop) * 1.9);
+  const spread = settlementSpread(pop);
   const rise = 0.82 + 0.36 * Math.min(1, pop / 14);
   const roof = cityBannerColor(c.owner);
   if (beau) {
@@ -3851,8 +3858,11 @@ function draw() {
     const [mx, myy] = hexXY(m.target[0], m.target[1]);
     const my = myy - (mt ? elev(mt) : 0);
     const k = UI_K();
-    // clear of the settlement, whose footprint widens with population
-    const bx = mx - 21 * k, by = my - 2;
+    // Clear of the settlement, measured from the town's own sprawl rather than
+    // a fixed guess: a constant sized against a small city grazes a capital.
+    const host = (state.cities || []).find(c => c.id === sp.city)
+      || (state.cities || []).find(c => key(c.pos) === key(m.target));
+    const bx = mx - (settlementSpread(host && host.pop) + 8.5) * k, by = my - 2;
     const left = Math.max(0, (m.ends || 0) - state.turn);
     cx.save();
     cx.fillStyle = "#12161de8";
