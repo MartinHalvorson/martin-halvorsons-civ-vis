@@ -153,6 +153,10 @@ pub struct ImprovementSpec {
     pub terrain: Vec<String>,
     #[serde(default)]
     pub feature: Vec<String>,
+    /// Features the improvement may also sit on once a civic is unlocked --
+    /// Gathering Storm opens the Lumber Mill to Rainforest at Mercantilism.
+    #[serde(default)]
+    pub feature_after_civic: BTreeMap<String, String>,
     #[serde(default)]
     pub resources: Vec<String>,
     #[serde(default)]

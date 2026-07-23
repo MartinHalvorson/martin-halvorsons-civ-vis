@@ -2085,6 +2085,35 @@ mod governor_runtime_tests {
     }
 
     #[test]
+    fn lumber_mills_reach_rainforest_only_at_mercantilism() {
+        let mut game = Game::new_full(1, 24, 16, 91_963, 200, 0, false);
+        let city = found_capital(&mut game, 0);
+        let site = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != game.cities[&city].pos)
+            .unwrap();
+        {
+            let tile = game.map.tiles.get_mut(&site).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = Some("jungle".to_string());
+            tile.hills = false;
+            tile.resource = None;
+            tile.improvement = None;
+        }
+        game.players[0].techs.insert("construction".to_string());
+        assert!(!game.valid_improvements(0, site).contains(&"lumber_mill".to_string()));
+        game.players[0].civics.insert("mercantilism".to_string());
+        assert!(game.valid_improvements(0, site).contains(&"lumber_mill".to_string()));
+
+        // Woods never needed the civic.
+        game.map.tiles.get_mut(&site).unwrap().feature = Some("forest".to_string());
+        game.players[0].civics.remove("mercantilism");
+        assert!(game.valid_improvements(0, site).contains(&"lumber_mill".to_string()));
+    }
+
+    #[test]
     fn security_expert_defends_the_city_victor_governs() {
         let mut game = Game::new_full(1, 24, 16, 91_957, 200, 0, false);
         let city = found_capital(&mut game, 0);
@@ -20896,10 +20925,13 @@ impl Game {
             // Lumber Mills list no terrain at all, so only their feature
             // route exists. An improvement listing none of the three is
             // unrestricted (governor and appeal specials gate elsewhere).
-            let feature_route = t
-                .feature
-                .as_ref()
-                .is_some_and(|feature| spec.feature.contains(feature));
+            let feature_route = t.feature.as_ref().is_some_and(|feature| {
+                spec.feature.contains(feature)
+                    || spec
+                        .feature_after_civic
+                        .get(feature)
+                        .is_some_and(|civic| self.players[pid].civics.contains(civic))
+            });
             let resource_route = visible_resource.is_some_and(|resource| {
                 spec.resources.iter().any(|candidate| candidate == resource)
                     || self.rules.resources[resource].improvement == *name

@@ -165,7 +165,7 @@
       "verified": false,
       "note": "Partly checked. Liang's City Park Culture and Fishery Production match. Egypt's Sphinx was missing both of its conditional yields -- +1 Culture on Floodplains and +2 Faith next to a Wonder -- now added. Still partial: arbitrary plot-yield grants have no general path.",
       "leads": [
-        "LUMBER_MILL_RIVERADJACENCY_PRODUCTION fires on PLOT_ADJACENT_TO_RIVER, is attached to IMPROVEMENT_LUMBER_MILL in the Gathering Storm load order and is never detached. That reads as 2 base + 1 on rivers, against CIVVIS' flat 2. But Gathering Storm also raised the base from 1 to 2, so the shipped rows are equally consistent with the river bonus having been folded into the base and left attached as dead data. File reading cannot separate those; an in-game observation of a riverside Lumber Mill can. Do not change it before that."
+        "Resolved: the Lumber Mill's river bonus is superseded. Gathering Storm's shipped text reads '+2 Production. Can only be built on Woods. Once Mercantilism is unlocked it can also be built on Rainforest', with no river clause -- the base game's +1 base and +1 on rivers were folded into the flat 2, and the river modifier is left attached as dead data. CIVVIS' flat 2 was right. The same sentence turned up a real gap: CIVVIS allowed Lumber Mills on Rainforest from Construction, with no Mercantilism gate."
       ]
     },
     "GRANT_ABILITY": {

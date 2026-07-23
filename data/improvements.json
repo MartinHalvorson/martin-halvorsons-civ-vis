@@ -174,9 +174,11 @@
       "production": 2
     },
     "feature": [
-      "forest",
-      "jungle"
-    ]
+      "forest"
+    ],
+    "feature_after_civic": {
+      "jungle": "mercantilism"
+    }
   },
   "oil_well": {
     "tech": "refining",
