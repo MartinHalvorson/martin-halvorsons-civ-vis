@@ -2909,17 +2909,31 @@ impl AdvancedAi {
             .map(|deal| deal.id)
             .collect();
         for deal_id in incoming {
-            let accept = g
+            let Some((accept, peace)) = g
                 .pending_deals
                 .iter()
                 .find(|deal| deal.id == deal_id)
-                .is_some_and(|deal| self.incoming_deal_value(g, pid, deal, plan) >= 0.0);
+                .map(|deal| {
+                    (
+                        self.incoming_deal_value(g, pid, deal, plan) >= 0.0,
+                        deal.peace,
+                    )
+                })
+            else {
+                continue;
+            };
             let action = if accept {
                 Action::AcceptDeal { deal: deal_id }
             } else {
                 Action::RejectDeal { deal: deal_id }
             };
-            let _ = g.apply(pid, &action);
+            if g.apply(pid, &action).is_ok() && accept && peace {
+                // An accepted peace offer is the negotiated equivalent of
+                // MakePeace: remember the stand-down so this AI does not
+                // redeclare as soon as the mandatory treaty expires.
+                self.peace_until = g.turn.saturating_add(30);
+                self.major_war_since = None;
+            }
         }
         if let Some(session) = g.congress.clone() {
             for resolution in session.resolutions {
@@ -2977,17 +2991,38 @@ impl AdvancedAi {
                 g.turn.saturating_sub(started) >= 24
                     && g.turn.saturating_sub(self.last_campaign_progress) >= 12
             });
+            let peace_pending = g.pending_deals.iter().any(|deal| {
+                deal.peace
+                    && ((deal.from == pid && deal.to == *other)
+                        || (deal.from == *other && deal.to == pid))
+                    && deal.expires >= g.turn
+            });
             if g.is_at_war(pid, *other)
                 && !g.emergency_war_pair(pid, *other)
                 && !g.players[*other].is_minor
+                && !peace_pending
                 && (my_power < g.military_power(*other) * 0.62
                     || (plan.strategy == GrandStrategy::Recovery
                         && plan.target_player != Some(*other))
                     || (fatigued && g.player_city_ids(*other).len() > 1))
-                && g.apply(pid, &Action::MakePeace { player: *other }).is_ok()
             {
-                self.peace_until = g.turn.saturating_add(30);
-                self.major_war_since = None;
+                // Peace between majors is bilateral. The former direct
+                // MakePeace let an outmatched defender terminate a winning
+                // invasion on the first legal turn, even when the conqueror
+                // valued the campaign. Keep fighting until the recipient's
+                // normal deal valuation accepts this offer.
+                let _ = g.apply(
+                    pid,
+                    &Action::ProposeDeal {
+                        player: *other,
+                        give_gold: 0.0,
+                        request_gold: 0.0,
+                        open_borders: false,
+                        friendship: false,
+                        peace: true,
+                        alliance: None,
+                    },
+                );
             }
         }
         let major_wars = rivals
@@ -9780,6 +9815,80 @@ mod tests {
         game.at_war.insert((0, 1));
         plan.strategy = GrandStrategy::Recovery;
         assert!(ai.incoming_deal_value(&game, 0, &deal(0.0, 100.0, false, true), &plan) > 0.0);
+    }
+
+    #[test]
+    fn outmatched_major_must_negotiate_peace_with_the_winning_campaign() {
+        let mut game = Game::new_full(2, 24, 16, 7_922, 300, 0, false);
+        for pid in 0..2 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.found_city_for(pid, game.units[&settler].pos, None);
+            game.remove_unit(settler);
+        }
+        let staging = game.cities[&game.player_city_ids(0)[0]].pos;
+        for _ in 0..3 {
+            game.spawn_test_unit("modern_armor", 0, staging);
+        }
+        game.current = 0;
+        game.turn = 60;
+        game.apply(0, &Action::DeclareWar { player: 1 })
+            .unwrap();
+        game.turn = game
+            .peace_available_at(0, 1)
+            .expect("the new war has a mandatory minimum");
+        assert!(game.military_power(1) < game.military_power(0) * 0.62);
+
+        let recovery = StrategicPlan {
+            strategy: GrandStrategy::Recovery,
+            target_player: None,
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 2,
+            assessed_turn: game.turn,
+        };
+        let mut defender = AdvancedAi::new();
+        defender.major_war_since = Some(60);
+        game.current = 1;
+        defender.advanced_diplomacy(&mut game, 1, &recovery);
+
+        assert!(
+            game.is_at_war(0, 1),
+            "an outmatched defender cannot impose white peace unilaterally"
+        );
+        assert!(game.pending_deals.iter().any(|deal| {
+            deal.from == 1 && deal.to == 0 && deal.peace
+        }));
+
+        let conquest = StrategicPlan {
+            strategy: GrandStrategy::Conquest,
+            target_player: Some(1),
+            target_city: game.player_city_ids(1).into_iter().next(),
+            threatened_city: None,
+            desired_cities: 2,
+            assessed_turn: game.turn,
+        };
+        let mut refused = game.clone();
+        let mut conqueror = AdvancedAi::new();
+        conqueror.major_war_since = Some(60);
+        refused.current = 0;
+        conqueror.advanced_diplomacy(&mut refused, 0, &conquest);
+        assert!(refused.is_at_war(0, 1));
+        assert!(
+            refused.pending_deals.iter().all(|deal| !deal.peace),
+            "the stronger conquest plan should reject an immediate white peace"
+        );
+
+        let mut accepting = AdvancedAi::new();
+        accepting.major_war_since = Some(60);
+        game.current = 0;
+        accepting.advanced_diplomacy(&mut game, 0, &recovery);
+        assert!(!game.is_at_war(0, 1));
+        assert_eq!(accepting.peace_until, game.turn + 30);
+        assert!(accepting.major_war_since.is_none());
     }
 
     #[test]
