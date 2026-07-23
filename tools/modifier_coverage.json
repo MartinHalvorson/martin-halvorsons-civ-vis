@@ -50,7 +50,8 @@
     },
     "ADJUST_UNIT_HEALING_MODIFIERS": {
       "status": "implemented",
-      "note": "Medic, Supply Convoy and promotion healing all execute."
+      "verified": true,
+      "note": "Verified row by row. Chaplain's +20 adjacent heal matches. Auxiliary Ships, Supply Fleet and Supercarrier do not let a ship heal as if it were home: each pays 5 in enemy territory and 10 in neutral. CIVVIS modelled all three as a boolean 'heal anywhere' worth the full 20, which roughly doubled naval sustain in neutral water and quadrupled it in enemy water."
     },
     "ADJUST_UNIT_SPY_OPERATION_CHANCE": {
       "status": "implemented",
@@ -98,7 +99,8 @@
     },
     "ADJUST_DISTRICT_YIELD_MODIFIER": {
       "status": "implemented",
-      "note": "Percentage district yield modifiers from policies and governors."
+      "verified": true,
+      "note": "Verified row by row. Every adjacency-doubling card CIVVIS carries matches at +100%: Aesthetics and Sports Media on the Theater Square, Natural Philosophy and Five Year Plan on the Campus, Five Year Plan and Craftsmen on the Industrial Zone, Town Charters and Economic Union on the Commercial Hub, Economic Union and Naval Infrastructure on the Harbor, Scripture on the Holy Site, and Reyna's Harbormaster on both Commercial Hub and Harbor. Collectivism is a card CIVVIS does not carry."
     },
     "ADJUST_DISTRICT_YIELD_CHANGE": {
       "status": "implemented",
