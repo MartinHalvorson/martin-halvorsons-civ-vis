@@ -584,6 +584,18 @@ class SourceSnapshotTests(unittest.TestCase):
 
 
 class RecoveryTests(unittest.TestCase):
+    def setUp(self):
+        # Recovery tests exercise `main()` while the real exhibition may be
+        # running on the same machine. The per-port production lock is an
+        # external deployment boundary, not part of those state-machine
+        # scenarios; letting it consult the live 8766 lock makes the suite
+        # return before any mocked recovery behavior runs.
+        instance_guard = patch.object(
+            supervisor, "acquire_single_instance", return_value=True
+        )
+        instance_guard.start()
+        self.addCleanup(instance_guard.stop)
+
     @staticmethod
     def supervisor_args(**overrides):
         values = {
@@ -609,6 +621,15 @@ class RecoveryTests(unittest.TestCase):
         }
         values.update(overrides)
         return SimpleNamespace(**values)
+
+    def test_live_owner_exits_before_touching_the_server(self):
+        with (
+            patch.object(supervisor, "parse_args", return_value=self.supervisor_args()),
+            patch.object(supervisor, "acquire_single_instance", return_value=False),
+            patch.object(supervisor, "start_server") as start,
+        ):
+            self.assertEqual(supervisor.main(), 0)
+        start.assert_not_called()
 
     def test_successor_detection_closes_the_cooldown_restart_race(self):
         finished = {"server_instance": 7, "seed": 11, "winner": 2}
