@@ -34636,9 +34636,16 @@ impl Game {
         }
         if self.congress.is_none() && !self.pending_emergencies.is_empty() {
             self.convene_pending_emergency();
-        } else if self.world_era >= 2
+        }
+        // Whether the regular session is displaced turns on what actually
+        // opened, not on what was queued: `convene_pending_emergency` drops
+        // proposals whose target, city or membership has since gone, and a
+        // queue that emptied without seating anybody has displaced nothing.
+        // Testing the queue instead cost the world its Congress for a full
+        // thirty turns over an emergency that never happened.
+        if self.congress.is_none()
+            && self.world_era >= 2
             && self.turn.is_multiple_of(self.standard_duration(30))
-            && self.congress.is_none()
         {
             self.convene_congress();
         }
@@ -43690,6 +43697,35 @@ mod victory_conditions {
                 && resolution.choices.contains(&"A:0".to_string())
                 && resolution.choices.contains(&"B:0".to_string())
         }));
+    }
+
+    #[test]
+    fn a_stale_emergency_queue_does_not_cost_the_world_its_regular_session() {
+        let mut g = game_with_capitals(3, 4_133, 300);
+        g.world_era = 2;
+        g.turn = 30;
+        // Queued against a city that no longer exists, so the proposal is
+        // dropped rather than seated. Nothing displaces the regular session.
+        g.pending_emergencies.push(EmergencyProposal {
+            id: 1,
+            kind: "military".to_string(),
+            target: 1,
+            city: u32::MAX,
+            original_owner: 2,
+            eligible: BTreeSet::from([0, 2]),
+            requested: 30,
+        });
+        g.process_congress();
+        assert!(g.pending_emergencies.is_empty(), "the stale proposal is dropped");
+        let session = g
+            .congress
+            .as_ref()
+            .expect("the regular session is still due");
+        assert_eq!(session.resolutions.len(), 2);
+        assert!(session
+            .resolutions
+            .iter()
+            .all(|resolution| !resolution.title.contains("Emergency")));
     }
 
     #[test]
