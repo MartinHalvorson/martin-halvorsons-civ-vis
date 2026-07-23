@@ -391,6 +391,25 @@ fn main() {
                 resumed,
             );
         }
+        "pedia" => {
+            // Everything after the command that is not a flag is the query.
+            let query = args
+                .iter()
+                .skip(1)
+                .take_while(|arg| !arg.starts_with("--"))
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" ");
+            let rules = Rules::embedded();
+            let found = civvis::pedia::search(&rules, &query);
+            if found.is_empty() {
+                println!("nothing in the ruleset matches {query:?}");
+                std::process::exit(1);
+            }
+            print!("{}", civvis::pedia::render(&found));
+            println!("
+{} entries", found.len());
+        }
         "validate" => {
             let findings = civvis::validate::validate(&Rules::embedded());
             let (text, clean) = civvis::validate::report(&findings);
@@ -402,7 +421,7 @@ fn main() {
         }
         _ => {
             println!(
-                "usage: civvis <simulate|soak|benchmark|tournament|play|evolve|validate> \
+                "usage: civvis <simulate|soak|benchmark|tournament|play|evolve|validate|pedia> \
                       [--players N] [--seed N] [--turns N] [--width N] [--height N] \
                       [--city-states N] [--games N] [--ais a,b] [--port N] [--no-open] \
                       [--map pangaea|continents|small_continents|inland_sea] \

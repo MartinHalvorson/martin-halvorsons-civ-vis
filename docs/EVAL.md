@@ -258,3 +258,30 @@ leader, and these AIs largely are not. The remaining lever for the religion
 runaway is therefore in `victory_denial`'s willingness to open a war (or
 push the Congress vote) against a runaway faith, not in the condemn
 mechanic itself.
+
+## 2026-07-23 — the learned policy overtakes the scripted agent (session F)
+
+The first `PolicyAi` rung lost 5/12, and a better net did not fix it: with
+the leak-free GPU-trained value net it still scored **8/20 (40%)** against
+`advanced`. So the bottleneck was never the net's calibration — it was the
+one-ply architecture. A one-ply evaluator cannot see the cost of a
+multi-turn commitment, so production, research and purchases all look
+nearly free, which is exactly why the agent's treasury kept collapsing
+(Gold 138 against advanced's ~325).
+
+Restricting the net to action kinds whose whole effect lands **this turn**
+(`TACTICAL_KINDS` — moves, attacks, strikes, fortify, pillage, condemn) and
+leaving multi-turn economy to the scripted layer flips the result:
+
+| Run | policy | advanced | policy Gold |
+|---|---|---|---|
+| unrestricted, 10 pairs | 8/20 (40%) | 12/20 (60%) | 138 |
+| tactical-only, same 10 pairs | 11/20 (55%) | 9/20 (45%) | 685 |
+| tactical-only, 25 fresh pairs (seed 8200) | **28/50 (56%)** | 22/50 (44%) | — |
+
+Two independent seed sets agree, and the Gold column confirms the
+diagnosis rather than just the outcome. This is the first configuration in
+which a learned component beats the scripted agent head-to-head, and it
+states the design rule plainly: give the net the decisions whose
+consequences it can actually observe, and let search or scripting own the
+ones it cannot.

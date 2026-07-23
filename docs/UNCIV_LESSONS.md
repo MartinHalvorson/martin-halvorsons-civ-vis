@@ -59,7 +59,7 @@ runtime. The text surface belongs in the mod loader, not in the hot path.
 | 8 | Victories as data with ordered milestones | Adopt next | `data/victories.json` |
 | 9 | Mod folders overlaid on the base ruleset at load | **Adopted** | `--mods`, see [MODS.md](MODS.md) |
 | 10 | Dev console for state inspection/mutation | Adopt next | GUI console + `civvis console` |
-| 11 | Civilopedia generated from the ruleset | Adopt next | `/pedia` endpoint |
+| 11 | Civilopedia generated from the ruleset | **Adopted** | `civvis pedia`, `GET /pedia`, **P** in the GUI |
 | 12 | Unit automation + autoplay for the human seat | Adopt next | reuse `AdvancedAi` per-unit |
 | 13 | Deprecation table + auto-updater for mod data | Note | when the data format stabilizes |
 | 14 | Translation pipeline, libGDX UI, Android packaging | **Skip** | wrong shape for a headless engine |
@@ -192,6 +192,24 @@ What a mod still cannot do is invent behaviour. Effect keys work because the
 engine has handlers for them, so a mod can move existing effects around and not
 create new kinds — which is exactly the ceiling that idea 1, the typed effect
 interpreter, exists to lift.
+
+### 11. The Civilopedia — adopted
+
+Unciv generates its encyclopedia from the ruleset rather than writing it, which
+has two consequences worth having: the documentation cannot drift from the
+rules, and a mod is documented the moment it loads.
+
+The second one is why this waited for idea 9. A hand-written reference for the
+shipped ruleset would have been wrong for every modded game; a generated one is
+right for all of them. `civvis pedia <query>` prints entries, `GET /pedia`
+serves them, and **P** opens a searchable reference in the GUI. Entries link to
+what they depend on, so a unique unit walks to its technology, its strategic
+resource, its civilization and the unit it replaces.
+
+One small discipline came out of building it: links are only emitted to pages
+that exist. Unique buildings belonging to civilizations the ruleset has not
+defined — the ones `civvis validate` warns about — name their owner without
+offering a dead link, and a test asserts every link resolves.
 
 ### 14 & 15. What we are not taking
 

@@ -1,5 +1,5 @@
 //! Zero-dependency local HTTP server for the human-vs-AI browser GUI.
-//! Endpoints: GET / (page), GET /state, GET /save, GET /rules,
+//! Endpoints: GET / (page), GET /state, GET /save, GET /rules, GET /pedia,
 //! POST /action, POST /step, POST /view, POST /spectator-status, POST /new.
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -926,6 +926,14 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
                     "game_speeds": CIV6_GAME_SPEEDS,
                 }),
             );
+        }
+        ("GET", "/pedia") => {
+            // Generated from the ruleset in play, mods included, so the GUI
+            // reference never disagrees with the game it is attached to.
+            let session = sh.session.lock().unwrap();
+            let entries = crate::pedia::entries(&session.game.rules);
+            drop(session);
+            respond_json(stream, &json!({ "entries": entries }));
         }
         ("POST", "/action") => {
             let mut session = sh.session.lock().unwrap();

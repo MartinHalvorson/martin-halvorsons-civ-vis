@@ -26,7 +26,20 @@ pub struct PolicyAi {
     pub depth: usize,
     /// Minimum value gain required to commit an action.
     pub margin: f64,
+    /// Restrict the net to action kinds where a one-ply value delta is
+    /// meaningful. Multi-turn commitments (production, research, purchases)
+    /// look near-free to a one-ply evaluator, which is how an unrestricted
+    /// policy empties its treasury; those stay with the scripted layer.
+    pub tactical_only: bool,
 }
+
+/// Action kinds whose whole effect lands this turn, so the resulting
+/// position honestly reflects the choice.
+pub const TACTICAL_KINDS: [&str; 12] = [
+    "move", "move_to", "attack", "ranged", "air_strike", "air_patrol",
+    "air_rebase", "fortify", "pillage", "city_strike", "encampment_strike",
+    "condemn_heretic",
+];
 
 impl Default for PolicyAi {
     fn default() -> Self {
@@ -46,6 +59,7 @@ impl PolicyAi {
             width: 48,
             depth: 10,
             margin: 1e-4,
+            tactical_only: true,
         }
     }
 
@@ -69,6 +83,7 @@ impl PolicyAi {
             .actions
             .into_iter()
             .filter(|a| !matches!(a, Action::EndTurn))
+            .filter(|a| !self.tactical_only || TACTICAL_KINDS.contains(&kind_name(a)))
             .collect();
         if out.len() > self.width {
             // Deterministic stride keeps a spread across action kinds rather

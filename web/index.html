@@ -354,6 +354,39 @@
   .victory-option input { margin: 0; }
 
   /* Tech and civic overlay */
+  #pedia {
+    position: absolute; z-index: 16; inset: 5% 6%; display: none; flex-direction: column;
+    padding: 18px; border: 1px solid #536c63; border-radius: 18px;
+    background: radial-gradient(circle at top left, #1e332e, #091310f8 58%);
+    box-shadow: 0 28px 100px #000e; backdrop-filter: blur(20px);
+  }
+  #pedia.open { display: flex; animation: rise .18s ease-out; }
+  #pediahead { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+  #pediahead b { font-size: 15px; letter-spacing: .04em; }
+  #pediaq {
+    flex: 1; padding: 6px 10px; border: 1px solid #3d5850; border-radius: 8px;
+    background: #0b1a16; color: inherit; font: inherit;
+  }
+  #pediabody { display: grid; flex: 1; grid-template-columns: minmax(180px, 1fr) 2fr; gap: 14px; min-height: 0; }
+  #pedialist { overflow-y: auto; padding-right: 4px; }
+  #pedialist .pedia-cat {
+    margin: 10px 0 4px; color: #82968f; font-size: 9px; font-weight: 850; letter-spacing: .12em;
+  }
+  #pedialist button {
+    display: block; width: 100%; padding: 4px 7px; border: 0; border-radius: 6px;
+    background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+  }
+  #pedialist button:hover, #pedialist button.on { background: #ffffff14; }
+  #pediadetail { overflow-y: auto; padding-right: 4px; }
+  #pediadetail h3 { margin: 0 0 2px; font-size: 17px; }
+  #pediadetail .pedia-summary { margin-bottom: 12px; color: var(--muted); }
+  #pediadetail .pedia-fact { display: flex; gap: 10px; padding: 3px 0; border-top: 1px solid #ffffff0d; }
+  #pediadetail .pedia-fact span:first-child { min-width: 150px; color: #82968f; }
+  #pediadetail .pedia-links { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 6px; }
+  #pediadetail .pedia-links button {
+    padding: 3px 9px; border: 1px solid #3d5850; border-radius: 999px;
+    background: none; color: inherit; font: inherit; font-size: 11px; cursor: pointer;
+  }
   #tree {
     position: absolute; z-index: 15; inset: 4% 3%; display: none; flex-direction: column;
     padding: 20px; border: 1px solid #536c63; border-radius: 18px;
@@ -491,6 +524,17 @@
     <div class="minimap-label"><span>World map</span><span>click to travel</span></div>
     <canvas id="mini" width="200" height="140"></canvas>
   </div>
+  <div id="pedia" role="dialog" aria-modal="true" aria-labelledby="pediatitle">
+    <div id="pediahead">
+      <b id="pediatitle">Civilopedia</b>
+      <input id="pediaq" type="search" placeholder="Search the ruleset…" autocomplete="off">
+      <button class="ghost" onclick='closePedia()'>✕ Close</button>
+    </div>
+    <div id="pediabody">
+      <div id="pedialist"></div>
+      <div id="pediadetail"><div class="empty-state">Pick an entry.</div></div>
+    </div>
+  </div>
   <div id="tree">
     <div id="treehead"><b id="treetitle"></b>
       <button class="ghost" onclick='document.getElementById("tree").classList.remove("open")'>✕ Close</button>
@@ -626,7 +670,7 @@
       <div class="section-label"><span>Active strategy</span><span class="rule"></span></div>
       <div class="sec strategy-sec">
         <div class="strategy-track">
-          <div class="strategy-heading"><span>Research</span><button class="mini" onclick='openTree("techs")'>Tree</button></div>
+          <div class="strategy-heading"><span>Research</span><span><button class="mini" onclick='openPedia()'>Pedia</button> <button class="mini" onclick='openTree("techs")'>Tree</button></span></div>
           <div id="research" class="progress-slot"></div>
         </div>
         <div class="strategy-track culture">
@@ -716,6 +760,12 @@ const ARTIFACT_RESOURCES = new Set(["antiquity_site", "shipwreck"]);
 // strategic-view discs both read from here, and a unit without an entry falls
 // back to its first letter, which tells you nothing. Grouped by promotion
 // class so a line reads as a family at a glance.
+// Units that cannot fight — captured rather than killed, and the things an
+// empire has to escort. They carry their own plate shape so a glance separates
+// an army from what it is protecting.
+const CIVILIAN_UNITS = new Set(["settler", "builder", "trader", "naturalist",
+  "archaeologist", "rock_band", "spy", "missionary", "apostle", "guru",
+  "inquisitor"]);
 const UNIT_ICON = {
   // civilians & specialists
   settler:"🏕", builder:"🔨", trader:"🐫", naturalist:"🏞", archaeologist:"🏺",
@@ -2096,10 +2146,18 @@ function drawUnitBase(u, x, y) {
   cx.fillStyle = g;
   cx.beginPath(); cx.arc(x, cy, 13.5, 0, 7); cx.fill();
   cx.restore();
-  // A filled disc in the owner's color carries much further than a rim: at map
+  // A filled plate in the owner's color carries much further than a rim: at map
   // zoom the figure itself is only a few pixels of tunic, but the plate under
-  // it stays an unmistakable blob of empire color.
-  cx.beginPath(); cx.ellipse(x, cy, 9.6, 4.1, 0, 0, 7);
+  // it stays an unmistakable blob of empire color. Its shape splits fighting
+  // units from the civilians they escort, matching the disc/slab distinction
+  // the flat view already draws.
+  const civil = CIVILIAN_UNITS.has(u.type);
+  const plate = (rx, ry) => {
+    cx.beginPath();
+    if (civil) cx.roundRect(x - rx * 0.9, cy - ry, rx * 1.8, ry * 2, ry * 0.72);
+    else cx.ellipse(x, cy, rx, ry, 0, 0, 7);
+  };
+  plate(9.6, 4.1);
   cx.fillStyle = pcol(u.owner);
   cx.globalAlpha = spent ? 0.5 : 0.9;
   cx.fill();
@@ -2113,17 +2171,37 @@ function drawUnitBase(u, x, y) {
   cx.stroke();
   if (!spent) {   // ready units get a lit rim so they read before spent ones
     cx.strokeStyle = "#ffffff6b"; cx.lineWidth = 1;
-    cx.beginPath(); cx.ellipse(x, cy, 7.9, 3.0, 0, 0, 7); cx.stroke();
+    plate(7.9, 3.0); cx.stroke();
+  }
+  // A Corps is two units folded into one and an Army three, which is the
+  // difference between a raid and an invasion — and the map said nothing about
+  // it. One bar per unit in the formation, under the plate where it clears the
+  // health bar above and the shoulder shield beside.
+  if (u.formation) {
+    const k = UI_K();                 // hold their size as the map zooms out,
+    const n = u.formation + 1;        // the way the HP bar and type badge do
+    const w = 3.6 * k, gap = 5.0 * k;
+    cx.fillStyle = "#f6efdc"; cx.strokeStyle = "#0d1117"; cx.lineWidth = 0.9;
+    for (let i = 0; i < n; i++) {
+      cx.beginPath();
+      cx.roundRect(x - (n * gap) / 2 + i * gap + gap * 0.14,
+                   cy + 3.6, w, 2.5 * k, 1.1);
+      cx.fill(); cx.stroke();
+    }
   }
 }
+
+// Status marks keep their on-screen size as the map zooms out, so a unit's
+// state stays readable at the scale you actually survey an empire at.
+const UI_K = () => 1 / Math.min(1, Math.max(cam.scale, 0.5));
 
 // Civ 6 hangs a small flag off each unit carrying its icon, because a drawn
 // figure at map scale reads as "somebody's soldier" and nothing more. Same
 // badge glyph the production medallion uses, so a unit looks the same coming
 // off the queue as it does standing on the map.
 function drawUnitBadge(u, x, y) {
-  const k = 1 / Math.min(1, Math.max(cam.scale, 0.5));  // as the HP bar does:
-  const br = 6.4 * k;                                   // stays legible far out
+  const k = UI_K();
+  const br = 6.4 * k;
   const bx = x + 9.5 * k, by = y + 1;
   cx.save();                                   // ambient text state is shared
   cx.fillStyle = "#10151de8";
@@ -2719,7 +2797,7 @@ function draw() {
   // --- units
   const sorted = [...state.units].sort((a, b) =>
     (hexXY(a.pos[0], a.pos[1])[1] - hexXY(b.pos[0], b.pos[1])[1]) ||
-    ((a.type === "settler" || a.type === "builder") ? -1 : 1));
+    (CIVILIAN_UNITS.has(a.type) ? -1 : 1));
   const now = performance.now();
   for (const u of sorted) {
     let [x, y] = worldXY(u.pos);
@@ -2773,19 +2851,22 @@ function draw() {
       drawUnitChar(u, x, y, now, moving);
       drawUnitBadge(u, x, y);
       if (u.fortified) {
-        // A compact shield at the shoulder. The old ring was wider than the
-        // unit itself and read as a selection highlight rather than a state.
-        const sx = x + 8.6, sy = y - 6.5;
+        // A compact shield, mirrored opposite the type badge so the two status
+        // marks stop crowding one shoulder, and scaled with them so it does not
+        // shrink away at survey zoom. The old ring was wider than the unit
+        // itself and read as a selection highlight rather than a state.
+        const k = UI_K(), w = 3.5 * k;
+        const sx = x - 9.5 * k, sy = y + 1;
         cx.beginPath();
-        cx.moveTo(sx - 3.5, sy - 4.2); cx.lineTo(sx + 3.5, sy - 4.2);
-        cx.lineTo(sx + 3.5, sy + 0.5);
-        cx.quadraticCurveTo(sx, sy + 5.2, sx - 3.5, sy + 0.5);
+        cx.moveTo(sx - w, sy - 4.2 * k); cx.lineTo(sx + w, sy - 4.2 * k);
+        cx.lineTo(sx + w, sy + 0.5 * k);
+        cx.quadraticCurveTo(sx, sy + 5.2 * k, sx - w, sy + 0.5 * k);
         cx.closePath();
         cx.fillStyle = "#dee7f4ee"; cx.fill();
         cx.strokeStyle = "#10151d"; cx.lineWidth = 1.2; cx.stroke();
       }
     } else {
-      const civ = (u.type === "settler" || u.type === "builder");
+      const civ = CIVILIAN_UNITS.has(u.type);
       // spent units recede so the ones that can still act carry the eye
       cx.globalAlpha = (u.moves_left !== undefined && u.moves_left <= 0) ? 0.62 : 1;
       cx.save();
@@ -3506,6 +3587,59 @@ function drawCityPanel() {
 }
 
 // ---------------------------------------------------------------- trees
+// The Civilopedia is generated by the engine from the ruleset in play, mods
+// included, so it can never disagree with the game it is attached to.
+let PEDIA = null, pediaKey = null;
+async function openPedia(key) {
+  if (!PEDIA) {
+    try { PEDIA = (await fetchJSON("/pedia")).entries || []; }
+    catch (e) { PEDIA = []; }
+  }
+  document.getElementById("pedia").classList.add("open");
+  if (key) pediaKey = key;
+  drawPedia();
+  const box = document.getElementById("pediaq");
+  if (!key) { box.focus(); box.select(); }
+}
+function closePedia() { document.getElementById("pedia").classList.remove("open"); }
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("pediaq").addEventListener("input", () => { pediaKey = null; drawPedia(); });
+});
+function pediaShow(key) { pediaKey = key; drawPedia(); }
+function drawPedia() {
+  const needle = (document.getElementById("pediaq").value || "").trim().toLowerCase();
+  const shown = (PEDIA || []).filter(e => !needle ||
+    e.name.toLowerCase().includes(needle) || e.category.includes(needle) ||
+    e.summary.toLowerCase().includes(needle));
+  const list = document.getElementById("pedialist");
+  let category = null, html = "";
+  for (const entry of shown) {
+    if (entry.category !== category) {
+      category = entry.category;
+      html += `<div class="pedia-cat">${titleCase(category)}</div>`;
+    }
+    html += `<button class="${entry.key === pediaKey ? "on" : ""}" ` +
+      `onclick='pediaShow(${JSON.stringify(entry.key)})'>${entry.name}</button>`;
+  }
+  list.innerHTML = html || `<div class="empty-state">Nothing matches.</div>`;
+  const entry = (PEDIA || []).find(e => e.key === pediaKey) || shown[0];
+  const detail = document.getElementById("pediadetail");
+  if (!entry) { detail.innerHTML = `<div class="empty-state">Nothing matches.</div>`; return; }
+  const byKey = new Map((PEDIA || []).map(e => [e.key, e]));
+  detail.innerHTML =
+    `<h3>${entry.name}</h3><div class="pedia-summary">${entry.summary || titleCase(entry.category)}</div>` +
+    entry.facts.map(([label, value]) =>
+      `<div class="pedia-fact"><span>${label}</span><span>${value}</span></div>`).join("") +
+    (entry.links.length
+      ? `<div class="pedia-links">` + entry.links.map(link => {
+          const target = byKey.get(link);
+          return target
+            ? `<button onclick='pediaShow(${JSON.stringify(link)})'>${target.name} →</button>`
+            : "";
+        }).join("") + `</div>`
+      : "");
+}
+
 function openTree(kind) {
   if (!RULES || !state) return;
   const specs = kind === "techs" ? RULES.techs : RULES.civics;
@@ -3962,6 +4096,13 @@ document.addEventListener("keydown", ev => {
   }
   const tag = (document.activeElement || {}).tagName;
   if (tag === "SELECT" || tag === "INPUT" || tag === "TEXTAREA") return;
+  const pediaOpen = document.getElementById("pedia").classList.contains("open");
+  if (ev.key === "Escape" && pediaOpen) { closePedia(); return; }
+  if (ev.key.toLowerCase() === "p") {
+    pediaOpen ? closePedia() : openPedia();
+    return;
+  }
+  if (pediaOpen) return;
   const tradeOpen = document.getElementById("trade").classList.contains("open");
   if (ev.key === "Escape" && tradeOpen) { closeTrade(); return; }
   if (ev.key.toLowerCase() === "d") {

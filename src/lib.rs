@@ -23,6 +23,7 @@ pub mod setup;
 pub mod strategic;
 pub mod valuenet;
 pub mod mods;
+pub mod pedia;
 pub mod validate;
 pub mod world;
 
@@ -1373,10 +1374,11 @@ mod tests {
         g.apply(0, &Action::SendEnvoy { player: minor }).unwrap();
         assert_eq!(g.envoys_at(0, minor), 1);
         let after = g.city_yields(cap);
+        // The first Envoy pays 2 in the Capital, which Zanzibar doubles.
         let expected = if g.players[minor].civ == "Zanzibar" {
-            2.0
+            4.0
         } else {
-            1.0
+            2.0
         };
         let delta = after.total() - before.total();
         assert!(
