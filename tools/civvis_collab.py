@@ -360,7 +360,7 @@ def required_check_gate_errors(
     return errors
 
 
-def merged_pr_gate_errors(number: int) -> List[str]:
+def merged_pr_gate_errors(number: int, base_sha: str = "") -> List[str]:
     view = gh_json(
         (
             "pr",
@@ -376,13 +376,26 @@ def merged_pr_gate_errors(number: int) -> List[str]:
     merged_at = str(view.get("mergedAt") or "")
     if not head_sha or not merged_at:
         return ["merged PR metadata is incomplete"]
+    errors: List[str] = []
+    if base_sha:
+        comparison = gh_json(
+            (
+                "api",
+                f"repos/{REPOSITORY}/compare/{base_sha}...{head_sha}",
+            )
+        )
+        if not compare_status_is_current(str(comparison.get("status") or "")):
+            errors.append("PR head did not contain current main before merge")
     payload = gh_json(
         (
             "api",
             f"repos/{REPOSITORY}/commits/{head_sha}/check-runs?per_page=100",
         )
     )
-    return required_check_gate_errors(payload.get("check_runs") or [], merged_at)
+    errors.extend(
+        required_check_gate_errors(payload.get("check_runs") or [], merged_at)
+    )
+    return errors
 
 
 def format_claim_body(
@@ -863,7 +876,8 @@ def monitor_command(args: argparse.Namespace) -> int:
                     findings["ok"].append(
                         f"main commit {sha[:7]} is backed by merged PR #{pr_number}"
                     )
-                    gate_errors = merged_pr_gate_errors(pr_number)
+                    parent_sha = git(root, "rev-parse", f"{sha}^")
+                    gate_errors = merged_pr_gate_errors(pr_number, parent_sha)
                     for error in gate_errors:
                         findings["errors"].append(
                             f"PR #{pr_number} merged without a green gate: {error}"
