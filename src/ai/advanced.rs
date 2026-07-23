@@ -1840,36 +1840,278 @@ impl AdvancedAi {
         }
     }
 
-    /// Replace generic early cards with the late-game cards that directly
-    /// advance an explicitly selected victory. Typed cards preferentially
-    /// replace cards of their own type so wildcard capacity remains useful.
+    /// Reassess policy cards as the civic tree advances instead of treating
+    /// the first cards which filled a government as permanent.  Each plan has
+    /// a complete late-game portfolio, while temporary Dark Age cards are
+    /// admitted only when their explicit downside is safe for the live empire.
+    /// Typed cards preferentially replace cards of their own type so wildcard
+    /// capacity remains useful.
     fn strategic_policies(&self, g: &mut Game, pid: usize, strategy: GrandStrategy) {
         let objective = self
             .victory_target
             .map(VictoryTarget::strategy)
             .unwrap_or(strategy);
-        let desired: &[&str] = match objective {
-            GrandStrategy::Culture => &[
+
+        // A successor card removes its predecessor from the policy menu.  An
+        // already slotted predecessor used to survive forever, which is how
+        // future governments reached the archive still running Ilkum and
+        // Colonization.  Retire those cards before choosing the new portfolio.
+        let obsolete: HashSet<String> = g
+            .rules
+            .policies
+            .values()
+            .filter(|policy| {
+                policy
+                    .civic
+                    .as_ref()
+                    .is_none_or(|civic| g.players[pid].civics.contains(civic))
+            })
+            .filter_map(|policy| policy.replaces.clone())
+            .collect();
+        let obsolete_active: Vec<String> = g.players[pid]
+            .policies
+            .iter()
+            .filter(|card| obsolete.contains(card.as_str()))
+            .cloned()
+            .collect();
+        for card in obsolete_active {
+            let _ = g.apply(pid, &Action::UnslotPolicy { policy: card });
+        }
+
+        let mut desired: Vec<&str> = match objective {
+            GrandStrategy::Science => vec![
+                "integrated_space_cell",
+                "future_victory_science",
+                "five_year_plan",
+                "rationalism",
+                "nobel_prize",
+                "international_space_agency",
+                "ecommerce",
+                "market_economy",
+                "new_deal",
+                "levee_en_masse",
+                "military_research",
+                "cryptography",
+                "future_counter_science",
+            ],
+            GrandStrategy::Culture => vec![
+                "future_victory_culture",
                 "heritage_tourism",
                 "satellite_broadcasts",
                 "online_communities",
+                "collective_activism",
+                "sports_media",
+                "grand_opera",
+                "symphonies",
+                "ecommerce",
+                "new_deal",
+                "gunboat_diplomacy",
+                "cryptography",
+                "communications_office",
+                "levee_en_masse",
             ],
-            GrandStrategy::Science => &["integrated_space_cell"],
-            _ => return,
+            GrandStrategy::Religion => vec![
+                "religious_orders",
+                "simultaneum",
+                "scripture",
+                "revelation",
+                "wars_of_religion",
+                "collectivization",
+                "new_deal",
+                "ecommerce",
+                "levee_en_masse",
+                "gunboat_diplomacy",
+                "cryptography",
+                "wisselbanken",
+                "raj",
+            ],
+            GrandStrategy::Diplomacy => vec![
+                "future_victory_diplomatic",
+                "gunboat_diplomacy",
+                "charismatic_leader",
+                "raj",
+                "merchant_confederation",
+                "diplomatic_league",
+                "containment",
+                "collective_activism",
+                "international_space_agency",
+                "cryptography",
+                "communications_office",
+                "wisselbanken",
+                "ecommerce",
+                "new_deal",
+                "levee_en_masse",
+            ],
+            GrandStrategy::Conquest => vec![
+                "future_victory_domination",
+                "future_counter_domination",
+                "military_first",
+                "strategic_air_force",
+                "lightning_warfare",
+                "total_war",
+                "propaganda",
+                "levee_en_masse",
+                "force_modernization",
+                "after_action_reports",
+                "logistics",
+                "five_year_plan",
+                "ecommerce",
+                "gunboat_diplomacy",
+                "cryptography",
+                "new_deal",
+            ],
+            GrandStrategy::Expansion => vec![
+                "expropriation",
+                "public_works",
+                "five_year_plan",
+                "economic_union",
+                "collectivization",
+                "ecommerce",
+                "market_economy",
+                "new_deal",
+                "colonial_taxes",
+                "colonial_offices",
+                "gunboat_diplomacy",
+                "levee_en_masse",
+                "logistics",
+                "rationalism",
+                "cryptography",
+            ],
+            GrandStrategy::Recovery => vec![
+                "new_deal",
+                "liberalism",
+                "civil_prestige",
+                "collectivization",
+                "five_year_plan",
+                "ecommerce",
+                "market_economy",
+                "wisselbanken",
+                "raj",
+                "gunboat_diplomacy",
+                "cryptography",
+                "communications_office",
+                "levee_en_masse",
+                "logistics",
+                "public_works",
+            ],
         };
-        for card in desired {
-            if g.players[pid].policies.contains(*card)
-                || !g
-                    .available_policies(pid)
-                    .iter()
-                    .any(|available| available == card)
-            {
+
+        let city_ids = g.player_city_ids(pid);
+        let unit_ids = g.player_unit_ids(pid);
+        let settlers = unit_ids
+            .iter()
+            .filter(|unit| g.units[unit].kind == "settler")
+            .count();
+        let city_goal = self
+            .plan
+            .as_ref()
+            .map(|plan| plan.desired_cities)
+            .unwrap_or_else(|| self.base.w.city_target.ceil().max(1.0) as usize);
+        let expansion_complete = strategy != GrandStrategy::Expansion
+            && settlers == 0
+            && !city_ids.is_empty()
+            && city_ids.len() >= city_goal;
+        let at_war = g
+            .at_war
+            .iter()
+            .any(|(first, second)| *first == pid || *second == pid);
+        let military = unit_ids
+            .iter()
+            .filter(|unit| g.rules.units[g.units[unit].kind.as_str()].class == "military")
+            .count();
+        let elite_active = g.players[pid].policies.contains("elite_forces");
+        let elite_affordable = if elite_active {
+            g.players[pid].gold_per_turn >= 5.0
+        } else {
+            g.players[pid].gold_per_turn >= military as f64 * 2.0 + 5.0
+        };
+        let robber_active = g.players[pid].policies.contains("robber_barons");
+        let robber_pays = city_ids.iter().any(|city| {
+            let city = &g.cities[city];
+            city.buildings.iter().any(|building| {
+                matches!(building.as_str(), "stock_exchange" | "factory")
+                    && !city.pillaged_buildings.contains(building)
+            })
+        });
+        let robber_safe = robber_pays
+            && city_ids.iter().all(|city| {
+                g.city_amenity_surplus(&g.cities[city]) >= if robber_active { 0 } else { 2 }
+            });
+        let holy_site_cities = city_ids
+            .iter()
+            .filter(|city| g.city_has_district_family(&g.cities[city], "holy_site"))
+            .count();
+
+        let mut temporary = Vec::new();
+        match objective {
+            GrandStrategy::Science if holy_site_cities * 2 >= city_ids.len().max(1) => {
+                temporary.push("monasticism");
+            }
+            GrandStrategy::Religion if g.players[pid].religion.is_some() => {
+                temporary.push("inquisition");
+            }
+            GrandStrategy::Conquest if at_war => {
+                temporary.push("twilight_valor");
+                if elite_affordable {
+                    temporary.push("elite_forces");
+                }
+            }
+            _ => {}
+        }
+        if expansion_complete
+            && matches!(
+                objective,
+                GrandStrategy::Science
+                    | GrandStrategy::Culture
+                    | GrandStrategy::Diplomacy
+                    | GrandStrategy::Recovery
+            )
+        {
+            temporary.push("isolationism");
+        }
+        if robber_safe
+            && matches!(
+                objective,
+                GrandStrategy::Science
+                    | GrandStrategy::Culture
+                    | GrandStrategy::Expansion
+                    | GrandStrategy::Recovery
+            )
+        {
+            temporary.push("robber_barons");
+        }
+        temporary.extend(desired);
+        desired = temporary;
+        desired.retain(|card| {
+            g.rules.policies[*card].offered(&g.players[pid].age, g.world_era)
+        });
+
+        // If circumstances changed, remove a downside-bearing Dark Age card
+        // immediately.  Most importantly, Isolationism can never coexist with
+        // a live settler or an Expansion plan.
+        let desired_set: HashSet<&str> = desired.iter().copied().collect();
+        let unsafe_dark_cards: Vec<String> = g.players[pid]
+            .policies
+            .iter()
+            .filter(|card| {
+                g.rules.policies[card.as_str()].dark_age
+                    && !desired_set.contains(card.as_str())
+            })
+            .cloned()
+            .collect();
+        for card in unsafe_dark_cards {
+            let _ = g.apply(pid, &Action::UnslotPolicy { policy: card });
+        }
+
+        let available: HashSet<String> = g.available_policies(pid).into_iter().collect();
+        for card in desired.iter().copied() {
+            if g.players[pid].policies.contains(card) || !available.contains(card) {
                 continue;
             }
             if g.apply(
                 pid,
                 &Action::SlotPolicy {
-                    policy: (*card).to_string(),
+                    policy: card.to_string(),
                 },
             )
             .is_ok()
@@ -1877,28 +2119,46 @@ impl AdvancedAi {
                 continue;
             }
 
-            let slot = g.rules.policies[*card].slot.clone();
+            let slot = g.rules.policies[card].slot.clone();
             let mut replaceable: Vec<String> = g.players[pid]
                 .policies
                 .iter()
-                .filter(|current| !desired.contains(&current.as_str()))
+                .filter(|current| !desired_set.contains(current.as_str()))
                 .cloned()
                 .collect();
-            replaceable.sort_by_key(|current| {
-                usize::from(g.rules.policies[current.as_str()].slot != slot)
+            replaceable.sort_by(|first, second| {
+                let key = |current: &str| {
+                    let policy = &g.rules.policies[current];
+                    let era = policy
+                        .civic
+                        .as_ref()
+                        .and_then(|civic| g.rules.civics.get(civic))
+                        .map_or(0, |civic| civic.era);
+                    (usize::from(policy.slot != slot), era)
+                };
+                key(first).cmp(&key(second)).then(first.cmp(second))
             });
             for current in replaceable {
-                let _ = g.apply(pid, &Action::UnslotPolicy { policy: current });
+                let _ = g.apply(
+                    pid,
+                    &Action::UnslotPolicy {
+                        policy: current.clone(),
+                    },
+                );
                 if g.apply(
                     pid,
                     &Action::SlotPolicy {
-                        policy: (*card).to_string(),
+                        policy: card.to_string(),
                     },
                 )
                 .is_ok()
                 {
                     break;
                 }
+                // A type mismatch can make one particular swap invalid. Put
+                // the old card back before trying another candidate so policy
+                // reassessment can never silently empty a government.
+                let _ = g.apply(pid, &Action::SlotPolicy { policy: current });
             }
         }
     }
@@ -14135,6 +14395,85 @@ mod tests {
             .extend(["discipline".to_string(), "urban_planning".to_string()]);
         AdvancedAi::new().strategic_policies(&mut reactive, 0, GrandStrategy::Culture);
         assert!(reactive.players[0].policies.contains("heritage_tourism"));
+    }
+
+    #[test]
+    fn future_policy_reassessment_replaces_ancient_fillers() {
+        let mut game = Game::new(2, 24, 16, 79_100, 250, 0);
+        let civics: Vec<String> = game.rules.civics.keys().cloned().collect();
+        game.players[0].civics.extend(civics);
+        game.players[0].government = Some("synthetic_technocracy".to_string());
+        let ancient = [
+            "discipline",
+            "agoge",
+            "bastions",
+            "retainers",
+            "urban_planning",
+            "god_king",
+            "ilkum",
+            "colonization",
+            "insulae",
+            "charismatic_leader",
+        ];
+        game.players[0]
+            .policies
+            .extend(ancient.iter().map(|card| (*card).to_string()));
+
+        AdvancedAi::targeting(VictoryTarget::Science).strategic_policies(
+            &mut game,
+            0,
+            GrandStrategy::Science,
+        );
+
+        assert!(game.players[0]
+            .policies
+            .contains("integrated_space_cell"));
+        assert!(game.players[0]
+            .policies
+            .contains("future_victory_science"));
+        assert!(game.players[0].policies.contains("five_year_plan"));
+        assert!(game.players[0].policies.contains("rationalism"));
+        assert!(ancient
+            .iter()
+            .all(|card| !game.players[0].policies.contains(*card)));
+    }
+
+    #[test]
+    fn dark_age_policies_follow_strategy_and_never_close_live_expansion() {
+        let mut game = Game::new(2, 24, 16, 79_101, 250, 0);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = game.player_city_ids(0)[0];
+        install_ai_test_district(&mut game, city, "holy_site");
+        game.world_era = 2;
+        game.players[0].age = "dark".to_string();
+        game.players[0].government = Some("classical_republic".to_string());
+
+        AdvancedAi::targeting(VictoryTarget::Science).strategic_policies(
+            &mut game,
+            0,
+            GrandStrategy::Science,
+        );
+        assert!(game.players[0].policies.contains("monasticism"));
+
+        game.players[0].policies.clear();
+        game.players[0].policies.insert("isolationism".to_string());
+        game.spawn_test_unit("settler", 0, game.cities[&city].pos);
+        AdvancedAi::new().strategic_policies(&mut game, 0, GrandStrategy::Expansion);
+        assert!(!game.players[0].policies.contains("isolationism"));
+
+        game.players[0].policies.clear();
+        game.at_war.insert((0, 1));
+        AdvancedAi::new().strategic_policies(&mut game, 0, GrandStrategy::Conquest);
+        assert!(game.players[0].policies.contains("twilight_valor"));
+
+        game.world_era = 8;
+        AdvancedAi::new().strategic_policies(&mut game, 0, GrandStrategy::Conquest);
+        assert!(!game.players[0].policies.contains("twilight_valor"));
     }
 
     #[test]
