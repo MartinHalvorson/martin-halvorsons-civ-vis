@@ -9,7 +9,7 @@ use crate::rng::Rng;
 use crate::rules::{AgendaSpec, DifficultySpec, Rules, SpeedSpec, Yields, ERA_NAMES};
 use crate::specmap::SpecMap;
 use crate::setup::{GameSpeed, MapScript, MapSize};
-use crate::world::{DistrictFoundation, RememberedTile, TileMemory, WorldMap};
+use crate::world::{DistrictFoundation, RememberedTile, TileBits, TileMemory, WorldMap};
 use crate::{hex, mapgen, Pos};
 
 pub const CIV_NAMES: [&str; 8] = [
@@ -7401,6 +7401,9 @@ impl Game {
 /// line of sight, say — wants: filling a per-tile table costs more than the
 /// two lookups it would save.
 struct HeightField {
+    /// The state of the world this sweep is reading. Worked out once when
+    /// the sweep starts rather than per unit.
+    stamp: u64,
     sight: Vec<i16>,
     /// Blocker heights for a viewer who sees through woods, and for one who
     /// does not. Woods are the only thing the two disagree about.
@@ -7413,17 +7416,81 @@ impl HeightField {
 
     fn none() -> HeightField {
         HeightField {
+            stamp: 0,
             sight: Vec::new(),
             open: Vec::new(),
             wooded: Vec::new(),
         }
     }
 
-    fn for_map(tiles: usize) -> HeightField {
+    fn for_map(stamp: u64, tiles: usize) -> HeightField {
         HeightField {
+            stamp,
             sight: vec![HeightField::UNKNOWN; tiles],
             open: vec![HeightField::UNKNOWN; tiles],
             wooded: vec![HeightField::UNKNOWN; tiles],
+        }
+    }
+}
+
+/// Mix a few numbers into one, for cache keys that must change whenever any
+/// of their parts does.
+fn vision_key(parts: &[u64]) -> u64 {
+    const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut key = SEED;
+    for part in parts {
+        key = (key ^ part).wrapping_mul(SEED);
+        key ^= key >> 29;
+    }
+    key
+}
+
+/// What each unit could see, the last time anybody asked.
+///
+/// The whole cache is thrown away when the world moves under it, which is
+/// what `stamp` records; within one state of the world an entry stands until
+/// its unit moves. Entries are kept in unit order in flat vectors so that
+/// cloning a game — which the AI does once per branch it searches — copies
+/// three blocks of memory rather than walking a tree.
+#[derive(Clone, Default)]
+pub struct VisionCache {
+    stamp: u64,
+    units: Vec<u32>,
+    keys: Vec<u64>,
+    seen: Vec<TileBits>,
+}
+
+impl VisionCache {
+    fn reset(&mut self, stamp: u64) {
+        self.stamp = stamp;
+        self.units.clear();
+        self.keys.clear();
+        self.seen.clear();
+    }
+
+    fn lookup(&mut self, stamp: u64, uid: u32, key: u64) -> Option<&TileBits> {
+        if self.stamp != stamp {
+            self.reset(stamp);
+            return None;
+        }
+        let slot = self.units.binary_search(&uid).ok()?;
+        (self.keys[slot] == key).then(|| &self.seen[slot])
+    }
+
+    fn put(&mut self, stamp: u64, uid: u32, key: u64, seen: TileBits) {
+        if self.stamp != stamp {
+            self.reset(stamp);
+        }
+        match self.units.binary_search(&uid) {
+            Ok(slot) => {
+                self.keys[slot] = key;
+                self.seen[slot] = seen;
+            }
+            Err(slot) => {
+                self.units.insert(slot, uid);
+                self.keys.insert(slot, key);
+                self.seen.insert(slot, seen);
+            }
         }
     }
 }
@@ -8820,6 +8887,11 @@ pub struct Game {
     /// Shared with every other game in the process: nothing plays a game by
     /// rewriting its own rules, and copying them per search branch is not free.
     pub rules: Arc<Rules>,
+    /// Derived from the rest of the game, never saved, and safe to drop at
+    /// any moment — it is only ever a shortcut to an answer the sweep would
+    /// otherwise recompute.
+    #[serde(skip)]
+    vision: std::cell::RefCell<VisionCache>,
     pub rng: Rng,
     pub seed: u64,
     /// Key into `rules.difficulties`. Prince is the unhandicapped reference.
@@ -9000,6 +9072,7 @@ impl From<GameSer> for Game {
         };
         let mut g = Game {
             rules: Rules::shared(),
+            vision: std::cell::RefCell::new(VisionCache::default()),
             rng: s.rng,
             seed: s.seed,
             difficulty: s.difficulty,
@@ -9285,6 +9358,7 @@ impl Game {
         let game_speed = GameSpeed::from_id(&speed).unwrap_or(GameSpeed::Standard);
         let mut g = Game {
             rules,
+            vision: std::cell::RefCell::new(VisionCache::default()),
             rng,
             seed,
             difficulty,
@@ -17863,7 +17937,7 @@ impl Game {
 
     /// A height table sized to this map, for one visibility sweep.
     fn height_field(&self) -> HeightField {
-        HeightField::for_map(self.map.tiles.len())
+        HeightField::for_map(self.world_stamp(), self.map.tiles.len())
     }
 
     fn reveal(&mut self, pid: usize, pos: Pos, radius: i32) {
@@ -17871,9 +17945,17 @@ impl Game {
             return;
         }
         let mut heights = self.height_field();
-        let mut visible = self.player_visibility_via(&mut heights, pid);
+        let mut visible = self.player_vision(&mut heights, pid);
         let height = self.map.tiles[&pos].hills as i32 + self.district_viewpoint_bonus(pos);
-        visible.extend(self.visible_tiles_from(&mut heights, pos, radius, height, false, false));
+        visible.union_with(&self.visible_tiles_from(
+            &mut heights,
+            pos,
+            radius,
+            height,
+            false,
+            false,
+        ));
+        let visible = self.tiles_of(&visible);
         self.refresh_visibility_snapshot(pid, visible);
     }
 
@@ -18214,8 +18296,8 @@ impl Game {
         viewer_height: i32,
         see_through_woods: bool,
         flying: bool,
-    ) -> BTreeSet<Pos> {
-        let mut visible = BTreeSet::new();
+    ) -> TileBits {
+        let mut visible = TileBits::with_capacity(self.map.tiles.len());
         let search_radius = if flying || radius <= 0 {
             radius
         } else {
@@ -18233,7 +18315,7 @@ impl Game {
                         see_through_woods,
                     )
                 {
-                    visible.insert(target);
+                    self.mark_visible(&mut visible, target);
                 }
             } else if !flying
                 && distance == radius + 1
@@ -18248,10 +18330,22 @@ impl Game {
             {
                 // Elevated terrain one tile beyond nominal sight is itself
                 // visible when it rises above the intervening terrain.
-                visible.insert(target);
+                self.mark_visible(&mut visible, target);
             }
         }
         visible
+    }
+
+    #[inline]
+    fn mark_visible(&self, visible: &mut TileBits, pos: Pos) {
+        if let Some(index) = self.map.tiles.index_of(pos) {
+            visible.insert(index);
+        }
+    }
+
+    /// The positions in a visibility set, in map order.
+    fn tiles_of(&self, bits: &TileBits) -> BTreeSet<Pos> {
+        self.map.tiles.positions(bits).collect()
     }
 
     /// Civ VI line of sight for the ranges represented by this ruleset. At
@@ -18449,34 +18543,88 @@ impl Game {
     }
 
     fn unit_visible_tiles_via(&self, heights: &mut HeightField, uid: u32) -> BTreeSet<Pos> {
+        let mut seen = TileBits::with_capacity(self.map.tiles.len());
+        self.union_unit_vision(&mut seen, heights, uid);
+        self.tiles_of(&seen)
+    }
+
+    /// What one unit can see, from the sweep cache when the answer still
+    /// stands.
+    ///
+    /// A unit's view depends only on where it stands, how far it sees, and
+    /// the map — so between two moves the answer does not change, and a
+    /// player's visibility is asked for hundreds of times a turn. Only the
+    /// unit that just moved needs a fresh sweep; the rest of the army's
+    /// views are still good.
+    fn union_unit_vision(&self, into: &mut TileBits, heights: &mut HeightField, uid: u32) {
         let Some(unit) = self.units.get(&uid) else {
-            return BTreeSet::new();
+            return;
         };
         let spec = &self.rules.units[unit.kind.as_str()];
         let origin = unit.air_patrol_pos.unwrap_or(unit.pos);
+        let sight = self.unit_sight(uid);
+        let see_through_woods = self.promotion_effect(unit, "see_through_woods") > 0.0;
+        let flying = spec.domain.as_deref() == Some("air");
         let viewer_height =
             self.map.tiles[&origin].hills as i32 + self.district_viewpoint_bonus(origin);
-        self.visible_tiles_from(
+        let key = vision_key(&[
+            origin.0 as u64,
+            origin.1 as u64,
+            sight as u64,
+            viewer_height as u64,
+            see_through_woods as u64,
+            flying as u64,
+        ]);
+        {
+            let mut cache = self.vision.borrow_mut();
+            if let Some(seen) = cache.lookup(heights.stamp, uid, key) {
+                into.union_with(seen);
+                return;
+            }
+        }
+        let seen = self.visible_tiles_from(
             heights,
             origin,
-            self.unit_sight(uid),
+            sight,
             viewer_height,
-            self.promotion_effect(unit, "see_through_woods") > 0.0,
-            spec.domain.as_deref() == Some("air"),
-        )
+            see_through_woods,
+            flying,
+        );
+        into.union_with(&seen);
+        self.vision.borrow_mut().put(heights.stamp, uid, key, seen);
     }
 
-    fn base_player_visibility(&self, heights: &mut HeightField, pid: usize) -> BTreeSet<Pos> {
-        let mut visible = BTreeSet::new();
+    /// A number that changes whenever anything a sweep reads could have
+    /// changed: the map itself, and the cities whose centers and Encampments
+    /// look out over it.
+    fn world_stamp(&self) -> u64 {
+        let mut stamp = vision_key(&[self.map.tiles.epoch(), self.turn as u64]);
+        for city in self.cities.values() {
+            stamp = vision_key(&[
+                stamp,
+                city.id as u64,
+                city.pos.0 as u64,
+                city.pos.1 as u64,
+                city.encampment_pillaged as u64,
+                city.districts.len() as u64,
+            ]);
+        }
+        stamp
+    }
+
+    fn base_player_visibility(&self, heights: &mut HeightField, pid: usize) -> TileBits {
+        let mut visible = TileBits::with_capacity(self.map.tiles.len());
         for uid in self.player_unit_ids(pid) {
-            visible.extend(self.unit_visible_tiles_via(heights, uid));
+            self.union_unit_vision(&mut visible, heights, uid);
         }
         // Civ VI grants unconditional visibility to every owned border tile
         // and the one-tile ring beyond it, regardless of terrain blockers.
         for city in self.cities.values().filter(|city| city.owner == pid) {
             for position in &city.owned_tiles {
-                visible.insert(*position);
-                visible.extend(self.nbrs(*position));
+                self.mark_visible(&mut visible, *position);
+                for neighbor in self.nbrs(*position) {
+                    self.mark_visible(&mut visible, neighbor);
+                }
             }
         }
         // Suzerain diplomacy reveals exactly three tiles around the
@@ -18489,7 +18637,9 @@ impl Game {
                 && self.suzerain_of(minor.id) == Some(pid)
         }) {
             for city in self.cities.values().filter(|city| city.owner == minor.id) {
-                visible.extend(self.wdisk(city.pos, 3));
+                for position in self.wdisk(city.pos, 3) {
+                    self.mark_visible(&mut visible, position);
+                }
             }
         }
         // Spies are city-based rather than map Units in this engine, but have
@@ -18505,7 +18655,9 @@ impl Game {
             };
             let height =
                 self.map.tiles[&position].hills as i32 + self.district_viewpoint_bonus(position);
-            visible.extend(self.visible_tiles_from(heights, position, 3, height, false, false));
+            visible.union_with(&self.visible_tiles_from(
+                heights, position, 3, height, false, false,
+            ));
         }
         visible
     }
@@ -18539,14 +18691,40 @@ impl Game {
     /// Authoritative current visibility for a player, including level-two
     /// Military Alliance shared vision. Explored/remembered tiles are not
     /// included here.
+    /// The tiles a player can see right now, as bits.
+    ///
+    /// Callers that only ask whether a tile is visible want this: building a
+    /// sorted set of a few hundred positions to answer one membership
+    /// question was, by some way, the most expensive thing visibility did.
+    pub(crate) fn player_vision_now(&self, pid: usize) -> TileBits {
+        self.player_vision(&mut self.height_field(), pid)
+    }
+
+    #[inline]
+    pub(crate) fn sees(&self, visible: &TileBits, pos: Pos) -> bool {
+        self.map
+            .tiles
+            .index_of(pos)
+            .is_some_and(|index| visible.contains(index))
+    }
+
+    /// Whether one tile is currently in a player's sight.
+    pub fn player_can_see(&self, pid: usize, pos: Pos) -> bool {
+        self.sees(&self.player_vision_now(pid), pos)
+    }
+
     pub fn player_visibility(&self, pid: usize) -> BTreeSet<Pos> {
         self.player_visibility_via(&mut self.height_field(), pid)
     }
 
     fn player_visibility_via(&self, heights: &mut HeightField, pid: usize) -> BTreeSet<Pos> {
-        let mut visible = BTreeSet::new();
+        self.tiles_of(&self.player_vision(heights, pid))
+    }
+
+    fn player_vision(&self, heights: &mut HeightField, pid: usize) -> TileBits {
+        let mut visible = TileBits::with_capacity(self.map.tiles.len());
         for viewer in self.visibility_viewers(pid) {
-            visible.extend(self.base_player_visibility(heights, viewer));
+            visible.union_with(&self.base_player_visibility(heights, viewer));
         }
         visible
     }
@@ -24021,7 +24199,7 @@ impl Game {
         }
         let p = &self.players[pid];
         let mut acts = self.legal_unit_upgrade_actions(pid);
-        let current_visibility = self.player_visibility(pid);
+        let current_visibility = self.player_vision_now(pid);
         let visibility_viewers = self.visibility_viewers(pid);
         for spy_id in self
             .spies
@@ -24066,7 +24244,7 @@ impl Game {
                             && u.attacks_left > 0
                             && (u.hp >= 50
                                 || self.promotion_effect(&u, "air_pillage_at_low_health") > 0.0)
-                            && current_visibility.contains(&target)
+                            && self.sees(&current_visibility, target)
                             && self.air_pillageable_at(pid, target)
                         {
                             acts.push(Action::AirPillage { unit: uid, target });
@@ -25130,10 +25308,10 @@ impl Game {
         &self,
         pid: usize,
         pos: Pos,
-        visible: &BTreeSet<Pos>,
+        visible: &TileBits,
         viewers: &BTreeSet<usize>,
     ) -> bool {
-        if !visible.contains(&pos) {
+        if !self.sees(visible, pos) {
             return false;
         }
         let hostile_city = self
@@ -25156,7 +25334,7 @@ impl Game {
     }
 
     fn combat_target_visible(&self, pid: usize, pos: Pos) -> bool {
-        let visible = self.player_visibility(pid);
+        let visible = self.player_vision_now(pid);
         let viewers = self.visibility_viewers(pid);
         self.combat_target_visible_at(pid, pos, &visible, &viewers)
     }
@@ -25166,7 +25344,7 @@ impl Game {
             return false;
         };
         let pos = unit.air_patrol_pos.unwrap_or(unit.pos);
-        self.player_visibility(pid).contains(&pos)
+        self.player_can_see(pid, pos)
             && self
                 .visibility_viewers(pid)
                 .iter()
@@ -28124,7 +28302,7 @@ impl Game {
             || (bomber.hp < 50
                 && self.promotion_effect(&bomber, "air_pillage_at_low_health") <= 0.0)
             || self.wdist(self.air_operation_origin(uid), target) > self.unit_attack_range(uid)
-            || !self.player_visibility(pid).contains(&target)
+            || !self.player_can_see(pid, target)
             || !self.air_pillageable_at(pid, target)
         {
             return Err("invalid air pillage".into());

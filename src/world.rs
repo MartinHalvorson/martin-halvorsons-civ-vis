@@ -161,6 +161,10 @@ impl Tile {
 pub struct TileGrid {
     width: i32,
     height: i32,
+    /// Bumped by every route that can write to a tile. Anything that caches a
+    /// conclusion drawn from the map — what a unit can see, say — records the
+    /// epoch it was drawn under and recomputes when the map has moved on.
+    epoch: u64,
     tiles: Vec<Tile>,
     /// `row * width + col` -> index into `tiles`, or `u32::MAX` when a save
     /// omitted that hex.
@@ -174,6 +178,7 @@ impl TileGrid {
         let mut grid = TileGrid {
             width,
             height,
+            epoch: 0,
             tiles: Vec::new(),
             slot: Vec::new(),
         };
@@ -191,6 +196,7 @@ impl TileGrid {
         let mut grid = TileGrid {
             width,
             height,
+            epoch: 0,
             tiles: Vec::new(),
             slot: Vec::new(),
         };
@@ -199,6 +205,7 @@ impl TileGrid {
     }
 
     fn rebuild(&mut self, mut tiles: Vec<Tile>) {
+        self.epoch += 1;
         tiles.sort_unstable_by_key(|tile| tile.pos);
         tiles.dedup_by_key(|tile| tile.pos);
         let cells = (self.width.max(0) as usize) * (self.height.max(0) as usize);
@@ -240,7 +247,15 @@ impl TileGrid {
 
     #[inline]
     pub fn get_mut(&mut self, pos: &Pos) -> Option<&mut Tile> {
+        self.epoch += 1;
         self.index_of(*pos).map(|index| &mut self.tiles[index])
+    }
+
+    /// How many times the map has been opened for writing. Two reads of the
+    /// same epoch saw the same map.
+    #[inline]
+    pub fn epoch(&self) -> u64 {
+        self.epoch
     }
 
     #[inline]
@@ -265,6 +280,7 @@ impl TileGrid {
     }
 
     pub fn values_mut(&mut self) -> std::slice::IterMut<'_, Tile> {
+        self.epoch += 1;
         self.tiles.iter_mut()
     }
 
@@ -295,6 +311,7 @@ impl<'a> IntoIterator for &'a mut TileGrid {
         std::iter::Map<std::slice::IterMut<'a, Tile>, fn(&'a mut Tile) -> (Pos, &'a mut Tile)>;
 
     fn into_iter(self) -> Self::IntoIter {
+        self.epoch += 1;
         self.tiles.iter_mut().map(|tile| (tile.pos, tile))
     }
 }
@@ -424,5 +441,85 @@ impl WorldMap {
 impl Tile {
     pub fn has_river(&self) -> bool {
         self.river_edges.iter().any(|edge| *edge)
+    }
+}
+
+/// A set of tiles held as one bit each.
+///
+/// Visibility is unioned constantly — every unit's view into its owner's,
+/// every ally's into the alliance's — and doing that through a `BTreeSet` of
+/// positions meant an allocation and a tree descent per tile. Bits are
+/// indexed by [`TileGrid::index_of`], which runs in position order, so
+/// reading a `TileBits` back out yields tiles already sorted.
+#[derive(Clone, Default, PartialEq)]
+pub struct TileBits {
+    words: Vec<u64>,
+}
+
+impl TileBits {
+    pub fn with_capacity(tiles: usize) -> TileBits {
+        TileBits {
+            words: vec![0; tiles.div_ceil(64)],
+        }
+    }
+
+    #[inline]
+    pub fn insert(&mut self, index: usize) {
+        let word = index / 64;
+        if word >= self.words.len() {
+            self.words.resize(word + 1, 0);
+        }
+        self.words[word] |= 1 << (index % 64);
+    }
+
+    #[inline]
+    pub fn contains(&self, index: usize) -> bool {
+        self.words
+            .get(index / 64)
+            .is_some_and(|word| word & (1 << (index % 64)) != 0)
+    }
+
+    pub fn union_with(&mut self, other: &TileBits) {
+        if self.words.len() < other.words.len() {
+            self.words.resize(other.words.len(), 0);
+        }
+        for (into, from) in self.words.iter_mut().zip(&other.words) {
+            *into |= *from;
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.words.iter_mut().for_each(|word| *word = 0);
+    }
+
+    /// The set members in ascending index order.
+    pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+        self.words.iter().enumerate().flat_map(|(slot, word)| {
+            let mut bits = *word;
+            std::iter::from_fn(move || {
+                if bits == 0 {
+                    return None;
+                }
+                let bit = bits.trailing_zeros() as usize;
+                bits &= bits - 1;
+                Some(slot * 64 + bit)
+            })
+        })
+    }
+}
+
+impl TileGrid {
+    /// The position at a tile index, as handed out by [`TileGrid::index_of`].
+    #[inline]
+    pub fn pos_at(&self, index: usize) -> Option<Pos> {
+        self.tiles.get(index).map(|tile| tile.pos)
+    }
+
+    /// The positions in a bit set, in map order.
+    pub fn positions(&self, bits: &TileBits) -> impl Iterator<Item = Pos> + '_ {
+        bits.iter()
+            .filter_map(|index| self.tiles.get(index).map(|tile| tile.pos))
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 }
