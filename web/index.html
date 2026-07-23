@@ -1614,10 +1614,6 @@ function setView(v) {
 }
 let SHOW_YIELDS = localStorage.getItem("civvis-show-yields") === "1";
 let SHOW_ARTIFACT_SITES = localStorage.getItem("civvis-show-artifact-sites") === "1";
-// A stable map is easier to watch at Lightning speed. Action-following remains
-// available as an explicit spectator option, but every browser starts locked.
-let DIRECTOR = localStorage.getItem("civvis-director-v2") === "1";
-let directorGoal = null, directorLast = 0;
 // Cinema is the default spectator composition. It never changes the strategic
 // map or player UI: it only enters after the server identifies this page as a
 // spectator, and every control returns on C/Escape.
@@ -2191,21 +2187,6 @@ function animateDiff(prev, next) {
         unitHeadings.set(nu.id, {x:end.x - start.x, y:end.y - start.y, at:now});
         anim.moves.delete(nu.id);
       } else {
-        let points = hasRoute ? route.map(worldXY) : [[sx, sy], [tx, ty]];
-        if (cur) points[0] = [sx, sy];
-        const steps = Math.max(1, points.length - 1);
-        // Remember whether each end of the step is a city tile. A garrison is
-        // drawn shifted to the front of its hex so the town reads behind it,
-        // and that shift keys off the unit's CURRENT position — which during a
-        // move is already the destination. So a unit walking into a city
-        // dropped the full shift the instant it set off, and one walking out
-        // snapped up by the same amount: a visible jolt at both ends of the
-        // step. Carrying both endpoints lets the shift ease across the move.
-        anim.moves.set(nu.id, { sx, sy, tx, ty, x: sx, y: sy, points, steps,
-                                fromCity: cityKeys.has(key(pu.pos)),
-                                toCity: cityKeys.has(key(nu.pos)),
-                                t0: now, dur: 90 + 90 * Math.min(4, steps) });
-        if (Math.abs(tx - sx) > 1) facing.set(nu.id, tx > sx ? 1 : -1);
         const positions = hasRoute ? route : [pu.pos, nu.pos];
         const current = cur ? sampleUnitMove(cur, now) : null;
         let nearX = current?.x ?? cam.x;
@@ -2217,8 +2198,17 @@ function animateDiff(prev, next) {
         if (current) mapPoints[0] = {x:current.x, y:current.y, lift:current.lift};
         const start = mapPoints[0], end = mapPoints[mapPoints.length - 1];
         const steps = Math.max(1, mapPoints.length - 1);
+        // Remember whether each end of the step is a city tile. A garrison is
+        // drawn shifted to the front of its hex so the town reads behind it,
+        // and that shift keys off the unit's CURRENT position — which during a
+        // move is already the destination. So a unit walking into a city
+        // dropped the full shift the instant it set off, and one walking out
+        // snapped up by the same amount: a visible jolt at both ends of the
+        // step. Carrying both endpoints lets the shift ease across the move.
         anim.moves.set(nu.id, {mapX:start.x, mapY:start.y, mapLift:start.lift,
                                 mapPoints, steps,
+                                fromCity: cityKeys.has(key(pu.pos)),
+                                toCity: cityKeys.has(key(nu.pos)),
                                 t0: now, dur:unitMoveDuration(nu.id, steps) });
         unitHeadings.set(nu.id, {x:end.x - start.x, y:end.y - start.y, at:now});
         if (Math.abs(end.x - start.x) > 1)
@@ -2456,13 +2446,6 @@ function elev(t) {
   if (t.hills) e += 6;
   if (t.terrain === "mountain") e += 9;
   return e * k;
-  if (VIEW !== "cinematic") return 0;
-  if (t.terrain === "ocean") return -6;
-  if (t.terrain === "coast") return -4;
-  let e = 8;
-  if (t.hills) e += 7;
-  if (t.terrain === "mountain") e += 12;
-  return e;
 }
 function corner(x, y, s, i) {
   const a = Math.PI / 180 * (60 * i - 30) + cam.rot;
@@ -3793,7 +3776,6 @@ function drawFeathered(t, x, y, alpha) {
   const st = biomeStamp(t.terrain,
     Math.floor(hash2(t.pos[0] * 7 + 1, t.pos[1] * 13 + 5) * 4));
   if (!st) return;
-  const R = S * 1.5;
   // Flat land may cross-fade with flat land even when the named biome changes;
   // the same is true within one water level. Height changes remain a real edge
   // because relief walls, not texture, must explain those. A one-ring clip is
@@ -4571,8 +4553,6 @@ function drawMountainSprite(t, x, y) {
   // mixing snow, granite, and sandstone inside one connected massif.
   const shapeX = hash2(t.pos[0] * 7 + 3, t.pos[1] * 5 + 11);
   const shapeY = hash2(t.pos[0] * 17 + 5, t.pos[1] * 13 + 7);
-  const w = S * (1.9 + shapeX * 0.18), h = S * (1.92 + shapeY * 0.24);
-  const flip = hash2(t.pos[0] * 29 + 1, t.pos[1] * 31 + 9) > 0.5;
   const w = S * (2.30 + shapeX * 0.18), h = S * (2.02 + shapeY * 0.24);
   const flip = hash2(t.pos[0] * 29 + 1, t.pos[1] * 31 + 9) > 0.5;
   const footprint = blendedTileFootprint(t, x, y, neighbor =>
@@ -5511,7 +5491,6 @@ function draw() {
   const beau0 = MODE.painted;
   const now0 = performance.now();
   const sceneTime = performance.now();
-  const beau0 = VIEW === "cinematic";
   cx.setTransform(1, 0, 0, 1, 0, 0);
   if (beau0) {
     // The board sits on something. A flat fill made the unexplored world and
@@ -5624,7 +5603,6 @@ function draw() {
     // pass below; resetting a gradient inside every hex was itself a grid.
     hexPath(x, y, beau ? S + 0.85 : S + 0.6);
     if (beau) {
-      if (!water) drawWalls(x, y, base, e + SKIRT);
       const art = tileArt(t.terrain, !!t.hills && t.terrain !== "mountain", artVariant(t));
       cx.setTransform(mA, mB, mC, mD, SC * x + OX, SC * y + OY);
       cx.drawImage(art, -artR, -artR, artR * 2, artR * 2);
@@ -7280,9 +7258,7 @@ function drawPlayerHud() {
     .filter(p => !p.is_minor && !p.is_barbarian)
     .sort((a, b) => b.score - a.score || a.id - b.id);
   const rankById = new Map(majors.map((p, index) => [p.id, index + 1]));
-  const html =
-    `<div class="ribbon-heading"><span>World leaders</span><span>output · empire · score</span></div>` +
-  hud.innerHTML = overview +
+  const html = overview +
     `<section class="hud-region leader-region" aria-labelledby="world-leaders-title">` +
     `<div class="hud-section-heading"><span id="world-leaders-title">World leaders</span>` +
     `<span>${majors.length} civilizations · output · empire · score</span></div>` +
