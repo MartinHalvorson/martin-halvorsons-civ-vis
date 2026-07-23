@@ -7251,6 +7251,47 @@ fn gold_s() -> String {
 
 // --------------------------------------------------------------------- game
 
+/// Victory paths that can end the game. All paths are enabled by default so
+/// existing callers and saves retain the traditional rules unless a new-game
+/// setup explicitly disables one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VictoryConditions {
+    pub science: bool,
+    pub culture: bool,
+    pub religious: bool,
+    pub diplomatic: bool,
+    pub domination: bool,
+    pub score: bool,
+}
+
+impl VictoryConditions {
+    pub fn is_enabled(self, victory_type: &str) -> bool {
+        match victory_type {
+            "science" => self.science,
+            "culture" => self.culture,
+            "religious" => self.religious,
+            "diplomatic" => self.diplomatic,
+            "domination" => self.domination,
+            "score" => self.score,
+            _ => false,
+        }
+    }
+}
+
+impl Default for VictoryConditions {
+    fn default() -> Self {
+        Self {
+            science: true,
+            culture: true,
+            religious: true,
+            diplomatic: true,
+            domination: true,
+            score: true,
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(from = "GameSer", into = "GameSer")]
 pub struct Game {
@@ -7264,6 +7305,7 @@ pub struct Game {
     pub current: usize,
     pub winner: Option<usize>,
     pub victory_type: Option<String>,
+    pub victory_conditions: VictoryConditions,
     pub next_id: u32,
     pub map: WorldMap,
     pub players: Vec<Player>,
@@ -7322,6 +7364,8 @@ struct GameSer {
     current: usize,
     winner: Option<usize>,
     victory_type: Option<String>,
+    #[serde(default)]
+    victory_conditions: VictoryConditions,
     next_id: u32,
     rng: Rng,
     at_war: Vec<(usize, usize)>,
@@ -7382,6 +7426,7 @@ impl From<GameSer> for Game {
             current: s.current,
             winner: s.winner,
             victory_type: s.victory_type,
+            victory_conditions: s.victory_conditions,
             next_id: s.next_id,
             map: s.map,
             players: s.players,
@@ -7504,6 +7549,7 @@ impl From<Game> for GameSer {
             current: g.current,
             winner: g.winner,
             victory_type: g.victory_type,
+            victory_conditions: g.victory_conditions,
             next_id: g.next_id,
             rng: g.rng,
             at_war: g.at_war.into_iter().collect(),
@@ -7614,6 +7660,7 @@ impl Game {
             current: 0,
             winner: None,
             victory_type: None,
+            victory_conditions: VictoryConditions::default(),
             next_id: 1,
             map,
             players: Vec::new(),
@@ -31707,7 +31754,10 @@ impl Game {
     }
 
     fn set_winner(&mut self, pid: usize, vtype: &str) {
-        if self.winner.is_none() && self.victory_eligible(pid) {
+        if self.winner.is_none()
+            && self.victory_eligible(pid)
+            && self.victory_conditions.is_enabled(vtype)
+        {
             self.winner = Some(pid);
             self.victory_type = Some(vtype.to_string());
         }
@@ -35229,6 +35279,44 @@ mod victory_conditions {
             g.found_city_for(pid, pos, None);
         }
         g
+    }
+
+    #[test]
+    fn every_victory_path_can_be_disabled_independently() {
+        let conditions: [(&str, fn(&mut VictoryConditions) -> &mut bool); 6] = [
+            ("science", |v: &mut VictoryConditions| &mut v.science),
+            ("culture", |v: &mut VictoryConditions| &mut v.culture),
+            ("religious", |v: &mut VictoryConditions| &mut v.religious),
+            ("diplomatic", |v: &mut VictoryConditions| &mut v.diplomatic),
+            ("domination", |v: &mut VictoryConditions| &mut v.domination),
+            ("score", |v: &mut VictoryConditions| &mut v.score),
+        ];
+        for (index, (victory_type, disable)) in conditions.into_iter().enumerate() {
+            let mut game = game_with_capitals(2, 90_000 + index as u64, 300);
+            *disable(&mut game.victory_conditions) = false;
+            game.set_winner(0, victory_type);
+            assert_eq!(game.winner, None, "disabled {victory_type} ended the game");
+
+            *disable(&mut game.victory_conditions) = true;
+            game.set_winner(0, victory_type);
+            assert_eq!(game.winner, Some(0), "enabled {victory_type} did not win");
+            assert_eq!(game.victory_type.as_deref(), Some(victory_type));
+        }
+    }
+
+    #[test]
+    fn victory_settings_round_trip_and_old_saves_default_to_enabled() {
+        let mut game = game_with_capitals(2, 90_010, 300);
+        game.victory_conditions.culture = false;
+        game.victory_conditions.score = false;
+        let encoded = serde_json::to_value(&game).unwrap();
+        let restored: Game = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(restored.victory_conditions, game.victory_conditions);
+
+        let mut legacy = encoded;
+        legacy.as_object_mut().unwrap().remove("victory_conditions");
+        let restored: Game = serde_json::from_value(legacy).unwrap();
+        assert_eq!(restored.victory_conditions, VictoryConditions::default());
     }
 
     #[test]

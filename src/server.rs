@@ -1,17 +1,19 @@
 //! Zero-dependency local HTTP server for the human-vs-AI browser GUI.
 //! Endpoints: GET / (page), GET /state, GET /save, GET /rules,
 //! POST /action, POST /step, POST /view, POST /spectator-status, POST /new.
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 
 use serde_json::{json, Value};
 
 use crate::ai::{AdvancedAi, Ai, BasicAi};
-use crate::game::{Action, Game};
+use crate::game::{Action, Game, VictoryConditions};
 use crate::obs::{observation, observation_player_view, observation_spectator};
 use crate::setup::{
     GameSpeed, MapScript, MapSize, CIV6_GAME_SPEEDS, CIV6_MAP_SCRIPTS, CIV6_MAP_SIZES,
 };
+use crate::Pos;
 
 const EMBEDDED_INDEX: &str = include_str!("../web/index.html");
 const EMBEDDED_TERRAIN_ATLAS: &[u8] = include_bytes!("../web/assets/terrain-atlas.png");
@@ -31,6 +33,7 @@ pub struct Params {
     pub map_script: MapScript,
     pub game_speed: GameSpeed,
     pub max_turns: u32,
+    pub victory_conditions: VictoryConditions,
     pub num_city_states: usize,
     /// All players AI-driven; the GUI just watches (auto-steps via /step).
     pub spectate: bool,
@@ -48,6 +51,291 @@ pub struct Session {
     /// civilization's fog-of-war perspective. Only meaningful in spectate
     /// mode—the AI still controls every seat either way.
     view_player: Option<usize>,
+    /// District families that have completed at least once in this match.
+    /// Keeping this at session scope prevents a destroyed district from later
+    /// being announced as the world's first copy a second time.
+    chronicle_districts: BTreeSet<String>,
+}
+
+#[derive(Clone)]
+struct ChronicleCity {
+    name: String,
+    owner: usize,
+    occupied_from: Option<usize>,
+}
+
+#[derive(Clone)]
+struct ChronicleDistrict {
+    city: u32,
+    district: String,
+    owner: usize,
+}
+
+struct ChronicleSnapshot {
+    turn: u32,
+    cities: BTreeMap<u32, ChronicleCity>,
+    districts: BTreeMap<Pos, ChronicleDistrict>,
+    wonders: BTreeMap<String, usize>,
+    religions: Vec<Option<String>>,
+    governments: Vec<Option<String>>,
+    suzerains: BTreeMap<usize, Option<usize>>,
+    tech_eras: Vec<usize>,
+    civic_eras: Vec<usize>,
+    majors: Vec<bool>,
+}
+
+pub struct SpectatorStep {
+    pub player: usize,
+    pub actions: Vec<Action>,
+    pub world_events: Vec<Value>,
+}
+
+impl ChronicleSnapshot {
+    fn capture(game: &Game) -> Self {
+        let mut districts = BTreeMap::new();
+        let mut wonders = BTreeMap::new();
+        for city in game.cities.values() {
+            for (district, position) in &city.districts {
+                districts.insert(
+                    *position,
+                    ChronicleDistrict {
+                        city: city.id,
+                        district: game.district_family(district).to_string(),
+                        owner: city.owner,
+                    },
+                );
+            }
+            for wonder in city.wonders.keys() {
+                wonders.insert(wonder.clone(), city.owner);
+            }
+        }
+        let tree_era = |nodes: &BTreeSet<String>, technology: bool| {
+            nodes
+                .iter()
+                .filter_map(|node| {
+                    if technology {
+                        game.rules.techs.get(node).map(|spec| spec.era)
+                    } else {
+                        game.rules.civics.get(node).map(|spec| spec.era)
+                    }
+                })
+                .max()
+                .unwrap_or(0)
+        };
+        Self {
+            turn: game.turn,
+            cities: game
+                .cities
+                .values()
+                .map(|city| {
+                    (
+                        city.id,
+                        ChronicleCity {
+                            name: city.name.clone(),
+                            owner: city.owner,
+                            occupied_from: city.occupied_from,
+                        },
+                    )
+                })
+                .collect(),
+            districts,
+            wonders,
+            religions: game
+                .players
+                .iter()
+                .map(|player| player.religion.clone())
+                .collect(),
+            governments: game
+                .players
+                .iter()
+                .map(|player| player.government.clone())
+                .collect(),
+            suzerains: game
+                .players
+                .iter()
+                .filter(|player| player.is_minor && !player.is_barbarian)
+                .map(|player| (player.id, game.suzerain_of(player.id)))
+                .collect(),
+            tech_eras: game
+                .players
+                .iter()
+                .map(|player| tree_era(&player.techs, true))
+                .collect(),
+            civic_eras: game
+                .players
+                .iter()
+                .map(|player| tree_era(&player.civics, false))
+                .collect(),
+            majors: game
+                .players
+                .iter()
+                .map(|player| !player.is_minor && !player.is_barbarian)
+                .collect(),
+        }
+    }
+}
+
+fn completed_districts(game: &Game) -> BTreeSet<String> {
+    game.cities
+        .values()
+        .flat_map(|city| city.districts.keys())
+        .map(|district| game.district_family(district).to_string())
+        .collect()
+}
+
+fn chronicle_world_events(
+    before: &ChronicleSnapshot,
+    after: &ChronicleSnapshot,
+    actor: usize,
+    actions: &[Action],
+    seen_districts: &mut BTreeSet<String>,
+) -> Vec<Value> {
+    let mut events = Vec::new();
+    let turn = after.turn;
+
+    for (wonder, owner) in &after.wonders {
+        if !before.wonders.contains_key(wonder) {
+            events.push(json!({
+                "type": "wonder_built", "player": owner,
+                "wonder": wonder, "turn": turn,
+            }));
+        }
+    }
+
+    for (player, religion) in after.religions.iter().enumerate() {
+        if before.religions.get(player).is_some_and(Option::is_none) {
+            if let Some(religion) = religion {
+                events.push(json!({
+                    "type": "religion_founded", "player": player,
+                    "religion": religion, "turn": turn,
+                }));
+            }
+        }
+    }
+
+    let mut new_districts: Vec<_> = after
+        .districts
+        .iter()
+        .filter(|(position, _)| !before.districts.contains_key(position))
+        .map(|(_, district)| district)
+        .collect();
+    new_districts.sort_by_key(|district| district.city);
+    for district in new_districts {
+        if seen_districts.insert(district.district.clone()) {
+            events.push(json!({
+                "type": "district_first", "player": district.owner,
+                "district": district.district, "turn": turn,
+            }));
+        }
+    }
+
+    // Capture decisions are resolved before an AI can end its turn. Reading
+    // those decisions catches kept, razed, and immediately liberated cities.
+    let mut captured = BTreeSet::new();
+    for action in actions {
+        let city = match action {
+            Action::KeepCity { city }
+            | Action::RazeCity { city }
+            | Action::LiberateCity { city } => Some(*city),
+            _ => None,
+        };
+        let Some(city) = city else { continue };
+        let Some(previous) = before.cities.get(&city) else {
+            continue;
+        };
+        if captured.insert(city) {
+            events.push(json!({
+                "type": "city_captured", "player": actor,
+                "former": previous.owner, "city": previous.name,
+                "turn": turn,
+            }));
+        }
+    }
+    // Also cover a conquest that ended the match before its keep/raze choice
+    // was logged.
+    for (city, previous) in &before.cities {
+        let Some(current) = after.cities.get(city) else {
+            continue;
+        };
+        if current.owner != previous.owner
+            && current.occupied_from == Some(previous.owner)
+            && captured.insert(*city)
+        {
+            events.push(json!({
+                "type": "city_captured", "player": current.owner,
+                "former": previous.owner, "city": previous.name,
+                "turn": turn,
+            }));
+        }
+    }
+
+    for (city_state, current) in &after.suzerains {
+        let previous = before.suzerains.get(city_state).copied().flatten();
+        if previous != *current {
+            events.push(json!({
+                "type": "suzerain_changed", "city_state": city_state,
+                "from": previous, "to": current, "turn": turn,
+            }));
+        }
+    }
+
+    let first_era_events =
+        |track: &str, before_eras: &[usize], after_eras: &[usize], events: &mut Vec<Value>| {
+            let before_lead = before_eras
+                .iter()
+                .enumerate()
+                .filter(|(player, _)| before.majors.get(*player) == Some(&true))
+                .map(|(_, era)| *era)
+                .max()
+                .unwrap_or(0);
+            let after_lead = after_eras
+                .iter()
+                .enumerate()
+                .filter(|(player, _)| after.majors.get(*player) == Some(&true))
+                .map(|(_, era)| *era)
+                .max()
+                .unwrap_or(0);
+            for era in (before_lead + 1)..=after_lead {
+                let Some(player) = after_eras
+                    .iter()
+                    .enumerate()
+                    .find_map(|(player, after_era)| {
+                        (after.majors.get(player) == Some(&true)
+                            && *after_era >= era
+                            && before_eras.get(player).copied().unwrap_or(0) < era)
+                            .then_some(player)
+                    })
+                else {
+                    continue;
+                };
+                events.push(json!({
+                    "type": "era_first", "player": player,
+                    "track": track, "era": era, "turn": turn,
+                }));
+            }
+        };
+    first_era_events(
+        "technology",
+        &before.tech_eras,
+        &after.tech_eras,
+        &mut events,
+    );
+    first_era_events("civics", &before.civic_eras, &after.civic_eras, &mut events);
+
+    for (player, government) in after.governments.iter().enumerate() {
+        if after.majors.get(player) != Some(&true) {
+            continue;
+        }
+        let previous = before.governments.get(player).cloned().flatten();
+        if previous != *government {
+            events.push(json!({
+                "type": "government_changed", "player": player,
+                "from": previous, "to": government, "turn": turn,
+            }));
+        }
+    }
+
+    events
 }
 
 impl Session {
@@ -64,7 +352,7 @@ impl Session {
     }
 
     pub fn new(params: Params) -> Session {
-        let game = Game::new_with_setup(
+        let mut game = Game::new_with_setup(
             params.num_players,
             params.width,
             params.height,
@@ -75,16 +363,19 @@ impl Session {
             params.game_speed,
             true,
         );
+        game.victory_conditions = params.victory_conditions;
         // Paired and multiplayer evaluation make the hierarchical agent the
         // strongest built-in default. Minors/barbarians retain the cheaper
         // baseline because they do not need empire-level planning.
         let ais = Self::ai_fleet(&game);
+        let chronicle_districts = completed_districts(&game);
         Session {
             params,
             game,
             ais,
             spectator_paused: false,
             view_player: None,
+            chronicle_districts,
         }
     }
 
@@ -107,13 +398,16 @@ impl Session {
         params.map_script = game.map_script;
         params.game_speed = game.game_speed;
         params.max_turns = game.max_turns;
+        params.victory_conditions = game.victory_conditions;
         let ais = Self::ai_fleet(&game);
+        let chronicle_districts = completed_districts(&game);
         Session {
             params,
             game,
             ais,
             spectator_paused: false,
             view_player: None,
+            chronicle_districts,
         }
     }
 
@@ -208,6 +502,7 @@ impl Session {
             o["supervised"] = json!(self.params.supervised);
             o["spectator_paused"] = json!(self.spectator_paused);
             o["view_player"] = json!(self.view_player);
+            o["victory_conditions"] = json!(self.game.victory_conditions);
             o["legal_actions"] = json!([]);
             // Lets a long-running spectator notice that its server was
             // rebuilt/restarted between games and reload the latest UI.
@@ -218,6 +513,7 @@ impl Session {
         o["spectate"] = json!(false);
         o["supervised"] = json!(self.params.supervised);
         o["view_player"] = json!(0);
+        o["victory_conditions"] = json!(self.game.victory_conditions);
         o["legal_actions"] = serde_json::to_value(self.game.legal_actions(0)).unwrap();
         o["server_instance"] = json!(std::process::id());
         o
@@ -247,10 +543,28 @@ impl Session {
     /// Advance a bounded batch while retaining each civilization's action
     /// trace. The HTTP layer can then serialize the large world observation
     /// once per browser paint instead of once per AI turn.
-    pub fn step_many(&mut self, count: usize) -> Vec<(usize, Vec<Action>)> {
+    fn spectator_step(&mut self) -> SpectatorStep {
+        let before = ChronicleSnapshot::capture(&self.game);
+        let (player, actions) = self.step();
+        let after = ChronicleSnapshot::capture(&self.game);
+        let world_events = chronicle_world_events(
+            &before,
+            &after,
+            player,
+            &actions,
+            &mut self.chronicle_districts,
+        );
+        SpectatorStep {
+            player,
+            actions,
+            world_events,
+        }
+    }
+
+    pub fn step_many(&mut self, count: usize) -> Vec<SpectatorStep> {
         let mut steps = Vec::new();
         for _ in 0..count.clamp(1, 12) {
-            steps.push(self.step());
+            steps.push(self.spectator_step());
             if self.game.winner.is_some() {
                 break;
             }
@@ -359,6 +673,22 @@ fn new_game_params(current: &Params, request: &Value) -> Params {
     }
     if let Some(v) = request["max_turns"].as_u64() {
         p.max_turns = v as u32;
+    }
+    if let Some(victories) = request["victory_conditions"].as_object() {
+        for (name, enabled) in victories {
+            let Some(enabled) = enabled.as_bool() else {
+                continue;
+            };
+            match name.as_str() {
+                "science" => p.victory_conditions.science = enabled,
+                "culture" => p.victory_conditions.culture = enabled,
+                "religious" => p.victory_conditions.religious = enabled,
+                "diplomatic" => p.victory_conditions.diplomatic = enabled,
+                "domination" => p.victory_conditions.domination = enabled,
+                "score" => p.victory_conditions.score = enabled,
+                _ => {}
+            }
+        }
     }
     // Advanced clients can still deliberately override individual stock
     // settings by sending them alongside num_players.
@@ -494,18 +824,32 @@ fn handle(stream: &mut TcpStream, session: &mut Session) {
                 // the map fog through the event chronicle.
                 let visible_steps: Vec<_> = steps
                     .iter()
-                    .filter(|(pid, _)| session.view_player.is_none_or(|viewer| *pid == viewer))
+                    .filter(|step| {
+                        session
+                            .view_player
+                            .is_none_or(|viewer| step.player == viewer)
+                    })
                     .collect();
-                if let Some((pid, actions)) = visible_steps.last() {
+                if let Some(step) = visible_steps.last() {
                     // Preserve the original single-step response fields for
                     // existing clients and supervisor recovery nudges.
-                    out["stepped"] = json!(pid);
-                    out["actions_taken"] = serde_json::to_value(actions).unwrap();
+                    out["stepped"] = json!(step.player);
+                    out["actions_taken"] = serde_json::to_value(&step.actions).unwrap();
                 }
                 out["step_batches"] = Value::Array(
                     visible_steps
                         .iter()
-                        .map(|(pid, actions)| json!({"stepped": pid, "actions_taken": actions}))
+                        .map(|step| {
+                            json!({
+                                "stepped": step.player,
+                                "actions_taken": step.actions,
+                                "world_events": if session.view_player.is_none() {
+                                    step.world_events.clone()
+                                } else {
+                                    Vec::new()
+                                },
+                            })
+                        })
                         .collect(),
                 );
             } else {
@@ -561,9 +905,13 @@ fn handle(stream: &mut TcpStream, session: &mut Session) {
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
-    use super::{new_game_params, Params, Session, EMBEDDED_INDEX};
+    use super::{
+        chronicle_world_events, new_game_params, ChronicleSnapshot, Params, Session, EMBEDDED_INDEX,
+    };
+    use crate::game::{Action, VictoryConditions};
     use crate::setup::{GameSpeed, MapScript};
     use serde_json::json;
+    use std::collections::BTreeSet;
 
     fn current() -> Params {
         Params {
@@ -574,6 +922,7 @@ mod tests {
             map_script: MapScript::Pangaea,
             game_speed: GameSpeed::Standard,
             max_turns: 500,
+            victory_conditions: VictoryConditions::default(),
             num_city_states: 1,
             spectate: false,
             supervised: false,
@@ -634,6 +983,45 @@ mod tests {
     }
 
     #[test]
+    fn new_game_applies_each_victory_condition_setting() {
+        let disabled = json!({
+            "science": false,
+            "culture": false,
+            "religious": false,
+            "diplomatic": false,
+            "domination": false,
+            "score": false
+        });
+        let params = new_game_params(&current(), &json!({"victory_conditions": disabled.clone()}));
+        assert_eq!(
+            params.victory_conditions,
+            VictoryConditions {
+                science: false,
+                culture: false,
+                religious: false,
+                diplomatic: false,
+                domination: false,
+                score: false,
+            }
+        );
+
+        let session = Session::new(params.clone());
+        assert_eq!(session.game.victory_conditions, params.victory_conditions);
+        assert_eq!(session.state()["victory_conditions"], disabled);
+    }
+
+    #[test]
+    fn omitted_victory_settings_preserve_the_current_selection() {
+        let mut current = current();
+        current.victory_conditions.culture = false;
+        current.victory_conditions.score = false;
+        let next = new_game_params(&current, &json!({"seed": 2}));
+        assert!(!next.victory_conditions.culture);
+        assert!(!next.victory_conditions.score);
+        assert!(next.victory_conditions.science);
+    }
+
+    #[test]
     fn browser_orders_settings_event_log_and_strategy() {
         for players in [2, 4, 6, 8, 10, 12] {
             assert!(
@@ -647,9 +1035,28 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("id=\"gamemode\""));
         assert!(EMBEDDED_INDEX.contains("id=\"maptype\""));
         assert!(EMBEDDED_INDEX.contains("id=\"gamespeed\""));
+        for victory in [
+            "science",
+            "culture",
+            "religious",
+            "diplomatic",
+            "domination",
+            "score",
+        ] {
+            assert!(
+                EMBEDDED_INDEX.contains(&format!("id=\"victory-{victory}\"")),
+                "browser setup is missing the {victory} victory checkbox"
+            );
+        }
+        assert!(EMBEDDED_INDEX.contains("victory_conditions: victoryConditions"));
         assert!(EMBEDDED_INDEX.contains("AI-only simulation"));
         assert!(EMBEDDED_INDEX.contains("Single player · later"));
         assert!(EMBEDDED_INDEX.contains("Multiplayer · later"));
+        assert!(EMBEDDED_INDEX.contains("id=\"head-newgame\""));
+        assert!(EMBEDDED_INDEX.contains("Start new sim"));
+        assert!(EMBEDDED_INDEX.contains("function startNewSimulation()"));
+        assert!(EMBEDDED_INDEX
+            .contains("document.getElementById(\"head-newgame\").onclick = startNewSimulation"));
         assert!(EMBEDDED_INDEX.contains("spectate: gameMode === \"ai_sim\""));
         assert!(!EMBEDDED_INDEX.contains("id=\"specchk\""));
         assert!(!EMBEDDED_INDEX.contains("RULES.map_sizes.filter"));
@@ -701,6 +1108,16 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("player log"));
         assert!(EMBEDDED_INDEX.contains("Spectator · combined summary"));
         assert!(EMBEDDED_INDEX.contains("let eventLogs = new Map()"));
+        assert!(EMBEDDED_INDEX.contains("function chronicleWorldEvents(next)"));
+        assert!(EMBEDDED_INDEX.contains("built the world's first"));
+        assert!(EMBEDDED_INDEX.contains("changed government from"));
+        assert!(!EMBEDDED_INDEX.contains("completed its turn"));
+        assert!(!EMBEDDED_INDEX
+            .contains("civilization${summaries.length === 1 ? \"\" : \"s\"} completed"));
+        assert!(EMBEDDED_INDEX.contains("id=\"strategysec\""));
+        assert!(EMBEDDED_INDEX
+            .contains("document.getElementById(\"strategysec\").style.display = fullMapSpectator"));
+        assert!(EMBEDDED_INDEX.contains("if (!fullMapSpectator && (SPEC || govs.length"));
         assert!(EMBEDDED_INDEX.contains(".sort((a, b) => b.score - a.score || a.id - b.id)"));
         assert!(EMBEDDED_INDEX.contains("class=\"diplomacy-rank\">#${rank}"));
         assert!(EMBEDDED_INDEX.contains("#side {\n    order: -1;"));
@@ -935,7 +1352,107 @@ mod tests {
         assert_ne!((session.game.turn, session.game.current), initial);
         assert!(steps
             .iter()
-            .all(|(pid, _)| *pid < session.game.players.len()));
+            .all(|step| step.player < session.game.players.len()));
+    }
+
+    #[test]
+    fn spectator_chronicle_reports_world_milestones_once() {
+        let mut params = current();
+        params.spectate = true;
+        let mut session = Session::new(params);
+        let game = &mut session.game;
+        let first_pos = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .map(|unit| game.units[&unit].pos)
+            .unwrap();
+        let second_pos = game
+            .player_unit_ids(1)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .map(|unit| game.units[&unit].pos)
+            .unwrap();
+        let first_city = game.found_city_for(0, first_pos, Some("Alpha".to_string()));
+        let captured_city = game.found_city_for(1, second_pos, Some("Beta".to_string()));
+        let before = ChronicleSnapshot::capture(game);
+
+        let district_pos = game.cities[&first_city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != first_pos)
+            .unwrap();
+        game.cities
+            .get_mut(&first_city)
+            .unwrap()
+            .districts
+            .insert("campus".to_string(), district_pos);
+        game.cities
+            .get_mut(&first_city)
+            .unwrap()
+            .wonders
+            .insert("pyramids".to_string(), district_pos);
+        game.players[0].religion = Some("Test Faith".to_string());
+        game.players[0].government = Some("classical_republic".to_string());
+        game.players[0].techs.insert("horseback_riding".to_string());
+        game.players[0].civics.insert("drama_poetry".to_string());
+        let city_state = game
+            .players
+            .iter()
+            .find(|player| player.is_minor && !player.is_barbarian)
+            .map(|player| player.id)
+            .unwrap();
+        game.players[0].envoys.push((city_state, 3));
+        {
+            let city = game.cities.get_mut(&captured_city).unwrap();
+            city.owner = 0;
+            city.occupied_from = Some(1);
+        }
+
+        let after = ChronicleSnapshot::capture(game);
+        let mut seen_districts = BTreeSet::new();
+        let events = chronicle_world_events(
+            &before,
+            &after,
+            0,
+            &[Action::KeepCity {
+                city: captured_city,
+            }],
+            &mut seen_districts,
+        );
+        let event_types: Vec<_> = events
+            .iter()
+            .filter_map(|event| event["type"].as_str())
+            .collect();
+        for expected in [
+            "wonder_built",
+            "religion_founded",
+            "district_first",
+            "city_captured",
+            "suzerain_changed",
+            "government_changed",
+        ] {
+            assert!(
+                event_types.contains(&expected),
+                "missing {expected}: {events:?}"
+            );
+        }
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["type"] == "era_first")
+                .count(),
+            2,
+            "technology and civics should each announce their Classical leader"
+        );
+
+        let later = ChronicleSnapshot::capture(game);
+        let repeat = chronicle_world_events(&after, &later, 0, &[], &mut seen_districts);
+        assert!(
+            repeat.is_empty(),
+            "unchanged milestones repeated: {repeat:?}"
+        );
     }
 
     #[test]

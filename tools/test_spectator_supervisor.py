@@ -178,6 +178,28 @@ class SourceSnapshotTests(unittest.TestCase):
                 self.assertTrue(supervisor.prepare_boundary_runtime(7.5))
         retry.assert_called_once_with(7.5)
 
+    def test_live_refresh_requires_both_fresh_code_and_a_safe_checkpoint(self):
+        checkpoint = Path("/tmp/civvis-live-refresh.json")
+        with (
+            patch.object(supervisor, "prepare_latest_once", return_value=False),
+            patch.object(supervisor, "capture_checkpoint") as capture,
+        ):
+            self.assertFalse(supervisor.prepare_live_refresh(8766, checkpoint))
+        capture.assert_not_called()
+
+        with (
+            patch.object(supervisor, "prepare_latest_once", return_value=True),
+            patch.object(supervisor, "capture_checkpoint", return_value=False),
+        ):
+            self.assertFalse(supervisor.prepare_live_refresh(8766, checkpoint))
+
+        with (
+            patch.object(supervisor, "prepare_latest_once", return_value=True),
+            patch.object(supervisor, "capture_checkpoint", return_value=True) as capture,
+        ):
+            self.assertTrue(supervisor.prepare_live_refresh(8766, checkpoint))
+        capture.assert_called_once_with(8766, checkpoint)
+
 
 class RecoveryTests(unittest.TestCase):
     def test_busy_server_detection_distinguishes_compute_from_idle(self):
@@ -335,6 +357,68 @@ class RecoveryTests(unittest.TestCase):
             checkpoint,
         )
         self.assertGreaterEqual(stop.call_count, 2)
+
+    def test_adopted_stale_runtime_refreshes_and_resumes_without_waiting_for_a_win(self):
+        args = SimpleNamespace(
+            port=8766,
+            players=4,
+            width=60,
+            height=38,
+            city_states=6,
+            turns=500,
+            map="pangaea",
+            speed="standard",
+            cooldown=0.0,
+            poll=0.01,
+            build_retry=0.01,
+            unresponsive_timeout=20.0,
+            busy_timeout=0.0,
+            stall_timeout=30.0,
+            checkpoint_interval=5.0,
+            max_resume_attempts=2,
+            no_open=True,
+            adopt_pid=321,
+        )
+        active = {"seed": 9, "turn": 42, "current": 2, "winner": None}
+        replacement = SimpleNamespace(pid=654)
+        events = []
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "civvis"
+            runtime.touch()
+            checkpoint = root / "save.json"
+
+            def prepare(_port, path):
+                path.write_text(json.dumps(active), encoding="utf-8")
+                events.append(("prepare", None))
+                return True
+
+            def stop(process, adopted_pid):
+                events.append(("stop", getattr(process, "pid", adopted_pid)))
+
+            def start(*args, **_kwargs):
+                events.append(("start", args[3]))
+                return replacement
+
+            with (
+                patch.object(supervisor, "parse_args", return_value=args),
+                patch.object(supervisor, "RUNTIME_BINARY", runtime),
+                patch.object(supervisor, "checkpoint_path", return_value=checkpoint),
+                patch.object(supervisor, "process_alive", return_value=True),
+                patch.object(supervisor, "runtime_matches", return_value=False),
+                patch.object(supervisor, "source_snapshot", return_value="fresh"),
+                patch.object(supervisor, "prepare_live_refresh", side_effect=prepare),
+                patch.object(supervisor, "capture_checkpoint", return_value=False),
+                patch.object(supervisor, "read_state", side_effect=[active, active, KeyboardInterrupt]),
+                patch.object(supervisor, "start_server", side_effect=start),
+                patch.object(supervisor, "wait_for_server", return_value=active),
+                patch.object(supervisor, "stop_server", side_effect=stop),
+            ):
+                self.assertEqual(supervisor.main(), 0)
+
+        self.assertLess(events.index(("prepare", None)), events.index(("stop", 321)))
+        self.assertIn(("start", checkpoint), events)
 
     def test_finished_server_is_stopped_before_update_and_successor_launch(self):
         args = SimpleNamespace(

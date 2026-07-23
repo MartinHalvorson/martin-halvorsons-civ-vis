@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Keep a CIVVIS spectator running, recover it, and update between games.
 
-The supervisor deliberately never replaces code during a healthy live match.
-It checkpoints active matches, revives a crashed or unresponsive server from
-the latest checkpoint, and nudges a spectator whose browser stopped stepping.
-Once a winner appears it retires that server immediately, leaving the rendered
-result screen visible while it tries the newest stable worktree. A successful
-build launches the fresh runtime; a broken or changing side edit cannot stall
-the cycle because the last verified runtime starts the successor instead. The
-browser's guarded result countdown cannot race either path ahead on stale code.
+The supervisor checkpoints active matches, revives a crashed or unresponsive
+server from the latest checkpoint, and nudges a spectator whose browser stopped
+stepping. Once a winner appears it retires that server immediately, leaving the
+rendered result screen visible while it tries the newest stable worktree. A
+broken or changing side edit cannot stall the cycle because the last verified
+runtime starts the successor instead. If that fallback was necessary, the
+supervisor keeps retrying and atomically resumes the match on fresh code as soon
+as a stable build and safe checkpoint are both available. The browser's guarded
+result countdown cannot race either path ahead on stale code.
 """
 
 from __future__ import annotations
@@ -207,6 +208,16 @@ def prepare_boundary_runtime(retry_seconds: float) -> bool:
         )
         return False
     prepare_latest(retry_seconds)
+    return True
+
+
+def prepare_live_refresh(port: int, path: Path) -> bool:
+    """Build current source and checkpoint before replacing a fallback runtime."""
+    if not prepare_latest_once():
+        return False
+    if not capture_checkpoint(port, path):
+        log("fresh build is ready but no safe checkpoint was captured; retrying")
+        return False
     return True
 
 
@@ -576,6 +587,8 @@ def main() -> int:
     busy_reported = False
     busy_check_at = 0.0
     busy_until = 0.0
+    refresh_pending = False
+    refresh_at = 0.0
 
     def launch_recovery(open_browser: bool = False) -> dict[str, Any]:
         nonlocal process, adopted_pid
@@ -633,6 +646,15 @@ def main() -> int:
                 return 2
             log(f"adopted PID {adopted_pid} on port {args.port}")
             state = read_state(args.port)
+
+        # A cold supervisor can inherit a verified but stale runtime, and a
+        # boundary may deliberately start that fallback when source is still
+        # changing. Do not make the successor play a whole game before trying
+        # the stable source again.
+        refresh_pending = not runtime_matches(source_snapshot())
+        refresh_at = time.monotonic()
+        if refresh_pending:
+            log("active runtime is behind the worktree; scheduling a safe live refresh")
 
         while True:
             state = read_state(args.port)
@@ -725,6 +747,23 @@ def main() -> int:
                 ):
                     checkpoint_at = now
                     checkpointed_progress = marker
+
+                if refresh_pending and now >= refresh_at:
+                    refresh_at = now + max(0.1, args.build_retry)
+                    log("retrying stable source for the active fallback runtime")
+                    if prepare_live_refresh(args.port, save_path):
+                        log("fresh runtime is ready; resuming the active game from checkpoint")
+                        state = launch_recovery()
+                        refresh_pending = False
+                        unavailable_since = None
+                        busy_reported = False
+                        busy_check_at = 0.0
+                        busy_until = 0.0
+                        last_progress = progress_marker(state)
+                        progress_at = time.monotonic()
+                        checkpointed_progress = last_progress
+                        checkpoint_at = progress_at
+                        continue
                 time.sleep(args.poll)
                 continue
 
@@ -743,7 +782,7 @@ def main() -> int:
             stop_server(process, adopted_pid)
             process = None
             adopted_pid = None
-            prepare_boundary_runtime(args.build_retry)
+            latest_ready = prepare_boundary_runtime(args.build_retry)
 
             remaining = args.cooldown - (time.monotonic() - finished_seen_at)
             if remaining > 0:
@@ -754,6 +793,8 @@ def main() -> int:
                 pass
             process = start_server(args.port, settings, False)
             state = wait_for_server(args.port, process)
+            refresh_pending = not latest_ready
+            refresh_at = time.monotonic() + max(0.1, args.build_retry)
             last_progress = progress_marker(state)
             progress_at = time.monotonic()
             checkpointed_progress = None

@@ -63,6 +63,7 @@
     flex: 0 0 auto; min-height: 110px; padding: 16px 18px 13px; border-bottom: 1px solid var(--line-soft);
     background: linear-gradient(180deg, #172825e8, #101d1be8);
   }
+  .side-head-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .brand { display: flex; align-items: center; gap: 10px; }
   .brand-mark {
     width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%;
@@ -76,6 +77,7 @@
     letter-spacing: .12em; text-transform: uppercase;
   }
   .tagline { color: var(--muted); font-size: 9px; letter-spacing: .16em; text-transform: uppercase; margin-top: 4px; }
+  #head-newgame { flex: 0 0 auto; margin: 0; padding: 6px 8px; font-size: 9px; white-space: nowrap; }
   #gameidentity { min-height: 34px; margin-top: 11px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
   .identity-copy { min-width: 0; }
   #gameidentity .civ-name { font: 600 15px/1.2 Georgia, serif; color: var(--text); }
@@ -329,6 +331,11 @@
   #newgame-options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: end; }
   #newgame-options button { margin: 0; height: 34px; }
   #newgame-options #newgame { grid-column: 1 / -1; }
+  .victory-options { grid-column: 1 / -1; padding: 9px 10px 10px; border: 1px solid var(--line-soft); border-radius: 9px; background: #09131080; }
+  .victory-options h2 { margin-bottom: 8px; }
+  .victory-option-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px 9px; }
+  .victory-option { display: flex; align-items: center; gap: 5px; min-width: 0; color: var(--muted); font-size: 9px; cursor: pointer; }
+  .victory-option input { margin: 0; }
 
   /* Tech and civic overlay */
   #tree {
@@ -497,12 +504,15 @@
 </div>
 <div id="side">
   <div class="side-head">
-    <div class="brand">
-      <div class="brand-mark">VI</div>
-      <div class="brand-copy">
-        <h1>Civilization VIS</h1>
-        <div class="tagline">Strategy simulator</div>
+    <div class="side-head-top">
+      <div class="brand">
+        <div class="brand-mark">VI</div>
+        <div class="brand-copy">
+          <h1>Civilization VIS</h1>
+          <div class="tagline">Strategy simulator</div>
+        </div>
       </div>
+      <button id="head-newgame" class="ghost" title="Start a new simulation" aria-label="Start a new simulation">＋ New sim</button>
     </div>
     <div id="gameidentity"></div>
   </div>
@@ -536,7 +546,18 @@
           <option value="epic">Epic · 750 turns</option>
           <option value="marathon">Marathon · 1500 turns</option>
         </select></label>
-        <button id="newgame">Start AI simulation</button>
+        <div class="victory-options" role="group" aria-labelledby="victory-options-title">
+          <h2 id="victory-options-title">Victory conditions</h2>
+          <div class="victory-option-grid">
+            <label class="victory-option"><input type="checkbox" id="victory-science" checked>Science</label>
+            <label class="victory-option"><input type="checkbox" id="victory-culture" checked>Culture</label>
+            <label class="victory-option"><input type="checkbox" id="victory-religious" checked>Religion</label>
+            <label class="victory-option"><input type="checkbox" id="victory-diplomatic" checked>Diplomacy</label>
+            <label class="victory-option"><input type="checkbox" id="victory-domination" checked>Domination</label>
+            <label class="victory-option"><input type="checkbox" id="victory-score" checked>Score</label>
+          </div>
+        </div>
+        <button id="newgame">Start new sim</button>
       </div>
     </div>
 
@@ -585,15 +606,17 @@
       <div class="sec"><div id="events" class="event-list"><div class="empty-state">The world is quiet—for now.</div></div></div>
     </div>
 
-    <div class="section-label"><span>Active strategy</span><span class="rule"></span></div>
-    <div class="sec strategy-sec">
-      <div class="strategy-track">
-        <div class="strategy-heading"><span>Research</span><button class="mini" onclick='openTree("techs")'>Tree</button></div>
-        <div id="research" class="progress-slot"></div>
-      </div>
-      <div class="strategy-track culture">
-        <div class="strategy-heading"><span>Civic development</span><button class="mini" onclick='openTree("civics")'>Tree</button></div>
-        <div id="civics" class="progress-slot"></div>
+    <div id="strategysec">
+      <div class="section-label"><span>Active strategy</span><span class="rule"></span></div>
+      <div class="sec strategy-sec">
+        <div class="strategy-track">
+          <div class="strategy-heading"><span>Research</span><button class="mini" onclick='openTree("techs")'>Tree</button></div>
+          <div id="research" class="progress-slot"></div>
+        </div>
+        <div class="strategy-track culture">
+          <div class="strategy-heading"><span>Civic development</span><button class="mini" onclick='openTree("civics")'>Tree</button></div>
+          <div id="civics" class="progress-slot"></div>
+        </div>
       </div>
     </div>
     <div class="sec" id="govsec" style="display:none"><h2>Government</h2><div id="gov"></div></div>
@@ -1104,7 +1127,7 @@ function addEvent(icon, text, turn, st) {
   events.unshift({ icon, text, turn });
   eventLogs.set(viewKey, events.slice(0, 12));
 }
-function actionSummary(next, batch, includeMovement) {
+function actionSummary(next, batch, includeMovement, includeMilestones = true) {
   const actions = batch.actions_taken;
   if (!Array.isArray(actions) || batch.stepped === undefined) return null;
   const actor = next.players[batch.stepped];
@@ -1130,8 +1153,8 @@ function actionSummary(next, batch, includeMovement) {
   if (deals.length) parts.push(`completed ${deals.length} mutually favorable ${deals.length === 1 ? "deal" : "deals"}`);
   if (research) parts.push(`began ${titleCase(research.tech)}`);
   if (civic) parts.push(`pursued ${titleCase(civic.civic)}`);
-  if (government) parts.push(`adopted ${titleCase(government.government)}`);
-  if (religion) parts.push("founded a religion");
+  if (includeMilestones && government) parts.push(`adopted ${titleCase(government.government)}`);
+  if (includeMilestones && religion) parts.push("founded a religion");
   if (productions.length) {
     const first = titleCase(itemName(productions[0].item));
     parts.push(productions.length === 1 ? `ordered ${first}` : `set ${productions.length} production orders`);
@@ -1153,10 +1176,10 @@ function chronicleActions(next) {
       const summary = actionSummary(next, batch, true);
       if (!summary || summary.actor.id !== viewer) continue;
       const shown = summary.parts.slice(0, 4);
+      if (!shown.length) continue;
       const more = summary.parts.length - shown.length;
-      addEvent("◈", shown.length
-        ? `${summary.actor.civ} ${shown.join(" · ")}${more ? ` · +${more} more` : ""}.`
-        : `${summary.actor.civ} completed its turn.`, next.turn, next);
+      addEvent("◈", `${summary.actor.civ} ${shown.join(" · ")}` +
+        `${more ? ` · +${more} more` : ""}.`, next.turn, next);
     }
     return;
   }
@@ -1164,7 +1187,7 @@ function chronicleActions(next) {
   // Omniscient spectator paints can contain several simulated turns. Keep
   // them together as one readable world summary instead of flooding the log
   // with every unit-level action from every civilization.
-  const summaries = batches.map(batch => actionSummary(next, batch, false)).filter(Boolean);
+  const summaries = batches.map(batch => actionSummary(next, batch, false, false)).filter(Boolean);
   if (!summaries.length) return;
   const majorActivity = summaries.filter(summary => summary.parts.length &&
     !summary.actor.is_minor && !summary.actor.is_barbarian);
@@ -1173,17 +1196,55 @@ function chronicleActions(next) {
   const clauses = noteworthy.slice(0, 3).map(summary =>
     `${summary.actor.civ}: ${summary.parts.slice(0, 2).join(", ")}`);
   const omitted = noteworthy.length - clauses.length;
-  const moves = summaries.reduce((total, summary) => total + summary.moves, 0);
-  let text;
-  if (clauses.length) {
-    text = clauses.join(" • ") + (omitted > 0 ? ` • +${omitted} more civilizations` : "");
-  } else {
-    text = `${summaries.length} civilization${summaries.length === 1 ? "" : "s"} completed ` +
-      `${summaries.length === 1 ? "its" : "their"} turn${summaries.length === 1 ? "" : "s"}` +
-      (moves ? ` · ${moves} unit maneuvers` : "");
-  }
+  if (!clauses.length) return;
+  const text = clauses.join(" • ") +
+    (omitted > 0 ? ` • +${omitted} more civilizations` : "");
   addEvent("◎", `${text}.`, next.turn, next);
 }
+
+function worldEventPresentation(event, next) {
+  const civ = id => (next.players[id] || {}).civ || "An unknown civilization";
+  switch (event.type) {
+    case "wonder_built":
+      return ["★", `${civ(event.player)} built ${titleCase(event.wonder)}.`];
+    case "religion_founded":
+      return ["✦", `${civ(event.player)} founded ${titleCase(event.religion)}.`];
+    case "district_first":
+      return ["◆", `${civ(event.player)} built the world's first ${titleCase(event.district)}.`];
+    case "city_captured":
+      return ["⚔", `${civ(event.player)} captured ${event.city} from ${civ(event.former)}.`];
+    case "suzerain_changed": {
+      const cityState = civ(event.city_state);
+      if (event.from === null || event.from === undefined)
+        return ["⚜", `${civ(event.to)} became Suzerain of ${cityState}.`];
+      if (event.to === null || event.to === undefined)
+        return ["⚜", `${civ(event.from)} lost suzerainty of ${cityState}.`];
+      return ["⚜", `${civ(event.to)} replaced ${civ(event.from)} as Suzerain of ${cityState}.`];
+    }
+    case "era_first": {
+      const era = titleCase(ERA_NAMES[event.era] || `era ${event.era}`);
+      return [event.track === "technology" ? "⌬" : "❦",
+        `${civ(event.player)} was first to enter the ${era} Era through ${event.track}.`];
+    }
+    case "government_changed":
+      if (event.from === null || event.from === undefined)
+        return ["♜", `${civ(event.player)} adopted ${titleCase(event.to)}.`];
+      return ["♜", `${civ(event.player)} changed government from ${titleCase(event.from)} to ${titleCase(event.to)}.`];
+    default:
+      return null;
+  }
+}
+
+function chronicleWorldEvents(next) {
+  const batches = Array.isArray(next.step_batches) ? next.step_batches : [];
+  for (const batch of batches) {
+    for (const event of (Array.isArray(batch.world_events) ? batch.world_events : [])) {
+      const presentation = worldEventPresentation(event, next);
+      if (presentation) addEvent(presentation[0], presentation[1], event.turn ?? next.turn, next);
+    }
+  }
+}
+
 function chronicle(prev, next) {
   if (!prev || prev.seed !== next.seed) {
     eventLogs = new Map();
@@ -1204,7 +1265,7 @@ function chronicle(prev, next) {
     const civ = (next.players[city.owner] || {}).civ || "An unknown civilization";
     if (!old && (viewer === null || city.owner === viewer))
       addEvent("🏛", `${civ} founded ${city.name}.`, next.turn, next);
-    else if (old && old.owner !== city.owner &&
+    else if (playerView && old && old.owner !== city.owner &&
              (viewer === null || city.owner === viewer || old.owner === viewer)) {
       const former = (prev.players[old.owner] || {}).civ || "its former ruler";
       addEvent("⚔", `${civ} captured ${city.name} from ${former}.`, next.turn, next);
@@ -1229,6 +1290,7 @@ function chronicle(prev, next) {
     if (majors.length && lastLeader !== undefined && majors[0].id !== lastLeader)
       addEvent("♛", `${majors[0].civ} has taken the score lead.`, next.turn, next);
     if (majors.length) lastLeaderByView.set(viewKey, majors[0].id);
+    chronicleWorldEvents(next);
   }
   chronicleActions(next);
 }
@@ -1253,9 +1315,11 @@ function render(st, recordChronicle = true) {
   }
   state = st;
   SPEC = !!st.spectate;
+  const fullMapSpectator = SPEC && (st.view_player === null || st.view_player === undefined);
   document.getElementById("humanfooter").style.display = SPEC ? "none" : "grid";
   document.getElementById("specbar").style.display = SPEC ? "block" : "none";
   document.getElementById("observer-settings").style.display = SPEC ? "block" : "none";
+  document.getElementById("strategysec").style.display = fullMapSpectator ? "none" : "block";
   if (SPEC) closeTrade();
   syncViewPlayer();
   if (newWorld && st.seed !== undefined) { lastSeed = st.seed; loadTacks(); }
@@ -1266,6 +1330,10 @@ function render(st, recordChronicle = true) {
       playerSelect.value = String(majors);
     document.getElementById("maptype").value = st.map.script || "pangaea";
     document.getElementById("gamespeed").value = st.game_speed || "standard";
+    for (const track of VICTORY_TRACKS) {
+      const checkbox = document.getElementById(`victory-${track.id}`);
+      if (checkbox) checkbox.checked = st.victory_conditions?.[track.id] !== false;
+    }
   }
   if (SPEC) sel = null;
   if (sel) sel = st.units.find(u => u.id === sel.id && u.owner === 0) || null;
@@ -2513,7 +2581,9 @@ function drawTopbar() {
     ? (ERA_NAMES[eraRaw] || `era ${eraRaw}`)
     : String(eraRaw || "ancient").replaceAll("_", " ");
   const contenders = state.players.filter(p => p.alive && !p.is_minor && !p.is_barbarian);
-  const victoryTracks = VICTORY_TRACKS.map(track => {
+  const victoryTracks = VICTORY_TRACKS
+    .filter(track => state.victory_conditions?.[track.id] !== false)
+    .map(track => {
     const ranked = [...contenders]
       .sort((a, b) => {
         const am = victoryMetric(a, track.id), bm = victoryMetric(b, track.id);
@@ -2886,7 +2956,8 @@ function drawSide(force = true) {
   const levies = legalFor("levy_military");
   const dealReplies = state.legal_actions.filter(a => a.type === "accept_deal" || a.type === "reject_deal");
   const gs = document.getElementById("govsec");
-  if (SPEC || govs.length || me.government || dedications.length || societies.length || congressVotes.length || levies.length || dealReplies.length) {
+  const fullMapSpectator = SPEC && (state.view_player === null || state.view_player === undefined);
+  if (!fullMapSpectator && (SPEC || govs.length || me.government || dedications.length || societies.length || congressVotes.length || levies.length || dealReplies.length)) {
     gs.style.display = "block";
     let politics =
       `<div class="row"><span class="muted">Current</span><b>${titleCase(me.government || "Unformed")}</b></div>` +
@@ -3433,22 +3504,27 @@ document.getElementById("viewplayer").onchange = ev => {
   const player = select.value === "spectator" ? null : +select.value;
   spectatePlayer(player);
 };
-document.getElementById("newgame").onclick = async () => {
+async function startNewSimulation() {
   const np = +document.getElementById("np").value;
   const gameMode = document.getElementById("gamemode").value;
   const mapScript = document.getElementById("maptype").value;
   const gameSpeed = document.getElementById("gamespeed").value;
+  const victoryConditions = Object.fromEntries(VICTORY_TRACKS.map(track =>
+    [track.id, document.getElementById(`victory-${track.id}`).checked]));
   sel = null; selCity = null;
   clearTimeout(specTimer); specPaused = false;
   document.getElementById("specpause").textContent = "⏸ Pause";
   render(await fetchJSON("/new", { method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({num_players: np, map_script: mapScript, game_speed: gameSpeed,
+                          victory_conditions: victoryConditions,
                           seed: Math.floor(Math.random() * 1e9), force: true,
                           spectate: gameMode === "ai_sim"}) }));
   reportSpecStatus();
   scheduleSpec(state);
-};
+}
+document.getElementById("newgame").onclick = startNewSimulation;
+document.getElementById("head-newgame").onclick = startNewSimulation;
 {
   const vs = document.getElementById("viewsel");
   vs.value = VIEW;

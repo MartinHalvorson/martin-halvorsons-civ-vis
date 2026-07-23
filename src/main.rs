@@ -280,6 +280,7 @@ fn main() {
                     max_turns: arg_optional(&args, "--turns")
                         .map(|turns| turns as u32)
                         .unwrap_or_else(|| game_speed.turn_limit()),
+                    victory_conditions: Default::default(),
                     num_city_states: auto_cs(&args, players),
                     spectate: args.iter().any(|a| a == "--spectate" || a == "--watch"),
                     supervised: args.iter().any(|a| a == "--supervised"),

@@ -434,19 +434,99 @@ impl AdvancedAi {
             .map(|(_, _, cid)| cid)
     }
 
-    fn religious_opening_viable(&self, g: &Game, pid: usize) -> bool {
-        if g.players[pid].religion.is_some()
-            || g.religions_founded() >= g.max_religions()
-            || g.turn > 110
+    fn religious_opening_rank(g: &Game, pid: usize) -> Option<(u8, f64, f64)> {
+        let player = &g.players[pid];
+        if !player.alive
+            || player.is_minor
+            || player.is_barbarian
+            || player.religion.is_some()
+            || player.prophet_pending
             || g.player_city_ids(pid).len() < 2
+        {
+            return None;
+        }
+        let city_ids = g.player_city_ids(pid);
+        let has_holy_site = city_ids
+            .iter()
+            .any(|cid| g.cities[cid].districts.contains_key("holy_site"));
+        let holy_site_planned = city_ids.iter().any(|cid| {
+            matches!(
+                g.cities[cid].queue.first(),
+                Some(Item::District { district, .. }) if district == "holy_site"
+            )
+        });
+        let best_site = city_ids
+            .iter()
+            .flat_map(|cid| g.district_sites(*cid, "holy_site"))
+            .map(|pos| g.district_yields("holy_site", pos).faith)
+            .max_by(f64::total_cmp);
+        if !has_holy_site && !holy_site_planned && best_site.is_none() {
+            return None;
+        }
+        // Once an empire has paid toward the race, keep that commitment ahead
+        // of an uninvested late entrant. The remaining comparisons select the
+        // best available Holy Site and faith economy instead of requiring the
+        // unusually rare +3 adjacency that previously left most maps with a
+        // single founder.
+        let commitment = if has_holy_site {
+            4
+        } else if holy_site_planned {
+            3
+        } else if player.techs.contains("astrology") {
+            2
+        } else if player.research.as_deref() == Some("astrology") {
+            1
+        } else {
+            0
+        };
+        Some((commitment, best_site.unwrap_or(0.0), player.faith))
+    }
+
+    fn religious_opening_viable(&self, g: &Game, pid: usize) -> bool {
+        let player = &g.players[pid];
+        if player.religion.is_some() {
+            return false;
+        }
+        if player.prophet_pending {
+            return true;
+        }
+        let founded = g.religions_founded();
+        let pending = g
+            .players
+            .iter()
+            .filter(|candidate| candidate.prophet_pending)
+            .count();
+        let claimed = founded + pending;
+        if claimed >= g.max_religions()
+            || g.turn > if founded > 0 { 180 } else { 120 }
+            || Self::religious_opening_rank(g, pid).is_none()
         {
             return false;
         }
-        g.player_city_ids(pid).into_iter().any(|cid| {
-            g.district_sites(cid, "holy_site")
-                .into_iter()
-                .any(|pos| g.district_yields("holy_site", pos).faith >= 3.0)
-        })
+
+        // Prophet slots are a global race. Let exactly the best uncommitted
+        // contenders pursue the slots that remain, while still allowing a
+        // newly founded rival religion to trigger a genuine counter-race.
+        let open_slots = g.max_religions() - claimed;
+        let mut contenders: Vec<_> = g
+            .players
+            .iter()
+            .filter_map(|candidate| {
+                Self::religious_opening_rank(g, candidate.id).map(|rank| (candidate.id, rank))
+            })
+            .collect();
+        contenders.sort_by(|(left_id, left), (right_id, right)| {
+            right
+                .0
+                .cmp(&left.0)
+                .then_with(|| right.1.total_cmp(&left.1))
+                .then_with(|| right.2.total_cmp(&left.2))
+                .then_with(|| left_id.cmp(right_id))
+        });
+        contenders
+            .into_iter()
+            .take(open_slots)
+            .any(|(contender, _)| contender == pid)
     }
 
     fn victory_focus(&self, g: &Game, pid: usize) -> VictoryFocus {
@@ -507,7 +587,11 @@ impl AdvancedAi {
         let religion = if player.religion.is_some() {
             40 + (60 * converted / living_majors.len().max(1)) as i32
         } else if self.religious_opening_viable(g, pid) {
-            42
+            if g.religions_founded() > 0 {
+                55
+            } else {
+                46
+            }
         } else {
             0
         };
@@ -807,6 +891,14 @@ impl AdvancedAi {
                 && my_power >= strongest_rival * 1.10)
         {
             GrandStrategy::Conquest
+        } else if victory.strategy == GrandStrategy::Religion
+            && self.religious_opening_viable(g, pid)
+        {
+            // A Prophet is a finite global race, not an economic goal that can
+            // wait until the generic city target is complete. Religious
+            // production only occupies one city, so the baseline governor can
+            // continue settlers and development in the rest of the empire.
+            GrandStrategy::Religion
         } else if victory.progress >= 65 {
             victory.strategy
         } else if cities.len() < desired_cities && has_site && g.turn < 175 {
@@ -1232,7 +1324,12 @@ impl AdvancedAi {
                     Some("astrology")
                 }
                 _ => None,
-            };
+            }
+            .or_else(|| {
+                (plan.strategy == GrandStrategy::Religion
+                    && !g.players[pid].techs.contains("astrology"))
+                .then_some("astrology")
+            });
             let goal_pick = forced_goal.and_then(|goal| {
                 available
                     .iter()
@@ -3083,22 +3180,89 @@ impl AdvancedAi {
                     }
                 }
             }
-            if let Some((faith, city, pos)) = best {
-                if faith >= 3.0 {
-                    let _ = g.apply(
-                        pid,
-                        &Action::Produce {
-                            city,
-                            item: Item::District {
-                                district: "holy_site".to_string(),
-                                pos,
-                            },
+            if let Some((_, city, pos)) = best {
+                let _ = g.apply(
+                    pid,
+                    &Action::Produce {
+                        city,
+                        item: Item::District {
+                            district: "holy_site".to_string(),
+                            pos,
                         },
-                    );
-                }
+                    },
+                );
             }
             return;
         }
+
+        let religion_unfounded = g.players[pid].religion.is_none();
+        let prophet_slot_open = g.religions_founded()
+            + g.players
+                .iter()
+                .filter(|player| player.prophet_pending)
+                .count()
+            < g.max_religions();
+        if religion_unfounded && !g.players[pid].prophet_pending && prophet_slot_open {
+            let shrine_planned = city_ids.iter().any(|cid| {
+                matches!(
+                    g.cities[cid].queue.first(),
+                    Some(Item::Building { building }) if building == "shrine"
+                )
+            });
+            let has_shrine = city_ids.iter().any(|cid| {
+                g.cities[cid]
+                    .buildings
+                    .iter()
+                    .any(|building| building == "shrine")
+            });
+            if !has_shrine && g.religions_founded() == 0 {
+                if shrine_planned {
+                    return;
+                }
+                for cid in &city_ids {
+                    let item = Item::Building {
+                        building: "shrine".to_string(),
+                    };
+                    if g.cities[cid].queue.is_empty()
+                        && g.cities[cid].districts.contains_key("holy_site")
+                        && g.can_produce(pid, *cid, &item)
+                    {
+                        let _ = g.apply(pid, &Action::Produce { city: *cid, item });
+                        return;
+                    }
+                }
+                return;
+            }
+
+            let prayers = Item::Project {
+                project: "holy_site_prayers".to_string(),
+            };
+            if let Some(city) = city_ids
+                .iter()
+                .filter(|cid| {
+                    g.cities[cid].queue.is_empty()
+                        && g.cities[cid].districts.contains_key("holy_site")
+                        && g.can_produce(pid, **cid, &prayers)
+                })
+                .max_by(|left, right| {
+                    g.city_yields(**left)
+                        .production
+                        .total_cmp(&g.city_yields(**right).production)
+                        .then_with(|| right.cmp(left))
+                })
+                .copied()
+            {
+                let _ = g.apply(
+                    pid,
+                    &Action::Produce {
+                        city,
+                        item: prayers,
+                    },
+                );
+            }
+            return;
+        }
+
         for building in ["shrine", "temple"] {
             for cid in &city_ids {
                 let item = Item::Building {
@@ -8871,6 +9035,125 @@ mod tests {
         assert_eq!(
             ai.victory_focus(&culture, 0).strategy,
             GrandStrategy::Culture
+        );
+    }
+
+    #[test]
+    fn religious_openings_fill_available_prophet_slots_with_stable_contenders() {
+        let mut game = Game::new_full(4, 34, 20, 76_101, 300, 0, false);
+        let mut capitals = Vec::new();
+        for pid in 0..4 {
+            game.current = pid;
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+            capitals.push(game.player_city_ids(pid)[0]);
+        }
+        for (pid, capital) in capitals.into_iter().enumerate() {
+            let anchor = game.cities[&capital].pos;
+            found_nearby_test_city(&mut game, pid, anchor);
+        }
+        game.current = 0;
+        game.turn = 60;
+
+        let ai = AdvancedAi::new();
+        let contenders: Vec<_> = (0..4)
+            .filter(|pid| ai.religious_opening_viable(&game, *pid))
+            .collect();
+        assert_eq!(contenders.len(), game.max_religions().min(4));
+
+        let founder = contenders[0];
+        game.players[founder].religion = Some("Rival Faith".to_string());
+        let counters = (0..4)
+            .filter(|pid| ai.religious_opening_viable(&game, *pid))
+            .count();
+        assert_eq!(counters, (game.max_religions() - 1).min(3));
+    }
+
+    #[test]
+    fn ordinary_religious_plan_routes_research_to_astrology() {
+        let mut game = Game::new_full(1, 20, 14, 76_102, 120, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Religion,
+            target_player: None,
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+
+        AdvancedAi::new().advanced_research(&mut game, 0, &plan);
+        assert_eq!(game.players[0].research.as_deref(), Some("astrology"));
+    }
+
+    #[test]
+    fn religious_production_builds_prophet_infrastructure_then_runs_prayers() {
+        let mut game = Game::new_full(1, 20, 14, 76_103, 120, 0, false);
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = game.player_city_ids(0)[0];
+        game.players[0].techs.insert("astrology".to_string());
+        install_ai_test_district(&mut game, city, "holy_site");
+        game.cities.get_mut(&city).unwrap().queue.clear();
+
+        let ai = AdvancedAi::new();
+        ai.religious_production(&mut game, 0);
+        assert!(matches!(
+            game.cities[&city].queue.first(),
+            Some(Item::Building { building }) if building == "shrine"
+        ));
+
+        game.cities.get_mut(&city).unwrap().queue.clear();
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("shrine".to_string());
+        ai.religious_production(&mut game, 0);
+        assert!(matches!(
+            game.cities[&city].queue.first(),
+            Some(Item::Project { project }) if project == "holy_site_prayers"
+        ));
+    }
+
+    #[test]
+    fn competitive_religious_opening_produces_multiple_founders() {
+        let mut game = Game::new_full(4, 24, 16, 76_104, 110, 0, false);
+        let mut ais = AdvancedAi::fleet(&game);
+        run_game(&mut game, &mut ais);
+        assert!(
+            game.religions_founded() >= 2,
+            "a stock Prophet race should not end with one uncontested founder: turn {}, {:?}",
+            game.turn,
+            game.players
+                .iter()
+                .take(4)
+                .map(|player| (
+                    &player.civ,
+                    &player.religion,
+                    player.prophet_pending,
+                    player.gpp.get("prophet"),
+                    player.techs.contains("astrology"),
+                    game.player_city_ids(player.id)
+                        .iter()
+                        .filter(|city| game.cities[city].districts.contains_key("holy_site"))
+                        .count(),
+                ))
+                .collect::<Vec<_>>()
         );
     }
 
