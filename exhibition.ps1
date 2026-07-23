@@ -68,10 +68,24 @@ function Start-Evolve {
     Log "evolve launched"
 }
 
+# Windows keeps an exe locked for a moment after the process using it dies, so
+# a promote right behind a Stop-Process can still be refused. Uncaught, that
+# threw out of the whole iteration - taking the game-over check with it and
+# leaving the exhibition dark until a later pass happened to succeed. Retry
+# briefly instead, and let the caller carry on either way.
 function Promote-Staged {
-    Copy-Item "$binRun\civvis-next.exe" "$binRun\civvis-gui.exe" -Force
-    Copy-Item "$binRun\civvis-next.exe" "$binRun\civvis-evolve.exe" -Force
-    Remove-Item "$binRun\civvis-next.exe" -Force
+    for ($attempt = 0; $attempt -lt 12; $attempt++) {
+        try {
+            Copy-Item "$binRun\civvis-next.exe" "$binRun\civvis-gui.exe" -Force -ErrorAction Stop
+            Copy-Item "$binRun\civvis-next.exe" "$binRun\civvis-evolve.exe" -Force -ErrorAction Stop
+            Remove-Item "$binRun\civvis-next.exe" -Force -ErrorAction SilentlyContinue
+            return $true
+        } catch {
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    Log "staged build is still locked; leaving it for the next pass"
+    return $false
 }
 
 # Deal a fresh game into the running server. POST /new inherits the current
@@ -119,7 +133,7 @@ while ($true) {
         if (-not $guiUp -and -not $settling) {
             Get-Process civvis-gui -ErrorAction SilentlyContinue | Stop-Process -Force
             Start-Sleep -Milliseconds 300
-            if (Test-Path "$binRun\civvis-next.exe") { Promote-Staged }
+            if (Test-Path "$binRun\civvis-next.exe") { Promote-Staged | Out-Null }
             if (Test-Path "$binRun\civvis-gui.exe") { Start-Gui; $lastLaunch = Get-Date }
         }
         # Evolve is a twelve-thread CPU hog and only useful in the background.
@@ -212,7 +226,7 @@ while ($true) {
                 Get-Process civvis-gui -ErrorAction SilentlyContinue | Stop-Process -Force
                 Get-Process civvis-evolve -ErrorAction SilentlyContinue | Stop-Process -Force
                 Start-Sleep -Milliseconds 200
-                Promote-Staged
+                Promote-Staged | Out-Null
                 Start-Gui
                 # Evolve is deliberately not restarted here. The revive check
                 # brings it back once the server is listening, so the new game
