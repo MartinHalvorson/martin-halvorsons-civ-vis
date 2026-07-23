@@ -589,6 +589,7 @@
     <div class="footer-actions" id="humanfooter">
       <button class="primary" id="endturn">End turn · Enter</button>
       <button id="tradebtn" title="Compare all mutually acceptable offers (D)">⚖ Quick Deals · D</button>
+      <button id="autoplaybtn" title="Let the agent play your seat (A · hold Shift for ten turns)">▶▶ Auto-play · A</button>
     </div>
     <div id="specbar" style="display:none">
       <div class="spec-controls">
@@ -3554,6 +3555,7 @@ document.addEventListener("keydown", ev => {
     sel = null; selCity = null; lensOn = false; tackMode = false;
     modeline(); draw(); drawSide(); drawUbar();
   }
+  else if (ev.key.toLowerCase() === "a" && !SPEC) autoplay(ev.shiftKey ? 10 : 1);
   else if (ev.key === "1") nextAction();
   else if (ev.key === "2") { lensOn = !lensOn; tackMode = false; modeline(); draw(); }
   else if (ev.key === "3") { tackMode = !tackMode; lensOn = false; modeline(); draw(); }
@@ -3572,6 +3574,36 @@ document.addEventListener("keyup", ev => {
   altTap = false;
 });
 document.getElementById("endturn").onclick = () => { sel = null; send({type: "end_turn"}); };
+// Hand your own seat to the agent for a turn or ten. Useful for skipping a
+// decided game, and for seeing how the agent would play the position you are
+// in — which is most of why Unciv has it.
+let autoplaying = false;
+async function autoplay(turns) {
+  if (SPEC || autoplaying) return;
+  autoplaying = true;
+  const button = document.getElementById("autoplaybtn");
+  const label = button.textContent;
+  button.textContent = `▶▶ Playing ${turns} turn${turns === 1 ? "" : "s"}…`;
+  button.disabled = true;
+  try {
+    sel = null;
+    render(await fetchJSON("/autoplay", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({turns}),
+    }));
+  } catch (e) {
+    const errEl = document.getElementById("err");
+    errEl.textContent = `auto-play failed: ${e}`;
+    errEl.style.display = "block";
+    setTimeout(() => errEl.style.display = "none", 2500);
+  } finally {
+    button.textContent = label;
+    button.disabled = false;
+    autoplaying = false;
+  }
+}
+document.getElementById("autoplaybtn").onclick = ev => autoplay(ev.shiftKey ? 10 : 1);
 document.getElementById("tradebtn").onclick = () => openTrade();
 document.getElementById("paneltoggle").onclick = () => togglePanel();
 document.getElementById("specdirector").onclick = () => setDirector(!DIRECTOR);

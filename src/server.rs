@@ -1,6 +1,6 @@
 //! Zero-dependency local HTTP server for the human-vs-AI browser GUI.
 //! Endpoints: GET / (page), GET /state, GET /save, GET /rules, GET /pedia,
-//! POST /action, POST /step, POST /spectator-status, POST /new.
+//! POST /action, POST /step, POST /autoplay, POST /spectator-status, POST /new.
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -187,6 +187,42 @@ impl Session {
             .map(|(_, action)| action.clone())
             .collect();
         (pid, actions)
+    }
+
+    /// Hand the player's own seat to the AI for `turns` turns.
+    ///
+    /// Unciv calls this AutoPlay, and it earns its keep in the same two
+    /// places: skipping a stretch of a game that has already been decided,
+    /// and watching how the agent would have played a position you are in.
+    /// Seat 0 already has an agent built for it — in a human game it simply
+    /// never gets asked — so this is a matter of asking it.
+    pub fn autoplay(&mut self, turns: u32) -> usize {
+        let mut played = 0;
+        for _ in 0..turns.min(500) {
+            if self.game.winner.is_some() || !self.game.players[0].alive {
+                break;
+            }
+            self.ais[0].take_turn(&mut self.game, 0);
+            if self.game.current == 0 && self.game.winner.is_none() {
+                let _ = self.game.apply(0, &Action::EndTurn);
+            }
+            let g = &mut self.game;
+            let mut guard = 0;
+            while g.winner.is_none()
+                && g.current != 0
+                && g.players[0].alive
+                && guard < 2 * g.players.len()
+            {
+                let pid = g.current;
+                self.ais[pid].take_turn(g, pid);
+                if g.current == pid && g.winner.is_none() {
+                    let _ = g.apply(pid, &Action::EndTurn);
+                }
+                guard += 1;
+            }
+            played += 1;
+        }
+        played
     }
 
     pub fn act(&mut self, v: &Value) -> Option<String> {
@@ -450,6 +486,21 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
                     "difficulties": r.difficulties, "speeds": r.speeds,
                 }),
             );
+        }
+        ("POST", "/autoplay") => {
+            let mut session = sh.session.lock().unwrap();
+            if session.params.spectate {
+                drop(session);
+                respond_json(stream, &json!({"error": "a spectated game is already playing itself"}));
+                return;
+            }
+            let turns = parsed["turns"].as_u64().unwrap_or(1).clamp(1, 500) as u32;
+            let played = session.autoplay(turns);
+            let mut out = session.state();
+            out["autoplayed"] = json!(played);
+            drop(session);
+            decorate(&mut out, sh);
+            respond_json(stream, &out);
         }
         ("GET", "/pedia") => {
             // Generated from the ruleset in play, mods included, so the GUI
