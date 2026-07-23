@@ -2300,7 +2300,7 @@ function directorCue(prev, next) {
   for (const unit of next.units) {
     const old = oldUnits.get(unit.id);
     if (old && majorOwners.has(unit.owner) && key(old.pos) !== key(unit.pos)) offer(unit.pos, 2, {
-      unitId:unit.id, silent:true, zoom:1.18
+      unitId:unit.id, silent:true, zoom:1.32
     });
     if (old && majorOwners.has(unit.owner) && unit.hp < old.hp) offer(unit.pos, 4, {
       kicker:"Battle joined", title:`${next.players[unit.owner].civ} takes fire`,
@@ -5547,8 +5547,13 @@ mini.addEventListener("click", ev => {
   const cs = Math.min(192 / (state.map.width + 1),
                       132 / (state.map.height + 1));
   const col = (ev.clientX - r.left - 4) / cs, row = (ev.clientY - r.top - 4) / cs;
-  cam.x = S * SQ3 * col; cam.y = S * 1.5 * row;
-  draw(); drawMini();
+  takeCameraControl();
+  let x = S * SQ3 * col;
+  if (mapWrapsX()) x += Math.round((cam.x - x) / WW()) * WW();
+  const y = clampCameraY(S * 1.5 * row);
+  if (REDUCED_MOTION_QUERY.matches) {
+    cam.x = x; cam.y = y; draw(); drawMini();
+  } else cameraFlight = {x, y, scale:cam.scale};
 });
 
 // ---------------------------------------------------------------- panels
@@ -6635,7 +6640,7 @@ function startCameraFollow(unitId) {
   if (SPEC && DIRECTOR) setDirector(false);
   cameraFlight = null; cameraZoom = null; clearCameraInertia();
   cameraFollowUnitId = unit.id; cameraFollowManual = true;
-  cameraFollowScale = Math.max(cam.scale, cinemaActive() ? 1.18 : 1.05);
+  cameraFollowScale = Math.max(cam.scale, cinemaActive() ? 1.42 : 1.12);
   updateCameraFollowChip(); wakeCinema();
   return true;
 }
@@ -7010,7 +7015,7 @@ window.addEventListener("mouseup", ev => {
     if (released && dragMoved && performance.now() - released.lastT < 90 &&
         !REDUCED_MOTION_QUERY.matches) {
       cameraInertia = released.rotate
-        ? {vx:0, vy:0, vrot:released.vrot, vtilt:released.vtilt}
+        ? {vx:0, vy:0, vrot:released.vrot * .32, vtilt:released.vtilt * .25}
         : {vx:released.vx, vy:released.vy, vrot:0, vtilt:0};
     }
     return;
