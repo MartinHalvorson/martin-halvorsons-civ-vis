@@ -612,7 +612,24 @@ impl AdvancedAi {
         } else {
             0
         };
+        // A launch program cannot raise project progress until the AI has
+        // already chosen Science long enough to unlock Rocketry and build a
+        // Spaceport. Count progress along that prerequisite path so adaptive
+        // agents can make the initial commitment instead of remaining stuck
+        // at the old 25% floor forever.
+        let rocketry_path: Vec<_> = g
+            .rules
+            .techs
+            .keys()
+            .filter(|tech| self.tech_leads_to(g, tech, "rocketry"))
+            .collect();
+        let completed_rocketry_path = rocketry_path
+            .iter()
+            .filter(|tech| player.techs.contains(tech.as_str()))
+            .count();
+        let readiness = 25 + (40 * completed_rocketry_path / rocketry_path.len().max(1)) as i32;
         let science = tech_progress
+            .max(readiness)
             .max(project_progress)
             .max(travel_progress)
             .max((player.civ == "China") as i32 * 45);
@@ -920,13 +937,14 @@ impl AdvancedAi {
                 && my_power >= strongest_rival * 1.10)
         {
             GrandStrategy::Conquest
-        } else if victory.strategy == GrandStrategy::Religion
-            && self.religious_opening_viable(g, pid)
-        {
+        } else if self.religious_opening_viable(g, pid) {
             // A Prophet is a finite global race, not an economic goal that can
             // wait until the generic city target is complete. Religious
             // production only occupies one city, so the baseline governor can
             // continue settlers and development in the rest of the empire.
+            // Keep that commitment independent of the generic progress race:
+            // improving a contender's science readiness must not make it
+            // abandon a nearly earned, globally limited Prophet.
             GrandStrategy::Religion
         } else if victory.progress >= 65 {
             victory.strategy
@@ -1376,12 +1394,7 @@ impl AdvancedAi {
                     Some("astrology")
                 }
                 _ => None,
-            }
-            .or_else(|| {
-                (plan.strategy == GrandStrategy::Religion
-                    && !g.players[pid].techs.contains("astrology"))
-                .then_some("astrology")
-            });
+            };
             let goal_pick = forced_goal.and_then(|goal| {
                 available
                     .iter()
@@ -10001,6 +10014,41 @@ mod tests {
         game.players[0].civ = "China".to_string();
         game.players[0].techs.clear();
         assert_eq!(ai.victory_focus(&game, 0).progress, 45);
+    }
+
+    #[test]
+    fn adaptive_science_readiness_commits_to_the_rocketry_path() {
+        let mut game = Game::new(2, 24, 16, 76_001, 300, 0);
+        let ai = AdvancedAi::new();
+        let rocketry_path: Vec<String> = game
+            .rules
+            .techs
+            .keys()
+            .filter(|tech| ai.tech_leads_to(&game, tech, "rocketry"))
+            .cloned()
+            .collect();
+        for tech in rocketry_path
+            .iter()
+            .filter(|tech| tech.as_str() != "rocketry")
+        {
+            game.players[0].techs.insert(tech.clone());
+        }
+        game.players[0].dvp = 10;
+
+        let focus = ai.victory_focus(&game, 0);
+        assert_eq!(focus.strategy, GrandStrategy::Science);
+        assert!(focus.progress > 50);
+
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Science,
+            target_player: None,
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        };
+        ai.advanced_research(&mut game, 0, &plan);
+        assert_eq!(game.players[0].research.as_deref(), Some("rocketry"));
     }
 
     #[test]
