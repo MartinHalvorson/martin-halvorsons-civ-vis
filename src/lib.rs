@@ -1668,9 +1668,7 @@ mod tests {
             .find(|t| t.feature.as_deref() == Some("crater_lake"))
         {
             assert!(g.rules.is_passable(t));
-<<<<<<< Updated upstream
             assert_eq!(g.rules.tile_yields(t).faith, 5.0);
-=======
         }
         if let Some(t) = g
             .map
@@ -1679,7 +1677,6 @@ mod tests {
             .find(|t| t.feature.as_deref() == Some("uluru"))
         {
             assert!(!g.rules.is_passable(t));
->>>>>>> Stashed changes
         }
         // battering ram lets melee hit ancient walls at full strength
         let mut g = Game::new_full(2, 24, 16, 9, 60, 0, false);
