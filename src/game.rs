@@ -7404,6 +7404,10 @@ struct HeightField {
     /// The state of the world this sweep is reading. Worked out once when
     /// the sweep starts rather than per unit.
     stamp: u64,
+    /// How many tiles a table would need, or zero for a sweep that memoizes
+    /// nothing. The tables themselves are only built if something asks for a
+    /// height — a sweep whose every unit is already cached never does.
+    tiles: usize,
     sight: Vec<i16>,
     /// Blocker heights for a viewer who sees through woods, and for one who
     /// does not. Woods are the only thing the two disagree about.
@@ -7417,6 +7421,7 @@ impl HeightField {
     fn none() -> HeightField {
         HeightField {
             stamp: 0,
+            tiles: 0,
             sight: Vec::new(),
             open: Vec::new(),
             wooded: Vec::new(),
@@ -7426,10 +7431,22 @@ impl HeightField {
     fn for_map(stamp: u64, tiles: usize) -> HeightField {
         HeightField {
             stamp,
-            sight: vec![HeightField::UNKNOWN; tiles],
-            open: vec![HeightField::UNKNOWN; tiles],
-            wooded: vec![HeightField::UNKNOWN; tiles],
+            tiles,
+            sight: Vec::new(),
+            open: Vec::new(),
+            wooded: Vec::new(),
         }
+    }
+
+    /// The table for one kind of height, built on first use.
+    fn table(tiles: usize, cache: &mut Vec<i16>) -> Option<&mut Vec<i16>> {
+        if tiles == 0 {
+            return None;
+        }
+        if cache.is_empty() {
+            cache.resize(tiles, HeightField::UNKNOWN);
+        }
+        Some(cache)
     }
 }
 
@@ -7458,6 +7475,10 @@ pub struct VisionCache {
     units: Vec<u32>,
     keys: Vec<u64>,
     seen: Vec<TileBits>,
+    /// Which wonders exist anywhere in the world. Deciding whether a city may
+    /// start one asks this of every wonder in the ruleset, and answering it
+    /// from scratch meant walking every city and every tile each time.
+    built_wonders: Option<BTreeSet<String>>,
 }
 
 impl VisionCache {
@@ -7466,6 +7487,14 @@ impl VisionCache {
         self.units.clear();
         self.keys.clear();
         self.seen.clear();
+        self.built_wonders = None;
+    }
+
+    fn wonders(&mut self, stamp: u64, build: impl FnOnce() -> BTreeSet<String>) -> &BTreeSet<String> {
+        if self.stamp != stamp {
+            self.reset(stamp);
+        }
+        self.built_wonders.get_or_insert_with(build)
     }
 
     fn lookup(&mut self, stamp: u64, uid: u32, key: u64) -> Option<&TileBits> {
@@ -14532,6 +14561,9 @@ impl Game {
     /// effective delegation, while the stored envoy balance remains unchanged.
     pub fn envoys_at(&self, pid: usize, minor: usize) -> i64 {
         let raw = self.raw_envoys_at(pid, minor);
+        if self.players[pid].governor_roster.is_empty() {
+            return raw;
+        }
         let Some(city) = self.established_governor_city(pid, "amani") else {
             return raw;
         };
@@ -15847,14 +15879,21 @@ impl Game {
     }
 
     pub fn wonder_built(&self, name: &str) -> bool {
-        self.cities
-            .values()
-            .any(|city| city.wonders.contains_key(name))
-            || self
-                .map
-                .tiles
-                .values()
-                .any(|tile| tile.wonder.as_deref() == Some(name))
+        let stamp = self.world_stamp();
+        let mut cache = self.vision.borrow_mut();
+        cache.wonders(stamp, || {
+            let mut built: BTreeSet<String> = BTreeSet::new();
+            for city in self.cities.values() {
+                built.extend(city.wonders.keys().cloned());
+            }
+            for tile in self.map.tiles.values() {
+                if let Some(wonder) = &tile.wonder {
+                    built.insert(wonder.clone());
+                }
+            }
+            built
+        })
+        .contains(name)
     }
 
     fn empire_building_sum(
@@ -18094,11 +18133,12 @@ impl Game {
         let Some(index) = self.map.tiles.index_of(pos) else {
             return self.sight_height(pos);
         };
-        if heights.sight.is_empty() {
+        let tiles = heights.tiles;
+        let Some(cache) = HeightField::table(tiles, &mut heights.sight) else {
             return self.sight_height(pos);
-        }
-        if heights.sight[index] != HeightField::UNKNOWN {
-            return heights.sight[index] as i32;
+        };
+        if cache[index] != HeightField::UNKNOWN {
+            return cache[index] as i32;
         }
         let height = self.sight_height(pos);
         heights.sight[index] = height as i16;
@@ -18115,14 +18155,15 @@ impl Game {
         let Some(index) = self.map.tiles.index_of(pos) else {
             return self.blocker_height(pos, see_through_woods);
         };
-        let cache = if see_through_woods {
+        let tiles = heights.tiles;
+        let slot = if see_through_woods {
             &mut heights.open
         } else {
             &mut heights.wooded
         };
-        if cache.is_empty() {
+        let Some(cache) = HeightField::table(tiles, slot) else {
             return self.blocker_height(pos, see_through_woods);
-        }
+        };
         if cache[index] != HeightField::UNKNOWN {
             return cache[index] as i32;
         }
@@ -18607,6 +18648,7 @@ impl Game {
                 city.pos.1 as u64,
                 city.encampment_pillaged as u64,
                 city.districts.len() as u64,
+                city.wonders.len() as u64,
             ]);
         }
         stamp
@@ -31684,14 +31726,12 @@ impl Game {
     }
 
     fn established_governor_city(&self, pid: usize, governor: &str) -> Option<u32> {
-        self.governor_established(pid, governor)
-            .then(|| {
-                self.players[pid]
-                    .governor_roster
-                    .get(governor)
-                    .and_then(|state| state.city)
-            })
-            .flatten()
+        let state = self.players.get(pid)?.governor_roster.get(governor)?;
+        let city = state.city?;
+        let spec = self.rules.governors.get(governor)?;
+        (self.turn >= state.assigned_turn + self.standard_duration(spec.establish_turns)
+            && self.turn >= state.disabled_until)
+            .then_some(city)
     }
 
     fn amani_city_state_for_effect(&self, pid: usize, effect: &str) -> Option<(u32, usize)> {
