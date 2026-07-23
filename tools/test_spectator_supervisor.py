@@ -420,6 +420,77 @@ class RecoveryTests(unittest.TestCase):
             path.write_text(json.dumps({**active, "winner": 1}), encoding="utf-8")
             self.assertIsNone(supervisor.checkpoint_marker(path))
 
+    def test_finished_result_archives_exact_save_and_runtime_metadata(self):
+        class Response:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return self.payload
+
+        save = {
+            "seed": 91,
+            "turn": 188,
+            "winner": 2,
+            "victory_type": "culture",
+            "game_speed": "standard",
+            "max_turns": 500,
+            "map_script": "pangaea",
+        }
+        payload = json.dumps(save, separators=(",", ":")).encode()
+        state = {
+            **save,
+            "server_instance": 4321,
+            "players": [
+                {
+                    "id": 2,
+                    "civ": "Egypt",
+                    "score": 400,
+                    "cities": 6,
+                    "faith": 120,
+                    "military": 90,
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime_metadata = root / "build.json"
+            runtime_metadata.write_text(
+                json.dumps({"revision": "abc123", "dirty": False}),
+                encoding="utf-8",
+            )
+            with (
+                patch.object(supervisor, "urlopen", return_value=Response(payload)),
+                patch.object(supervisor, "RUNTIME_METADATA", runtime_metadata),
+            ):
+                archived = supervisor.archive_result(8766, state, root / "results")
+
+            self.assertIsNotNone(archived)
+            assert archived is not None
+            self.assertEqual(archived.read_bytes(), payload)
+            result_paths = list((root / "results").glob("*.result.json"))
+            self.assertEqual(len(result_paths), 1)
+            result = json.loads(result_paths[0].read_text(encoding="utf-8"))
+            self.assertEqual(result["runtime"]["revision"], "abc123")
+            self.assertEqual(result["save"], archived.name)
+            self.assertIn("winner Egypt", result["standings"])
+
+    def test_active_result_is_never_archived(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory)
+            self.assertIsNone(
+                supervisor.archive_result(
+                    8766, {"seed": 1, "winner": None}, destination
+                )
+            )
+            self.assertEqual(list(destination.iterdir()), [])
+
     def test_cold_supervisor_start_resumes_an_active_checkpoint(self):
         args = SimpleNamespace(
             port=8766,
@@ -604,6 +675,7 @@ class RecoveryTests(unittest.TestCase):
                     "read_state",
                     side_effect=[finished, KeyboardInterrupt],
                 ),
+                patch.object(supervisor, "archive_result") as archive,
                 patch.object(supervisor, "stop_server", side_effect=stop),
             ):
                 self.assertEqual(supervisor.main(), 0)
@@ -612,6 +684,7 @@ class RecoveryTests(unittest.TestCase):
         launched = events.index(("start", 654))
         self.assertLess(retired, launched)
         self.assertNotIn(("prepare", None), events)
+        archive.assert_called_once_with(8766, finished)
 
 
 if __name__ == "__main__":

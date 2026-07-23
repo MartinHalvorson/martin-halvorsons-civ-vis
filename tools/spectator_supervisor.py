@@ -36,6 +36,7 @@ BINARY = ROOT / "target" / "release" / ("civvis.exe" if os.name == "nt" else "ci
 RUNTIME_BINARY = ROOT / "target" / "spectator" / BINARY.name
 RUNTIME_METADATA = RUNTIME_BINARY.parent / "build.json"
 CHECKPOINT_DIR = RUNTIME_BINARY.parent / "checkpoints"
+RESULTS_DIR = RUNTIME_BINARY.parent / "results"
 RUNTIME_INPUTS = ("Cargo.toml", "Cargo.lock", "build.rs", "src", "data", "web")
 
 
@@ -393,6 +394,67 @@ def capture_checkpoint(port: int, path: Path, timeout: float = 30.0) -> bool:
         return True
     except (OSError, URLError, ValueError):
         return False
+
+
+def archive_result(
+    port: int,
+    state: dict[str, Any],
+    directory: Path | None = None,
+    timeout: float = 30.0,
+) -> Path | None:
+    """Preserve the exact final save and source metadata before handoff."""
+    if state.get("winner") is None:
+        return None
+    try:
+        with urlopen(f"http://127.0.0.1:{port}/save", timeout=timeout) as response:
+            payload = response.read()
+        save = json.loads(payload)
+        if (
+            not isinstance(save, dict)
+            or save.get("seed") != state.get("seed")
+            or save.get("winner") is None
+        ):
+            return None
+
+        archived_at = datetime.now(timezone.utc)
+        stamp = archived_at.strftime("%Y%m%dT%H%M%S.%fZ")
+        instance = state.get("server_instance", "unknown")
+        stem = (
+            f"{stamp}-seed-{save.get('seed')}-turn-{save.get('turn')}"
+            f"-instance-{instance}"
+        )
+        destination = directory if directory is not None else RESULTS_DIR
+        destination.mkdir(parents=True, exist_ok=True)
+        save_path = destination / f"{stem}.save.json"
+        staged_save = save_path.with_suffix(save_path.suffix + ".new")
+        staged_save.write_bytes(payload)
+        os.replace(staged_save, save_path)
+
+        try:
+            runtime = json.loads(RUNTIME_METADATA.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            runtime = None
+        result = {
+            "archived_at": archived_at.isoformat(),
+            "server_instance": state.get("server_instance"),
+            "seed": save.get("seed"),
+            "turn": save.get("turn"),
+            "winner": save.get("winner"),
+            "victory_type": save.get("victory_type"),
+            "game_speed": save.get("game_speed"),
+            "max_turns": save.get("max_turns"),
+            "map_script": save.get("map_script"),
+            "standings": result_standings(state),
+            "runtime": runtime,
+            "save": save_path.name,
+        }
+        result_path = destination / f"{stem}.result.json"
+        staged_result = result_path.with_suffix(result_path.suffix + ".new")
+        staged_result.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        os.replace(staged_result, result_path)
+        return save_path
+    except (OSError, URLError, ValueError, TypeError):
+        return None
 
 
 def checkpoint_marker(path: Path) -> tuple[Any, ...] | None:
@@ -917,6 +979,11 @@ def main() -> int:
                 standings = result_standings(state)
                 if standings:
                     log(f"standings: {standings}")
+                archive = archive_result(args.port, state)
+                if archive is not None:
+                    log(f"archived final save at {archive}")
+                else:
+                    log("could not archive the final save; continuing the handoff")
 
             # The supervised server rejects every in-process /new request, so
             # it is safe to leave the result reachable during the short
