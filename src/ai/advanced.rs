@@ -8360,8 +8360,72 @@ impl AdvancedAi {
     fn advanced_command_actions(&self, g: &mut Game, pid: usize, plan: &StrategicPlan) {
         self.advanced_city_strikes(g, pid);
         self.advanced_encampment_strikes(g, pid);
+        self.advanced_wmd_strikes(g, pid, plan);
         self.advanced_promotions(g, pid, plan.strategy);
         self.advanced_formations(g, pid);
+    }
+
+    /// Nuclear doctrine: a Conquest empire at war spends a stockpiled device
+    /// on the hardest enemy city in range — the one whose walls and garrison
+    /// would cost the most to break conventionally — and never on a blast
+    /// that would touch its own cities or units.
+    fn advanced_wmd_strikes(&self, g: &mut Game, pid: usize, plan: &StrategicPlan) {
+        if plan.strategy != GrandStrategy::Conquest {
+            return;
+        }
+        let candidates: Vec<(Action, Pos, bool)> = g
+            .legal_actions(pid)
+            .into_iter()
+            .filter_map(|action| match action {
+                Action::WmdStrike {
+                    target,
+                    thermonuclear,
+                    ..
+                } => Some((action.clone(), target, thermonuclear)),
+                _ => None,
+            })
+            .collect();
+        let mut best: Option<(f64, Action)> = None;
+        for (action, target, thermonuclear) in candidates {
+            let radius = g.rules.wmds[if thermonuclear {
+                "thermonuclear_device"
+            } else {
+                "nuclear_device"
+            }]
+            .blast_radius;
+            let blast = g.wdisk(target, radius);
+            let friendly_exposure = blast.iter().any(|position| {
+                g.city_at(*position)
+                    .is_some_and(|city| g.cities[&city].owner == pid)
+                    || g.units_at(*position)
+                        .into_iter()
+                        .any(|uid| g.units[&uid].owner == pid)
+            });
+            if friendly_exposure {
+                continue;
+            }
+            let Some(city) = g.city_at(target) else {
+                continue;
+            };
+            let garrison = blast
+                .iter()
+                .flat_map(|position| g.units_at(*position))
+                .filter(|uid| g.is_at_war(pid, g.units[uid].owner))
+                .count();
+            let city_ref = &g.cities[&city];
+            let hardness = g.city_strength(city) + city_ref.wall_hp as f64 / 10.0;
+            // A device is worth spending only on a genuinely hard target.
+            if hardness < 50.0 && garrison < 3 {
+                continue;
+            }
+            let value = hardness + garrison as f64 * 12.0;
+            if best.as_ref().is_none_or(|(current, _)| value > *current) {
+                best = Some((value, action));
+            }
+        }
+        if let Some((_, action)) = best {
+            let _ = g.apply(pid, &action);
+        }
     }
 
     fn advanced_units(&mut self, g: &mut Game, pid: usize, plan: &StrategicPlan) {
@@ -8888,6 +8952,67 @@ mod tests {
             })
             .expect("test map has a nearby city site");
         game.found_city_for(owner, position, None)
+    }
+
+    #[test]
+    fn conquest_ai_spends_a_device_on_the_hard_city_but_spares_its_own() {
+        let mut game = Game::new_full(2, 24, 16, 91_802, 200, 0, false);
+        for pid in 0..2 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.found_city_for(pid, game.units[&settler].pos, None);
+            game.remove_unit(settler);
+        }
+        let target_city = game.player_city_ids(1)[0];
+        let target = game.cities[&target_city].pos;
+        game.at_war.insert((0, 1));
+        game.players[0]
+            .counters
+            .insert("project_effect:thermonuclear_devices".to_string(), 1);
+        game.players[0].explored.insert(target);
+        game.cities.get_mut(&target_city).unwrap().wall_hp = 300;
+        let plan = StrategicPlan {
+            strategy: GrandStrategy::Conquest,
+            target_player: Some(1),
+            target_city: Some(target_city),
+            threatened_city: None,
+            desired_cities: 4,
+            assessed_turn: game.turn,
+        };
+        let ai = AdvancedAi::targeting(VictoryTarget::Domination);
+
+        // A friendly scout in the blast must hold the launch.
+        let radius = game.rules.wmds["thermonuclear_device"].blast_radius;
+        let picket_pos = game
+            .wdisk(target, radius)
+            .into_iter()
+            .find(|position| {
+                *position != target
+                    && game.map.get(*position).is_some_and(|tile| {
+                        game.rules.is_passable(tile) && !game.rules.is_water(tile)
+                    })
+                    && game.units_at(*position).is_empty()
+            })
+            .expect("blast ring has an open land tile");
+        let picket = game.spawn_test_unit("scout", 0, picket_pos);
+        ai.advanced_wmd_strikes(&mut game, 0, &plan);
+        assert_eq!(
+            game.players[0].counters["project_effect:thermonuclear_devices"],
+            1,
+            "no launch while a friendly unit stands in the blast"
+        );
+
+        game.remove_unit(picket);
+        ai.advanced_wmd_strikes(&mut game, 0, &plan);
+        assert_eq!(
+            game.players[0].counters["project_effect:thermonuclear_devices"],
+            0,
+            "the hard city draws the device once the blast is clean"
+        );
+        assert!(game.map.tiles[&target].fallout_until > game.turn);
     }
 
     fn island_colony_game() -> (Game, Pos, Pos) {
