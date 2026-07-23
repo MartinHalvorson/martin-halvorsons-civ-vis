@@ -5918,6 +5918,7 @@ function warMomentText(moment) {
       ? `${actor} detonated a device on ${moment.city}.`
       : `${actor} detonated a device in ${subject} territory.`;
     case "peace": return `${actor} and ${subject} made peace.`;
+    case "coalition": return `${actor} and ${subject} entered an Emergency coalition ceasefire.`;
     case "conquest": return `${subject} was wiped from the map by ${actor}.`;
     default: return `${actor} against ${subject}.`;
   }
@@ -6013,6 +6014,7 @@ const WAR_MOMENT_TONE = {
   nuclear_strike: "capture",
   conquest: "conquest",
   peace: "peace",
+  coalition: "peace",
 };
 function drawWarLog() {
   const el = document.getElementById("wars");
@@ -6034,11 +6036,12 @@ function drawWarLog() {
   el.innerHTML = wars.map(war => {
     const over = war.ended !== null && war.ended !== undefined;
     const conquest = war.outcome === "conquest";
+    const coalition = war.outcome === "coalition";
     const [attacker, defender] = war.sides;
     const length = Math.max(0, (over ? war.ended : state.turn) - war.started);
     const result = conquest
       ? `${warPartyName(war.victor)} conquest`
-      : "peace";
+      : (coalition ? "Emergency coalition ceasefire" : "peace");
     const truce = over && war.truce_until ? ` · truce to T${war.truce_until}` : "";
     const since = over
       ? `Turn ${war.started}–${war.ended} · ${length} turn${length === 1 ? "" : "s"} · ${result}${truce}`

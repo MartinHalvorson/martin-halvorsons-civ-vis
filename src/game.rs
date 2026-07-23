@@ -8461,7 +8461,7 @@ pub struct WarLosses {
 pub struct WarHighlight {
     pub turn: u32,
     /// `declared`, `city_captured`, `capital_captured`, `city_razed`,
-    /// `nuclear_strike`, `peace` or `conquest`.
+    /// `nuclear_strike`, `peace`, `coalition` or `conquest`.
     pub kind: String,
     /// The player who acted, and the one it happened to.
     pub actor: usize,
@@ -10942,6 +10942,44 @@ impl Game {
             .or_insert_with(|| WarRecord::new(aggressor, defender, self.turn));
     }
 
+    /// Retire one declared war with either the state-derived result or a
+    /// caller-supplied exceptional result. Emergency coalitions compel their
+    /// members to stop fighting one another; that is neither negotiated peace
+    /// nor conquest and must remain distinguishable in the chronicle.
+    fn close_war_record(
+        &mut self,
+        key: (usize, usize),
+        outcome: Option<(&str, usize, usize)>,
+    ) {
+        let Some(mut war) = self.wars.remove(&key) else {
+            return;
+        };
+        war.ended = Some(self.turn);
+        let (kind, actor, subject) = outcome.unwrap_or_else(|| {
+            match (
+                self.players[war.aggressor].alive,
+                self.players[war.defender].alive,
+            ) {
+                (true, false) => ("conquest", war.aggressor, war.defender),
+                (false, true) => ("conquest", war.defender, war.aggressor),
+                _ => ("peace", war.aggressor, war.defender),
+            }
+        });
+        war.highlights.push(WarHighlight {
+            turn: self.turn,
+            kind: kind.into(),
+            actor,
+            subject,
+            city: None,
+        });
+        self.concluded_wars.push(war);
+        const CONCLUDED_KEPT: usize = 24;
+        if self.concluded_wars.len() > CONCLUDED_KEPT {
+            let excess = self.concluded_wars.len() - CONCLUDED_KEPT;
+            self.concluded_wars.drain(..excess);
+        }
+    }
+
     /// Reconcile the ledger with the diplomatic state: open a record for any
     /// war being fought without one, and retire the records whose war is over.
     ///
@@ -10977,34 +11015,7 @@ impl Game {
             .copied()
             .collect();
         for key in ended {
-            let Some(mut war) = self.wars.remove(&key) else {
-                continue;
-            };
-            war.ended = Some(self.turn);
-            // How the war ended is part of the record: a negotiated peace and
-            // a conquest are not the same result, and the survivor is the one
-            // the ledger credits.
-            let (kind, actor, subject) = match (
-                self.players[war.aggressor].alive,
-                self.players[war.defender].alive,
-            ) {
-                (true, false) => ("conquest", war.aggressor, war.defender),
-                (false, true) => ("conquest", war.defender, war.aggressor),
-                _ => ("peace", war.aggressor, war.defender),
-            };
-            war.highlights.push(WarHighlight {
-                turn: self.turn,
-                kind: kind.into(),
-                actor,
-                subject,
-                city: None,
-            });
-            self.concluded_wars.push(war);
-        }
-        const CONCLUDED_KEPT: usize = 24;
-        if self.concluded_wars.len() > CONCLUDED_KEPT {
-            let excess = self.concluded_wars.len() - CONCLUDED_KEPT;
-            self.concluded_wars.drain(..excess);
+            self.close_war_record(key, None);
         }
     }
 
@@ -26630,9 +26641,15 @@ impl Game {
                         }
                     } else if !p.is_minor && !o.is_minor {
                         // A peace treaty is binding while it runs: no casus
-                        // belli reopens the war before it expires.
-                        let treaty = self.peace_treaty_until(pid, o.id).is_some();
-                        if !treaty && !self.are_friends(pid, o.id) && !self.are_allied(pid, o.id) {
+                        // belli reopens the war before it expires. Emergency
+                        // coalition partners are equally bound while they
+                        // prosecute their shared objective.
+                        let non_aggression = self.peace_treaty_until(pid, o.id).is_some()
+                            || self.emergency_coalition_pair(pid, o.id);
+                        if !non_aggression
+                            && !self.are_friends(pid, o.id)
+                            && !self.are_allied(pid, o.id)
+                        {
                             acts.push(Action::DeclareWar { player: o.id });
                             if p.denounced_until
                                 .get(&o.id)
@@ -31230,6 +31247,11 @@ impl Game {
         if self.are_allied(pid, other) || self.are_friends(pid, other) {
             return Err("friendship and alliance declarations must expire before war".into());
         }
+        if self.emergency_coalition_pair(pid, other) {
+            return Err(
+                "active Emergency coalition members cannot declare war on each other".into(),
+            );
+        }
         if let Some(until) = self.peace_treaty_until(pid, other) {
             return Err(format!("a peace treaty holds until turn {until}"));
         }
@@ -33598,6 +33620,14 @@ impl Game {
         })
     }
 
+    fn emergency_coalition_pair(&self, first: usize, second: usize) -> bool {
+        self.active_emergencies.iter().any(|emergency| {
+            emergency.ends > self.turn
+                && emergency.members.contains(&first)
+                && emergency.members.contains(&second)
+        })
+    }
+
     pub(crate) fn emergency_objective(&self, member: usize) -> Option<&Emergency> {
         self.active_emergencies
             .iter()
@@ -34329,7 +34359,10 @@ impl Game {
         let members_vec: Vec<usize> = members.iter().copied().collect();
         for (index, member) in members_vec.iter().enumerate() {
             for peer in members_vec.iter().skip(index + 1) {
-                self.at_war.remove(&pair(*member, *peer));
+                let key = pair(*member, *peer);
+                if self.at_war.remove(&key) {
+                    self.close_war_record(key, Some(("coalition", *member, *peer)));
+                }
                 self.players[*member].open_borders_until.insert(*peer, ends);
                 self.players[*peer].open_borders_until.insert(*member, ends);
             }
@@ -45871,6 +45904,7 @@ mod district_mechanics {
         assert!(treaty.peace_treaty_until(0, 3).is_some());
 
         game.at_war.insert(pair(2, 3));
+        game.open_war_record(2, 3);
         game.turn = game.congress.as_ref().unwrap().closes;
         game.process_congress();
 
@@ -45883,6 +45917,20 @@ mod district_mechanics {
         assert!(game.is_at_war(0, 2));
         assert!(game.is_at_war(0, 3));
         assert!(!game.is_at_war(2, 3));
+        let coalition_ceasefire = game
+            .concluded_wars
+            .iter()
+            .find(|war| pair(war.aggressor, war.defender) == pair(2, 3))
+            .expect("the coalition keeps the war it interrupted in the chronicle");
+        assert_eq!(coalition_ceasefire.ended, Some(game.turn));
+        assert_eq!(
+            coalition_ceasefire.highlights.last().unwrap().kind,
+            "coalition"
+        );
+        assert!(!game
+            .legal_actions(2)
+            .contains(&Action::DeclareWar { player: 3 }));
+        assert!(game.do_declare_war(2, 3).is_err());
         assert!(game.players[2].open_borders_until[&3] > game.turn);
         assert!(game.players[3].open_borders_until[&2] > game.turn);
         assert!(game.players[2].explored.contains(&last_sight));
