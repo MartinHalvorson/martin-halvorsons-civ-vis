@@ -7617,6 +7617,96 @@ struct LuxuryHoldings<'a> {
     amani: Option<BTreeMap<&'a str, i32>>,
 }
 
+/// The seats in a game, each shared until it is written to.
+///
+/// A game is cloned to look ahead, and a seat carries everything that player
+/// has ever learned — its explored map, its counters, its trees. A branch
+/// that moves one unit changes at most one seat, so copying all of them per
+/// branch was most of what cloning a game cost.
+///
+/// Indexing mutably is what copies a seat, and every write already goes
+/// through that, so nothing can write through the sharing by accident.
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(from = "Vec<Player>", into = "Vec<Player>")]
+pub struct Players(Vec<Arc<Player>>);
+
+impl Players {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn push(&mut self, player: Player) {
+        self.0.push(Arc::new(player));
+    }
+
+    pub fn get(&self, index: usize) -> Option<&Player> {
+        self.0.get(index).map(|seat| &**seat)
+    }
+
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut Player> {
+        self.0.get_mut(index).map(Arc::make_mut)
+    }
+
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = &Player> + ExactSizeIterator {
+        self.0.iter().map(|seat| &**seat)
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Player> {
+        self.0.iter_mut().map(Arc::make_mut)
+    }
+}
+
+impl std::ops::Index<usize> for Players {
+    type Output = Player;
+
+    #[inline]
+    fn index(&self, index: usize) -> &Player {
+        &self.0[index]
+    }
+}
+
+impl std::ops::IndexMut<usize> for Players {
+    #[inline]
+    fn index_mut(&mut self, index: usize) -> &mut Player {
+        Arc::make_mut(&mut self.0[index])
+    }
+}
+
+impl<'a> IntoIterator for &'a Players {
+    type Item = &'a Player;
+    type IntoIter = std::iter::Map<std::slice::Iter<'a, Arc<Player>>, fn(&'a Arc<Player>) -> &'a Player>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter().map(|seat| &**seat)
+    }
+}
+
+impl From<Vec<Player>> for Players {
+    fn from(players: Vec<Player>) -> Players {
+        Players(players.into_iter().map(Arc::new).collect())
+    }
+}
+
+impl From<Players> for Vec<Player> {
+    fn from(players: Players) -> Vec<Player> {
+        players
+            .0
+            .into_iter()
+            .map(|seat| Arc::try_unwrap(seat).unwrap_or_else(|shared| (*shared).clone()))
+            .collect()
+    }
+}
+
+impl FromIterator<Player> for Players {
+    fn from_iter<I: IntoIterator<Item = Player>>(players: I) -> Players {
+        Players(players.into_iter().map(Arc::new).collect())
+    }
+}
+
 fn bump(p: &mut Player, key: &str) {
     *p.counters.entry(key.to_string()).or_insert(0) += 1;
 }
@@ -9058,7 +9148,7 @@ pub struct Game {
     pub victory_conditions: VictoryConditions,
     pub next_id: u32,
     pub map: WorldMap,
-    pub players: Vec<Player>,
+    pub players: Players,
     pub units: BTreeMap<u32, Unit>,
     pub spies: BTreeMap<u32, Spy>,
     pub cities: BTreeMap<u32, City>,
@@ -9232,7 +9322,7 @@ impl From<GameSer> for Game {
             victory_conditions: s.victory_conditions,
             next_id: s.next_id,
             map: s.map,
-            players: s.players,
+            players: s.players.into(),
             units: s.units.into_iter().map(|u| (u.id, u)).collect(),
             spies: s.spies.into_iter().map(|spy| (spy.id, spy)).collect(),
             cities: s.cities.into_iter().map(|c| (c.id, c)).collect(),
@@ -9308,7 +9398,7 @@ impl From<GameSer> for Game {
             }
         }
         let governor_ids: Vec<String> = g.rules.governors.keys().cloned().collect();
-        for player in &mut g.players {
+        for player in g.players.iter_mut() {
             // Favor lived in the generic counter map in pre-trade saves.
             // Migrate it once into the typed balance used by Congress and
             // diplomatic trades without changing the save format version.
@@ -9393,7 +9483,7 @@ impl From<Game> for GameSer {
             pending_emergencies: g.pending_emergencies,
             active_emergencies: g.active_emergencies,
             map: g.map,
-            players: g.players,
+            players: g.players.into(),
             units: g.units.into_values().collect(),
             spies: g.spies.into_values().collect(),
             cities: g.cities.into_values().collect(),
@@ -9517,7 +9607,7 @@ impl Game {
             victory_conditions: VictoryConditions::default(),
             next_id: 1,
             map,
-            players: Vec::new(),
+            players: Players::default(),
             units: BTreeMap::new(),
             spies: BTreeMap::new(),
             cities: BTreeMap::new(),
@@ -32924,13 +33014,15 @@ impl Game {
                 }
             }
         }
-        if let Some(winner) = self
+        let contenders: Vec<(usize, i64)> = self
             .players
             .iter()
-            .find(|player| {
-                self.victory_eligible(player.id) && player.dvp >= DIPLOMATIC_VICTORY_POINTS
-            })
-            .map(|player| player.id)
+            .map(|player| (player.id, player.dvp))
+            .collect();
+        if let Some(winner) = contenders
+            .into_iter()
+            .find(|(id, dvp)| self.victory_eligible(*id) && *dvp >= DIPLOMATIC_VICTORY_POINTS)
+            .map(|(id, _)| id)
         {
             self.set_winner(winner, "diplomatic");
         }
@@ -36813,7 +36905,7 @@ impl Game {
                 3 | 4 => 6,
                 _ => 9,
             };
-            for player in &mut self.players {
+            for player in self.players.iter_mut() {
                 player.envoys.retain(|(minor, _)| *minor != original_owner);
             }
             self.players[pid]
@@ -36857,7 +36949,7 @@ impl Game {
             }
         }
         if self.players[pid].is_minor {
-            for player in &mut self.players {
+            for player in self.players.iter_mut() {
                 player.envoys.retain(|(minor, _)| *minor != pid);
             }
         }
@@ -37135,7 +37227,7 @@ mod visibility_tests {
         for unit in game.units.keys().copied().collect::<Vec<_>>() {
             game.remove_unit(unit);
         }
-        for player in &mut game.players {
+        for player in game.players.iter_mut() {
             player.explored.clear();
             player.remembered_tiles.clear();
             player.remembered_cities.clear();
@@ -37557,7 +37649,7 @@ mod combat_scenarios {
         for id in ids {
             g.remove_unit(id);
         }
-        for player in &mut g.players {
+        for player in g.players.iter_mut() {
             player.civ = "Rome".to_string();
             player.government = None;
             player.policies.clear();
@@ -40690,7 +40782,7 @@ mod victory_conditions {
     #[test]
     fn world_era_uses_all_nine_tree_eras_including_future() {
         let mut g = game_with_capitals(2, 400, 500);
-        for player in &mut g.players {
+        for player in g.players.iter_mut() {
             player.techs.clear();
             player.civics.clear();
         }
@@ -41909,7 +42001,7 @@ mod victory_conditions {
     #[test]
     fn remaining_stock_congress_candidates_obey_their_era_windows() {
         let mut g = game_with_capitals(2, 4_133, 300);
-        for player in &mut g.players[..2] {
+        for player in g.players.iter_mut().take(2) {
             player.government = Some("democracy".to_string());
         }
         let feature_tile = *g.map.tiles.keys().next().unwrap();

@@ -10268,7 +10268,7 @@ mod tests {
     fn advanced_ai_proposes_the_alliance_for_its_victory_plan() {
         let mut game = Game::new_full(3, 24, 16, 782, 300, 0, false);
         game.turn = 12;
-        for player in &mut game.players {
+        for player in game.players.iter_mut() {
             player.civics.insert("civil_service".to_string());
             player.techs.insert("scientific_theory".to_string());
         }

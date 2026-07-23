@@ -1344,9 +1344,12 @@ fn auto_step_loop(sh: Arc<Shared>) {
                 // share of the turn budget and the round adds up to the pace.
                 // Only the living take a step: counting the eliminated made a
                 // late game outrun its own pace as the city-states fell.
-                let living = s.game.players.iter().filter(|p| p.alive);
-                let minors = living.clone().filter(|p| p.is_minor || p.is_barbarian).count();
-                let majors = living.count() - minors;
+                let living: Vec<_> = s.game.players.iter().filter(|p| p.alive).collect();
+                let minors = living
+                    .iter()
+                    .filter(|p| p.is_minor || p.is_barbarian)
+                    .count();
+                let majors = living.len() - minors;
                 let p = &s.game.players[pid];
                 delay = seat_delay_ms(pace, majors, minors, p.is_minor || p.is_barbarian);
                 // The seat that ends the round closes the turn being timed.
