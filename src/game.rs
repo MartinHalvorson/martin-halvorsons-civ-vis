@@ -937,6 +937,71 @@ mod belief_runtime_tests {
         (game, cities)
     }
 
+    #[test]
+    fn wmd_strikes_launch_from_range_consume_devices_and_leave_fallout() {
+        let (mut game, cities) = game_with_capitals(91_802);
+        let (launch, struck) = (cities[0], cities[1]);
+        let target = game.cities[&struck].pos;
+        let distance = game.wdist(game.cities[&launch].pos, target);
+        let spec = game.rules.wmds["thermonuclear_device"].clone();
+        assert!(
+            distance <= spec.icbm_strike_range,
+            "fixture capitals must sit within ICBM range ({distance})"
+        );
+        game.players[0].explored.insert(target);
+        for position in game.wdisk(target, spec.blast_radius) {
+            game.players[0].explored.insert(position);
+        }
+        game.cities.get_mut(&struck).unwrap().pop = 6;
+        game.cities.get_mut(&struck).unwrap().wall_hp = 100;
+        let defender = game.spawn_test_unit("warrior", 1, target);
+
+        let strike = Action::WmdStrike {
+            city: launch,
+            target,
+            thermonuclear: true,
+        };
+        // No device yet, and no war yet: both must refuse the order.
+        assert!(game.apply(0, &strike).is_err());
+        game.players[0]
+            .counters
+            .insert("project_effect:thermonuclear_devices".to_string(), 1);
+        assert!(
+            game.apply(0, &strike).is_err(),
+            "nuking a civilization at peace must be refused"
+        );
+        game.at_war.insert(pair(0, 1));
+
+        // The strike is enumerated once war and a device exist.
+        assert!(game.legal_actions(0).contains(&strike));
+
+        game.apply(0, &strike).unwrap();
+        assert_eq!(
+            game.players[0].counters["project_effect:thermonuclear_devices"],
+            0
+        );
+        assert_eq!(game.players[0].counters["wmd_strikes"], 1);
+        let city = &game.cities[&struck];
+        assert_eq!(city.pop, 3, "the blast halves the population");
+        assert_eq!(city.wall_hp, 0, "ground zero levels the Outer Defenses");
+        assert!(
+            game.units
+                .get(&defender)
+                .is_none_or(|unit| unit.hp <= 0 || unit.hp < 100),
+            "a full-health defender cannot shrug off ground zero"
+        );
+        for position in game.wdisk(target, spec.blast_radius) {
+            assert!(
+                game.map.tiles[&position].fallout_until
+                    >= game.turn + spec.fallout_duration,
+                "every blast tile carries fallout"
+            );
+        }
+        // The stockpile is spent: a second launch must be refused.
+        assert!(game.apply(0, &strike).is_err());
+    }
+
+
     fn place_district(game: &mut Game, city: u32, district: &str) -> Pos {
         let center = game.cities[&city].pos;
         let position = game.cities[&city]
@@ -7719,6 +7784,14 @@ pub enum Action {
     CityStrike {
         city: u32,
         target: Pos,
+    },
+    /// Launch a stockpiled nuclear or thermonuclear device from a city (or
+    /// an owned Missile Silo) at a revealed tile within the shipped
+    /// ICBMStrikeRange.
+    WmdStrike {
+        city: u32,
+        target: Pos,
+        thermonuclear: bool,
     },
     EncampmentStrike {
         city: u32,
@@ -22916,6 +22989,35 @@ impl Game {
                     }
                 }
             }
+            // Nuclear strikes are enumerated against enemy city centers in
+            // ICBM range; arbitrary revealed tiles remain legal through apply.
+            for (device_key, thermonuclear, weapon) in [
+                ("project_effect:nuclear_devices", false, "nuclear_device"),
+                (
+                    "project_effect:thermonuclear_devices",
+                    true,
+                    "thermonuclear_device",
+                ),
+            ] {
+                if p.counters.get(device_key).copied().unwrap_or(0) <= 0 {
+                    continue;
+                }
+                let range = self.rules.wmds[weapon].icbm_strike_range;
+                for launch in self.cities.values().filter(|c| c.owner == pid) {
+                    for enemy in self.cities.values() {
+                        if self.is_at_war(pid, enemy.owner)
+                            && p.explored.contains(&enemy.pos)
+                            && self.wdist(launch.pos, enemy.pos) <= range
+                        {
+                            acts.push(Action::WmdStrike {
+                                city: launch.id,
+                                target: enemy.pos,
+                                thermonuclear,
+                            });
+                        }
+                    }
+                }
+            }
             let gp_kinds: BTreeSet<String> = self
                 .rules
                 .great_people
@@ -23548,6 +23650,11 @@ impl Game {
             }
             Action::ConvertBarbarians { unit } => self.do_convert_barbarians(pid, *unit),
             Action::CityStrike { city, target } => self.do_city_strike(pid, *city, *target),
+            Action::WmdStrike {
+                city,
+                target,
+                thermonuclear,
+            } => self.do_wmd_strike(pid, *city, *target, *thermonuclear),
             Action::EncampmentStrike { city, target } => {
                 self.do_encampment_strike(pid, *city, *target)
             }
@@ -27096,6 +27203,134 @@ impl Game {
         if !self.players[pid].policies.remove(policy) {
             return Err("policy not slotted".into());
         }
+        Ok(())
+    }
+
+    /// Launch a stockpiled device. Range, blast radius and fallout duration
+    /// are the shipped WMDs rows; the per-ring unit damage is the one number
+    /// the database does not carry.
+    fn do_wmd_strike(
+        &mut self,
+        pid: usize,
+        cid: u32,
+        target: Pos,
+        thermonuclear: bool,
+    ) -> Result<(), String> {
+        let city = self
+            .cities
+            .get(&cid)
+            .filter(|city| city.owner == pid)
+            .ok_or_else(|| "launch city must be yours".to_string())?;
+        let device_key = if thermonuclear {
+            "project_effect:thermonuclear_devices"
+        } else {
+            "project_effect:nuclear_devices"
+        };
+        if self.players[pid]
+            .counters
+            .get(device_key)
+            .copied()
+            .unwrap_or(0)
+            <= 0
+        {
+            return Err("no device of that type in the stockpile".into());
+        }
+        let spec = &self.rules.wmds[if thermonuclear {
+            "thermonuclear_device"
+        } else {
+            "nuclear_device"
+        }];
+        if !self.map.tiles.contains_key(&target) {
+            return Err("no such tile".into());
+        }
+        if !self.players[pid].explored.contains(&target) {
+            return Err("target tile is unrevealed".into());
+        }
+        // The launch platform is the city itself or any of its owned,
+        // working Missile Silos; the closest one carries the shot.
+        let range = city
+            .owned_tiles
+            .iter()
+            .filter(|position| {
+                self.map.tiles[position].improvement.as_deref() == Some("missile_silo")
+                    && !self.map.tiles[position].pillaged
+            })
+            .chain(std::iter::once(&city.pos))
+            .map(|platform| self.wdist(*platform, target))
+            .min()
+            .unwrap_or(i32::MAX);
+        if range > spec.icbm_strike_range {
+            return Err("target out of ICBM range".into());
+        }
+        // Nuking a major you are at peace with is not a legal order.
+        let blast: Vec<Pos> = self.wdisk(target, spec.blast_radius);
+        for position in &blast {
+            let victims = self
+                .units_at(*position)
+                .into_iter()
+                .map(|uid| self.units[&uid].owner)
+                .chain(self.city_at(*position).map(|c| self.cities[&c].owner));
+            for owner in victims {
+                let victim = &self.players[owner];
+                if owner != pid && !victim.is_barbarian && !self.is_at_war(pid, owner) {
+                    return Err("cannot nuke a civilization you are at peace with".into());
+                }
+            }
+        }
+        let fallout_until = self.turn.saturating_add(spec.fallout_duration);
+        let blast_radius = spec.blast_radius;
+        *self.players[pid]
+            .counters
+            .entry(device_key.to_string())
+            .or_insert(0) -= 1;
+        bump(&mut self.players[pid], "wmd_strikes");
+        let mut aggrieved: BTreeSet<usize> = BTreeSet::new();
+        for position in blast {
+            if let Some(tile) = self.map.tiles.get_mut(&position) {
+                tile.fallout_until = tile.fallout_until.max(fallout_until);
+            }
+            // Ground zero is lethal to full-health units; the outer rings
+            // wound severely.
+            let ring = self.wdist(position, target);
+            let unit_damage = match ring {
+                0 => 100,
+                1 => 80,
+                _ => 60,
+            };
+            if let Some(owner) = self
+                .map
+                .get(position)
+                .and_then(|tile| tile.owner_city)
+                .and_then(|c| self.cities.get(&c))
+                .map(|c| c.owner)
+            {
+                if owner != pid {
+                    aggrieved.insert(owner);
+                }
+            }
+            self.damage_disaster_tile(position, unit_damage);
+            if let Some(struck) = self.city_at(position) {
+                let city = self.cities.get_mut(&struck).unwrap();
+                // Half the population and the Outer Defenses go with the blast.
+                city.pop = (city.pop - (city.pop / 2)).max(1);
+                city.wall_hp = if ring == 0 { 0 } else { city.wall_hp / 2 };
+            }
+        }
+        for owner in aggrieved {
+            // The world does not forgive a nuclear strike quickly.
+            self.add_grievances(owner, pid, 150.0);
+        }
+        let weapon = if thermonuclear {
+            "thermonuclear device"
+        } else {
+            "nuclear device"
+        };
+        self.note(
+            pid,
+            "War",
+            format!("You detonated a {weapon}"),
+            Some(target),
+        );
         Ok(())
     }
 

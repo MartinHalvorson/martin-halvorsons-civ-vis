@@ -15,7 +15,7 @@ use crate::Pos;
 
 /// Every `Action` discriminant, in a stable order. Appending is safe;
 /// reordering invalidates trained policies.
-pub const KINDS: [&str; 74] = [
+pub const KINDS: [&str; 75] = [
     "move", "move_to", "attack", "ranged", "found_city", "improve",
     "found_corporation", "move_product", "contribute_project",
     "contribute_district", "perform_concert", "pillage", "repair_improvement",
@@ -32,7 +32,7 @@ pub const KINDS: [&str; 74] = [
     "reassign_governor", "promote_governor", "found_religion", "spread",
     "theological_attack", "condemn_heretic", "heal_religious", "remove_heresy",
     "launch_inquisition", "evangelize_belief", "convert_barbarians",
-    "city_strike", "encampment_strike", "keep_city", "raze_city",
+    "city_strike", "wmd_strike", "encampment_strike", "keep_city", "raze_city",
     "liberate_city", "end_turn", "air_pillage", "priority_target", "upgrade",
 ];
 
@@ -116,6 +116,7 @@ pub fn kind_name(action: &Action) -> &'static str {
         Action::EvangelizeBelief { .. } => "evangelize_belief",
         Action::ConvertBarbarians { .. } => "convert_barbarians",
         Action::CityStrike { .. } => "city_strike",
+        Action::WmdStrike { .. } => "wmd_strike",
         Action::EncampmentStrike { .. } => "encampment_strike",
         Action::KeepCity { .. } => "keep_city",
         Action::RazeCity { .. } => "raze_city",
@@ -139,6 +140,7 @@ pub fn target_tile(g: &Game, action: &Action) -> Option<Pos> {
         | Action::AirPillage { target, .. }
         | Action::PriorityTarget { target, .. }
         | Action::CityStrike { target, .. }
+        | Action::WmdStrike { target, .. }
         | Action::EncampmentStrike { target, .. } => Some(*target),
         Action::FoundCity { unit }
         | Action::Improve { unit, .. }

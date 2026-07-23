@@ -19,7 +19,7 @@ data change, and see
 > **In progress** (claimed by parallel sessions — check before starting a batch):
 > - session MOD: phase 2 measurement COMPLETE 2026-07-22 — `tools/civ6_modifiers.py` + `docs/MODIFIERS.md` rank the 698 shipped effects by row count against `tools/modifier_coverage.json`. Claim released; next is row-by-row verification of the 28 implemented/partial entries
 > - session G: continuous-exhibition bug hunt — rules defects observed in full 8-player games, one game at a time. Owns the Pressure/majority core in `src/game.rs` (`city_religion`, `process_pressure`, atheist Pressure); session F owns the religious AI and purchase rules above it
-> - session FID: fidelity expansion COMPLETE 2026-07-22 at 25 tables / zero divergence; now claiming **WMD delivery** — a `WmdStrike` action launching stockpiled devices from cities/Missile Silos using the shipped `data/wmds.json` ranges, blast radii and fallout. Owns `src/game.rs` WMD sections and `data/wmds.json`
+> - session FID: fidelity expansion COMPLETE 2026-07-22 at 25 tables / zero divergence; WMD delivery shipped (`WmdStrike` from cities/Missile Silos on the shipped ranges, radii and fallout; enumerated against enemy city centers in range). Claim released
 
 | System | Status | Notes |
 |---|---|---|

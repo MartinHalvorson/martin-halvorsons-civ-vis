@@ -189,8 +189,9 @@ Known simplifications not yet expressed in data: civic-gated valid terrain
 `tree_effects`' hill_farms), wonders' widening `Building_ValidFeatures`
 rows (CIVVIS is the permissive side there), true per-work theming (the
 proxy counts full museums), barbarian camp spawn cadence (the odds/boldness
-model is DLL-side; placement floors and distances are exact), WMD delivery
-(stats are data, the strike action awaits), the meteor-strike goody site,
+model is DLL-side; placement floors and distances are exact), WMD delivery detail
+(the `WmdStrike` action launches on the shipped ranges, radii and fallout;
+the per-ring unit damage is the one number the database does not carry), the meteor-strike goody site,
 and roads staying unleveled per tile (the world era stands in for the route
 its traders lay).
 
