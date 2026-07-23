@@ -534,10 +534,9 @@ class RecoveryTests(unittest.TestCase):
                 patch.object(supervisor, "RUNTIME_BINARY", runtime),
                 patch.object(supervisor, "checkpoint_path", return_value=checkpoint),
                 patch.object(supervisor, "process_alive", return_value=True),
-                patch.object(supervisor, "runtime_matches", return_value=False),
+                patch.object(supervisor, "runtime_matches", side_effect=[False, True]),
                 patch.object(supervisor, "source_snapshot", return_value="fresh"),
-                patch.object(supervisor, "prepare_live_refresh", side_effect=prepare),
-                patch.object(supervisor, "capture_checkpoint", return_value=False),
+                patch.object(supervisor, "capture_checkpoint", side_effect=prepare),
                 patch.object(supervisor, "read_state", side_effect=[active, active, KeyboardInterrupt]),
                 patch.object(supervisor, "start_server", side_effect=start),
                 patch.object(supervisor, "wait_for_server", return_value=active),
@@ -547,6 +546,123 @@ class RecoveryTests(unittest.TestCase):
 
         self.assertLess(events.index(("prepare", None)), events.index(("stop", 321)))
         self.assertIn(("start", checkpoint), events)
+
+    def test_active_prebuild_runs_out_of_process_while_monitoring_continues(self):
+        args = SimpleNamespace(
+            port=8766,
+            players=4,
+            width=60,
+            height=38,
+            city_states=6,
+            turns=500,
+            map="pangaea",
+            speed="standard",
+            cooldown=0.0,
+            poll=0.01,
+            build_retry=0.01,
+            source_check_interval=30.0,
+            unresponsive_timeout=20.0,
+            busy_timeout=0.0,
+            stall_timeout=30.0,
+            checkpoint_interval=5.0,
+            max_resume_attempts=2,
+            no_open=True,
+            adopt_pid=321,
+        )
+        active = {"seed": 9, "turn": 42, "current": 2, "winner": None}
+        worker = SimpleNamespace(pid=777, poll=lambda: None)
+
+        with (
+            patch.object(supervisor, "parse_args", return_value=args),
+            patch.object(supervisor, "process_alive", return_value=True),
+            patch.object(supervisor, "source_snapshot", return_value="changed"),
+            patch.object(supervisor, "runtime_matches", side_effect=[True, False]),
+            patch.object(
+                supervisor,
+                "read_state",
+                side_effect=[active, active, KeyboardInterrupt],
+            ) as read,
+            patch.object(supervisor, "capture_checkpoint", return_value=False),
+            patch.object(
+                supervisor, "start_background_prebuild", return_value=worker
+            ) as start_build,
+            patch.object(supervisor, "stop_background_prebuild") as stop_build,
+            patch.object(supervisor, "prebuild_latest_once") as blocking_build,
+            patch.object(supervisor, "stop_server"),
+            patch.object(supervisor.time, "sleep"),
+        ):
+            self.assertEqual(supervisor.main(), 0)
+
+        start_build.assert_called_once_with()
+        blocking_build.assert_not_called()
+        self.assertEqual(read.call_count, 3)
+        stop_build.assert_called_once_with(worker)
+
+    def test_running_prebuild_does_not_delay_a_finished_boundary(self):
+        args = SimpleNamespace(
+            port=8766,
+            players=4,
+            width=60,
+            height=38,
+            city_states=6,
+            turns=500,
+            map="pangaea",
+            speed="standard",
+            cooldown=0.0,
+            poll=0.01,
+            build_retry=0.01,
+            source_check_interval=30.0,
+            unresponsive_timeout=20.0,
+            busy_timeout=0.0,
+            stall_timeout=30.0,
+            checkpoint_interval=5.0,
+            max_resume_attempts=2,
+            no_open=True,
+            adopt_pid=321,
+        )
+        active = {"seed": 9, "turn": 42, "current": 2, "winner": None}
+        finished = {
+            **active,
+            "turn": 70,
+            "winner": 1,
+            "victory_type": "science",
+            "players": [],
+        }
+        successor = {"seed": 10, "turn": 1, "current": 0, "winner": None}
+        worker = SimpleNamespace(pid=777, poll=lambda: None)
+        replacement = SimpleNamespace(pid=654)
+
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / "save.json"
+            with (
+                patch.object(supervisor, "parse_args", return_value=args),
+                patch.object(supervisor, "checkpoint_path", return_value=checkpoint),
+                patch.object(supervisor, "process_alive", return_value=True),
+                patch.object(supervisor, "source_snapshot", return_value="changed"),
+                patch.object(
+                    supervisor, "runtime_matches", side_effect=[True, False, False]
+                ),
+                patch.object(
+                    supervisor,
+                    "read_state",
+                    side_effect=[active, active, finished, KeyboardInterrupt],
+                ) as read,
+                patch.object(supervisor, "capture_checkpoint", return_value=False),
+                patch.object(supervisor, "archive_result"),
+                patch.object(
+                    supervisor, "start_background_prebuild", return_value=worker
+                ),
+                patch.object(supervisor, "stop_background_prebuild") as stop_build,
+                patch.object(supervisor, "start_server", return_value=replacement) as start,
+                patch.object(supervisor, "wait_for_server", return_value=successor),
+                patch.object(supervisor, "stop_server"),
+                patch.object(supervisor.time, "sleep"),
+            ):
+                self.assertEqual(supervisor.main(), 0)
+
+        start.assert_called_once()
+        self.assertEqual(read.call_count, 4)
+        stop_build.assert_called_once_with(worker)
 
     def test_finished_server_starts_successor_without_waiting_for_a_build(self):
         args = SimpleNamespace(

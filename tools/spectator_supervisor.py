@@ -235,6 +235,36 @@ def prebuild_latest_once() -> bool:
     return prepare_latest_once()
 
 
+def start_background_prebuild() -> subprocess.Popen[str]:
+    """Compile in a separate process so winner polling never waits on Cargo."""
+    return subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "--prepare-once"],
+        cwd=ROOT,
+        text=True,
+        start_new_session=os.name != "nt",
+    )
+
+
+def stop_background_prebuild(process: subprocess.Popen[str] | None) -> None:
+    """Stop the isolated build worker and its Cargo descendants."""
+    if process is None or process.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            process.terminate()
+        else:
+            os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=5.0)
+    except (OSError, subprocess.TimeoutExpired):
+        try:
+            if os.name == "nt":
+                process.kill()
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
 def read_json(
     port: int,
     path: str,
@@ -649,11 +679,14 @@ def parse_args() -> argparse.Namespace:
         type=int,
         help="take over an already-running server, then supervise its successors",
     )
+    parser.add_argument("--prepare-once", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    if getattr(args, "prepare_once", False):
+        return 0 if prepare_latest_once() else 1
     settings = {
         "players": args.players,
         "width": args.width,
@@ -678,6 +711,7 @@ def main() -> int:
     refresh_pending = False
     refresh_at = 0.0
     source_check_at = 0.0
+    prebuild_process: subprocess.Popen[str] | None = None
 
     def launch_recovery(open_browser: bool = False) -> dict[str, Any]:
         nonlocal process, adopted_pid
@@ -805,6 +839,8 @@ def main() -> int:
             settings = session_settings(state, settings)
             if state.get("winner") is None:
                 now = time.monotonic()
+                if prebuild_process is not None and prebuild_process.poll() is not None:
+                    prebuild_process = None
                 marker = progress_marker(state)
                 if marker != last_progress:
                     last_progress = marker
@@ -839,8 +875,13 @@ def main() -> int:
 
                 if refresh_pending and now >= refresh_at:
                     refresh_at = now + max(0.1, args.build_retry)
-                    log("retrying stable source for the active fallback runtime")
-                    if prepare_live_refresh(args.port, save_path):
+                    snapshot = source_snapshot()
+                    runtime_ready = prebuild_process is None and runtime_matches(snapshot)
+                    if runtime_ready:
+                        checkpoint_ready = capture_checkpoint(args.port, save_path)
+                    else:
+                        checkpoint_ready = False
+                    if checkpoint_ready:
                         log("fresh runtime is ready; resuming the active game from checkpoint")
                         state = launch_recovery()
                         refresh_pending = False
@@ -853,9 +894,17 @@ def main() -> int:
                         checkpointed_progress = last_progress
                         checkpoint_at = progress_at
                         continue
+                    if prebuild_process is None and not runtime_ready:
+                        log("retrying stable source for the active fallback runtime")
+                        prebuild_process = start_background_prebuild()
+                    elif prebuild_process is None:
+                        log("fresh build is ready but no safe checkpoint was captured; retrying")
                 elif not refresh_pending and now >= source_check_at:
                     source_check_at = now + max(1.0, args.source_check_interval)
-                    prebuild_latest_once()
+                    snapshot = source_snapshot()
+                    if prebuild_process is None and not runtime_matches(snapshot):
+                        log("source changed during the active game; prebuilding in the background")
+                        prebuild_process = start_background_prebuild()
                 time.sleep(args.poll)
                 continue
 
@@ -910,6 +959,7 @@ def main() -> int:
             checkpointed_progress = None
     except KeyboardInterrupt:
         log("stopping")
+        stop_background_prebuild(prebuild_process)
         stop_server(process, adopted_pid)
         return 0
 
