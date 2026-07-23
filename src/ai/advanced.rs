@@ -658,7 +658,23 @@ impl AdvancedAi {
 
         let (converted, living_religious_rivals) = self.religious_conversion_tally(g, pid);
         let religion = if player.religion.is_some() {
-            40 + (60 * converted / living_religious_rivals.max(1)) as i32
+            // Founding a religion normally converts the founder's own small
+            // empire first. That is table stakes, not progress against a
+            // Religious Victory: counting it made every founder jump from the
+            // 40-point commitment floor to 55 in a four-player game before it
+            // had converted a single rival. Measure expansion into foreign
+            // civilizations here; rival threat scoring below still counts all
+            // living majors because the actual victory rule does too.
+            let religion = player.religion.as_deref().unwrap();
+            let own_cities = g.player_city_ids(pid);
+            let own_following = own_cities
+                .iter()
+                .filter(|city| g.city_religion(&g.cities[city]) == Some(religion))
+                .count();
+            let own_converted = !own_cities.is_empty() && own_following * 2 > own_cities.len();
+            let foreign_converted = converted.saturating_sub(usize::from(own_converted));
+            let foreign_rivals = living_religious_rivals.saturating_sub(1);
+            40 + (60 * foreign_converted / foreign_rivals.max(1)) as i32
         } else if self.religious_opening_viable(g, pid) {
             if g.religions_founded() > 0 {
                 55
@@ -10082,6 +10098,47 @@ mod tests {
             ai.victory_focus(&culture, 0).strategy,
             GrandStrategy::Culture
         );
+    }
+
+    #[test]
+    fn religious_focus_counts_foreign_conversions_not_the_founder() {
+        let mut game = Game::new_full(4, 30, 18, 7_600, 300, 0, false);
+        for pid in 0..4 {
+            game.current = pid;
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        game.current = 0;
+        game.players[0].religion = Some("Test Faith".to_string());
+        let convert = |game: &mut Game, owner: usize| {
+            let city = game.player_city_ids(owner)[0];
+            game.cities
+                .get_mut(&city)
+                .unwrap()
+                .pressure
+                .insert("Test Faith".to_string(), 1_000.0);
+        };
+        convert(&mut game, 0);
+
+        let ai = AdvancedAi::new();
+        let founded = ai.victory_focus(&game, 0);
+        assert_eq!(founded.strategy, GrandStrategy::Religion);
+        assert_eq!(
+            founded.progress, 40,
+            "the founder's own majority is not a foreign victory gain"
+        );
+
+        convert(&mut game, 1);
+        assert_eq!(ai.victory_focus(&game, 0).progress, 60);
+        convert(&mut game, 2);
+        assert_eq!(ai.victory_focus(&game, 0).progress, 80);
+        convert(&mut game, 3);
+        assert_eq!(ai.victory_focus(&game, 0).progress, 100);
     }
 
     #[test]
