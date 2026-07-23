@@ -8970,7 +8970,7 @@ impl Ai for AdvancedAi {
         self.strategic_governors(g, pid, &plan);
         // Keep the mature ancillary systems: governments, policies, beliefs,
         // religions, and envoys. Research is already selected.
-        self.base.research(g, pid);
+        self.base.research_without_government(g, pid);
         self.strategic_government(g, pid, plan.strategy);
         self.base.corporations(g, pid);
         self.advanced_products(g, pid, plan.strategy);
@@ -13397,6 +13397,33 @@ mod tests {
         assert!(game.players[0].government.is_none());
         assert_eq!(game.players[0].pending_government.as_deref(), Some("fascism"));
         assert!(game.players[0].anarchy_turns > 0);
+    }
+
+    #[test]
+    fn advanced_turn_does_not_run_the_baseline_government_selector_first() {
+        let mut game = Game::new_full(2, 18, 10, 79_016, 200, 0, false);
+        game.players[0].civics.extend([
+            "code_of_laws".to_string(),
+            "political_philosophy".to_string(),
+        ]);
+        game.players[0].government = Some("chiefdom".to_string());
+        game.players[0]
+            .past_governments
+            .insert("chiefdom".to_string());
+
+        let mut ai = AdvancedAi::targeting(VictoryTarget::Domination);
+        ai.take_turn(&mut game, 0);
+
+        assert_eq!(game.players[0].government.as_deref(), Some("oligarchy"));
+        assert_eq!(game.players[0].anarchy_turns, 0);
+        assert!(game.players[0].pending_government.is_none());
+        assert!(game.players[0].past_governments.contains("oligarchy"));
+        assert!(
+            !game.players[0]
+                .past_governments
+                .contains("classical_republic"),
+            "the baseline selector must not install a throwaway government before the strategic one"
+        );
     }
 
     #[test]

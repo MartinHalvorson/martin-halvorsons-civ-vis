@@ -1382,6 +1382,20 @@ impl BasicAi {
     }
 
     fn research(&self, g: &mut Game, pid: usize) {
+        self.research_with_government(g, pid, true);
+    }
+
+    /// Choose research and run the baseline ancillary pass without allowing
+    /// the baseline government priority to compete with a strategic caller.
+    /// `AdvancedAi` has its own plan-aware government selector later in the
+    /// same turn; running both selectors made it adopt two Tier-1 governments
+    /// back-to-back and then pay Anarchy when the baseline tried to undo the
+    /// strategic choice on the next turn.
+    fn research_without_government(&self, g: &mut Game, pid: usize) {
+        self.research_with_government(g, pid, false);
+    }
+
+    fn research_with_government(&self, g: &mut Game, pid: usize, choose_government: bool) {
         if g.players[pid].research.is_none() {
             let avail = g.available_techs(pid);
             if !avail.is_empty() {
@@ -1426,23 +1440,25 @@ impl BasicAi {
                 let _ = g.apply(pid, &Action::Civic { civic: pick });
             }
         }
-        for gname in GOV_PRIORITY {
-            if let Some(spec) = g.rules.governments.get(gname) {
-                let ok = spec
-                    .civic
-                    .as_ref()
-                    .map(|c| g.players[pid].civics.contains(c))
-                    .unwrap_or(true);
-                if ok {
-                    if g.players[pid].government.as_deref() != Some(gname) {
-                        let _ = g.apply(
-                            pid,
-                            &Action::Government {
-                                government: gname.to_string(),
-                            },
-                        );
+        if choose_government {
+            for gname in GOV_PRIORITY {
+                if let Some(spec) = g.rules.governments.get(gname) {
+                    let ok = spec
+                        .civic
+                        .as_ref()
+                        .map(|c| g.players[pid].civics.contains(c))
+                        .unwrap_or(true);
+                    if ok {
+                        if g.players[pid].government.as_deref() != Some(gname) {
+                            let _ = g.apply(
+                                pid,
+                                &Action::Government {
+                                    government: gname.to_string(),
+                                },
+                            );
+                        }
+                        break;
                     }
-                    break;
                 }
             }
         }
