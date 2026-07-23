@@ -91,10 +91,17 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool, interactive: bool) -> Value 
                     .map(|city| city.owner);
                 (tile, owner)
             } else {
-                let memory = viewers
+                // Whose memory of this hex is the freshest. The stamp sits
+                // beside the remembered map rather than inside it.
+                let (memory, _) = viewers
                     .iter()
-                    .filter_map(|viewer| g.players[*viewer].remembered_tiles.get(pos))
-                    .max_by_key(|memory| memory.seen_turn)?;
+                    .filter_map(|viewer| {
+                        let seat = &g.players[*viewer];
+                        seat.remembered_tiles
+                            .get(pos)
+                            .map(|memory| (memory, seat.remembered_tiles.seen_turn(pos)))
+                    })
+                    .max_by_key(|(_, seen)| *seen)?;
                 (&memory.tile, memory.owner)
             };
             Some(tile_json(

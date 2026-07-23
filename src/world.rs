@@ -85,13 +85,48 @@ pub struct RememberedTile {
 /// runtime while serializing player map memory as a stable list of snapshots.
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(from = "Vec<RememberedTile>", into = "Vec<RememberedTile>")]
-pub struct TileMemory(std::sync::Arc<BTreeMap<Pos, RememberedTile>>);
+pub struct TileMemory {
+    tiles: std::sync::Arc<BTreeMap<Pos, RememberedTile>>,
+    /// When each remembered tile was last actually looked at.
+    ///
+    /// This moves every turn while the tiles themselves almost never do, so
+    /// it is kept out of the shared map. Restamping it in place would copy
+    /// every remembered tile — a few hundred hexes, each with its own
+    /// strings — which is most of what refreshing a seat's map used to cost.
+    stamps: BTreeMap<Pos, u32>,
+}
+
+impl TileMemory {
+    /// The turn a tile was last seen on, or zero for one never seen.
+    pub fn seen_turn(&self, position: &Pos) -> u32 {
+        self.stamps.get(position).copied().unwrap_or_default()
+    }
+
+    /// Note that a remembered tile was looked at again. Cheap: it does not
+    /// touch the shared map.
+    pub fn mark_seen(&mut self, position: Pos, turn: u32) {
+        if self.tiles.contains_key(&position) {
+            self.stamps.insert(position, turn);
+        }
+    }
+
+    /// Record what a tile looks like now.
+    pub fn remember(&mut self, position: Pos, tile: RememberedTile, turn: u32) {
+        std::sync::Arc::make_mut(&mut self.tiles).insert(position, tile);
+        self.stamps.insert(position, turn);
+    }
+
+    pub fn forget_all(&mut self) {
+        std::sync::Arc::make_mut(&mut self.tiles).clear();
+        self.stamps.clear();
+    }
+}
 
 impl Deref for TileMemory {
     type Target = BTreeMap<Pos, RememberedTile>;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.tiles
     }
 }
 
@@ -104,26 +139,43 @@ impl Deref for TileMemory {
 /// per branch was about half the cost of cloning a game.
 impl DerefMut for TileMemory {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        std::sync::Arc::make_mut(&mut self.0)
+        std::sync::Arc::make_mut(&mut self.tiles)
     }
 }
 
 impl From<Vec<RememberedTile>> for TileMemory {
     fn from(tiles: Vec<RememberedTile>) -> Self {
-        Self(std::sync::Arc::new(
-            tiles
-                .into_iter()
-                .map(|remembered| (remembered.tile.pos, remembered))
-                .collect(),
-        ))
+        let stamps = tiles
+            .iter()
+            .map(|remembered| (remembered.tile.pos, remembered.seen_turn))
+            .collect();
+        TileMemory {
+            tiles: std::sync::Arc::new(
+                tiles
+                    .into_iter()
+                    .map(|remembered| (remembered.tile.pos, remembered))
+                    .collect(),
+            ),
+            stamps,
+        }
     }
 }
 
+/// A save carries the stamp on each tile, which is where it used to live, so
+/// the two are put back together on the way out.
 impl From<TileMemory> for Vec<RememberedTile> {
     fn from(memory: TileMemory) -> Self {
-        match std::sync::Arc::try_unwrap(memory.0) {
-            Ok(tiles) => tiles.into_values().collect(),
-            Err(shared) => shared.values().cloned().collect(),
+        let stamps = memory.stamps;
+        let restamp = |mut remembered: RememberedTile| {
+            remembered.seen_turn = stamps
+                .get(&remembered.tile.pos)
+                .copied()
+                .unwrap_or(remembered.seen_turn);
+            remembered
+        };
+        match std::sync::Arc::try_unwrap(memory.tiles) {
+            Ok(tiles) => tiles.into_values().map(restamp).collect(),
+            Err(shared) => shared.values().cloned().map(restamp).collect(),
         }
     }
 }

@@ -19337,22 +19337,12 @@ impl Game {
             // Only reach for the memory mutably when a stamp actually has to
             // move: taking it mutably is what copies it, and after the first
             // refresh of a turn every visible tile already carries this turn.
-            let restamp = visible.iter().any(|position| {
-                player
-                    .remembered_tiles
-                    .get(position)
-                    .is_some_and(|remembered| remembered.seen_turn != turn)
-            });
-            if restamp {
-                for position in visible.iter() {
-                    if let Some(remembered) = player.remembered_tiles.get_mut(position) {
-                        remembered.seen_turn = turn;
-                    }
-                }
+            for position in visible.iter() {
+                player.remembered_tiles.mark_seen(*position, turn);
             }
             player.explored.extend(visible.iter().copied());
             for (position, tile) in tiles {
-                player.remembered_tiles.insert(position, tile);
+                player.remembered_tiles.remember(position, tile, turn);
             }
             player.remembered_cities.retain(|city, memory| {
                 !visible.contains(&memory.pos) || live_city_ids.contains(city)
@@ -19420,15 +19410,18 @@ impl Game {
             .iter()
             .flat_map(|member| self.players[*member].explored.iter().copied())
             .collect();
-        let mut tiles: BTreeMap<Pos, RememberedTile> = BTreeMap::new();
+        // Carry each tile's stamp alongside it: the stamp lives beside the
+        // remembered map now rather than inside it, and it is what decides
+        // whose memory of a hex is the fresher.
+        let mut tiles: BTreeMap<Pos, (RememberedTile, u32)> = BTreeMap::new();
         let mut cities: BTreeMap<u32, RememberedCity> = BTreeMap::new();
         for member in members {
-            for (position, memory) in self.players[*member].remembered_tiles.iter() {
-                let replace = tiles
-                    .get(position)
-                    .is_none_or(|old| memory.seen_turn > old.seen_turn);
+            let seat = &self.players[*member];
+            for (position, memory) in seat.remembered_tiles.iter() {
+                let seen = seat.remembered_tiles.seen_turn(position);
+                let replace = tiles.get(position).is_none_or(|(_, old)| seen > *old);
                 if replace {
-                    tiles.insert(*position, memory.clone());
+                    tiles.insert(*position, (memory.clone(), seen));
                 }
             }
             for (city, memory) in &self.players[*member].remembered_cities {
@@ -19443,13 +19436,13 @@ impl Game {
         for member in members {
             let player = &mut self.players[*member];
             player.explored.extend(explored.iter().copied());
-            for (position, memory) in &tiles {
-                let replace = player
-                    .remembered_tiles
-                    .get(position)
-                    .is_none_or(|old| memory.seen_turn > old.seen_turn);
+            for (position, (memory, seen)) in &tiles {
+                let replace = player.remembered_tiles.get(position).is_none()
+                    || *seen > player.remembered_tiles.seen_turn(position);
                 if replace {
-                    player.remembered_tiles.insert(*position, memory.clone());
+                    player
+                        .remembered_tiles
+                        .remember(*position, memory.clone(), *seen);
                 }
             }
             for (city, memory) in &cities {
@@ -19485,7 +19478,10 @@ impl Game {
                 .map(|city| self.remember_city(city))
                 .collect();
             for (position, tile) in missing_tiles {
-                self.players[pid].remembered_tiles.insert(position, tile);
+                let seen = tile.seen_turn;
+                self.players[pid]
+                    .remembered_tiles
+                    .remember(position, tile, seen);
             }
             for city in missing_cities {
                 self.players[pid].remembered_cities.insert(city.id, city);
@@ -37440,7 +37436,7 @@ mod visibility_tests {
         }
         for player in game.players.iter_mut() {
             player.explored.clear();
-            player.remembered_tiles.clear();
+            player.remembered_tiles.forget_all();
             player.remembered_cities.clear();
         }
         game.map.clear_rivers();
