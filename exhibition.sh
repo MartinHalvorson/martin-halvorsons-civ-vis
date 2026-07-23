@@ -50,6 +50,14 @@ build_started=0
 
 say() { printf '%s %s\n' "$(date '+%m-%d %H:%M:%S')" "$1" >>"$log"; }
 
+# Compilers working on this exhibition's worktree, ours or left behind by a
+# supervisor killed mid-build. A background build outlives the supervisor that
+# started it, and a fresh supervisor knows nothing about it - so without this
+# check it starts another on the same target directory, they fight over
+# Cargo's build lock, and every build fails. pgrep never matches itself, so
+# the pattern naming the path is safe here.
+exhibition_cargo() { pgrep -f "cargo.*civvis-exhibition-src" 2>/dev/null || true; }
+
 # One supervisor per port. Two of them fight: both build, both stop the server
 # mid-swap, and the log stops meaning anything. The lock is released when this
 # process dies, so a killed supervisor leaves the name free.
@@ -109,6 +117,14 @@ if [ ! -f "$src/Cargo.toml" ]; then
     fi
 fi
 
+# Anything still compiling belongs to a supervisor that is gone - this one
+# holds the lock - so clear it rather than let it collide with our first build.
+stale="$(exhibition_cargo)"
+if [ -n "$stale" ]; then
+    echo "$stale" | xargs -r kill -9 2>/dev/null || true
+    say "cleared build process(es) left by a previous supervisor"
+fi
+
 say "supervisor started (port $PORT, poll ${POLL_SEC}s, git every ${GIT_SEC}s)"
 while true; do
     # 1. revive anything that died. A server process that is alive but no
@@ -164,7 +180,8 @@ while true; do
         git -C "$src" fetch -q origin main 2>/dev/null || true
         head="$(git -C "$src" rev-parse FETCH_HEAD 2>/dev/null || true)"
         built="$( [ -f "$stamp" ] && tr -d '[:space:]' <"$stamp" || true )"
-        if [ -n "$head" ] && [ "$head" != "$built" ] && [ -z "$build_pid" ]; then
+        if [ -n "$head" ] && [ "$head" != "$built" ] && [ -z "$build_pid" ] &&
+            [ -z "$(exhibition_cargo)" ]; then
             build_short="${head:0:7}"
             build_head="$head"
             git -C "$src" reset -q --hard "$head" 2>/dev/null || true

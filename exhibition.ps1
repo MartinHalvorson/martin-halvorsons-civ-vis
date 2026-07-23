@@ -42,6 +42,17 @@ function Log($msg) {
     Add-Content -Encoding utf8 $log "$(Get-Date -Format 'MM-dd HH:mm:ss') $msg"
 }
 
+# Compilers working on this exhibition's worktree, ours or left behind by a
+# supervisor that was killed mid-build. A background build outlives the
+# supervisor that started it, and a fresh supervisor knows nothing about it -
+# so without this check it starts another on the same target directory, they
+# fight over Cargo's build lock, and every build fails. That stranded the
+# exhibition on a fifteen-minute-old commit through four different shas.
+function Get-ExhibitionCargo {
+    Get-CimInstance Win32_Process -Filter "Name='cargo.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like "*civvis-exhibition-src*" }
+}
+
 # The server prefers web/index.html and web/assets/* from its working
 # directory and falls back to the copies compiled into the binary. Running it
 # from the shared checkout therefore served whatever index.html happened to be
@@ -106,6 +117,15 @@ if (-not (Test-Path "$src\Cargo.toml")) {
     git -C $repo worktree add --detach $src origin/main 2>$null | Out-Null
     if (Test-Path "$src\Cargo.toml") { Log "created build worktree at $src" }
     else { Log "could not create build worktree at $src" }
+}
+
+# Anything still compiling belongs to a supervisor that is gone: this one holds
+# the mutex, so no other supervisor is alive to own it. Clear it out rather
+# than letting it collide with the first build of this run.
+$stale = @(Get-ExhibitionCargo)
+if ($stale.Count -gt 0) {
+    $stale | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Log "cleared $($stale.Count) build process(es) left by a previous supervisor"
 }
 
 Log "supervisor started (port $Port, poll ${PollSec}s, git every ${GitSec}s)"
@@ -183,7 +203,8 @@ while ($true) {
             git -C $src fetch -q origin main 2>$null
             $head = git -C $src rev-parse FETCH_HEAD
             $built = if (Test-Path $stamp) { (Get-Content $stamp -Raw).Trim() } else { "" }
-            if ($head -and $head -ne $built -and $null -eq $build) {
+            if ($head -and $head -ne $built -and $null -eq $build -and
+                $null -eq (Get-ExhibitionCargo | Select-Object -First 1)) {
                 $short = $head.Substring(0, 7)
                 git -C $src reset -q --hard $head 2>$null
                 Log "building $short"
