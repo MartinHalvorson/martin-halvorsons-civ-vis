@@ -140,7 +140,11 @@
     },
     "ADJUST_BUILDING_YIELD_CHANGE": {
       "status": "partial",
-      "note": "Buildings carry their shipped yields and named policies adjust them, but there is no general 'this modifier changes that building's yield' path, so unlisted sources are inert."
+      "verified": true,
+      "note": "Verified row by row. Third Alternative, Military Research, the Electronics Factory Culture, the Tsikhe Faith, Choral Music, Feed the World and Isaac Newton's University Science all match. The city-state Envoy building bonuses did not: the shipped rows pay 2 for the first two building tiers whatever the type, 3 for the third (6 for Trade), and 2/4 Consulate and 3/6 Chancery. CIVVIS paid 1 for the Capital and the first tier and doubled the second tier for Trade. Corrected. Still partial for the structural reason: an arbitrary modifier cannot adjust an arbitrary building's yield, only the named sources here.",
+      "leads": [
+        "CIVVIS grants Trade Envoy bonuses to the Shipyard and Stock Exchange; the shipped rows name only Market, Lighthouse, Bank and Seaport."
+      ]
     },
     "ADJUST_PLOT_YIELD": {
       "status": "partial",
