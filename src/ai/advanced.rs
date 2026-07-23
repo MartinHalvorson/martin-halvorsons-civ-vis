@@ -363,6 +363,23 @@ impl AdvancedAi {
         self.victory_target
     }
 
+    fn active_victory_target(&self, g: &Game) -> Option<VictoryTarget> {
+        self.victory_target
+            .filter(|target| g.victory_conditions.is_enabled(target.as_str()))
+    }
+
+    fn victory_strategy_enabled(g: &Game, strategy: GrandStrategy) -> bool {
+        match strategy {
+            GrandStrategy::Science => g.victory_conditions.science,
+            GrandStrategy::Culture => g.victory_conditions.culture,
+            GrandStrategy::Religion => g.victory_conditions.religious,
+            GrandStrategy::Diplomacy => g.victory_conditions.diplomatic,
+            GrandStrategy::Conquest => g.victory_conditions.domination,
+            GrandStrategy::Expansion => g.victory_conditions.score,
+            GrandStrategy::Recovery => false,
+        }
+    }
+
     /// Last set of force orders produced for this agent. This is useful to
     /// observers, evaluators, and tests; orders are rebuilt at every war turn.
     pub fn force_groups(&self) -> &[ForceGroup] {
@@ -395,6 +412,16 @@ impl AdvancedAi {
 
     fn plan_stale(&self, g: &Game, pid: usize) -> bool {
         let Some(plan) = &self.plan else { return true };
+        if matches!(
+            plan.strategy,
+            GrandStrategy::Science
+                | GrandStrategy::Culture
+                | GrandStrategy::Religion
+                | GrandStrategy::Diplomacy
+        ) && !Self::victory_strategy_enabled(g, plan.strategy)
+        {
+            return true;
+        }
         if g.turn.saturating_sub(plan.assessed_turn) >= 5 {
             return true;
         }
@@ -563,7 +590,7 @@ impl AdvancedAi {
 
     fn religious_opening_viable(&self, g: &Game, pid: usize) -> bool {
         let player = &g.players[pid];
-        if player.religion.is_some() {
+        if !g.victory_conditions.religious || player.religion.is_some() {
             return false;
         }
         if player.prophet_pending {
@@ -655,19 +682,32 @@ impl AdvancedAi {
     }
 
     fn victory_focus(&self, g: &Game, pid: usize) -> VictoryFocus {
-        if let Some(target) = self.victory_target {
+        if let Some(target) = self.active_victory_target(g) {
             return VictoryFocus {
                 strategy: target.strategy(),
                 progress: 100,
             };
         }
         if !self.victory_planning {
+            let preferred = if g.players[pid].civ == "Greece" {
+                GrandStrategy::Culture
+            } else {
+                GrandStrategy::Science
+            };
+            let strategy = [
+                preferred,
+                GrandStrategy::Science,
+                GrandStrategy::Culture,
+                GrandStrategy::Religion,
+                GrandStrategy::Diplomacy,
+                GrandStrategy::Conquest,
+                GrandStrategy::Expansion,
+            ]
+            .into_iter()
+            .find(|strategy| Self::victory_strategy_enabled(g, *strategy))
+            .unwrap_or(GrandStrategy::Science);
             return VictoryFocus {
-                strategy: if g.players[pid].civ == "Greece" {
-                    GrandStrategy::Culture
-                } else {
-                    GrandStrategy::Science
-                },
+                strategy,
                 progress: 25,
             };
         }
@@ -754,11 +794,11 @@ impl AdvancedAi {
             .count() as i64;
         let diplomacy = (player.dvp * 5 + suzerain * 6).clamp(0, 100) as i32;
 
-        let mut best = VictoryFocus {
-            strategy: GrandStrategy::Science,
-            progress: science,
-        };
-        for candidate in [
+        let candidates = [
+            VictoryFocus {
+                strategy: GrandStrategy::Science,
+                progress: science,
+            },
             VictoryFocus {
                 strategy: GrandStrategy::Culture,
                 progress: culture.max((player.civ == "Greece") as i32 * 45),
@@ -771,7 +811,23 @@ impl AdvancedAi {
                 strategy: GrandStrategy::Diplomacy,
                 progress: diplomacy,
             },
-        ] {
+            VictoryFocus {
+                strategy: GrandStrategy::Conquest,
+                progress: 0,
+            },
+            VictoryFocus {
+                strategy: GrandStrategy::Expansion,
+                progress: 0,
+            },
+        ];
+        let mut enabled = candidates
+            .into_iter()
+            .filter(|candidate| Self::victory_strategy_enabled(g, candidate.strategy));
+        let mut best = enabled.next().unwrap_or(VictoryFocus {
+            strategy: GrandStrategy::Science,
+            progress: science,
+        });
+        for candidate in enabled {
             if candidate.progress > best.progress {
                 best = candidate;
             }
@@ -878,12 +934,16 @@ impl AdvancedAi {
             },
         ]
         .into_iter()
+        .filter(|focus| Self::victory_strategy_enabled(g, focus.strategy))
         .max_by_key(|focus| focus.progress)
-        .unwrap()
+        .unwrap_or(VictoryFocus {
+            strategy: GrandStrategy::Recovery,
+            progress: 0,
+        })
     }
 
     fn victory_denial(&self, g: &Game, pid: usize) -> Option<(usize, GrandStrategy)> {
-        if self.victory_target.is_some() {
+        if self.active_victory_target(g).is_some() {
             return None;
         }
         let own_progress = self.victory_focus(g, pid).progress;
@@ -1012,7 +1072,7 @@ impl AdvancedAi {
             GrandStrategy::Recovery
         } else if emergency_objective.is_some() {
             GrandStrategy::Conquest
-        } else if let Some(target) = self.victory_target {
+        } else if let Some(target) = self.active_victory_target(g) {
             if target == VictoryTarget::Religion && g.players[pid].religion.is_none() {
                 GrandStrategy::Religion
             } else if cities.len() < desired_cities && has_site && g.turn < g.standard_duration(175)
@@ -11126,6 +11186,48 @@ mod tests {
             ai.victory_focus(&culture, 0).strategy,
             GrandStrategy::Culture
         );
+    }
+
+    #[test]
+    fn disabled_victories_do_not_drive_strategy_or_rival_denial() {
+        let mut game = Game::new(2, 24, 16, 7_602, 300, 0);
+        game.victory_conditions.religious = false;
+        game.victory_conditions.diplomatic = false;
+        game.victory_conditions.score = false;
+        game.players[0].dvp = 25;
+        game.players[0].religion = Some("Test Faith".to_string());
+        game.players[0].prophet_pending = true;
+        game.players[1].dvp = 25;
+
+        let ai = AdvancedAi::new();
+        assert_eq!(
+            ai.victory_focus(&game, 0).strategy,
+            GrandStrategy::Science,
+            "disabled diplomatic and religious progress must not outrank an enabled path"
+        );
+        assert!(!ai.religious_opening_viable(&game, 0));
+        assert_ne!(
+            ai.rival_victory_pressure(&game, 1).strategy,
+            GrandStrategy::Diplomacy,
+            "a disabled victory is not an imminent rival threat"
+        );
+        assert_eq!(ai.victory_denial(&game, 0), None);
+
+        let mut targeted = AdvancedAi::targeting(VictoryTarget::Diplomacy);
+        assert_eq!(
+            targeted.victory_focus(&game, 0).strategy,
+            GrandStrategy::Science,
+            "an explicit target must yield when the game disables that victory"
+        );
+        targeted.plan = Some(StrategicPlan {
+            strategy: GrandStrategy::Diplomacy,
+            target_player: None,
+            target_city: None,
+            threatened_city: None,
+            desired_cities: 3,
+            assessed_turn: game.turn,
+        });
+        assert!(targeted.plan_stale(&game, 0));
     }
 
     #[test]
