@@ -284,26 +284,20 @@ fn sprt_confirm(
 }
 
 fn evaluate_all(pop: &[Weights], opponents: &[Weights], cfg: &EvoCfg, gen: u32) -> Vec<f64> {
-    let n = pop.len();
-    let mut fits = vec![0.0f64; n];
-    let chunk = n.div_ceil(cfg.threads.max(1));
-    std::thread::scope(|s| {
-        for (pi, fi) in pop.chunks(chunk).zip(fits.chunks_mut(chunk)) {
-            s.spawn(move || {
-                for (j, w) in pi.iter().enumerate() {
-                    let mut f = 0.0;
-                    for gm in 0..cfg.games {
-                        let seat = gm % cfg.players;
-                        // same seeds for every genome → paired comparison
-                        let seed = cfg.seed + gen as u64 * 1_000 + gm as u64;
-                        f += eval_game(w, opponents, seat, cfg, seed, gm % 3 == 2).0;
-                    }
-                    fi[j] = f / cfg.games as f64;
-                }
-            });
+    // One genome at a time rather than an equal slice each: genomes do not
+    // cost the same, since a genome that wins early plays a shorter game than
+    // one that grinds to the turn limit, and a fixed split leaves threads
+    // idle waiting for whichever slice drew the long games.
+    crate::parallel::map(pop.len(), cfg.threads.max(1), |index| {
+        let mut fitness = 0.0;
+        for game in 0..cfg.games {
+            let seat = game % cfg.players;
+            // same seeds for every genome → paired comparison
+            let seed = cfg.seed + gen as u64 * 1_000 + game as u64;
+            fitness += eval_game(&pop[index], opponents, seat, cfg, seed, game % 3 == 2).0;
         }
-    });
-    fits
+        fitness / cfg.games as f64
+    })
 }
 
 fn mutate(w: &Weights, rng: &mut Rng, bounds: &[(f64, f64)]) -> Weights {
