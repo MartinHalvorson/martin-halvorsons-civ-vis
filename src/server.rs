@@ -2408,9 +2408,18 @@ pub fn serve_with_game(port: u16, open_browser: bool, params: Params, game: Opti
     if open_browser {
         open_url(&url);
     }
+    // One connection at a time meant one slow request stopped the server
+    // dead for everyone. /state builds close to a megabyte of observation and
+    // the browser asks for it continuously, so on a loaded machine the
+    // supervisor's health and game-over checks queued behind it - measured at
+    // twenty-one seconds once and fifty-five another, with the game running
+    // fine behind the stall. Each connection gets its own thread; the session
+    // mutex still serialises the state itself, but only for as long as the
+    // snapshot takes, not for the serialisation and the socket write too.
     for stream in listener.incoming() {
         if let Ok(mut s) = stream {
-            handle(&mut s, &shared);
+            let shared = shared.clone();
+            std::thread::spawn(move || handle(&mut s, &shared));
         }
     }
 }
