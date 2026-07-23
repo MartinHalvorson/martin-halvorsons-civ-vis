@@ -2085,7 +2085,11 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("p.ai_plan"));
         assert!(EMBEDDED_INDEX.contains(".civ-dossier {"));
         assert!(EMBEDDED_INDEX.contains("changed its grand strategy from"));
-        assert!(EMBEDDED_INDEX.contains("e.important && now - e.at < 6000"));
+        // The log never reorders: an overflowing log retires its least
+        // valuable entry instead of holding important ones frozen at the top.
+        assert!(!EMBEDDED_INDEX.contains("e.important && now - e.at < 6000"));
+        assert!(EMBEDDED_INDEX.contains("const CAP = 60, FRESH = 12"));
+        assert!(EMBEDDED_INDEX.contains("SERVER_EVENT_VALUES"));
         assert!(EMBEDDED_INDEX.contains("const floor = active ? (SPEC ? 32 : 16) : MODE.idle"));
         // The repaint rate answers to what a frame actually costs, so the
         // expensive style degrades to a slower picture rather than a stalled one

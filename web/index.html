@@ -1938,17 +1938,31 @@ function eventViewPlayer(st) {
 function eventsFor(st) {
   return eventLogs.get(eventViewKey(st)) || [];
 }
-function addEvent(icon, text, turn, st, important = false) {
+function addEvent(icon, text, turn, st, important = false, value = 2) {
   const viewKey = eventViewKey(st);
   const events = eventLogs.get(viewKey) || [];
-  events.unshift({ icon, text, turn, important, at: performance.now() });
+  events.unshift({ icon, text, turn, important, value, at: performance.now() });
   // The panel is as tall as the deck allows now, so the log keeps enough
-  // history to fill a large screen instead of the dozen a fixed box held.
-  eventLogs.set(viewKey, events.slice(0, 60));
+  // history to fill a large screen. When it overflows, retire the least
+  // valuable entry — oldest among ties — instead of simply the oldest, so
+  // wars, era firsts and captures outlive routine notices. The newest dozen
+  // are exempt from eviction: whatever just happened must get its moment.
+  const CAP = 60, FRESH = 12;
+  while (events.length > CAP) {
+    let drop = events.length - 1;
+    for (let i = events.length - 1; i >= FRESH; i--)
+      if ((events[i].value ?? 2) < (events[drop].value ?? 2)) drop = i;
+    events.splice(drop, 1);
+  }
+  eventLogs.set(viewKey, events);
 }
 const SERVER_EVENT_ICONS = {
   General: "✦", Cities: "🏛", War: "⚔", Science: "⌬",
   Culture: "❦", Faith: "☥", People: "★", Diplomacy: "⚖",
+};
+const SERVER_EVENT_VALUES = {
+  General: 4, War: 3, Cities: 3, Faith: 3, People: 2, Diplomacy: 2,
+  Science: 1, Culture: 1,
 };
 let seenServerEvents = new Set();
 function civilizationEventText(text, next) {
@@ -1971,57 +1985,58 @@ function chronicleServer(next) {
     if (seenServerEvents.has(key)) continue;
     seenServerEvents.add(key);
     addEvent(SERVER_EVENT_ICONS[event.category] || "✦", text, event.turn,
-      next, event.category === "General");
+      next, event.category === "General", SERVER_EVENT_VALUES[event.category] ?? 2);
   }
   if (seenServerEvents.size > 1200) seenServerEvents = new Set();
 }
 
+// [icon, text, value] — value ranks what survives when the log overflows.
 function worldEventPresentation(event, next) {
   const civ = id => (next.players[id] || {}).civ || "An unknown civilization";
   const losses = (units, cities) =>
     `${units} unit${units === 1 ? "" : "s"} and ${cities} cit${cities === 1 ? "y" : "ies"}`;
   switch (event.type) {
     case "wonder_built":
-      return ["★", `${civ(event.player)} built ${titleCase(event.wonder)}.`];
+      return ["★", `${civ(event.player)} built ${titleCase(event.wonder)}.`, 4];
     case "religion_founded":
-      return ["✦", `${civ(event.player)} founded ${titleCase(event.religion)}.`];
+      return ["✦", `${civ(event.player)} founded ${titleCase(event.religion)}.`, 4];
     case "district_first":
       return ["◆", `${civ(event.player)} built the world's first ${titleCase(event.district)}` +
-        `${event.city ? ` in ${event.city}` : ""}.`];
+        `${event.city ? ` in ${event.city}` : ""}.`, 3];
     case "building_first":
       return ["▰", `${civ(event.player)} built the world's first ${titleCase(event.building)}` +
-        `${event.city ? ` in ${event.city}` : ""}.`];
+        `${event.city ? ` in ${event.city}` : ""}.`, 2];
     case "population_milestone":
       return ["♟", `${civ(event.player)} reached city population ${event.population}` +
-        `${event.city ? ` in ${event.city}` : ""} for the first time.`];
+        `${event.city ? ` in ${event.city}` : ""} for the first time.`, 2];
     case "war_started":
-      return ["⚔", `${civ(event.aggressor)} started a war against ${civ(event.defender)}.`];
+      return ["⚔", `${civ(event.aggressor)} started a war against ${civ(event.defender)}.`, 5];
     case "war_progress":
       return ["⚔", `${civ(event.defender)} has lost ${losses(event.defender_units_lost, event.defender_cities_lost)}; ` +
-        `${civ(event.aggressor)} has lost ${losses(event.aggressor_units_lost, event.aggressor_cities_lost)}.`];
+        `${civ(event.aggressor)} has lost ${losses(event.aggressor_units_lost, event.aggressor_cities_lost)}.`, 2];
     case "war_ended":
       return ["☮", `${civ(event.aggressor)} and ${civ(event.defender)} made peace. Final losses: ` +
         `${civ(event.defender)} ${losses(event.defender_units_lost, event.defender_cities_lost)}; ` +
-        `${civ(event.aggressor)} ${losses(event.aggressor_units_lost, event.aggressor_cities_lost)}.`];
+        `${civ(event.aggressor)} ${losses(event.aggressor_units_lost, event.aggressor_cities_lost)}.`, 4];
     case "city_captured":
-      return ["⚔", `${civ(event.player)} captured ${event.city} from ${civ(event.former)}.`];
+      return ["⚔", `${civ(event.player)} captured ${event.city} from ${civ(event.former)}.`, 5];
     case "suzerain_changed": {
       const cityState = civ(event.city_state);
       if (event.from === null || event.from === undefined)
-        return ["⚜", `${civ(event.to)} became Suzerain of ${cityState}.`];
+        return ["⚜", `${civ(event.to)} became Suzerain of ${cityState}.`, 2];
       if (event.to === null || event.to === undefined)
-        return ["⚜", `${civ(event.from)} lost suzerainty of ${cityState}.`];
-      return ["⚜", `${civ(event.to)} replaced ${civ(event.from)} as Suzerain of ${cityState}.`];
+        return ["⚜", `${civ(event.from)} lost suzerainty of ${cityState}.`, 2];
+      return ["⚜", `${civ(event.to)} replaced ${civ(event.from)} as Suzerain of ${cityState}.`, 2];
     }
     case "era_first": {
       const era = titleCase(ERA_NAMES[event.era] || `era ${event.era}`);
       return [event.track === "technology" ? "⌬" : "❦",
-        `${civ(event.player)} was first to enter the ${era} Era through ${event.track}.`];
+        `${civ(event.player)} was first to enter the ${era} Era through ${event.track}.`, 5];
     }
     case "government_changed":
       if (event.from === null || event.from === undefined)
-        return ["♜", `${civ(event.player)} adopted ${titleCase(event.to)}.`];
-      return ["♜", `${civ(event.player)} changed government from ${titleCase(event.from)} to ${titleCase(event.to)}.`];
+        return ["♜", `${civ(event.player)} adopted ${titleCase(event.to)}.`, 3];
+      return ["♜", `${civ(event.player)} changed government from ${titleCase(event.from)} to ${titleCase(event.to)}.`, 3];
     default:
       return null;
   }
@@ -2032,7 +2047,9 @@ function chronicleWorldEvents(next) {
   for (const batch of batches) {
     for (const event of (Array.isArray(batch.world_events) ? batch.world_events : [])) {
       const presentation = worldEventPresentation(event, next);
-      if (presentation) addEvent(presentation[0], presentation[1], event.turn ?? next.turn, next);
+      if (presentation)
+        addEvent(presentation[0], presentation[1], event.turn ?? next.turn, next,
+          event.type === "era_first", presentation[2]);
     }
   }
 }
@@ -2042,7 +2059,7 @@ function chronicle(prev, next) {
     eventLogs = new Map();
     lastLeaderByView = new Map();
     seenServerEvents = new Set();
-    addEvent("✦", `A new world begins with seed ${next.seed}.`, next.turn, next);
+    addEvent("✦", `A new world begins with seed ${next.seed}.`, next.turn, next, false, 5);
     chronicleServer(next);
     return;
   }
@@ -2053,31 +2070,31 @@ function chronicle(prev, next) {
     const old = oldCities.get(city.id);
     const civ = (next.players[city.owner] || {}).civ || "An unknown civilization";
     if (!old && (viewer === null || city.owner === viewer))
-      addEvent("🏛", `${civ} founded ${city.name}.`, next.turn, next);
+      addEvent("🏛", `${civ} founded ${city.name}.`, next.turn, next, false, 3);
     else if (playerView && old && old.owner !== city.owner &&
              (viewer === null || city.owner === viewer || old.owner === viewer)) {
       const former = (prev.players[old.owner] || {}).civ || "its former ruler";
-      addEvent("⚔", `${civ} captured ${city.name} from ${former}.`, next.turn, next);
+      addEvent("⚔", `${civ} captured ${city.name} from ${former}.`, next.turn, next, false, 5);
     }
     oldCities.delete(city.id);
   }
   for (const city of oldCities.values()) {
     if (viewer === null || city.owner === viewer) {
       const owner = (prev.players[city.owner] || {}).civ || "An unknown civilization";
-      addEvent("♜", `${owner} lost ${city.name} to history.`, next.turn, next);
+      addEvent("♜", `${owner} lost ${city.name} to history.`, next.turn, next, false, 3);
     }
   }
   for (const p of next.players) {
     const old = prev.players.find(x => x.id === p.id);
     if (old && old.alive && !p.alive && (viewer === null || p.id === viewer))
-      addEvent("☠", `${p.civ} has been defeated.`, next.turn, next);
+      addEvent("☠", `${p.civ} has been defeated.`, next.turn, next, false, 5);
     if (old && !p.is_minor && !p.is_barbarian && old.ai_strategy && p.ai_strategy &&
         old.ai_strategy !== p.ai_strategy && (viewer === null || p.id === viewer)) {
       const icon = {expansion:"⌂", science:"⚛", culture:"♪", religion:"✦",
                     diplomacy:"⚜", conquest:"⚔", recovery:"♜"}[p.ai_strategy] || "◇";
       addEvent(icon,
         `${p.civ} changed its grand strategy from ${titleCase(old.ai_strategy)} to ${titleCase(p.ai_strategy)}.`,
-        next.turn, next, true);
+        next.turn, next, true, 4);
     }
   }
   if (!playerView) {
@@ -2086,7 +2103,7 @@ function chronicle(prev, next) {
     const viewKey = eventViewKey(next);
     const lastLeader = lastLeaderByView.get(viewKey);
     if (majors.length && lastLeader !== undefined && majors[0].id !== lastLeader)
-      addEvent("♛", `${majors[0].civ} has taken the score lead.`, next.turn, next);
+      addEvent("♛", `${majors[0].civ} has taken the score lead.`, next.turn, next, false, 3);
     if (majors.length) lastLeaderByView.set(viewKey, majors[0].id);
     chronicleWorldEvents(next);
   }
@@ -5735,12 +5752,12 @@ function drawEvents() {
   const playerView = viewer !== null && viewer !== undefined;
   const player = playerView ? state.players[viewer] : null;
   scope.textContent = playerView ? `${player.civ} · player log` : "Spectator · combined summary";
+  // Strictly newest-first: important entries keep their gold styling in
+  // place. Holding them at the top out of order left the head of the log
+  // frozen whenever a burst of milestones arrived.
   const events = eventsFor(state);
-  const now = performance.now();
-  const pinned = events.filter(e => e.important && now - e.at < 6000);
-  const ordered = [...pinned, ...events.filter(e => !pinned.includes(e))];
-  const signature = `${eventViewKey(state)}|` + ordered
-    .map(e => `${e.turn}:${e.icon}:${e.text}:${pinned.includes(e)}`).join("|");
+  const signature = `${eventViewKey(state)}|` + events
+    .map(e => `${e.turn}:${e.icon}:${e.text}`).join("|");
   if (el.dataset.signature === signature) return;
   el.dataset.signature = signature;
   if (!events.length) {
@@ -5749,7 +5766,7 @@ function drawEvents() {
       : "The world is quiet—for now."}</div>`;
     return;
   }
-  el.innerHTML = ordered.map(e =>
+  el.innerHTML = events.map(e =>
     `<div class="event-item${e.important ? " important" : ""}"><div class="event-icon">${e.icon}</div>` +
     `<div><div class="event-text">${e.text}</div><div class="event-turn">Turn ${e.turn}</div></div></div>`
   ).join("");

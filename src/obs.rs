@@ -437,7 +437,7 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool, interactive: bool) -> Value 
         // What has happened to this civilization lately, newest last. An
         // omniscient viewer watches whichever seat it is observing, so the
         // spectator log follows the same seat as the rest of the frame.
-        "events": recent_events(g, pid),
+        "events": recent_events(g, pid, omniscient),
     })
 }
 
@@ -505,9 +505,19 @@ fn wars_json(g: &Game) -> Vec<Value> {
 
 /// The tail of a civilization's event stream. Bounded because an observation
 /// is sent every frame and a long game accumulates thousands.
-fn recent_events(g: &Game, pid: usize) -> Vec<Value> {
+///
+/// The omniscient feed rotates through every seat, so per-item "researched"
+/// and "adopted" entries would multiply by the number of civilizations and
+/// drown the combined chronicle; its science and culture story is told by the
+/// era-first world events instead. A civilization's own perspective keeps its
+/// full personal log.
+fn recent_events(g: &Game, pid: usize, omniscient: bool) -> Vec<Value> {
     const RECENT: usize = 60;
-    let events = g.events_for(pid);
+    let events: Vec<_> = g
+        .events_for(pid)
+        .into_iter()
+        .filter(|event| !omniscient || !matches!(event.category.as_str(), "Science" | "Culture"))
+        .collect();
     events[events.len().saturating_sub(RECENT)..]
         .iter()
         .map(|event| {
@@ -926,6 +936,32 @@ fn merge(base: &mut Value, ext: Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_spectator_feed_trades_per_item_research_for_era_firsts() {
+        let mut game = Game::new(2, 18, 12, 7, 25, 0);
+        game.note(0, "Science", "researched pottery", None);
+        game.note(0, "Culture", "adopted code of laws", None);
+        game.note(0, "War", "declared war on somebody", None);
+
+        let categories = |observed: &Value| -> Vec<String> {
+            observed["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|event| event["category"].as_str().unwrap().to_string())
+                .collect()
+        };
+
+        let spectator = categories(&observation_spectator(&game, 0));
+        assert!(!spectator.iter().any(|category| category == "Science"));
+        assert!(!spectator.iter().any(|category| category == "Culture"));
+        assert!(spectator.iter().any(|category| category == "War"));
+
+        let personal = categories(&observation(&game, 0));
+        assert!(personal.iter().any(|category| category == "Science"));
+        assert!(personal.iter().any(|category| category == "Culture"));
+    }
 
     #[test]
     fn observation_exposes_compact_hud_and_victory_race_metrics() {
