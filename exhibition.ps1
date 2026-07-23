@@ -119,6 +119,24 @@ if (-not (Test-Path "$src\Cargo.toml")) {
     else { Log "could not create build worktree at $src" }
 }
 
+# Nothing in PowerShell reports a detached process's exit status reliably:
+# Start-Process -PassThru hands back an ExitCode that stays wrong even after
+# waiting on it, and reading the compiler's own output races the file still
+# being flushed. Both mistakes were made here, and both recorded every
+# successful build as broken - so the stamp was never written, the same commit
+# rebuilt every cadence, and the exhibition sat on an old binary while the
+# build log plainly read Finished. A script settles it: the shell writes the
+# real exit code once the compiler is genuinely done, and that file is the
+# verdict. It lives in a file rather than a cmd /c string because cmd strips
+# the outer quotes off a command that both begins and ends with one.
+$buildScript = "$binRun\build-once.cmd"
+Set-Content -Path $buildScript -Encoding ascii -Value @(
+    '@echo off',
+    "set CARGO_TARGET_DIR=$src\target",
+    "`"$cargo`" build --release --manifest-path `"$src\Cargo.toml`" > `"$binRun\build.log`" 2>&1",
+    "echo %ERRORLEVEL% > `"$binRun\build.code`""
+)
+
 # Anything still compiling belongs to a supervisor that is gone: this one holds
 # the mutex, so no other supervisor is alive to own it. Clear it out rather
 # than letting it collide with the first build of this run.
@@ -168,13 +186,17 @@ while ($true) {
         #     the moment the game ends rather than half a minute later.
         if ($null -ne $build -and $build.HasExited) {
             $took = ((Get-Date) - $buildStarted).TotalSeconds
-            # A process object from Start-Process -PassThru does not carry an
-            # exit code until it has been waited on, and reads as a failure
-            # until then - which reported every successful build as broken and
-            # rebuilt the same commit on a loop. HasExited is already true, so
-            # this returns at once and fills the code in.
+            # Judge the build by what the compiler said, not by the process
+            # object. Start-Process -PassThru hands back an ExitCode that
+            # stays unreliable on Windows PowerShell even after waiting, so
+            # every successful build was recorded as broken: the stamp was
+            # never written, the same commit rebuilt every cadence, and the
+            # exhibition sat on an old binary while build.err.log plainly read
+            # Finished release profile.
             $build.WaitForExit()
-            if ($build.ExitCode -eq 0) {
+            $code = (Get-Content "$binRun\build.code" -Raw -ErrorAction SilentlyContinue)
+            $report = Get-Content "$binRun\build.log" -Raw -ErrorAction SilentlyContinue
+            if ($null -ne $code -and $code.Trim() -eq "0") {
                 Copy-Item "$src\target\release\civvis.exe" "$binRun\civvis-next.exe" -Force
                 Set-Content -Path $stamp -Value $buildHead -Encoding ascii
                 Log ("staged $buildShort in {0:n0}s" -f $took)
@@ -184,10 +206,9 @@ while ($true) {
                 # compiler's own first complaint into the log: the next build
                 # overwrites build.err.log, so "build FAILED" on its own is
                 # unattributable by the time anyone reads it.
-                $why = (Select-String -Path "$binRun\build.err.log" -Pattern '^error' `
-                        -ErrorAction SilentlyContinue | Select-Object -First 1).Line
-                if ($why) { Log "build FAILED for ${buildShort}: $why" }
-                else { Log "build FAILED for $buildShort" }
+                $why = ([regex]::Match([string]$report, '(?m)^error(\[|:).*$')).Value
+                if (-not $why) { $why = "cargo exited $($code -replace '\s','') with no error line" }
+                Log "build FAILED for ${buildShort}: $why"
             }
             $build = $null
         }
@@ -216,11 +237,8 @@ while ($true) {
                 # for that long - so a game that ended mid-build sat decided,
                 # or the server sat dead, until the compiler finished. That is
                 # where a twenty-one second changeover came from.
-                $env:CARGO_TARGET_DIR = "$src\target"
-                $build = Start-Process -FilePath $cargo -PassThru -WindowStyle Hidden `
-                    -ArgumentList "build","--release","--manifest-path","$src\Cargo.toml" `
-                    -RedirectStandardOutput "$binRun\build.log" `
-                    -RedirectStandardError "$binRun\build.err.log"
+                Remove-Item "$binRun\build.code" -Force -ErrorAction SilentlyContinue
+                $build = Start-Process -FilePath $buildScript -PassThru -WindowStyle Hidden
             }
 
             # 3. keep the shared checkout moving too, for the sessions working
