@@ -25667,9 +25667,18 @@ impl Game {
         mu.acted = true;
         bump(&mut self.players[pid], "improvements");
         if excavates_artifact {
-            // A dig raises something from a past era.
+            // A dig raises something from a past era, left by one of the
+            // world's peoples - the shipped sites record whose history
+            // happened there, and museum theming asks for variety.
             let era = self.rng.below(self.world_era.max(1));
-            self.grant_great_work(pid, "artifact", era, "antiquity");
+            let civs: Vec<String> = self
+                .players
+                .iter()
+                .filter(|player| !player.is_barbarian)
+                .map(|player| player.civ.clone())
+                .collect();
+            let origin = civs[self.rng.below(civs.len().max(1))].clone();
+            self.grant_great_work(pid, "artifact", era, &origin);
         }
         if self.units[&uid].charges <= 0 {
             self.remove_unit(uid);
@@ -32843,7 +32852,11 @@ impl Game {
                 .collect();
             let eras: BTreeSet<usize> = artifacts.iter().map(|piece| piece.era).collect();
             for era in eras {
-                if artifacts.iter().filter(|piece| piece.era == era).count() >= 3 {
+                let of_era: Vec<&&GreatWorkPiece> =
+                    artifacts.iter().filter(|piece| piece.era == era).collect();
+                let origins: BTreeSet<&str> =
+                    of_era.iter().map(|piece| piece.creator.as_str()).collect();
+                if of_era.len() >= 3 && origins.len() >= 3 {
                     themed += 1;
                     culture += 9.0;
                     tourism += 3.0 * self.great_work_tourism(pid, "artifact");
@@ -40483,10 +40496,23 @@ mod great_work_tests {
             .counters
             .insert("great_work:artifact".to_string(), 0);
         let culture_without_artifacts = game.city_yields(city).culture;
-        // Three Ancient-era digs give three same-era artifacts, which also
-        // themes the museum: works and theming bonus, both banded.
+        // Three Ancient-era digs share era zero; whether they theme the
+        // museum depends on drawing three distinct origin civilizations.
+        let artifacts: Vec<&GreatWorkPiece> = game.players[0]
+            .great_work_pieces
+            .iter()
+            .filter(|piece| piece.kind == "artifact")
+            .collect();
+        let origins: BTreeSet<&str> =
+            artifacts.iter().map(|piece| piece.creator.as_str()).collect();
+        let theming = if artifacts.len() >= 3 && origins.len() >= 3 {
+            9.0
+        } else {
+            0.0
+        };
         assert!(
-            (culture_with_artifacts - culture_without_artifacts - (9.0 + 9.0) * 1.1).abs() < 1e-9
+            (culture_with_artifacts - culture_without_artifacts - (9.0 + theming) * 1.1).abs()
+                < 1e-9
         );
         game.players[0]
             .counters
