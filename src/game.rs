@@ -24502,7 +24502,16 @@ impl Game {
                 .iter()
                 .filter(|deal| deal.to == pid && deal.expires >= self.turn)
             {
-                acts.push(Action::AcceptDeal { deal: deal.id });
+                // A peace clause is only acceptable while the war it settles
+                // is being fought and has run its minimum turns; offering the
+                // acceptance anyway would advertise an action that can only
+                // fail. Rejecting a dead offer stays available either way.
+                let settleable = !deal.peace
+                    || (self.is_at_war(deal.from, deal.to)
+                        && self.peace_available_at(deal.from, deal.to).is_none());
+                if settleable {
+                    acts.push(Action::AcceptDeal { deal: deal.id });
+                }
                 acts.push(Action::RejectDeal { deal: deal.id });
             }
             for deal in self.quick_deals(pid) {
@@ -29414,6 +29423,24 @@ impl Game {
             && self.emergency_war_pair(self.pending_deals[index].from, self.pending_deals[index].to)
         {
             return Err("active Emergency members cannot make peace with its target".into());
+        }
+        // An offer outlives the war it was written for. The sides can settle,
+        // watch the treaty lapse and open a second war while the first offer
+        // is still pending, so the peace clause has to answer for the war
+        // actually being fought. Proposing already refuses both of these; an
+        // acceptance that did not re-check them signed away a war on the turn
+        // it was declared, and the ledger read as a dozen one-turn wars.
+        if self.pending_deals[index].peace {
+            let (from, to) = (
+                self.pending_deals[index].from,
+                self.pending_deals[index].to,
+            );
+            if !self.is_at_war(from, to) {
+                return Err("that war is already over".into());
+            }
+            if let Some(until) = self.peace_available_at(from, to) {
+                return Err(format!("this war cannot be settled before turn {until}"));
+            }
         }
         let deal = self.pending_deals.remove(index);
         if deal.expires < self.turn
@@ -43745,6 +43772,40 @@ mod district_mechanics {
         assert_eq!(game.players[0].diplomatic_favor, 200.0);
         assert_eq!(game.players[0].counters["emergency_city_strike_vs:2"], 2);
         assert!(game.do_make_peace(0, 2).is_ok());
+    }
+
+    #[test]
+    fn a_pending_offer_cannot_settle_a_war_before_its_minimum_turns() {
+        let mut game = Game::new_full(2, 18, 10, 79_021, 200, 0, false);
+        game.do_declare_war(0, 1).unwrap();
+        let earliest = game
+            .peace_available_at(0, 1)
+            .expect("a war declared this turn cannot be settled yet");
+
+        // An offer written for an earlier war stays pending across the peace,
+        // the treaty and the next declaration.
+        game.pending_deals.push(DiplomaticDeal {
+            id: 401,
+            from: 0,
+            to: 1,
+            give_gold: 0.0,
+            request_gold: 0.0,
+            open_borders: false,
+            friendship: false,
+            peace: true,
+            alliance: None,
+            expires: earliest + 5,
+        });
+
+        // Live, funded and unexpired — and still refused, because the war it
+        // would end is being fought now and is one turn old.
+        assert!(game.do_accept_deal(1, 401).is_err());
+        assert!(game.is_at_war(0, 1));
+
+        // The same offer settles it once the shipped minimum has run.
+        game.turn = earliest;
+        game.do_accept_deal(1, 401).unwrap();
+        assert!(!game.is_at_war(0, 1));
     }
 
     #[test]
