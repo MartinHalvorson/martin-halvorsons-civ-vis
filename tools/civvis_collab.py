@@ -286,6 +286,32 @@ def existing_pr_claims(repo: Path) -> List[Dict[str, Any]]:
     return list(rows)
 
 
+def parse_remote_heads(raw: str) -> Dict[str, str]:
+    heads: Dict[str, str] = {}
+    prefix = "refs/heads/"
+    for line in raw.splitlines():
+        sha, separator, ref = line.partition("\t")
+        if separator and ref.startswith(prefix):
+            heads[ref[len(prefix) :]] = sha
+    return heads
+
+
+def remote_heads(repo: Path) -> Dict[str, str]:
+    return parse_remote_heads(git(repo, "ls-remote", "--heads", "origin"))
+
+
+def commit_is_pr_backed(rows: Sequence[Dict[str, Any]], sha: str) -> Optional[int]:
+    for row in rows:
+        if row.get("merged_at") and row.get("merge_commit_sha") == sha:
+            return int(row["number"])
+    return None
+
+
+def associated_pr_number(sha: str) -> Optional[int]:
+    rows = gh_json(("api", f"repos/{REPOSITORY}/commits/{sha}/pulls"))
+    return commit_is_pr_backed(rows or [], sha)
+
+
 def format_claim_body(
     *,
     machine: str,
@@ -596,6 +622,7 @@ def audit_repo(root: Path) -> Dict[str, List[str]]:
             ok.append("test and collaboration-policy workflows are active")
 
         prs = existing_pr_claims(root)
+        open_heads = {str(pr.get("headRefName") or "") for pr in prs}
         pr_views: Dict[int, Dict[str, Any]] = {}
         pr_changed: Dict[int, Set[str]] = {}
         for pr in prs:
@@ -628,6 +655,14 @@ def audit_repo(root: Path) -> Dict[str, List[str]]:
                 errors.append(f"PR #{number}: {violation}")
         if prs and not any(item.startswith("PR #") for item in errors):
             ok.append(f"all {len(prs)} open PR claim(s) satisfy policy")
+
+        for branch in sorted(remote_heads(root)):
+            if branch == DEFAULT_BRANCH:
+                continue
+            if not BRANCH_RE.fullmatch(branch):
+                errors.append(f"nonconforming remote development branch: {branch}")
+            elif branch not in open_heads:
+                errors.append(f"remote task branch has no open PR claim: {branch}")
     else:
         errors.append("GitHub CLI is unavailable; remote enforcement cannot be audited")
 
@@ -695,10 +730,56 @@ def monitor_command(args: argparse.Namespace) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     rounds = 0
     ever_failed = False
+    previous_heads = remote_heads(root)
     while True:
         rounds += 1
         observed = dt.datetime.now(dt.timezone.utc).isoformat()
         findings = audit_repo(root)
+        current_heads = remote_heads(root)
+        main_before = previous_heads.get(DEFAULT_BRANCH)
+        main_after = current_heads.get(DEFAULT_BRANCH)
+        if main_before and main_after and main_before != main_after:
+            git(root, "fetch", "--prune", "origin", DEFAULT_BRANCH)
+            ancestry = run(
+                (
+                    "git",
+                    "-C",
+                    str(root),
+                    "merge-base",
+                    "--is-ancestor",
+                    main_before,
+                    main_after,
+                ),
+                check=False,
+            )
+            if ancestry.returncode:
+                findings["errors"].append(
+                    f"main was rewritten or force-pushed: {main_before[:7]} -> {main_after[:7]}"
+                )
+                commits = [main_after]
+            else:
+                commits = git(
+                    root, "rev-list", "--reverse", f"{main_before}..{main_after}"
+                ).splitlines()
+            for sha in commits:
+                pr_number = associated_pr_number(sha)
+                if pr_number is None:
+                    subject = git(root, "show", "-s", "--format=%s", sha)
+                    findings["errors"].append(
+                        f"direct main commit detected: {sha[:7]} {subject}"
+                    )
+                else:
+                    findings["ok"].append(
+                        f"main commit {sha[:7]} is backed by merged PR #{pr_number}"
+                    )
+        for branch, sha in current_heads.items():
+            if branch == DEFAULT_BRANCH or previous_heads.get(branch) == sha:
+                continue
+            if not BRANCH_RE.fullmatch(branch):
+                findings["errors"].append(
+                    f"new or updated nonconforming remote branch: {branch} at {sha[:7]}"
+                )
+        previous_heads = current_heads
         ever_failed = ever_failed or bool(findings["errors"])
         record = {"observed_at": observed, "round": rounds, **findings}
         with log_path.open("a", encoding="utf-8") as handle:

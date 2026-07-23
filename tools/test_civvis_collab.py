@@ -46,6 +46,20 @@ class BranchTests(unittest.TestCase):
     def test_ambiguous_legacy_branch_is_rejected(self):
         self.assertIsNone(collab.BRANCH_RE.fullmatch("agent/government-cleanup"))
 
+    def test_remote_heads_are_parsed_without_symbolic_refs(self):
+        raw = (
+            "abc123\trefs/heads/main\n"
+            "def456\trefs/heads/agent/render-win-02/codex-47/task-20260723T210500Z-a31f\n"
+            "999999\trefs/tags/v1\n"
+        )
+        self.assertEqual(
+            collab.parse_remote_heads(raw),
+            {
+                "main": "abc123",
+                "agent/render-win-02/codex-47/task-20260723T210500Z-a31f": "def456",
+            },
+        )
+
 
 class ClaimTests(unittest.TestCase):
     def test_claims_are_parsed_from_the_pr_contract(self):
@@ -121,6 +135,15 @@ class PolicyTests(unittest.TestCase):
             commit_subjects=[],
         )
         self.assertIn("ready PRs must complete every validation checkbox", errors)
+
+    def test_main_commit_requires_the_matching_merged_pr_commit(self):
+        rows = [
+            {"number": 12, "merged_at": "2026-07-23T22:00:00Z", "merge_commit_sha": "abc"},
+            {"number": 13, "merged_at": None, "merge_commit_sha": "def"},
+        ]
+        self.assertEqual(collab.commit_is_pr_backed(rows, "abc"), 12)
+        self.assertIsNone(collab.commit_is_pr_backed(rows, "def"))
+        self.assertIsNone(collab.commit_is_pr_backed(rows, "missing"))
 
 
 if __name__ == "__main__":
