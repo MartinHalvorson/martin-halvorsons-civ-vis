@@ -3855,6 +3855,9 @@ impl AdvancedAi {
     /// idle. A large surplus may start a secondary campaign, while an active
     /// spreader keeps it moving after the initial purchase lowers the bank.
     fn religious_offensive_posture(&self, g: &Game, pid: usize, strategy: GrandStrategy) -> bool {
+        if !g.victory_conditions.religious {
+            return false;
+        }
         if strategy == GrandStrategy::Religion {
             return true;
         }
@@ -9426,14 +9429,15 @@ impl Ai for AdvancedAi {
     fn take_turn(&mut self, g: &mut Game, pid: usize) {
         self.base.minor = g.players[pid].is_minor;
         self.base.barb = g.players[pid].is_barbarian;
-        self.base.pursue_religion =
-            self.victory_target.is_none() || self.victory_target == Some(VictoryTarget::Religion);
+        let active_victory_target = self.active_victory_target(g);
+        self.base.pursue_religion = g.victory_conditions.religious
+            && (active_victory_target.is_none()
+                || active_victory_target == Some(VictoryTarget::Religion));
         if self.base.minor || self.base.barb {
             self.base.take_turn(g, pid);
             return;
         }
-        let disposition_strategy = self
-            .victory_target
+        let disposition_strategy = active_victory_target
             .map(VictoryTarget::strategy)
             .unwrap_or_else(|| self.victory_focus(g, pid).strategy);
         self.resolve_city_dispositions(g, pid, disposition_strategy);
@@ -9460,7 +9464,7 @@ impl Ai for AdvancedAi {
         self.base.corporations(g, pid);
         self.advanced_products(g, pid, plan.strategy);
         self.advanced_great_people(g, pid, plan.strategy);
-        if self.victory_planning {
+        if self.victory_planning && g.victory_conditions.religious {
             let committed = plan.strategy == GrandStrategy::Religion;
             let offensive = self.religious_offensive_posture(g, pid, plan.strategy);
             // A secondary campaign spends only the bank above a substantial
@@ -9500,7 +9504,10 @@ impl Ai for AdvancedAi {
             // policy in paired evaluation.
             if self.victory_planning && plan.strategy == GrandStrategy::Religion {
                 self.religious_production(g, pid);
-            } else if self.victory_planning && g.players[pid].religion.is_none() {
+            } else if self.victory_planning
+                && g.victory_conditions.religious
+                && g.players[pid].religion.is_none()
+            {
                 // Every other strategy still defends its homeland: a rival's
                 // religious victory needs a majority in every living major,
                 // and before this pass non-religion civilizations never spent
@@ -9518,15 +9525,15 @@ impl Ai for AdvancedAi {
             if self.victory_planning && plan.strategy == GrandStrategy::Culture {
                 self.culture_spending(g, pid);
             }
-            if plan.strategy == GrandStrategy::Recovery || self.victory_target.is_some() {
+            if plan.strategy == GrandStrategy::Recovery || active_victory_target.is_some() {
                 self.advanced_production(g, pid, &plan);
             }
-            if self.victory_target.is_none() {
+            if active_victory_target.is_none() {
                 self.advanced_support_production(g, pid, &plan);
                 self.base.cities(g, pid);
             }
         }
-        if self.victory_target.is_some() {
+        if active_victory_target.is_some() {
             let counts = self.counts(g, pid);
             let cities = g.player_city_ids(pid);
             self.base.spend_gold(
@@ -11206,6 +11213,7 @@ mod tests {
             "disabled diplomatic and religious progress must not outrank an enabled path"
         );
         assert!(!ai.religious_opening_viable(&game, 0));
+        assert!(!ai.religious_offensive_posture(&game, 0, GrandStrategy::Science));
         assert_ne!(
             ai.rival_victory_pressure(&game, 1).strategy,
             GrandStrategy::Diplomacy,
@@ -11228,6 +11236,18 @@ mod tests {
             assessed_turn: game.turn,
         });
         assert!(targeted.plan_stale(&game, 0));
+
+        let mut turn = Game::new(2, 24, 16, 7_603, 300, 0);
+        turn.victory_conditions.religious = false;
+        turn.victory_conditions.diplomatic = false;
+        turn.victory_conditions.score = false;
+        targeted.take_turn(&mut turn, 0);
+        assert!(!targeted.base.pursue_religion);
+        assert_ne!(
+            targeted.current_plan().unwrap().strategy,
+            GrandStrategy::Diplomacy,
+            "the entire turn must fall back from a disabled explicit target"
+        );
     }
 
     #[test]
