@@ -7967,7 +7967,23 @@ impl AdvancedAi {
         let unit = g.units[&uid].clone();
         let spec = g.rules.units[unit.kind.as_str()].clone();
         let doctrine = BasicAi::unit_doctrine(g, uid);
-        if self.victory_planning && spec.class == "military" && self.condemn_step(g, pid, uid) {
+        let decline_settlers = self.counts(g, pid).settlers > 0
+            || g.player_city_ids(pid).len() >= plan.desired_cities
+            || !self.base.has_practical_settle_site(g, pid);
+        let unwanted_settler_adjacent = decline_settlers
+            && g.nbrs(unit.pos).into_iter().any(|position| {
+                g.units_at(position).iter().any(|other| {
+                    let other = &g.units[other];
+                    other.owner != pid
+                        && g.is_at_war(pid, other.owner)
+                        && other.kind == "settler"
+                })
+            });
+        if !unwanted_settler_adjacent
+            && self.victory_planning
+            && spec.class == "military"
+            && self.condemn_step(g, pid, uid)
+        {
             return true;
         }
         let holding_threatened_city = plan.threatened_city.is_some_and(|cid| {
@@ -7975,7 +7991,7 @@ impl AdvancedAi {
                 .get(&cid)
                 .is_some_and(|city| g.wdist(unit.pos, city.pos) <= 3)
         });
-        if !holding_threatened_city {
+        if !unwanted_settler_adjacent && !holding_threatened_city {
             if let Some(acted) = self.base.healing_step(g, pid, uid) {
                 return acted;
             }
@@ -7988,11 +8004,13 @@ impl AdvancedAi {
         if let Some(action) = self.base.doctrine_action(g, pid, uid) {
             return g.apply(pid, &action).is_ok();
         }
-        if let Some(city) = self.occupation_garrison_target(g, pid, uid) {
-            if unit.pos != city {
-                return self.base.step_toward(g, pid, uid, city);
+        if !unwanted_settler_adjacent {
+            if let Some(city) = self.occupation_garrison_target(g, pid, uid) {
+                if unit.pos != city {
+                    return self.base.step_toward(g, pid, uid, city);
+                }
+                return self.base.fortify_or_stop(g, pid, uid);
             }
-            return self.base.fortify_or_stop(g, pid, uid);
         }
         let enemies: Vec<usize> = g
             .players
@@ -8035,9 +8053,6 @@ impl AdvancedAi {
         } else {
             1
         };
-        let decline_settlers = self.counts(g, pid).settlers > 0
-            || g.player_city_ids(pid).len() >= plan.desired_cities
-            || !self.base.has_practical_settle_site(g, pid);
         let mut best: Option<(f64, Pos, Action)> = None;
         for pos in g.wdisk(unit.pos, radius) {
             if spec.class != "military" {
@@ -8131,6 +8146,10 @@ impl AdvancedAi {
                 }
                 return self.base.fortify_or_stop(g, pid, uid);
             }
+        }
+
+        if unwanted_settler_adjacent {
+            return self.base.fortify_or_stop(g, pid, uid);
         }
 
         if doctrine == UnitDoctrine::Recon
@@ -12150,6 +12169,15 @@ mod tests {
             game.units.get(&settler).map(|unit| unit.owner),
             Some(1),
             "capturing the civilian would create a settler with no legal city site"
+        );
+
+        game.remove_unit(warrior);
+        let scout = game.spawn_test_unit("scout", 0, origin);
+        let _ = ai.advanced_military_step(&mut game, 0, scout, &plan);
+        assert_eq!(
+            game.units.get(&settler).map(|unit| unit.owner),
+            Some(1),
+            "a recon fallback must not bypass the unwanted-settler guard"
         );
     }
 

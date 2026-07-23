@@ -1955,6 +1955,7 @@ impl BasicAi {
                 }
             }
         }
+        let active_settlers = settlers;
         let city_ids = g.player_city_ids(pid);
         let n_cities = city_ids.len();
         // Treat queued units as part of the force plan. Without this, every
@@ -1986,12 +1987,18 @@ impl BasicAi {
         // queued but before it finishes. Revalidate the queue every turn and
         // bank its progress behind a useful replacement instead of completing
         // a civilian that can never found a city.
-        if settlers > 0 && !self.has_practical_settle_site(g, pid) {
+        let practical_settle_site = self.has_practical_settle_site(g, pid);
+        if settlers > active_settlers || (settlers > 0 && !practical_settle_site) {
+            let mut committed_settlers = active_settlers;
             for cid in &city_ids {
                 if !matches!(
                     g.cities[cid].queue.first(),
                     Some(Item::Unit { unit }) if unit == "settler"
                 ) {
+                    continue;
+                }
+                if committed_settlers == 0 && practical_settle_site {
+                    committed_settlers = 1;
                     continue;
                 }
                 let replacement = self.pick_item(
@@ -2007,7 +2014,10 @@ impl BasicAi {
                     melee,
                     ranged,
                 );
-                let Some(item) = replacement else { continue };
+                let Some(item) = replacement else {
+                    committed_settlers += 1;
+                    continue;
+                };
                 if g
                     .apply(
                         pid,
@@ -2018,6 +2028,7 @@ impl BasicAi {
                     )
                     .is_err()
                 {
+                    committed_settlers += 1;
                     continue;
                 }
                 settlers = settlers.saturating_sub(1);
@@ -6269,6 +6280,52 @@ mod tests {
                 .get("unit:settler"),
             Some(&42.0),
             "the invested Production should remain banked when the queue is redirected"
+        );
+    }
+
+    #[test]
+    fn existing_settler_redirects_a_queued_duplicate() {
+        let mut game = Game::new_full(1, 20, 14, 320_002, 80, 0, false);
+        let founding_settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.apply(
+            0,
+            &Action::FoundCity {
+                unit: founding_settler,
+            },
+        )
+        .unwrap();
+        let city = game.player_city_ids(0)[0];
+        game.cities.get_mut(&city).unwrap().pop = 4;
+        let settler_item = Item::Unit {
+            unit: "settler".to_string(),
+        };
+        game.apply(
+            0,
+            &Action::Produce {
+                city,
+                item: settler_item,
+            },
+        )
+        .unwrap();
+        game.cities.get_mut(&city).unwrap().production = 42.0;
+        let captured = game.spawn_test_unit("settler", 0, game.cities[&city].pos);
+        let mut ai = BasicAi::new();
+        assert!(ai.has_practical_settle_site(&game, 0));
+
+        ai.cities(&mut game, 0);
+
+        assert!(game.units.contains_key(&captured));
+        assert!(!matches!(
+            game.cities[&city].queue.first(),
+            Some(Item::Unit { unit }) if unit == "settler"
+        ));
+        assert_eq!(
+            game.cities[&city].production_progress.get("unit:settler"),
+            Some(&42.0)
         );
     }
 
