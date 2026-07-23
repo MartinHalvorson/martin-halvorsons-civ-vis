@@ -1542,7 +1542,7 @@ impl BasicAi {
                 },
             );
         }
-        if g.players[pid].pantheon.is_none() && g.players[pid].faith >= 25.0 {
+        if !self.minor && g.players[pid].pantheon.is_none() && g.players[pid].faith >= 25.0 {
             for b in [
                 "divine_spark",
                 "fertility_rites",

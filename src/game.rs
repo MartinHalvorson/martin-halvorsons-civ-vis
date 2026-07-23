@@ -1395,6 +1395,35 @@ mod belief_runtime_tests {
     }
 
     #[test]
+    fn city_states_cannot_claim_pantheons_that_create_unusable_settlers() {
+        let (mut game, _) = game_with_capitals(91_769);
+        game.players[0].is_minor = true;
+        game.players[0].faith = 25.0;
+        let settlers = game
+            .units
+            .values()
+            .filter(|unit| unit.owner == 0 && unit.kind == "settler")
+            .count();
+
+        assert!(game
+            .do_choose_pantheon(0, "religious_settlements")
+            .is_err());
+        assert_eq!(game.players[0].faith, 25.0);
+        assert!(game.players[0].pantheon.is_none());
+        assert_eq!(
+            game.units
+                .values()
+                .filter(|unit| unit.owner == 0 && unit.kind == "settler")
+                .count(),
+            settlers
+        );
+        assert!(game
+            .legal_actions(0)
+            .iter()
+            .all(|action| !matches!(action, Action::ChoosePantheon { .. })));
+    }
+
+    #[test]
     fn follower_beliefs_execute_building_adjacency_amenity_and_route_effects() {
         let (mut game, cities) = game_with_capitals(91_763);
         establish_religion(&mut game, cities[0], &[]);
@@ -13198,6 +13227,9 @@ impl Game {
     }
 
     fn do_choose_pantheon(&mut self, pid: usize, belief: &str) -> Result<(), String> {
+        if self.players[pid].is_minor || self.players[pid].is_barbarian {
+            return Err("minor civilizations cannot choose pantheons".into());
+        }
         if self.players[pid].pantheon.is_some() {
             return Err("pantheon already chosen".into());
         }
@@ -26612,7 +26644,7 @@ impl Game {
                     });
                 }
             }
-            if p.pantheon.is_none() && p.faith >= 25.0 {
+            if !p.is_minor && !p.is_barbarian && p.pantheon.is_none() && p.faith >= 25.0 {
                 for b in self.rules.beliefs.pantheon.keys() {
                     if !self
                         .players
