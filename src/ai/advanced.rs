@@ -1709,6 +1709,28 @@ impl AdvancedAi {
         if let Some(government) = choice
             .filter(|government| g.players[pid].government.as_deref() != Some(government.as_str()))
         {
+            // Returning to any previously used government costs two complete
+            // turns of Anarchy. An adaptive plan can legitimately change its
+            // mind as a victory race moves, but a lateral return between (for
+            // example) Democracy and Fascism must not zero every empire yield
+            // on alternating turns. Only pay that recurring cost for a real
+            // policy-capacity upgrade; first-time governments remain free.
+            let policy_capacity = |name: &str| {
+                g.rules.governments.get(name).map_or(0, |spec| {
+                    spec.slots.military
+                        + spec.slots.economic
+                        + spec.slots.diplomatic
+                        + spec.slots.wildcard
+                })
+            };
+            let returning = g.players[pid].past_governments.contains(&government);
+            let current_capacity = g.players[pid]
+                .government
+                .as_deref()
+                .map_or(0, policy_capacity);
+            if returning && policy_capacity(&government) <= current_capacity {
+                return;
+            }
             let _ = g.apply(pid, &Action::Government { government });
         }
     }
@@ -13344,6 +13366,37 @@ mod tests {
             religion_fallback.players[0].government.as_deref(),
             Some("merchant_republic")
         );
+    }
+
+    #[test]
+    fn adaptive_government_does_not_repeat_lateral_anarchy() {
+        let mut game = Game::new_full(2, 18, 10, 79_015, 200, 0, false);
+        game.players[0]
+            .civics
+            .extend(["suffrage".to_string(), "totalitarianism".to_string()]);
+        game.players[0].government = Some("fascism".to_string());
+        game.players[0]
+            .past_governments
+            .extend(["fascism".to_string(), "democracy".to_string()]);
+        game.players[1].government = Some("democracy".to_string());
+        game.players[1].culture_lifetime = 20_000.0;
+
+        AdvancedAi::new().strategic_government(&mut game, 0, GrandStrategy::Culture);
+
+        assert_eq!(game.players[0].government.as_deref(), Some("fascism"));
+        assert_eq!(game.players[0].anarchy_turns, 0);
+        assert!(game.players[0].pending_government.is_none());
+
+        // Returning to a genuinely larger government remains worthwhile:
+        // the two dead turns buy a persistent jump from six to eight slots.
+        game.players[0].government = Some("merchant_republic".to_string());
+        game.players[0]
+            .past_governments
+            .insert("merchant_republic".to_string());
+        AdvancedAi::new().strategic_government(&mut game, 0, GrandStrategy::Conquest);
+        assert!(game.players[0].government.is_none());
+        assert_eq!(game.players[0].pending_government.as_deref(), Some("fascism"));
+        assert!(game.players[0].anarchy_turns > 0);
     }
 
     #[test]
