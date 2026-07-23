@@ -15,6 +15,7 @@ result countdown cannot race either path ahead on stale code.
 from __future__ import annotations
 
 import argparse
+import ctypes
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -30,6 +31,10 @@ import time
 from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+
+if os.name == "nt":
+    # ctypes.wintypes only imports on Windows.
+    from ctypes import wintypes
 
 
 SCRIPT_PATH = Path(__file__).resolve()
@@ -896,16 +901,97 @@ def start_server(
     return process
 
 
+def windows_process_handle(pid: int, access: int = 0x1000) -> Any | None:
+    """Open a Windows process for querying, or None when that is not possible.
+
+    The default access is PROCESS_QUERY_LIMITED_INFORMATION, which a process
+    may open on any other process of the same user.
+    """
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    handle = kernel32.OpenProcess(access, False, pid)
+    return handle or None
+
+
+def windows_cpu_seconds(pid: int) -> float | None:
+    """Total kernel plus user CPU time a Windows process has consumed."""
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = windows_process_handle(pid)
+    if handle is None:
+        return None
+    try:
+        creation, exited = wintypes.FILETIME(), wintypes.FILETIME()
+        kernel, user = wintypes.FILETIME(), wintypes.FILETIME()
+        if not kernel32.GetProcessTimes(
+            handle,
+            ctypes.byref(creation),
+            ctypes.byref(exited),
+            ctypes.byref(kernel),
+            ctypes.byref(user),
+        ):
+            return None
+    finally:
+        kernel32.CloseHandle(handle)
+    # FILETIME counts 100-nanosecond intervals.
+    ticks = sum(
+        (stamp.dwHighDateTime << 32) | stamp.dwLowDateTime for stamp in (kernel, user)
+    )
+    return ticks / 10_000_000
+
+
+def pid_alive(pid: int) -> bool:
+    """Liveness of a process this supervisor may not have spawned."""
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+    # os.kill(pid, 0) is not a probe on Windows: it opens the target with
+    # PROCESS_ALL_ACCESS and calls TerminateProcess. That open is denied for a
+    # server this process did not create, so an adopting successor read every
+    # live game as dead and exited - ending supervision on each self-update.
+    handle = windows_process_handle(pid)
+    if handle is None:
+        return False
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    try:
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return False
+        return code.value == 259  # STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def process_cpu_percent(pid: int, window: float = 0.25) -> float | None:
+    """Recent CPU share of a process, or None when it cannot be measured."""
+    if os.name != "nt":
+        result = command("ps", "-o", "%cpu=", "-p", str(pid))
+        if result.returncode != 0:
+            return None
+        try:
+            return float(result.stdout.strip())
+        except ValueError:
+            return None
+    # Windows exposes cumulative CPU time rather than a rate, so sample twice.
+    before = windows_cpu_seconds(pid)
+    if before is None:
+        return None
+    time.sleep(window)
+    after = windows_cpu_seconds(pid)
+    if after is None:
+        return None
+    return max(0.0, (after - before) / window * 100.0)
+
+
 def process_alive(process: subprocess.Popen[str] | None, adopted_pid: int | None) -> bool:
     if process is not None:
         return process.poll() is None
     if adopted_pid is None:
         return False
-    try:
-        os.kill(adopted_pid, 0)
-        return True
-    except OSError:
-        return False
+    return pid_alive(adopted_pid)
 
 
 def process_busy(
@@ -917,13 +1003,8 @@ def process_busy(
     pid = process.pid if process is not None else adopted_pid
     if pid is None:
         return False
-    result = command("ps", "-o", "%cpu=", "-p", str(pid))
-    if result.returncode != 0:
-        return False
-    try:
-        return float(result.stdout.strip()) >= threshold
-    except ValueError:
-        return False
+    percent = process_cpu_percent(pid)
+    return percent is not None and percent >= threshold
 
 
 def unavailable_recovery_due(
@@ -948,27 +1029,41 @@ def unavailable_recovery_due(
         return busy_timeout > 0.0 and unavailable_for >= busy_timeout
     return True
 
+def signal_pid(pid: int, force: bool) -> bool:
+    """Ask a process to stop; report whether the request could be delivered."""
+    if os.name == "nt":
+        # Windows has neither SIGTERM nor SIGKILL, and the os.kill() path here
+        # raised for any process this supervisor did not spawn - so a retiring
+        # server was left holding the port and its successor could not bind.
+        result = command("taskkill", "/PID", str(pid), "/T", "/F")
+        return result.returncode == 0
+    try:
+        os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
+        return True
+    except OSError:
+        return False
+
+
 def stop_server(process: subprocess.Popen[str] | None, adopted_pid: int | None) -> None:
     pid = process.pid if process is not None else adopted_pid
     if pid is None:
         return
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except OSError:
+    if process is not None:
+        process.terminate()
+    elif not signal_pid(pid, force=False):
         return
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-        if process is not None and process.poll() is not None:
-            return
-        try:
-            os.kill(pid, 0)
-        except OSError:
+        if process is not None:
+            if process.poll() is not None:
+                return
+        elif not pid_alive(pid):
             return
         time.sleep(0.1)
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except OSError:
-        pass
+    if process is not None:
+        process.kill()
+    else:
+        signal_pid(pid, force=True)
 
 
 def wait_for_server(

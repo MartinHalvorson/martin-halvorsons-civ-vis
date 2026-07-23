@@ -1,6 +1,8 @@
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -763,18 +765,46 @@ class RecoveryTests(unittest.TestCase):
 
     def test_busy_server_detection_distinguishes_compute_from_idle(self):
         process = SimpleNamespace(pid=321)
-        with patch.object(
-            supervisor,
-            "command",
-            return_value=SimpleNamespace(returncode=0, stdout=" 99.7\n"),
-        ):
+        with patch.object(supervisor, "process_cpu_percent", return_value=99.7):
             self.assertTrue(supervisor.process_busy(process, None))
-        with patch.object(
-            supervisor,
-            "command",
-            return_value=SimpleNamespace(returncode=0, stdout="  0.0\n"),
-        ):
+        with patch.object(supervisor, "process_cpu_percent", return_value=0.0):
             self.assertFalse(supervisor.process_busy(process, None))
+        with patch.object(supervisor, "process_cpu_percent", return_value=None):
+            self.assertFalse(supervisor.process_busy(process, None))
+
+    def test_cpu_measurement_reads_real_compute_on_this_platform(self):
+        idle = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        spinning = subprocess.Popen([sys.executable, "-c", "while True: pass"])
+        try:
+            self.assertGreater(supervisor.process_cpu_percent(spinning.pid), 1.0)
+            self.assertLess(supervisor.process_cpu_percent(idle.pid), 1.0)
+        finally:
+            for process in (idle, spinning):
+                process.kill()
+                process.wait()
+
+    def test_liveness_probe_reports_truth_without_killing_the_process(self):
+        process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            # A probe, not a kill: os.kill(pid, 0) terminates on Windows.
+            self.assertTrue(supervisor.pid_alive(process.pid))
+            self.assertTrue(supervisor.pid_alive(process.pid))
+            self.assertIsNone(process.poll())
+            self.assertTrue(supervisor.process_alive(None, process.pid))
+        finally:
+            process.kill()
+            process.wait()
+        self.assertFalse(supervisor.pid_alive(process.pid))
+        self.assertFalse(supervisor.process_alive(None, process.pid))
+
+    def test_stop_server_retires_a_server_it_did_not_spawn(self):
+        process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            supervisor.stop_server(None, process.pid)
+            self.assertFalse(supervisor.pid_alive(process.pid))
+        finally:
+            process.kill()
+            process.wait()
     def test_active_compute_has_no_default_wall_clock_kill(self):
         self.assertFalse(
             supervisor.unavailable_recovery_due(
