@@ -515,14 +515,27 @@ fn victory_progress_json(g: &Game, pid: usize, leading_score: i64) -> Value {
         }
     }
     .clamp(0.0, 100.0);
+    // The space race is the last stretch of a road that starts at the first
+    // technology, and for most of a game the tree is the only part of it a
+    // watcher can see moving.
+    let techs_known = player.techs.len();
+    let tech_total = g.rules.techs.len();
 
-    let culture_target = living_majors
+    let rival_domestic = living_majors
         .iter()
         .filter(|candidate| **candidate != pid)
         .map(|candidate| g.domestic_tourists(*candidate))
         .max()
-        .unwrap_or(0)
-        + 1;
+        .unwrap_or(0);
+    let culture_target = rival_domestic + 1;
+    let domestic_tourists = g.domestic_tourists(pid);
+    // The culture a civilization keeps at home is the other half of this
+    // race: it is what every rival's tourism has to out-run.
+    let leading_domestic = all_majors
+        .iter()
+        .map(|candidate| g.domestic_tourists(*candidate))
+        .max()
+        .unwrap_or(0);
     let foreign_tourists = g.foreign_tourists(pid);
     let culture_progress = if culture_target > 0 {
         100.0 * foreign_tourists as f64 / culture_target as f64
@@ -551,24 +564,25 @@ fn victory_progress_json(g: &Game, pid: usize, leading_score: i64) -> Value {
         0.0
     };
 
-    let foreign_capitals = all_majors
-        .iter()
-        .filter(|original_owner| **original_owner != pid)
-        .count();
+    // Domination counts every original capital in the world, a civilization's
+    // own included — `check_domination` treats the candidate's own seat as
+    // satisfied, so in a six-player game everybody starts the race at one of
+    // six rather than at nothing.
+    let capital_target = all_majors.len();
     let controlled_capitals = all_majors
         .iter()
-        .filter(|original_owner| **original_owner != pid)
         .filter(|original_owner| {
-            g.cities
-                .values()
-                .find(|city| city.is_capital && city.original_owner == **original_owner)
-                .map_or(!g.players[**original_owner].alive, |capital| {
-                    capital.owner == pid
-                })
+            **original_owner == pid
+                || g.cities
+                    .values()
+                    .find(|city| city.is_capital && city.original_owner == **original_owner)
+                    .map_or(!g.players[**original_owner].alive, |capital| {
+                        capital.owner == pid
+                    })
         })
         .count();
-    let domination_progress = if foreign_capitals > 0 {
-        100.0 * controlled_capitals as f64 / foreign_capitals as f64
+    let domination_progress = if capital_target > 0 {
+        100.0 * controlled_capitals as f64 / capital_target as f64
     } else {
         0.0
     };
@@ -590,11 +604,16 @@ fn victory_progress_json(g: &Game, pid: usize, leading_score: i64) -> Value {
             "project_target": science_projects.len(),
             "distance": round1(player.exoplanet_distance),
             "distance_target": EXOPLANET_DESTINATION,
+            "techs": techs_known,
+            "tech_total": tech_total,
         },
         "culture": {
             "progress": round1(culture_progress),
             "tourists": foreign_tourists,
             "target": culture_target,
+            "domestic": domestic_tourists,
+            "rival_domestic": rival_domestic,
+            "leading_domestic": leading_domestic,
         },
         "religious": {
             "progress": round1(religious_progress),
@@ -609,7 +628,7 @@ fn victory_progress_json(g: &Game, pid: usize, leading_score: i64) -> Value {
         "domination": {
             "progress": round1(domination_progress),
             "capitals": controlled_capitals,
-            "target": foreign_capitals,
+            "target": capital_target,
         },
         "score": {
             "progress": round1(score_progress.clamp(0.0, 100.0)),
@@ -823,6 +842,38 @@ mod tests {
             "score",
         ] {
             assert!(victories[victory]["progress"].is_number(), "{victory}");
+        }
+    }
+
+    /// The victory ribbon draws two things per race where a race has two:
+    /// the technology tree behind the space programme, and the culture a
+    /// civilization keeps at home behind the tourism it exports. Domination
+    /// counts every original capital in the world, a civilization's own
+    /// included, which is how `check_domination` reads the board.
+    #[test]
+    fn victory_metrics_carry_the_tree_the_home_culture_and_every_capital() {
+        let players = 6;
+        let game = Game::new_full(players, 26, 18, 81_005, 120, 1, false);
+        let observed = observation_spectator(&game, 0);
+        let victories = observed["players"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|player| player["victories"].is_object())
+            .map(|player| player["victories"].clone())
+            .collect::<Vec<_>>();
+        assert_eq!(victories.len(), players);
+
+        for victory in &victories {
+            assert_eq!(victory["domination"]["capitals"], serde_json::json!(1));
+            assert_eq!(victory["domination"]["target"], serde_json::json!(players));
+            assert_eq!(
+                victory["science"]["tech_total"],
+                serde_json::json!(game.rules.techs.len()),
+            );
+            assert!(victory["science"]["techs"].is_number());
+            assert!(victory["culture"]["domestic"].is_number());
+            assert!(victory["culture"]["leading_domestic"].is_number());
         }
     }
 }
