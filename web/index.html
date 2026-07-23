@@ -1741,7 +1741,7 @@ function cinematicUnitMapPoint(unit, now = performance.now()) {
   return {
     x:actual.x + (heading?.x || 0) / (headingLength || 1) * lead,
     y:actual.y + (heading?.y || 0) / (headingLength || 1) * lead,
-    focusX:actual.x, focusY:actual.y,
+    focusX:actual.x, focusY:actual.y, focusLift:actual.lift || 0,
   };
 }
 function unitMoveDuration(unitId, steps) {
@@ -2623,13 +2623,15 @@ function advanceDirector(now = performance.now()) {
     const focusY = trackedSubject
       ? trackedSubject.focusY : S * 1.5 * directorGoal.focus[1];
     const screenY = area.clientHeight / 2 +
-      (SINR * (focusX - gx) + COSR * (focusY - gy)) * YS * directorGoal.scale;
+      ((SINR * (focusX - gx) + COSR * (focusY - gy)) * YS -
+       (trackedSubject?.focusLift || 0)) * directorGoal.scale;
     // City nameplates rise roughly forty pixels above their tile center, so
     // reserve more than the ribbon's literal height instead of merely keeping
     // the hex center out from underneath it.
     const safeTop = Math.max(180, area.clientHeight * .17);
     const safeBottom = area.clientHeight - Math.max(155, area.clientHeight * .18);
-    const framedY = Math.max(safeTop, Math.min(safeBottom, screenY));
+    const desiredY = trackedSubject ? area.clientHeight * .54 : screenY;
+    const framedY = Math.max(safeTop, Math.min(safeBottom, desiredY));
     const correction = (screenY - framedY) / (YS * directorGoal.scale);
     // Move along the camera's projected vertical axis. This remains correct
     // after the viewer rotates the world instead of assuming north-up.
@@ -6955,8 +6957,8 @@ function advanceCameraFollow(now = performance.now()) {
   const desiredScreenY = area.clientHeight * .55;
   let gx = subject.x, gy = subject.y;
   const screenY = area.clientHeight / 2 +
-    (SINR * (subject.focusX - gx) + COSR * (subject.focusY - gy)) *
-      YS * cameraFollowScale;
+    ((SINR * (subject.focusX - gx) + COSR * (subject.focusY - gy)) * YS -
+     subject.focusLift) * cameraFollowScale;
   const correction = (screenY - desiredScreenY) /
     (Math.max(.25, cameraFollowScale) * YS);
   gx += SINR * correction;
