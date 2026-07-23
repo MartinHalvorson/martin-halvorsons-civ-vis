@@ -743,6 +743,30 @@ pub struct PolicySpec {
     /// the card is not era-gated.
     #[serde(default)]
     pub unit_eras: Vec<usize>,
+    /// Dark Age cards are not unlocked by a civic. They open a Wildcard slot
+    /// to a civilization living through a Dark Age, and close again the moment
+    /// it climbs out.
+    #[serde(default)]
+    pub dark_age: bool,
+    /// Inclusive world-era span a Dark Age card is offered in, as indices into
+    /// [`ERA_NAMES`]. Ignored for ordinary cards.
+    #[serde(default)]
+    pub eras: Option<(usize, usize)>,
+}
+
+impl PolicySpec {
+    /// Whether this card is on offer to a civilization in `age` during
+    /// `era`. Ordinary cards ignore both; Dark Age cards need the age and the
+    /// era together.
+    pub fn offered(&self, age: &str, era: usize) -> bool {
+        if !self.dark_age {
+            return true;
+        }
+        age == "dark"
+            && self
+                .eras
+                .is_none_or(|(first, last)| era >= first && era <= last)
+    }
 }
 
 /// A stock unit-promotion node. Effects are numeric flags so rules data can
@@ -1547,7 +1571,13 @@ mod tests {
         assert_eq!(rules.improvements.len(), 36);
         assert_eq!(rules.resources.len(), 52);
         assert_eq!(rules.projects.len(), 25);
-        assert_eq!(rules.policies.len(), 118);
+        // 118 civic-unlocked cards plus the seven Dark Age cards, which no
+        // civic unlocks — a Dark Age is what puts them on offer.
+        assert_eq!(rules.policies.len(), 125);
+        assert_eq!(
+            rules.policies.values().filter(|spec| spec.dark_age).count(),
+            7
+        );
         assert_eq!(rules.governments.len(), 13);
 
         let check_gate = |kind: &str, id: &str, tech: &Option<String>, civic: &Option<String>| {

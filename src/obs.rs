@@ -224,9 +224,12 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool, interactive: bool) -> Value 
         "climate_phase": g.climate_phase,
         "climate_points": g.climate_points(),
         "disaster_intensity": g.disaster_intensity(),
+        // Weather is only reported where the player can actually see it, and
+        // a drought is trimmed to the tiles they can see it on.
         "storms": g
             .storms
             .iter()
+            .filter(|storm| omniscient || vis.contains(&storm.pos))
             .map(|storm| {
                 json!({
                     "kind": storm.kind,
@@ -239,15 +242,19 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool, interactive: bool) -> Value 
         "droughts": g
             .droughts
             .iter()
-            .map(|drought| {
-                json!({
-                    "tiles": drought
-                        .tiles
-                        .iter()
-                        .map(|pos| [pos.0, pos.1])
-                        .collect::<Vec<_>>(),
-                    "severity": drought.severity,
-                    "ends": drought.ends,
+            .filter_map(|drought| {
+                let tiles: Vec<[i32; 2]> = drought
+                    .tiles
+                    .iter()
+                    .filter(|pos| omniscient || vis.contains(*pos))
+                    .map(|pos| [pos.0, pos.1])
+                    .collect();
+                (!tiles.is_empty()).then(|| {
+                    json!({
+                        "tiles": tiles,
+                        "severity": drought.severity,
+                        "ends": drought.ends,
+                    })
                 })
             })
             .collect::<Vec<_>>(),

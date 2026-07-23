@@ -216,6 +216,76 @@ resource upkeep (the shipped refund modifier). The tribal-village roll
 keeps its seven categories — the meteor's table is its own goody type,
 popped only by its own site.
 
+**Ninth wave (the weather):** Gathering Storm's random disasters now
+happen rather than merely being resolvable. Every class — volcanic
+eruptions, river floods, droughts, and the four terrain-bound storm
+systems — rolls each turn against a per-game budget, scaled by the lobby's
+disaster-intensity setting and again by the warming already banked, and
+resolves through the protection rules that were already modelled (Dams,
+the Great Bath, Egypt's Iteru, Aqueducts, Flood Barriers, and Governors'
+Reinforced Materials). Volcanoes now have the shipped active/dormant
+split, eruptions bury the ring they reach and leave Volcanic Soil, storms
+drift for three turns and pay for their damage with fertility, and
+droughts hold their tiles for a severity-scaled span before lifting.
+
+Two honest boundaries around it:
+
+- **The rates are calibrated, not shipped.** The tuning that lives in
+  `Expansion2_RandomEvents.xml` — occurrences per game, severity weights,
+  per-severity damage — is not published outside an installation, and the
+  only figures that are public are the band a volcano's activity sits in
+  (45%–95% across the five intensities) and the fact that intensities 3
+  and 4 widen an eruption to two rings. Both of those are exact here. The
+  rest lives in `data/disasters.json` precisely so it is visible, tunable
+  and moddable rather than buried in Rust: the per-class `per_game`
+  budgets, the intensity ladder, and the climate scaling are CIVVIS
+  numbers chosen to land in the documented range, and a pinned tournament
+  ruleset can replace the file wholesale. `validate` checks the file's
+  shape, and a test asserts a full game lands near the rates it asks for.
+- **Flood fertilisation stays off.** Gathering Storm gives a flooded
+  Floodplains tile a chance at permanent extra Food and Production, and
+  that probability is one of the numbers only an installation carries.
+  The mechanism is implemented — `disaster_food`/`disaster_production` are
+  real tile yields, and storms use them — but `river_flood`'s
+  `fertility_chance` is zero until the shipped table can be read, because
+  a guessed fertility rate changes what Floodplains are worth for the
+  whole game.
+
+**Both halves of every Dedication.** A Dedication in Civ VI is two rules,
+not one: the Normal-Age half that turns the behaviour it names into Era
+Score, and the Golden-Age half that only a Golden or Heroic Age switches
+on. CIVVIS had the Golden halves and none of the Normal ones, which meant
+choosing a Dedication in a Normal or Dark Age did nothing at all — and
+since that Era Score is exactly what a Dark Age civilization climbs out on,
+the ages below Golden had no engine behind them. All twelve Dedications
+now carry both halves in `data/dedications.json`, including the two that
+were missing entirely (Wish You Were Here, Bodyguard of Lies), with their
+triggers wired to the seventeen moments that pay them. The per-Dedication
+era spans are exact where the Civilopedia states them (Exodus of the
+Evangelists through the Renaissance, Automaton Warfare and Wish You Were
+Here in the last two eras) and era-appropriate where it does not.
+
+**Dark Age policy cards.** A Dark Age also opens a Wildcard slot to cards
+no civic unlocks: strong effects bought with a real drawback. The seven
+with published effects are implemented and execute both halves — Twilight
+Valor (+5 melee attack Strength, no healing outside your own territory),
+Isolationism (+1 Trade Route capacity and +2 Food/+2 Production at home,
+but no Settlers trained, bought or settled), Monasticism (Science doubled
+in Holy Site cities, -25% Culture), Inquisition (+15 Religious Combat
+Strength at home, -25% Science), Letters of Marque (+100% naval-raider
+Production, +2 Movement, doubled plunder, -2 Trade Route capacity), Elite
+Forces (+100% unit experience, +2 Gold per military unit) and Robber
+Barons (+50% Gold with a Stock Exchange, +25% Production with a Factory,
+-2 Amenities everywhere). They are offered only while the civilization is
+actually in a Dark Age and inside the card's own eras, and an age change
+takes them back out of their slot.
+
+The ten cards Gathering Storm added (Collectivism, Cyber Warfare,
+Decentralization, Despotic Paternalism, Disinformation Campaign, Flower
+Power, Rogue State, Samoderzhaviye, Soft Targets, Automated Workforce) are
+not modelled: their effects are not published in a form worth copying, and
+guessing at a card's numbers is worse than not shipping it.
+
 ### Next inside phase 1
 
 Known simplifications not yet expressed in data: civic-gated valid terrain

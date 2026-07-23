@@ -22,6 +22,13 @@ CIVVIS treats "tournament rules" as two distinct layers:
 - Headless agent tournaments, paired-seat evaluation, and replayable action
   logs.
 - Ruleset overlays through `--mods`, with reference validation before play.
+- The Gathering Storm world systems a tournament lobby actually configures:
+  Ages with both halves of every Dedication, climate change and sea-level
+  rise, and random natural disasters on the five-step intensity slider
+  (`--disasters 0..4`). Events run their lobbies at a chosen intensity
+  rather than off, so this is a pre-game setting a tournament preset must
+  pin like any other; `--disasters 0` reproduces a no-disaster lobby
+  exactly, leaving only the CO2-driven sea-level rise.
 
 For a stock 4v4 match:
 

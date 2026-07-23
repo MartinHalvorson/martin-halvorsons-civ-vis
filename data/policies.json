@@ -118,5 +118,13 @@
   "future_counter_science": {"slot":"wildcard","civic":"cultural_hegemony","note":"Non-State Actors: Spies may choose any promotion.","effects":{"spy_any_promotion":1}},
   "future_victory_culture": {"slot":"wildcard","civic":"cultural_hegemony","note":"Hallyu: Rock Bands may choose any promotion.","effects":{"rock_band_any_promotion":1}},
   "future_counter_domination": {"slot":"wildcard","civic":"smart_power_doctrine","note":"Global Coalition: +7 Combat Strength in friendly territory.","effects":{"friendly_combat":7}},
-  "future_victory_diplomatic": {"slot":"wildcard","civic":"smart_power_doctrine","note":"Diplomatic Capital: +4 Diplomatic Favor per turn.","effects":{"diplomatic_favor_per_turn":4}}
+  "future_victory_diplomatic": {"slot":"wildcard","civic":"smart_power_doctrine","note":"Diplomatic Capital: +4 Diplomatic Favor per turn.","effects":{"diplomatic_favor_per_turn":4}},
+
+  "twilight_valor": {"slot":"wildcard","dark_age":true,"eras":[1, 3],"note":"Dark Age: all units +5 Combat Strength while making a melee attack, but cannot heal outside your territory.","effects":{"melee_attack_combat":5,"no_healing_abroad":1}},
+  "isolationism": {"slot":"wildcard","dark_age":true,"eras":[1, 3],"note":"Dark Age: +1 Trade Route capacity and domestic routes provide +2 Food and +2 Production, but Settlers cannot be trained or bought and no new cities may be settled.","effects":{"policy_trade_route_capacity":1,"domestic_trade_food":2,"domestic_trade_production":2,"no_settling":1}},
+  "monasticism": {"slot":"wildcard","dark_age":true,"eras":[1, 3],"note":"Dark Age: Science doubled in cities with a Holy Site, but -25% Culture in all cities.","effects":{"holy_site_city_science_pct":100,"city_culture_pct":-25}},
+  "inquisition": {"slot":"wildcard","dark_age":true,"eras":[2, 4],"note":"Dark Age: religious units +15 Religious Combat Strength in friendly territory, but -25% Science in all cities.","effects":{"home_religious_strength":15,"city_science_pct":-25}},
+  "letters_of_marque": {"slot":"wildcard","dark_age":true,"eras":[2, 4],"note":"Dark Age: +100% Production toward naval raiders, which gain +2 Movement, and doubled yields from plundering, but -2 Trade Route capacity.","effects":{"naval_raider_production_pct":100,"naval_raider_movement":2,"pillage_yield_pct":100,"policy_trade_route_capacity":-2}},
+  "elite_forces": {"slot":"wildcard","dark_age":true,"eras":[3, 5],"note":"Dark Age: +100% combat experience for all units, but each military unit costs 2 more Gold to maintain.","effects":{"unit_xp_pct":100,"unit_maintenance_surcharge":2}},
+  "robber_barons": {"slot":"wildcard","dark_age":true,"eras":[4, 6],"note":"Dark Age: +50% Gold in cities with a Stock Exchange and +25% Production in cities with a Factory, but -2 Amenities in all cities.","effects":{"stock_exchange_city_gold_pct":50,"factory_city_production_pct":25,"city_amenities":-2}}
 }

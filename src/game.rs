@@ -11111,6 +11111,22 @@ impl Game {
     pub fn unit_heal_rate(&self, uid: u32) -> i32 {
         let unit = &self.units[&uid];
         let spec = &self.rules.units[unit.kind.as_str()];
+        // Twilight Valor: the army that fights harder cannot patch itself up
+        // on somebody else's ground.
+        if self.policy_effect(unit.owner, "no_healing_abroad") > 0.0
+            && self.healing_location(unit.owner, unit.pos) != HealingLocation::FriendlyTerritory
+            && !self
+                .city_at(unit.pos)
+                .is_some_and(|city| self.cities[&city].owner == unit.owner)
+            && self
+                .map
+                .get(unit.pos)
+                .and_then(|tile| tile.owner_city)
+                .and_then(|city_id| self.cities.get(&city_id))
+                .is_none_or(|city| city.owner != unit.owner)
+        {
+            return 0;
+        }
         if spec.domain.as_deref() == Some("air") && self.air_capacity_at(unit.owner, unit.pos) <= 0
         {
             return 0;
@@ -12478,6 +12494,7 @@ impl Game {
             }
         }
         cap += self.empire_wonder_effect(pid, "trade_route_capacity") as i64;
+        cap += self.policy_effect(pid, "policy_trade_route_capacity") as i64;
         cap += self.gov_effects(pid).trade_route_capacity as i64;
         cap += p
             .counters
@@ -13237,6 +13254,15 @@ impl Game {
             + self.promotion_effect(unit, "religious_strength");
         strength += self.gov_effects(unit.owner).religious_strength;
         strength += self.policy_effect(unit.owner, "religious_strength");
+        if self
+            .map
+            .get(unit.pos)
+            .and_then(|tile| tile.owner_city)
+            .and_then(|city_id| self.cities.get(&city_id))
+            .is_some_and(|city| city.owner == unit.owner)
+        {
+            strength += self.policy_effect(unit.owner, "home_religious_strength");
+        }
         strength += self.religious_combat_belief_bonus(unit.owner, unit.pos);
         if let Some(city) = self
             .map
@@ -15670,6 +15696,9 @@ impl Game {
                         .city_building_effect(&self.cities[&cid], "naval_unit_production_pct")
                         / 100.0;
                 }
+                if spec.promotion_class == "naval_raider" {
+                    bonus += self.policy_effect(pid, "naval_raider_production_pct") / 100.0;
+                }
                 if spec.promotion_class == "naval_ranged" {
                     bonus += self.players[pid]
                         .counters
@@ -15959,6 +15988,7 @@ impl Game {
             .filter(|(name, s)| {
                 !p.policies.contains(*name)
                     && !obsolete.contains(name.as_str())
+                    && s.offered(&p.age, self.world_era)
                     && s.civic
                         .as_ref()
                         .map(|c| p.civics.contains(c))
@@ -16132,6 +16162,12 @@ impl Game {
         } else {
             0.0
         }
+    }
+
+    /// Twilight Valor's half: strength that applies only while a unit is the
+    /// one making a melee attack, so it never shows up on defense.
+    fn melee_attack_bonus(&self, u: &Unit) -> f64 {
+        self.policy_effect(u.owner, "melee_attack_combat")
     }
 
     fn unit_unembarked_strength(&self, u: &Unit) -> f64 {
@@ -17740,7 +17776,8 @@ impl Game {
     }
 
     fn city_local_amenities(&self, city: &City) -> i64 {
-        let mut supply = if self.city_has_palace(city) {
+        let mut supply = self.policy_effect(city.owner, "city_amenities");
+        supply += if self.city_has_palace(city) {
             self.rules.buildings["palace"].amenity
         } else {
             0.0
@@ -19515,6 +19552,9 @@ impl Game {
         }
         if spec.domain.as_deref() == Some("sea") || embarked {
             moves += self.empire_wonder_effect(u.owner, "naval_movement");
+        }
+        if spec.promotion_class == "naval_raider" {
+            moves += self.policy_effect(u.owner, "naval_raider_movement");
         }
         if spec.class == "religious"
             && self.wdisk(u.pos, 1).into_iter().any(|position| {
@@ -23150,6 +23190,11 @@ impl Game {
                 rys.gold += self.policy_effect(city.owner, "trade_gold");
                 rys.food += self.policy_effect(city.owner, "trade_food");
                 rys.production += self.policy_effect(city.owner, "trade_production");
+                if domestic {
+                    // Isolationism pays only at home.
+                    rys.food += self.policy_effect(city.owner, "domestic_trade_food");
+                    rys.production += self.policy_effect(city.owner, "domestic_trade_production");
+                }
                 if !domestic {
                     // E-Commerce pays only on international routes.
                     rys.gold += self.policy_effect(city.owner, "international_trade_gold");
@@ -23491,6 +23536,24 @@ impl Game {
         }
         ys.science *= 1.0 + self.governor_effect(city.owner, city.id, "science_pct") / 100.0;
         ys.culture *= 1.0 + self.governor_effect(city.owner, city.id, "culture_pct") / 100.0;
+        // Dark Age cards buy their strength with an empire-wide penalty.
+        ys.science *= 1.0 + self.policy_effect(city.owner, "city_science_pct") / 100.0;
+        ys.culture *= 1.0 + self.policy_effect(city.owner, "city_culture_pct") / 100.0;
+        if self.city_has_active_district_family(city, "holy_site") {
+            ys.science *=
+                1.0 + self.policy_effect(city.owner, "holy_site_city_science_pct") / 100.0;
+        }
+        if city.buildings.iter().any(|building| building == "stock_exchange")
+            && !city.pillaged_buildings.contains("stock_exchange")
+        {
+            ys.gold *= 1.0 + self.policy_effect(city.owner, "stock_exchange_city_gold_pct") / 100.0;
+        }
+        if city.buildings.iter().any(|building| building == "factory")
+            && !city.pillaged_buildings.contains("factory")
+        {
+            ys.production *=
+                1.0 + self.policy_effect(city.owner, "factory_city_production_pct") / 100.0;
+        }
         let local_wonder_effect = |effect: &str| {
             city.wonders
                 .keys()
@@ -24916,6 +24979,11 @@ impl Game {
         };
         if matches!(unit, "rock_band" | "naturalist") {
             return false; // Faith purchase only (Civ VI)
+        }
+        // Isolationism closes the frontier while it is slotted: the empire it
+        // pays cannot train or buy a Settler at all.
+        if unit == "settler" && self.policy_effect(pid, "no_settling") > 0.0 {
+            return false;
         }
         if !spec.buildable || !self.unlocked(pid, &spec.tech, &spec.civic) {
             return false;
@@ -27722,7 +27790,8 @@ impl Game {
             let mut att_base = self.unit_unembarked_strength(&attacker)
                 + self.matchup_bonus(uid, &d, true)
                 + self.flanking_bonus(uid, target)
-                + self.vs_bonus(pid, d.owner);
+                + self.vs_bonus(pid, d.owner)
+                + self.melee_attack_bonus(&attacker);
             if amphibious && self.promotion_effect(&attacker, "amphibious") == 0.0 {
                 att_base -= 10.0;
             }
@@ -27803,7 +27872,8 @@ impl Game {
             if self.cities[&cid].hp > 0 {
                 let attacker = self.units[&uid].clone();
                 let mut att_base = self.unit_unembarked_strength(&attacker)
-                    + self.vs_bonus(pid, self.cities[&cid].owner);
+                    + self.vs_bonus(pid, self.cities[&cid].owner)
+                    + self.melee_attack_bonus(&attacker);
                 if amphibious && self.promotion_effect(&attacker, "amphibious") == 0.0 {
                     att_base -= 10.0;
                 }
@@ -28111,6 +28181,9 @@ impl Game {
         }
         if !self.can_found_city(uid) {
             return Err("cannot found city here".into());
+        }
+        if self.policy_effect(pid, "no_settling") > 0.0 {
+            return Err("Isolationism forbids settling new cities".into());
         }
         let cid = self.found_city_for(pid, u.pos, None);
         if self.empire_building_sum(pid, |building| {
@@ -29889,6 +29962,11 @@ impl Game {
         if !matches!(currency, "gold" | "faith") {
             return Err("unknown purchase currency".into());
         }
+        // Isolationism closes the frontier to Gold and Faith as well as to
+        // Production, which is what makes it a real cost rather than a detour.
+        if unit == "settler" && self.policy_effect(pid, "no_settling") > 0.0 {
+            return Err("Isolationism forbids buying Settlers".into());
+        }
         let rock_band = unit == "rock_band";
         let naturalist = unit == "naturalist";
         if rock_band || naturalist {
@@ -31518,9 +31596,15 @@ impl Game {
             2.. => 2.0,
             _ => 1.0,
         };
+        let surcharge = if self.rules.units[unit.kind.as_str()].class == "military" {
+            self.policy_effect(pid, "unit_maintenance_surcharge")
+        } else {
+            0.0
+        };
         (self.rules.units[unit.kind.as_str()].maintenance * formation
             - self.policy_effect(pid, "unit_maintenance_discount"))
         .max(0.0)
+            + surcharge
     }
 
     fn unit_gold_maintenance(&self, pid: usize) -> f64 {
@@ -34557,6 +34641,27 @@ impl Game {
             player.normal_age_threshold =
                 (12 + 3 * era as i64 + 2 * (cities - 1) + adjustment).max(6);
             player.golden_age_threshold = player.normal_age_threshold + 12 + cities;
+        }
+        // A Dark Age card is a loan against the age that offered it. Climbing
+        // out of the Dark Age — or simply leaving the eras that card belongs
+        // to — takes it back out of its Wildcard slot.
+        let era = self.world_era;
+        for pid in 0..self.players.len() {
+            let age = self.players[pid].age.clone();
+            let expired: Vec<String> = self.players[pid]
+                .policies
+                .iter()
+                .filter(|policy| {
+                    self.rules
+                        .policies
+                        .get(policy.as_str())
+                        .is_some_and(|spec| !spec.offered(&age, era))
+                })
+                .cloned()
+                .collect();
+            for policy in expired {
+                self.players[pid].policies.retain(|slotted| *slotted != policy);
+            }
         }
     }
 

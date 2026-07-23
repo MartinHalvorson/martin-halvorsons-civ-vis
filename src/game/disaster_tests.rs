@@ -307,3 +307,71 @@ fn a_save_written_before_disasters_loads_at_the_default_intensity() {
     assert_eq!(restored.disaster_intensity(), DEFAULT_DISASTER_INTENSITY);
     assert!(restored.storms.is_empty());
 }
+
+/// The rates in `disasters.json` are per-game expectations, so a full game
+/// has to land near them. This is the guard on the whole scheduler: a class
+/// that silently stops firing, or one that fires every turn, shows up here.
+#[test]
+fn a_full_game_lands_near_the_rates_the_ruleset_asks_for() {
+    let mut spawned = 0usize;
+    const GAMES: u64 = 3;
+    for seed in 0..GAMES {
+        let mut game = Game::new_full(2, 40, 24, 900 + seed, 500, 0, false);
+        game.disaster_intensity = DEFAULT_DISASTER_INTENSITY;
+        for _ in 0..500 {
+            let turn = game.turn;
+            while game.turn == turn {
+                let current = game.current;
+                if game.apply(current, &super::Action::EndTurn).is_err() {
+                    break;
+                }
+            }
+            // A system is counted on the turn it forms, when its expiry is
+            // still a full duration away.
+            spawned += game
+                .storms
+                .iter()
+                .filter(|storm| storm.ends == game.turn + 3)
+                .count();
+        }
+    }
+    // The four storm classes budget 26 systems a game between them at
+    // Moderate; a Poisson-ish spread over three games should stay well inside
+    // half to double that.
+    let per_game = spawned as f64 / GAMES as f64;
+    assert!(
+        (13.0..=52.0).contains(&per_game),
+        "{per_game} storms a game is nowhere near the 26 the ruleset budgets"
+    );
+}
+
+/// Intensity has to move the whole system, not just the volcano share.
+#[test]
+fn raising_the_intensity_raises_what_actually_happens() {
+    let count = |intensity: u8| {
+        let mut game = Game::new_full(2, 40, 24, 4711, 500, 0, false);
+        game.disaster_intensity = intensity;
+        let mut spawned = 0usize;
+        for _ in 0..300 {
+            let turn = game.turn;
+            while game.turn == turn {
+                let current = game.current;
+                if game.apply(current, &super::Action::EndTurn).is_err() {
+                    break;
+                }
+            }
+            spawned += game
+                .storms
+                .iter()
+                .filter(|storm| storm.ends == game.turn + 3)
+                .count();
+        }
+        spawned
+    };
+    let light = count(1);
+    let hyperreal = count(4);
+    assert!(
+        hyperreal > light * 2,
+        "Hyperreal produced {hyperreal} storms against Light's {light}"
+    );
+}
