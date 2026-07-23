@@ -534,6 +534,10 @@ pub struct BoostSpec {
     pub trigger: String,
     #[serde(default = "done_i")]
     pub count: i64,
+    /// Research granted on triggering, in percent. The database ships 40 for
+    /// every boost except Near Future Governance's 90.
+    #[serde(default)]
+    pub percent: Option<f64>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -769,6 +773,34 @@ pub struct Rules {
     pub civs: BTreeMap<String, CivSpec>,
     pub difficulties: BTreeMap<String, DifficultySpec>,
     pub speeds: BTreeMap<String, SpeedSpec>,
+    /// Tribal village reward tables, the shipped seven categories.
+    pub goody_huts: BTreeMap<String, BTreeMap<String, GoodyRewardSpec>>,
+    /// Per-era constants from the shipped Eras table, keyed by ERA_NAMES.
+    pub eras: BTreeMap<String, EraSpec>,
+}
+
+/// The shipped per-era ladder: Great Person recruitment base cost, embarked
+/// unit combat strength, and the warmonger weight of a declaration.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct EraSpec {
+    pub great_person_base_cost: f64,
+    pub embarked_strength: f64,
+    #[serde(default)]
+    pub warmonger_points: f64,
+}
+
+/// One tribal village reward: its selection weight within the rolled
+/// category, the earliest turn it appears, whether it needs a founded city,
+/// and what it grants.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct GoodyRewardSpec {
+    pub weight: i64,
+    #[serde(default)]
+    pub min_turn: u32,
+    #[serde(default)]
+    pub requires_city: bool,
+    #[serde(default)]
+    pub reward: BTreeMap<String, f64>,
 }
 
 impl Rules {
@@ -794,6 +826,8 @@ impl Rules {
             civs: serde_json::from_str(include_str!("../data/civs.json")).unwrap(),
             difficulties: serde_json::from_str(include_str!("../data/difficulties.json")).unwrap(),
             speeds: serde_json::from_str(include_str!("../data/speeds.json")).unwrap(),
+            goody_huts: serde_json::from_str(include_str!("../data/goody_huts.json")).unwrap(),
+            eras: serde_json::from_str(include_str!("../data/eras.json")).unwrap(),
         };
         let effects: TreeEffectsData =
             serde_json::from_str(include_str!("../data/tree_effects.json")).unwrap();

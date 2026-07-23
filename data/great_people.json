@@ -2,35 +2,27 @@
   "hypatia": {"name":"Hypatia","kind":"scientist","era":1,"cost":60,"effects":{"free_library":1,"libraries_science":1}},
   "isaac_newton": {"name":"Isaac Newton","kind":"scientist","era":3,"cost":240,"effects":{"free_library":1,"free_university":1,"universities_science":2}},
   "albert_einstein": {"name":"Albert Einstein","kind":"scientist","era":5,"cost":660,"effects":{"modern_atomic_tech_boosts":1,"research_labs_science":4}},
-
   "homer": {"name":"Homer","kind":"writer","era":1,"cost":60,"effects":{"great_work_writing":2}},
   "william_shakespeare": {"name":"William Shakespeare","kind":"writer","era":3,"cost":240,"effects":{"great_work_writing":2}},
   "leo_tolstoy": {"name":"Leo Tolstoy","kind":"writer","era":5,"cost":660,"effects":{"great_work_writing":2}},
-
   "donatello": {"name":"Donatello","kind":"artist","era":3,"cost":240,"effects":{"great_work_art":3}},
   "rembrandt": {"name":"Rembrandt van Rijn","kind":"artist","era":4,"cost":420,"effects":{"great_work_art":3}},
   "claude_monet": {"name":"Claude Monet","kind":"artist","era":6,"cost":960,"effects":{"great_work_art":3}},
-
   "antonio_vivaldi": {"name":"Antonio Vivaldi","kind":"musician","era":4,"cost":420,"effects":{"great_work_music":2}},
   "ludwig_van_beethoven": {"name":"Ludwig van Beethoven","kind":"musician","era":4,"cost":420,"effects":{"great_work_music":2}},
   "liu_tianhua": {"name":"Liu Tianhua","kind":"musician","era":5,"cost":660,"effects":{"great_work_music":2}},
-
   "confucius": {"name":"Confucius","kind":"prophet","era":1,"cost":60,"effects":{"found_religion":1}},
-  "siddhartha_gautama": {"name":"Siddhartha Gautama","kind":"prophet","era":1,"cost":120,"effects":{"found_religion":1}},
-  "zoroaster": {"name":"Zoroaster","kind":"prophet","era":1,"cost":240,"effects":{"found_religion":1}},
-
+  "siddhartha_gautama": {"name":"Siddhartha Gautama","kind":"prophet","era":1,"cost":60,"effects":{"found_religion":1}},
+  "zoroaster": {"name":"Zoroaster","kind":"prophet","era":1,"cost":60,"effects":{"found_religion":1}},
   "hannibal_barca": {"name":"Hannibal Barca","kind":"general","era":1,"cost":60,"effects":{"land_unit_promotion_level":1}},
   "el_cid": {"name":"El Cid","kind":"general","era":2,"cost":120,"effects":{"land_unit_formation":1}},
   "napoleon_bonaparte": {"name":"Napoleon Bonaparte","kind":"general","era":4,"cost":420,"effects":{"land_unit_formation":2}},
-
   "themistocles": {"name":"Themistocles","kind":"admiral","era":1,"cost":60,"effects":{"free_quadrireme":1,"naval_ranged_production_pct":20}},
   "zheng_he": {"name":"Zheng He","kind":"admiral","era":2,"cost":120,"effects":{"free_trader":1,"trade_capacity":1,"destination_foreign_trade_gold":2}},
   "horatio_nelson": {"name":"Horatio Nelson","kind":"admiral","era":4,"cost":420,"effects":{"free_lighthouse":1,"free_shipyard":1,"naval_flanking_bonus_pct":50}},
-
   "imhotep": {"name":"Imhotep","kind":"engineer","era":2,"cost":120,"charges":2,"effects":{"wonder_production":175,"ancient_classical_wonder_multiplier":2}},
   "leonardo_da_vinci": {"name":"Leonardo da Vinci","kind":"engineer","era":3,"cost":240,"effects":{"modern_tech_boosts":1,"workshops_culture":3}},
   "gustave_eiffel": {"name":"Gustave Eiffel","kind":"engineer","era":4,"cost":420,"charges":2,"effects":{"wonder_production":480}},
-
   "marcus_licinius_crassus": {"name":"Marcus Licinius Crassus","kind":"merchant","era":1,"cost":60,"charges":3,"effects":{"gold":60,"annex_tile":1}},
   "marco_polo": {"name":"Marco Polo","kind":"merchant","era":2,"cost":120,"effects":{"free_trader":1,"trade_capacity":1,"destination_foreign_trade_gold":2}},
   "john_rockefeller": {"name":"John D. Rockefeller","kind":"merchant","era":5,"cost":660,"effects":{"oil_per_turn":3,"strategic_destination_trade_gold":2}}

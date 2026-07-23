@@ -1,0 +1,11 @@
+{
+  "ancient": {"great_person_base_cost": 30, "embarked_strength": 10, "warmonger_points": 0},
+  "classical": {"great_person_base_cost": 60, "embarked_strength": 15, "warmonger_points": 6},
+  "medieval": {"great_person_base_cost": 120, "embarked_strength": 15, "warmonger_points": 12},
+  "renaissance": {"great_person_base_cost": 240, "embarked_strength": 30, "warmonger_points": 18},
+  "industrial": {"great_person_base_cost": 420, "embarked_strength": 35, "warmonger_points": 24},
+  "modern": {"great_person_base_cost": 660, "embarked_strength": 50, "warmonger_points": 24},
+  "atomic": {"great_person_base_cost": 960, "embarked_strength": 55, "warmonger_points": 24},
+  "information": {"great_person_base_cost": 1320, "embarked_strength": 55, "warmonger_points": 24},
+  "future": {"great_person_base_cost": 1320, "embarked_strength": 55, "warmonger_points": 24}
+}

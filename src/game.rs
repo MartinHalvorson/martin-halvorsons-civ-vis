@@ -1886,7 +1886,8 @@ mod governor_runtime_tests {
             3.0
         );
         assert!(base_reyna.city_yields(city).gold > no_reyna.city_yields(city).gold);
-        let base_border = 1.0 + no_reyna.city_yields(city).culture * 0.5;
+        // Borders grow on the city's Culture (the shipped rule).
+        let base_border = no_reyna.city_yields(city).culture;
         base_reyna.process_city(0, city);
         no_reyna.process_city(0, city);
         assert_eq!(base_reyna.cities[&city].border_culture, base_border * 1.2);
@@ -8277,8 +8278,10 @@ impl Game {
         }
     }
 
-    /// Tribal village rewards on entering a goody-hut tile (Civ 6-style
-    /// lean table: gold, faith, a eureka, or an inspiration).
+    /// Tribal village rewards on entering a goody-hut tile: the shipped
+    /// seven-category table (data/goody_huts.json), rolled the way the game
+    /// rolls it — a uniform category (every shipped category weighs 100),
+    /// then a weighted reward among the ones currently eligible.
     fn maybe_goody_hut(&mut self, uid: u32) {
         let (pos, owner) = match self.units.get(&uid) {
             Some(u) => (u.pos, u.owner),
@@ -8296,11 +8299,123 @@ impl Game {
             return;
         }
         self.map.tiles.get_mut(&pos).unwrap().improvement = None;
-        match self.rng.below(4) {
-            0 => self.players[owner].gold += 60.0,
-            1 => self.players[owner].faith += 20.0,
-            2 => self.grant_random_boosts(owner, 1, true),
-            _ => self.grant_random_boosts(owner, 1, false),
+        self.roll_goody_reward(owner, uid, pos);
+    }
+
+    fn roll_goody_reward(&mut self, owner: usize, uid: u32, pos: Pos) {
+        let has_city = self.cities.values().any(|c| c.owner == owner);
+        let categories: Vec<String> = self.rules.goody_huts.keys().cloned().collect();
+        let mut order: Vec<usize> = (0..categories.len()).collect();
+        let first = self.rng.below(order.len());
+        order.rotate_left(first);
+        for index in order {
+            let eligible: Vec<(String, i64)> = self.rules.goody_huts[&categories[index]]
+                .iter()
+                .filter(|(_, reward)| {
+                    reward.weight > 0
+                        && self.turn >= reward.min_turn
+                        && (!reward.requires_city || has_city)
+                })
+                .map(|(name, reward)| (name.clone(), reward.weight))
+                .collect();
+            let total: i64 = eligible.iter().map(|(_, weight)| weight).sum();
+            if total == 0 {
+                continue; // a city-gated category before the first city
+            }
+            let mut roll = self.rng.below(total as usize) as i64;
+            for (name, weight) in eligible {
+                roll -= weight;
+                if roll < 0 {
+                    let reward =
+                        self.rules.goody_huts[&categories[index]][&name].reward.clone();
+                    self.grant_goody_reward(owner, uid, pos, &reward);
+                    return;
+                }
+            }
+        }
+    }
+
+    fn grant_goody_reward(
+        &mut self,
+        owner: usize,
+        uid: u32,
+        pos: Pos,
+        reward: &BTreeMap<String, f64>,
+    ) {
+        for (kind, amount) in reward {
+            match kind.as_str() {
+                "gold" => self.players[owner].gold += amount,
+                "faith" => self.players[owner].faith += amount,
+                "civic_boosts" => self.grant_random_boosts(owner, *amount as usize, false),
+                "tech_boosts" => self.grant_random_boosts(owner, *amount as usize, true),
+                "techs" => self.complete_random_nodes(owner, *amount as usize, true),
+                "relic" => {
+                    *self.players[owner]
+                        .counters
+                        .entry("great_work:relic".to_string())
+                        .or_insert(0) += *amount as i64;
+                }
+                "experience" => self.award_xp(uid, *amount),
+                "heal" => {
+                    if let Some(unit) = self.units.get_mut(&uid) {
+                        unit.hp = (unit.hp + *amount as i32).min(100);
+                    }
+                }
+                "population" => {
+                    if let Some(city) = self
+                        .cities
+                        .values()
+                        .filter(|c| c.owner == owner)
+                        .min_by_key(|c| self.wdist(c.pos, pos))
+                        .map(|c| c.id)
+                    {
+                        self.cities.get_mut(&city).unwrap().pop += 1;
+                    }
+                }
+                "governor_title" => {
+                    *self.players[owner]
+                        .counters
+                        .entry("district_governor_titles".to_string())
+                        .or_insert(0) += *amount as i64;
+                }
+                "envoy" => self.players[owner].envoys_free += *amount as i64,
+                "favor" => self.players[owner].diplomatic_favor += amount,
+                "strategic_resources" => {
+                    // The most advanced strategic the player has revealed.
+                    let best = self
+                        .rules
+                        .resources
+                        .iter()
+                        .filter(|(_, spec)| spec.class == "strategic")
+                        .filter(|(name, _)| self.resource_visible_to(owner, name))
+                        .max_by_key(|(name, spec)| {
+                            (
+                                spec.tech
+                                    .as_deref()
+                                    .and_then(|t| self.rules.techs.get(t))
+                                    .map(|t| t.era)
+                                    .unwrap_or(0),
+                                name.clone(),
+                            )
+                        })
+                        .map(|(name, _)| name.clone());
+                    if let Some(resource) = best {
+                        let capacity = self.strategic_stockpile_capacity(owner);
+                        let stock = self.players[owner]
+                            .strategic_resources
+                            .entry(resource)
+                            .or_insert(0.0);
+                        *stock = (*stock + amount).min(capacity);
+                    }
+                }
+                unit if unit.starts_with("unit:") => {
+                    let kind = &unit["unit:".len()..];
+                    for _ in 0..*amount as usize {
+                        self.spawn_unit(kind, owner, pos);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -8324,12 +8439,8 @@ impl Game {
             self.players[owner].gold += 50.0 + self.human_camp_gold(owner);
             self.add_era_score(owner, 1);
             if self.has_ability(owner, "epic_quest") {
-                match self.rng.below(4) {
-                    0 => self.players[owner].gold += 60.0,
-                    1 => self.players[owner].faith += 20.0,
-                    2 => self.grant_random_boosts(owner, 1, true),
-                    _ => self.grant_random_boosts(owner, 1, false),
-                }
+                // Epic Quest: a full tribal village reward for the cleared camp.
+                self.roll_goody_reward(owner, uid, pos);
             }
             bump(&mut self.players[owner], "camps");
         }
@@ -9164,7 +9275,7 @@ impl Game {
             .collect();
         for tech in candidates {
             let cost = self.tech_cost(tech.as_str());
-            let fraction = self.boost_frac(attacker);
+            let fraction = self.node_boost_frac(attacker, tech.as_str(), true);
             let player = &mut self.players[attacker];
             player.boosted_techs.insert(tech.clone());
             if player.research.as_deref() == Some(tech.as_str()) {
@@ -9466,12 +9577,34 @@ impl Game {
     }
 
     /// Eureka/inspiration fraction (China's Dynastic Cycle: 50% vs 40%).
-    fn boost_frac(&self, pid: usize) -> f64 {
-        if self.has_ability(pid, "dynastic_cycle") {
-            0.5
+    /// Boost grant for a named node, for callers that only know the node
+    /// (steals, goody huts, and applying a stored boost on selection).
+    fn node_boost_frac(&self, pid: usize, name: &str, techs: bool) -> f64 {
+        let tree = if techs {
+            &self.rules.techs
         } else {
-            0.4
+            &self.rules.civics
+        };
+        match tree.get(name).and_then(|spec| spec.boost.as_ref()) {
+            Some(boost) => self.boost_frac(pid, boost),
+            None => {
+                let mut percent = 40.0;
+                if self.has_ability(pid, "dynastic_cycle") {
+                    percent += 10.0;
+                }
+                percent / 100.0
+            }
         }
+    }
+
+    fn boost_frac(&self, pid: usize, b: &crate::rules::BoostSpec) -> f64 {
+        // China's Dynastic Cycle adds ten percentage points to the shipped
+        // per-boost grant (40 everywhere except Near Future Governance's 90).
+        let mut percent = b.percent.unwrap_or(40.0);
+        if self.has_ability(pid, "dynastic_cycle") {
+            percent += 10.0;
+        }
+        percent / 100.0
     }
 
     // -------------------------------------------------- trade routes
@@ -11713,7 +11846,7 @@ impl Game {
                 return;
             }
             let (name, cost) = cands[self.rng.below(cands.len())].clone();
-            let f = self.boost_frac(pid);
+            let f = self.node_boost_frac(pid, &name, techs);
             let p = &mut self.players[pid];
             if techs {
                 p.boosted_techs.insert(name.clone());
@@ -11752,7 +11885,7 @@ impl Game {
                 return;
             }
             let (name, cost) = candidates[self.rng.below(candidates.len())].clone();
-            let fraction = self.boost_frac(pid);
+            let fraction = self.node_boost_frac(pid, &name, true);
             let player = &mut self.players[pid];
             player.boosted_techs.insert(name.clone());
             if player.research.as_deref() == Some(name.as_str()) {
@@ -12382,6 +12515,7 @@ impl Game {
         if attacking && self.grants_city_state_unique_bonus(unit.owner, "Kabul") {
             amount *= 2.0;
         }
+        // The shipped cap on experience from one combat (8 since Rise and Fall).
         let gained = self.modified_xp(uid, amount).min(8);
         self.units.get_mut(&uid).unwrap().xp += gained;
     }
@@ -12943,12 +13077,15 @@ impl Game {
 
     pub fn unit_strength(&self, u: &Unit, defending: bool) -> f64 {
         if self.is_embarked(u) {
-            return 10.0
+            // Embarked strength climbs the shipped era ladder: 10 in the
+            // Ancient era up to 55 from the Atomic era on.
+            let era = crate::rules::ERA_NAMES[self.world_era.min(8)];
+            return self.rules.eras[era].embarked_strength
                 + if defending {
                     self.governor_unit_defense_bonus(u)
                 } else {
                     0.0
-                }; // embarked units are nearly defenseless
+                };
         }
         let mut s = self.unit_unembarked_strength(u);
         if defending {
@@ -22328,7 +22465,7 @@ impl Game {
                 && capture_chance > 0.0
                 && self.rng.uniform(0.0, 100.0) < capture_chance;
             if d_dead {
-                bump(&mut self.players[pid], "kills");
+                self.record_kill(pid, Some(&attacker.kind), &d);
                 self.promotion_kill_rewards(&attacker, &d);
                 self.remove_unit(did);
                 self.on_unit_lost(downer);
@@ -22338,7 +22475,7 @@ impl Game {
             }
             if attacker_dead {
                 if self.units.contains_key(&uid) {
-                    bump(&mut self.players[downer], "kills");
+                    self.record_kill(downer, Some(&d.kind), &attacker);
                     self.remove_unit(uid);
                     self.on_unit_lost(pid);
                 }
@@ -22602,7 +22739,7 @@ impl Game {
                 self.award_unit_combat_xp(did, &attacker, true, false, false);
             }
             if defender_dead {
-                bump(&mut self.players[pid], "kills");
+                self.record_kill(pid, Some(&attacker.kind), &defender);
                 self.promotion_kill_rewards(&attacker, &defender);
                 if self.has_ability(pid, "killer_of_cyrus") {
                     if let Some(attacker) = self.units.get_mut(&uid) {
@@ -22943,6 +23080,7 @@ impl Game {
                 tile.improvement = Some("national_park".to_string());
                 tile.pillaged = false;
             }
+            bump(&mut self.players[pid], "national_park");
         } else {
             let t = self.map.tiles.get_mut(&u.pos).unwrap();
             // Excavation consumes the Antiquity Site/Shipwreck and immediately
@@ -24095,7 +24233,8 @@ impl Game {
             self.record_emergency_combat(pid, defender.owner, killed);
             self.award_unit_combat_xp(uid, &defender, true, true, killed);
             if killed {
-                bump(&mut self.players[pid], "kills");
+                let weapon = self.units[&uid].kind.clone();
+                self.record_kill(pid, Some(&weapon), &defender);
                 self.remove_unit(defender_id);
                 self.on_unit_lost(defender.owner);
             }
@@ -24399,9 +24538,7 @@ impl Game {
         if unit == "settler" && self.governor_effect(pid, cid, "settler_no_population") <= 0.0 {
             self.cities.get_mut(&cid).unwrap().pop -= 1;
         }
-        if unit == "settler" || unit == "builder" {
-            bump(&mut self.players[pid], &format!("trained:{unit}"));
-        }
+        bump(&mut self.players[pid], &format!("trained:{unit}"));
         if rock_band {
             bump(&mut self.players[pid], "purchased:rock_band");
         }
@@ -24672,7 +24809,7 @@ impl Game {
         p.research = Some(tech.to_string());
         p.research_progress = p.research_overflow;
         p.research_overflow = 0.0;
-        let f = self.boost_frac(pid);
+        let f = self.node_boost_frac(pid, tech, true);
         if self.players[pid].boosted_techs.contains(tech) {
             self.players[pid].research_progress += f * cost;
         }
@@ -24691,7 +24828,7 @@ impl Game {
         p.civic = Some(civic.to_string());
         p.civic_progress = p.civic_overflow;
         p.civic_overflow = 0.0;
-        let f = self.boost_frac(pid);
+        let f = self.node_boost_frac(pid, civic, false);
         if self.players[pid].boosted_civics.contains(civic) {
             self.players[pid].civic_progress += f * cost;
         }
@@ -24987,7 +25124,7 @@ impl Game {
         if !defender_dead {
             self.award_xp(did, 2.0);
         } else {
-            bump(&mut self.players[pid], "kills");
+            self.record_kill(pid, None, &d);
             let downer = self.units[&did].owner;
             self.remove_unit(did);
             self.on_unit_lost(downer);
@@ -25060,7 +25197,7 @@ impl Game {
         if !defender_dead {
             self.award_xp(defender_id, 2.0);
         } else {
-            bump(&mut self.players[pid], "kills");
+            self.record_kill(pid, None, &defender);
             let owner = self.units[&defender_id].owner;
             self.remove_unit(defender_id);
             self.on_unit_lost(owner);
@@ -25234,6 +25371,17 @@ impl Game {
         }
         self.add_grievances(other, pid, grievance_cost);
         self.at_war.insert(pair(pid, other));
+        // Eureka bookkeeping: Defensive Tactics wants a war declared on you,
+        // Nationalism a war declared with justification (a formal war on
+        // someone you had denounced).
+        bump(&mut self.players[other], "received_dow");
+        if self.players[pid]
+            .denounced_until
+            .get(&other)
+            .is_some_and(|until| *until > self.turn)
+        {
+            bump(&mut self.players[pid], "casus_belli");
+        }
         let (aggressor, defender) = (self.civ_name(pid), self.civ_name(other));
         self.note(pid, "War", format!("You declared war on {defender}"), None);
         self.note(other, "War", format!("{aggressor} declared war on you"), None);
@@ -29579,7 +29727,7 @@ impl Game {
                 continue;
             }
             if self.boost_met(pid, &b) {
-                let f = self.boost_frac(pid);
+                let f = self.boost_frac(pid, &b);
                 let p = &mut self.players[pid];
                 p.boosted_techs.insert(name.clone());
                 if p.research.as_deref() == Some(name.as_str()) {
@@ -29599,7 +29747,7 @@ impl Game {
                 continue;
             }
             if self.boost_met(pid, &b) {
-                let f = self.boost_frac(pid);
+                let f = self.boost_frac(pid, &b);
                 let p = &mut self.players[pid];
                 p.boosted_civics.insert(name.clone());
                 if p.civic.as_deref() == Some(name.as_str()) {
@@ -29609,17 +29757,81 @@ impl Game {
         }
     }
 
+    /// One owned, unpillaged tile per city satisfying the predicate.
+    fn owned_tiles_where(&self, pid: usize, want: impl Fn(&crate::world::Tile) -> bool) -> i64 {
+        self.cities
+            .values()
+            .filter(|c| c.owner == pid)
+            .flat_map(|c| c.owned_tiles.iter())
+            .filter(|pos| {
+                self.map
+                    .get(**pos)
+                    .is_some_and(|tile| !tile.pillaged && want(tile))
+            })
+            .count() as i64
+    }
+
+    /// Record a combat kill with the detail the Eureka triggers ask about:
+    /// what did the killing, what died, and whether it was a Barbarian.
+    fn record_kill(&mut self, pid: usize, weapon: Option<&str>, victim: &Unit) {
+        bump(&mut self.players[pid], "kills");
+        if let Some(kind) = weapon {
+            *self.players[pid]
+                .counters
+                .entry(format!("kill_with:{kind}"))
+                .or_insert(0) += 1;
+        }
+        *self.players[pid]
+            .counters
+            .entry(format!("kill_kind:{}", victim.kind))
+            .or_insert(0) += 1;
+        if self.players[victim.owner].is_barbarian {
+            bump(&mut self.players[pid], "barbs_killed");
+        }
+    }
+
+    /// The era a wonder belongs to: the era of its unlocking node.
+    fn wonder_era(&self, wonder: &str) -> usize {
+        let spec = &self.rules.wonders[wonder];
+        spec.tech
+            .as_deref()
+            .and_then(|t| self.rules.techs.get(t).map(|node| node.era))
+            .or_else(|| {
+                spec.civic
+                    .as_deref()
+                    .and_then(|c| self.rules.civics.get(c).map(|node| node.era))
+            })
+            .unwrap_or(0)
+    }
+
     fn boost_met(&self, pid: usize, b: &crate::rules::BoostSpec) -> bool {
         let p = &self.players[pid];
         let n = b.count;
         let cities: Vec<&City> = self.cities.values().filter(|c| c.owner == pid).collect();
+        let counter = |key: &str| p.counters.get(key).copied().unwrap_or(0);
         let trig = b.trigger.as_str();
         match trig {
-            "kills" | "improvements" | "camps" | "captures" => {
-                p.counters.get(trig).copied().unwrap_or(0) >= n
-            }
+            "kills" | "improvements" | "camps" | "captures" | "barbs_killed" | "received_dow"
+            | "casus_belli" | "national_park" | "great_people" => counter(trig) >= n,
+            "artifacts" => counter("great_work:artifact") >= n,
             "cities" => cities.len() as i64 >= n,
             "districts" => cities.iter().map(|c| c.districts.len() as i64).sum::<i64>() >= n,
+            "specialty_districts" => {
+                // Distinct specialty district types across the empire.
+                cities
+                    .iter()
+                    .flat_map(|c| c.districts.keys())
+                    .map(|d| self.district_family(d))
+                    .filter(|family| {
+                        self.rules
+                            .districts
+                            .get(*family)
+                            .is_some_and(|spec| spec.specialty)
+                    })
+                    .collect::<BTreeSet<&str>>()
+                    .len() as i64
+                    >= n
+            }
             "pop" => cities.iter().any(|c| c.pop as i64 >= n),
             "total_pop" => cities.iter().map(|c| c.pop as i64).sum::<i64>() >= n,
             "units" => {
@@ -29628,6 +29840,32 @@ impl Game {
                     .filter(|u| {
                         u.owner == pid && self.rules.units[u.kind.as_str()].class == "military"
                     })
+                    .count() as i64
+                    >= n
+            }
+            "land_units" => {
+                self.units
+                    .values()
+                    .filter(|u| {
+                        let spec = &self.rules.units[u.kind.as_str()];
+                        u.owner == pid
+                            && spec.class == "military"
+                            && !matches!(spec.domain.as_deref(), Some("sea") | Some("air"))
+                    })
+                    .count() as i64
+                    >= n
+            }
+            "corps" => {
+                self.units
+                    .values()
+                    .filter(|u| u.owner == pid && u.formation >= 1)
+                    .count() as i64
+                    >= n
+            }
+            "armies" => {
+                self.units
+                    .values()
+                    .filter(|u| u.owner == pid && u.formation >= 2)
                     .count() as i64
                     >= n
             }
@@ -29650,6 +29888,85 @@ impl Game {
                     .count() as i64
                     >= n
             }
+            "alliance_level" => p
+                .alliances
+                .values()
+                .any(|alliance| alliance.ends > self.turn && alliance.level as i64 >= n),
+            "pantheon" => p.pantheon.is_some(),
+            "religion" => p.religion.is_some(),
+            "religion_cities" => {
+                // Cities anywhere in the world following the player's faith.
+                p.religion.as_deref().is_some_and(|religion| {
+                    self.cities
+                        .values()
+                        .filter(|c| self.city_religion(c) == Some(religion))
+                        .count() as i64
+                        >= n
+                })
+            }
+            "trade_routes" => {
+                self.routes
+                    .iter()
+                    .filter(|route| route.owner == pid && route.ends > self.turn)
+                    .count() as i64
+                    >= n
+            }
+            "wonders" => cities.iter().map(|c| c.wonders.len() as i64).sum::<i64>() >= n,
+            "wonder_era" => cities
+                .iter()
+                .flat_map(|c| c.wonders.keys())
+                .any(|wonder| self.wonder_era(wonder) >= n as usize),
+            "government_slots" => {
+                let slots = self.gov_slots(pid);
+                slots.military + slots.economic + slots.diplomatic + slots.wildcard >= n
+            }
+            "natural_wonder" => !p.discovered_natural_wonders.is_empty(),
+            "met_civ" => self.players.iter().any(|o| {
+                o.id != pid
+                    && o.alive
+                    && !o.is_barbarian
+                    && !o.is_minor
+                    && self
+                        .cities
+                        .values()
+                        .any(|c| c.owner == o.id && p.explored.contains(&c.pos))
+            }),
+            "met_city_states" => {
+                self.players
+                    .iter()
+                    .filter(|o| {
+                        o.is_minor
+                            && o.alive
+                            && self
+                                .cities
+                                .values()
+                                .any(|c| c.owner == o.id && p.explored.contains(&c.pos))
+                    })
+                    .count() as i64
+                    >= n
+            }
+            "discover_continent" => {
+                let home = self.home_continent(pid);
+                home.is_some()
+                    && p.explored.iter().any(|pos| {
+                        self.map.get(*pos).is_some_and(|tile| {
+                            tile.continent.is_some() && tile.continent != home
+                        })
+                    })
+            }
+            "airbase_foreign_continent" => {
+                let home = self.home_continent(pid);
+                home.is_some()
+                    && self.owned_tiles_where(pid, |tile| {
+                        tile.continent.is_some()
+                            && tile.continent != home
+                            && (tile.improvement.as_deref() == Some("airstrip")
+                                || tile
+                                    .district
+                                    .as_deref()
+                                    .is_some_and(|d| d.starts_with("aerodrome")))
+                    }) >= 1
+            }
             _ => {
                 if let Some(t) = trig.strip_prefix("units_of:") {
                     self.units
@@ -29658,7 +29975,12 @@ impl Game {
                         .count() as i64
                         >= n
                 } else if let Some(d) = trig.strip_prefix("district:") {
-                    cities.iter().any(|c| c.districts.contains_key(d))
+                    cities
+                        .iter()
+                        .flat_map(|c| c.districts.keys())
+                        .filter(|have| self.district_family(have) == d)
+                        .count() as i64
+                        >= n
                 } else if let Some(bn) = trig.strip_prefix("building:") {
                     cities
                         .iter()
@@ -29667,6 +29989,68 @@ impl Game {
                         >= n
                 } else if let Some(t) = trig.strip_prefix("tech:") {
                     p.techs.contains(t)
+                } else if let Some(c) = trig.strip_prefix("civic:") {
+                    p.civics.contains(c)
+                } else if let Some(i) = trig.strip_prefix("improvement:") {
+                    self.owned_tiles_where(pid, |tile| tile.improvement.as_deref() == Some(i)) >= n
+                } else if let Some(i) = trig.strip_prefix("improvement_on_resource:") {
+                    self.owned_tiles_where(pid, |tile| {
+                        tile.improvement.as_deref() == Some(i) && tile.resource.is_some()
+                    }) >= n
+                } else if let Some(r) = trig.strip_prefix("improve_resource:") {
+                    self.owned_tiles_where(pid, |tile| {
+                        tile.resource.as_deref() == Some(r)
+                            && tile.improvement.as_deref().is_some_and(|imp| {
+                                self.rules.resources[r].improvement == imp
+                                    || self.rules.improvements.get(imp).is_some_and(|spec| {
+                                        spec.resources.iter().any(|c| c == r)
+                                    })
+                            })
+                    }) >= 1
+                } else if let Some(kind) = trig.strip_prefix("great_person_of:") {
+                    p.gp_claimed.get(kind).copied().unwrap_or(0) as i64 >= n
+                } else if trig.starts_with("kill_with:")
+                    || trig.starts_with("kill_kind:")
+                    || trig.starts_with("trained:")
+                {
+                    counter(trig) >= n
+                } else if let Some(d) = trig.strip_prefix("district_appeal:") {
+                    cities.iter().any(|c| {
+                        c.districts.iter().any(|(have, pos)| {
+                            self.district_family(have) == d && self.tile_appeal(*pos) as i64 >= n
+                        })
+                    })
+                } else if let Some(bn) = trig.strip_prefix("building_near_mountain:") {
+                    // The building's own district tile stands beside a mountain.
+                    let host = self
+                        .rules
+                        .buildings
+                        .get(bn)
+                        .and_then(|spec| spec.district.as_deref())
+                        .unwrap_or("");
+                    cities.iter().any(|c| {
+                        c.buildings.iter().any(|x| x == bn)
+                            && c.districts.iter().any(|(have, pos)| {
+                                self.district_family(have) == host
+                                    && self.nbrs(*pos).iter().any(|nb| {
+                                        self.map
+                                            .get(*nb)
+                                            .is_some_and(|t| t.terrain == "mountain")
+                                    })
+                            })
+                    })
+                } else if let Some(spec) = trig.strip_prefix("unit_and_improve:") {
+                    spec.split_once(':').is_some_and(|(unit, resource)| {
+                        self.units
+                            .values()
+                            .any(|u| u.owner == pid && u.kind == unit)
+                            && self.owned_tiles_where(pid, |tile| {
+                                tile.resource.as_deref() == Some(resource)
+                                    && tile.improvement.as_deref().is_some_and(|imp| {
+                                        self.rules.resources[resource].improvement == imp
+                                    })
+                            }) >= 1
+                    })
                 } else {
                     false
                 }
@@ -29845,8 +30229,11 @@ impl Game {
                     + self.governor_effect(pid, cid, "border_growth_pct"))
                     / 100.0;
             let city = self.cities.get_mut(&cid).unwrap();
-            city.border_culture += (1.0 + ys.culture * 0.5) * border_mult;
-            let need_b = (15 + 8 * (owned - 7).max(0)) as f64;
+            // Borders grow on the city's Culture, and the next plot costs the
+            // shipped curve: 10 + 6 * plots^1.3.
+            city.border_culture += ys.culture * border_mult;
+            let plots = (owned - 7).max(0) as f64;
+            let need_b = (10.0 + 6.0 * plots.powf(1.3)).trunc();
             if city.border_culture >= need_b {
                 city.border_culture -= need_b;
                 self.expand_borders(cid);
@@ -29961,8 +30348,8 @@ impl Game {
                 })
                 .map(|(node, tech)| (node.clone(), tech.cost))
                 .collect();
-            let fraction = self.boost_frac(pid);
             for (node, cost) in boosts {
+                let fraction = self.node_boost_frac(pid, &node, true);
                 self.players[pid].boosted_techs.insert(node.clone());
                 if self.players[pid].research.as_deref() == Some(node.as_str()) {
                     self.players[pid].research_progress += fraction * cost;
@@ -29987,7 +30374,7 @@ impl Game {
                 let (node, cost) = candidates[self.rng.below(candidates.len())].clone();
                 self.players[pid].boosted_civics.insert(node.clone());
                 if self.players[pid].civic.as_deref() == Some(node.as_str()) {
-                    self.players[pid].civic_progress += self.boost_frac(pid) * cost;
+                    self.players[pid].civic_progress += self.node_boost_frac(pid, &node, false) * cost;
                 }
             }
         }
@@ -30178,9 +30565,7 @@ impl Game {
                 {
                     self.cities.get_mut(&cid).unwrap().pop -= 1;
                 }
-                if unit == "settler" || unit == "builder" {
-                    bump(&mut self.players[pid], &format!("trained:{unit}"));
-                }
+                bump(&mut self.players[pid], &format!("trained:{unit}"));
                 if matches!(
                     self.rules.units[unit.as_str()].class.as_str(),
                     "military" | "support"

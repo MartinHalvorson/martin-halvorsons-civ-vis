@@ -1,0 +1,38 @@
+{
+  "culture": {
+    "one_relic": {"weight": 15, "requires_city": true, "reward": {"relic": 1}},
+    "two_civic_boosts": {"weight": 30, "min_turn": 30, "reward": {"civic_boosts": 2}},
+    "one_civic_boost": {"weight": 55, "reward": {"civic_boosts": 1}}
+  },
+  "gold": {
+    "large_gold": {"weight": 15, "min_turn": 40, "requires_city": true, "reward": {"gold": 120}},
+    "medium_gold": {"weight": 30, "min_turn": 20, "requires_city": true, "reward": {"gold": 75}},
+    "small_gold": {"weight": 55, "requires_city": true, "reward": {"gold": 40}}
+  },
+  "faith": {
+    "large_faith": {"weight": 15, "min_turn": 60, "requires_city": true, "reward": {"faith": 100}},
+    "medium_faith": {"weight": 30, "min_turn": 40, "requires_city": true, "reward": {"faith": 60}},
+    "small_faith": {"weight": 55, "min_turn": 20, "requires_city": true, "reward": {"faith": 20}}
+  },
+  "military": {
+    "grant_scout": {"weight": 35, "requires_city": true, "reward": {"unit:scout": 1}},
+    "grant_experience": {"weight": 20, "reward": {"experience": 20}},
+    "heal": {"weight": 25, "reward": {"heal": 100}},
+    "resources": {"weight": 20, "reward": {"strategic_resources": 20}}
+  },
+  "science": {
+    "one_tech": {"weight": 15, "min_turn": 50, "requires_city": true, "reward": {"techs": 1}},
+    "two_tech_boosts": {"weight": 30, "min_turn": 30, "reward": {"tech_boosts": 2}},
+    "one_tech_boost": {"weight": 55, "reward": {"tech_boosts": 1}}
+  },
+  "survivors": {
+    "add_pop": {"weight": 40, "requires_city": true, "reward": {"population": 1}},
+    "grant_builder": {"weight": 35, "requires_city": true, "reward": {"unit:builder": 1}},
+    "grant_trader": {"weight": 25, "min_turn": 15, "requires_city": true, "reward": {"unit:trader": 1}}
+  },
+  "diplomacy": {
+    "governor_title": {"weight": 15, "min_turn": 30, "reward": {"governor_title": 1}},
+    "envoy": {"weight": 40, "reward": {"envoy": 1}},
+    "favor": {"weight": 45, "min_turn": 30, "reward": {"favor": 20}}
+  }
+}
