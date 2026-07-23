@@ -2115,6 +2115,20 @@ function drawFeatureEffects(t, x, y) {
     cx.strokeStyle = "#b9eff088"; cx.lineWidth = 1;
     cx.beginPath(); cx.arc(x - 6, y + 2, 8, .2, 2.6); cx.arc(x + 8, y + 6, 7, 3.4, 5.8); cx.stroke();
   }
+  if (t.submerged) {
+    // Land the sea has taken for good. Flooding drew itself, but submergence —
+    // the end state, the tile that is never coming back — was explicitly
+    // skipped and rendered as ordinary ground. The most dramatic thing climate
+    // does to a map looked like nothing had happened. Drowned, not merely wet:
+    // a deep wash that leaves the lost ground showing faintly underneath.
+    hexPath(x, y, S + 0.4);
+    cx.fillStyle = "#123a52c9"; cx.fill();
+    cx.strokeStyle = "#8fd6e6a0"; cx.lineWidth = 1.2;
+    cx.beginPath();
+    cx.arc(x - 7, y - 2, 7.5, 0.3, 2.6);
+    cx.arc(x + 7, y + 5, 6.5, 3.5, 5.9);
+    cx.stroke();
+  }
 }
 
 // Multi-tile natural wonders are one landmark, not a repeated stamp. Group
@@ -3188,6 +3202,49 @@ function draw() {
       cx.stroke();
     }
     cx.globalAlpha = 1; cx.lineCap = "butt"; cx.lineJoin = "miter";
+  }
+  // --- cliffs. An escarpment blocks land movement across the edge it sits on,
+  // and a fresh map carries about 130 tiles' worth — yet nothing drew them, so
+  // a unit refused to cross a line that, as far as the player could see, was
+  // not there. Hachured the way a map draws a scarp: a rock line along the edge
+  // with short ticks down its face, so it reads as relief and not as a border.
+  const cliffDone = new Set();
+  const cliffLines = [], cliffTicks = [];
+  for (const t of tiles) {
+    if (!t.cliff_edges || !t.cliff_edges.some(Boolean)) continue;
+    const [x, yy] = hexXY(t.pos[0], t.pos[1]);
+    for (let i = 0; i < 6; i++) {
+      if (!t.cliff_edges[i]) continue;
+      const n = nbrTile(t.pos, DIRS[i]);
+      const ck = n ? [key(t.pos), key(n.pos)].sort().join("|") : key(t.pos) + "|c" + i;
+      if (cliffDone.has(ck)) continue;
+      cliffDone.add(ck);
+      const ey = yy - (n ? (elev(t) + elev(n)) / 2 : elev(t));
+      const [c1, c2] = EDGE_CORNERS[i];
+      const [ax, ay] = corner(x, ey, S - 0.5, c1);
+      const [bx, by] = corner(x, ey, S - 0.5, c2);
+      cliffLines.push([ax, ay, bx, by]);
+      const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1;
+      let nx = -dy / len, ny = dx / len;
+      const mx = (ax + bx) / 2, my = (ay + by) / 2;
+      if ((x - mx) * nx + (ey - my) * ny < 0) { nx = -nx; ny = -ny; }
+      for (let h = 1; h <= 3; h++) {          // ticks face into the scarp
+        const f = h / 4, px = ax + dx * f, py = ay + dy * f;
+        cliffTicks.push([px, py, px + nx * 4.6, py + ny * 4.6]);
+      }
+    }
+  }
+  if (cliffLines.length) {
+    cx.lineCap = "round";
+    for (const [segs, w, col, a] of [[cliffLines, 3.4, "#241d14", 0.8],
+                                     [cliffLines, 1.5, "#b3a68d", 0.85],
+                                     [cliffTicks, 1.5, "#2b2318", 0.7]]) {
+      cx.strokeStyle = col; cx.lineWidth = w; cx.globalAlpha = a;
+      cx.beginPath();
+      for (const [ax, ay, bx, by] of segs) { cx.moveTo(ax, ay); cx.lineTo(bx, by); }
+      cx.stroke();
+    }
+    cx.globalAlpha = 1; cx.lineCap = "butt";
   }
   // --- rivers: shared hex-edge segments, never tile-center spokes
   const riverDrawn = new Set();
