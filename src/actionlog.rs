@@ -23,6 +23,28 @@ struct Entry {
     applied: (usize, Action),
 }
 
+/// Releasing the head of the chain would otherwise drop its predecessor from
+/// inside its own destructor, one stack frame per action ever applied. A long
+/// game logs six figures of them, so the recursion overflowed the 2 MiB stack
+/// a spawned thread gets — every batch runner (`soak`, `tournament`,
+/// `benchmark`, `selfplay`) aborted partway through, while the same games run
+/// serially on the main thread's larger stack survived.
+///
+/// Walking the chain here instead keeps the release iterative. Ownership is
+/// unchanged: a link still shared with a live branch is left for whichever
+/// owner releases it last.
+impl Drop for Entry {
+    fn drop(&mut self) {
+        let mut cursor = self.previous.take();
+        while let Some(entry) = cursor {
+            match Arc::try_unwrap(entry) {
+                Ok(mut sole) => cursor = sole.previous.take(),
+                Err(_) => break,
+            }
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct ActionLog {
     last: Option<Arc<Entry>>,
@@ -154,6 +176,32 @@ mod tests {
             log.since(2).map(|(seat, _)| *seat).collect::<Vec<_>>(),
             [2, 3, 4]
         );
+    }
+
+    /// A chain long enough that a recursive release would overflow the stack
+    /// a spawned thread gets, dropped on such a thread so the smaller stack is
+    /// the one under test.
+    #[test]
+    fn a_long_log_is_released_without_recursing_through_the_chain() {
+        std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(|| {
+                let log: ActionLog = (0..200_000).map(|index| end(index % 6)).collect();
+                assert_eq!(log.len(), 200_000);
+                drop(log);
+
+                // A branch still holding the shared history must keep it, and
+                // release it just as safely once it is the only owner left.
+                let trunk: ActionLog = (0..200_000).map(|index| end(index % 6)).collect();
+                let mut branch = trunk.clone();
+                branch.push(3, Action::EndTurn);
+                drop(trunk);
+                assert_eq!(branch.len(), 200_001);
+                drop(branch);
+            })
+            .expect("spawn")
+            .join()
+            .expect("releasing a long log must not overflow the stack");
     }
 
     #[test]
