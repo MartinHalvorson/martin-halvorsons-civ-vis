@@ -867,6 +867,30 @@ pub struct Rules {
     /// The shipped WMDs table. Blast radius, fallout and ICBM range await a
     /// delivery mechanic; the per-turn Gold maintenance is charged today.
     pub wmds: SpecMap<WmdSpec>,
+    /// Which technologies grant each global effect, and which civics do.
+    ///
+    /// Asking what a player's trees add up to used to walk every node they
+    /// had researched and ask each one whether it granted the effect — over a
+    /// hundred lookups to answer a question whose answer usually comes from
+    /// one or two nodes. The tables are inverted once, when the ruleset is
+    /// built, and each list is in node order so the sum is added up in exactly
+    /// the order it always was.
+    pub tech_effects: SpecMap<Vec<(String, f64)>>,
+    pub civic_effects: SpecMap<Vec<(String, f64)>>,
+}
+
+/// Invert a tree's per-node effect tables into per-effect node lists.
+fn effect_sources(nodes: &SpecMap<TechSpec>) -> SpecMap<Vec<(String, f64)>> {
+    let mut sources: BTreeMap<String, Vec<(String, f64)>> = BTreeMap::new();
+    for (name, spec) in nodes.iter() {
+        for (effect, value) in &spec.effects {
+            sources
+                .entry(effect.clone())
+                .or_default()
+                .push((name.clone(), *value));
+        }
+    }
+    SpecMap::from(sources)
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -1019,6 +1043,8 @@ impl Rules {
             goody_huts: take(&mut files, "goody_huts")?,
             eras: take(&mut files, "eras")?,
             wmds: take(&mut files, "wmds")?,
+            tech_effects: SpecMap::default(),
+            civic_effects: SpecMap::default(),
         };
         let effects: TreeEffectsData = take(&mut files, "tree_effects")?;
         for (node, values) in effects.techs {
@@ -1036,6 +1062,8 @@ impl Rules {
                 .effects = values;
         }
         rules.index_tree_unlocks();
+        rules.tech_effects = effect_sources(&rules.techs);
+        rules.civic_effects = effect_sources(&rules.civics);
         Ok(rules)
     }
 

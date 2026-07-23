@@ -11095,17 +11095,23 @@ impl Game {
     /// Sum global abilities from every researched technology and civic.
     pub fn tree_effect(&self, pid: usize, effect: &str) -> f64 {
         let player = &self.players[pid];
-        player
-            .techs
-            .iter()
-            .filter_map(|node| self.rules.techs.get(node)?.effects.get(effect))
-            .chain(
-                player
-                    .civics
-                    .iter()
-                    .filter_map(|node| self.rules.civics.get(node)?.effects.get(effect)),
-            )
-            .sum()
+        let researched = self
+            .rules
+            .tech_effects
+            .get(effect)
+            .into_iter()
+            .flatten()
+            .filter(|(node, _)| player.techs.contains(node));
+        let adopted = self
+            .rules
+            .civic_effects
+            .get(effect)
+            .into_iter()
+            .flatten()
+            .filter(|(node, _)| player.civics.contains(node));
+        // Node lists are in tree order, so this adds the same values in the
+        // same sequence as walking the player's own trees did.
+        researched.chain(adopted).map(|(_, value)| *value).sum()
     }
 
     /// Technology/civic visibility plus active Listening Posts. Secret Agents
