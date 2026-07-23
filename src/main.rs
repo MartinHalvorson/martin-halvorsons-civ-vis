@@ -662,6 +662,7 @@ fn main() {
                         let dir = arg_text(&args, "--league", "");
                         (!dir.is_empty()).then_some(dir)
                     },
+                    league_record: args.iter().any(|a| a == "--league-record"),
                 },
                 resumed,
             );
@@ -706,7 +707,7 @@ fn main() {
                       [--human-seats 0,1] [--teams 0,0,1,1] [--mods path/to/mod,path/to/other] \
                       [--victories science,culture,religious,diplomatic,domination,score] \
                       [--spectate] [--supervised] [--resume checkpoint.json] [--strict] \
-                      [--league dir] [--standings [--civ Rome | --civs]] [--rounds N] \
+                      [--league dir] [--league-record] [--standings [--civ Rome | --civs]] [--rounds N] \
                       [--evolve-every N] [--pop N]"
             );
         }

@@ -607,7 +607,13 @@ fn play_round(league: &League, tables: &[Vec<usize>], cfg: &LeagueCfg, round: u3
 
 /// One Glicko-2 rating period: every game becomes pairwise results against
 /// opponents' pre-round ratings, then all active strategies update at once.
-fn apply_round(league: &mut League, outcomes: &[Outcome]) {
+///
+/// `age_idle` decides what happens to strategies that sat the period out. A
+/// league round schedules the whole roster, so anyone missing really did idle
+/// and their deviation should grow. A single recorded game is a period only
+/// six seats could enter, so ageing the rest would pin the roster at maximum
+/// uncertainty within an afternoon — the same reason civ tables are sparse.
+fn apply_round(league: &mut League, outcomes: &[Outcome], age_idle: bool) {
     let pre: Vec<Glicko> = league.strategies.iter().map(to_internal).collect();
     let mut results: BTreeMap<usize, Vec<(Glicko, f64)>> = BTreeMap::new();
     let mut civ_results: BTreeMap<(usize, &str), Vec<(Glicko, f64)>> = BTreeMap::new();
@@ -669,9 +675,83 @@ fn apply_round(league: &mut League, outcomes: &[Outcome]) {
         if league.strategies[i].retired {
             continue;
         }
-        let updated = rate(pre[i], results.get(&i).unwrap_or(&empty));
+        let played = results.get(&i);
+        if played.is_none() && !age_idle {
+            continue;
+        }
+        let updated = rate(pre[i], played.unwrap_or(&empty));
         apply_internal(&mut league.strategies[i], updated);
     }
+}
+
+/// Rate one finished game as its own rating period and persist it, so a
+/// server playing rated seats actually moves the table instead of showing a
+/// snapshot forever.
+///
+/// `placements` is (strategy name, civ played) ordered winner first, then by
+/// score. The roster is re-read from `dir` and seats are resolved by *name*
+/// rather than by the index the caller seated from: a live server holds its
+/// league in memory for the length of a game, and writing that stale copy
+/// back would undo any result recorded in the meantime. Returns the updated
+/// league, or `None` if the roster is unreadable or no longer holds every
+/// name (a retired or renamed entrant leaves the game unrated rather than
+/// rating the wrong strategy).
+pub fn record_game(
+    dir: &str,
+    placements: &[(String, String)],
+    seed: u64,
+    turn: u32,
+    victory: &str,
+) -> Option<League> {
+    if placements.len() < 2 {
+        return None;
+    }
+    let mut league = load_league(dir)?;
+    let seats: Option<Vec<usize>> = placements
+        .iter()
+        .map(|(name, _)| league.strategies.iter().position(|s| &s.name == name))
+        .collect();
+    let outcome = Outcome {
+        placements: seats?,
+        civs: placements.iter().map(|(_, civ)| civ.clone()).collect(),
+        seed,
+        turn,
+        victory: victory.to_string(),
+    };
+    let names: Vec<String> = placements
+        .iter()
+        .map(|(name, civ)| format!("{name}@{civ}"))
+        .collect();
+    let round = league.round;
+    apply_round(&mut league, &[outcome], false);
+    league.round += 1;
+    append_csv(
+        dir,
+        "matches.csv",
+        "round,seed,turns,victory,placements",
+        &[format!(
+            "{round},{seed},{turn},{victory},{}",
+            names.join("|")
+        )],
+    );
+    let rating_lines: Vec<String> = placements
+        .iter()
+        .filter_map(|(name, _)| league.strategies.iter().find(|s| &s.name == name))
+        .map(|s| {
+            format!(
+                "{},{},{:.1},{:.1},{:.4},{},{}",
+                league.round, s.name, s.rating, s.rd, s.vol, s.games, s.wins
+            )
+        })
+        .collect();
+    append_csv(
+        dir,
+        "ratings.csv",
+        "round,name,rating,rd,vol,games,wins",
+        &rating_lines,
+    );
+    save_league(dir, &league);
+    Some(league)
 }
 
 /// Selection: breed offspring from the top of the table, then retire the
@@ -980,7 +1060,7 @@ pub fn run_league(cfg: &LeagueCfg) -> League {
                 )
             })
             .collect();
-        apply_round(&mut league, &outcomes);
+        apply_round(&mut league, &outcomes, true);
         league.round += 1;
         let mut news = (Vec::new(), Vec::new());
         if cfg.evolve_every > 0 && league.round % cfg.evolve_every == 0 {
@@ -1109,7 +1189,7 @@ mod tests {
             turn: 10,
             victory: "score".into(),
         }];
-        apply_round(&mut league, &outcomes);
+        apply_round(&mut league, &outcomes, true);
         assert!(league.strategies[0].rating > BASE_RATING);
         assert!(league.strategies[1].rating < BASE_RATING);
         assert_eq!(league.strategies[0].wins, 1);
@@ -1120,6 +1200,94 @@ mod tests {
         assert!(rome.rating > BASE_RATING && rome.games == 1 && rome.wins == 1);
         assert!(egypt.rating < BASE_RATING && egypt.games == 1 && egypt.wins == 0);
         assert!(league.strategies[0].civ_elo.get("Egypt").is_none());
+    }
+
+    /// A finished game rated on its own moves only the strategies that
+    /// played it. Ageing the rest would be right for a league round, which
+    /// schedules everyone, but a six-seat game is not an idle period for the
+    /// twenty strategies that could never have entered it.
+    #[test]
+    fn a_single_recorded_game_leaves_absent_strategies_alone() {
+        let builtin = |ai: &str| StrategyKind::Builtin { ai: ai.into() };
+        let mut league = League {
+            round: 7,
+            strategies: vec![
+                Strategy::new("a", builtin("advanced"), 0),
+                Strategy::new("b", builtin("basic"), 0),
+                Strategy::new("bench", builtin("random"), 0),
+            ],
+        };
+        let bench_before = (league.strategies[2].rating, league.strategies[2].rd);
+        let outcomes = vec![Outcome {
+            placements: vec![0, 1],
+            civs: vec!["Rome".into(), "Egypt".into()],
+            seed: 3,
+            turn: 90,
+            victory: "science".into(),
+        }];
+        apply_round(&mut league, &outcomes, false);
+        assert!(league.strategies[0].rating > BASE_RATING);
+        assert!(league.strategies[1].rating < BASE_RATING);
+        let bench = &league.strategies[2];
+        assert_eq!((bench.rating, bench.rd), bench_before);
+        assert_eq!(bench.games, 0);
+    }
+
+    /// `record_game` is the live server's whole path to a moving table: it
+    /// must persist, keep counting across games, and rate by name so a
+    /// roster that changed under a long game is not overwritten with a
+    /// stale one.
+    #[test]
+    fn recording_a_game_persists_and_accumulates() {
+        let dir = std::env::temp_dir().join(format!(
+            "civvis-league-record-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let dir = dir.to_str().unwrap();
+        let _ = fs::remove_dir_all(dir);
+        let builtin = |ai: &str| StrategyKind::Builtin { ai: ai.into() };
+        let mut seeded = League {
+            round: 12,
+            strategies: vec![
+                Strategy::new("a", builtin("advanced"), 0),
+                Strategy::new("b", builtin("basic"), 0),
+            ],
+        };
+        seeded.strategies[1].rating = 1600.0;
+        save_league(dir, &seeded);
+
+        let placements = vec![
+            ("a".to_string(), "Rome".to_string()),
+            ("b".to_string(), "Egypt".to_string()),
+        ];
+        let first = record_game(dir, &placements, 5, 120, "culture").expect("rated");
+        assert_eq!(first.round, 13);
+        assert!(first.strategies[0].rating > BASE_RATING);
+        assert!(first.strategies[1].rating < 1600.0);
+        assert_eq!(first.strategies[0].civ_elo["Rome"].wins, 1);
+
+        // Reloaded from disk, not from the caller's copy.
+        let second = record_game(dir, &placements, 6, 130, "culture").expect("rated");
+        assert_eq!(second.round, 14);
+        assert_eq!(second.strategies[0].games, 2);
+        assert!(second.strategies[0].rating > first.strategies[0].rating);
+        assert_eq!(
+            load_league(dir).unwrap().strategies[0].rating,
+            second.strategies[0].rating
+        );
+        let matches = fs::read_to_string(Path::new(dir).join("matches.csv")).unwrap();
+        assert_eq!(matches.lines().count(), 3, "header plus one row per game");
+        assert!(matches.contains("a@Rome|b@Egypt"));
+
+        // A name the roster no longer carries leaves the table untouched.
+        let unknown = vec![
+            ("a".to_string(), "Rome".to_string()),
+            ("ghost".to_string(), "Egypt".to_string()),
+        ];
+        assert!(record_game(dir, &unknown, 7, 140, "score").is_none());
+        assert_eq!(load_league(dir).unwrap().round, 14);
+        let _ = fs::remove_dir_all(dir);
     }
 
     /// Seating by civ prefers each civ's settled specialist and never

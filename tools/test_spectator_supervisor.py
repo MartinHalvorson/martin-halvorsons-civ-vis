@@ -1324,5 +1324,93 @@ class RecoveryTests(unittest.TestCase):
         archive.assert_called_once_with(8766, finished)
 
 
+class LeagueRosterTests(unittest.TestCase):
+    """The rated exhibition has to move its table without ever rewriting the
+    committed snapshot it started from."""
+
+    def _source(self, directory: str) -> Path:
+        source = Path(directory) / "canonical"
+        snapshot = source / "data" / "league"
+        snapshot.mkdir(parents=True)
+        (snapshot / "league.json").write_text(
+            json.dumps({"round": 3, "strategies": []}), encoding="utf-8"
+        )
+        return source
+
+    def test_auto_records_into_a_runtime_copy_of_the_committed_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self._source(directory)
+            with (
+                patch.object(supervisor, "SOURCE_ROOT", source),
+                patch.object(supervisor, "LEAGUE_RECORD", True),
+            ):
+                roster, record = supervisor.league_dir("auto")
+                # Resolved again the way every spawn does; the seeded copy is
+                # reused rather than reset back to the snapshot.
+                (roster / "league.json").write_text(
+                    json.dumps({"round": 9, "strategies": []}), encoding="utf-8"
+                )
+                again, _ = supervisor.league_dir("auto")
+
+            self.assertTrue(record)
+            self.assertEqual(roster, source / "league")
+            self.assertEqual(again, roster)
+            snapshot = source / "data" / "league" / "league.json"
+            self.assertEqual(
+                json.loads(snapshot.read_text())["round"],
+                3,
+                "the committed snapshot must stay untouched",
+            )
+            self.assertEqual(json.loads((again / "league.json").read_text())["round"], 9)
+
+    def test_recording_off_seats_from_the_snapshot_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self._source(directory)
+            with (
+                patch.object(supervisor, "SOURCE_ROOT", source),
+                patch.object(supervisor, "LEAGUE_RECORD", False),
+            ):
+                roster, record = supervisor.league_dir("auto")
+
+            self.assertFalse(record)
+            self.assertEqual(roster, source / "data" / "league")
+            self.assertFalse((source / "league").exists())
+
+    def test_a_named_roster_is_read_only_unless_recording_is_asked_for(self):
+        with tempfile.TemporaryDirectory() as directory:
+            named = Path(directory) / "roster"
+            named.mkdir()
+            (named / "league.json").write_text("{}", encoding="utf-8")
+            with patch.object(supervisor, "LEAGUE_RECORD", False):
+                self.assertEqual(supervisor.league_dir(str(named))[1], False)
+            with patch.object(supervisor, "LEAGUE_RECORD", True):
+                self.assertEqual(supervisor.league_dir(str(named))[1], True)
+            self.assertIsNone(supervisor.league_dir(str(named / "missing")))
+            self.assertIsNone(supervisor.league_dir("off"))
+
+    def test_the_launch_command_carries_the_roster_and_the_record_flag(self):
+        settings = {
+            "players": 6,
+            "width": 74,
+            "height": 46,
+            "city_states": 9,
+            "turns": 250,
+            "map": "pangaea",
+            "speed": "online",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            source = self._source(directory)
+            with (
+                patch.object(supervisor, "SOURCE_ROOT", source),
+                patch.object(supervisor, "LEAGUE_RECORD", True),
+                patch.object(supervisor, "LEAGUE_SPEC", "auto"),
+            ):
+                command = supervisor.server_command(8766, settings, False)
+
+        self.assertIn("--league", command)
+        self.assertEqual(command[command.index("--league") + 1], str(source / "league"))
+        self.assertIn("--league-record", command)
+
+
 if __name__ == "__main__":
     unittest.main()

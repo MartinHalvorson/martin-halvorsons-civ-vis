@@ -24,6 +24,29 @@ pub fn expected(ra: f64, rb: f64) -> f64 {
     1.0 / (1.0 + 10f64.powf((rb - ra) / 400.0))
 }
 
+/// Each rating's chance of *winning outright* against the rest of the table,
+/// summing to 1.
+///
+/// A multiplayer table has one winner, so averaging the pairwise `expected`
+/// scores does not answer "who wins this game": those averages sit around
+/// 0.5 each and sum to n/2, which reads as a six-way table of 50% favourites.
+/// Weighting by each rating's Elo strength `10^(r/400)` and normalizing gives
+/// a real distribution, and for two players it collapses back to `expected`.
+pub fn win_shares(ratings: &[f64]) -> Vec<f64> {
+    // Offset by the strongest rating before exponentiating: the ratio is
+    // unchanged and no term can overflow, however far the table has drifted.
+    let top = ratings.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let weights: Vec<f64> = ratings
+        .iter()
+        .map(|r| 10f64.powf((r - top) / 400.0))
+        .collect();
+    let total: f64 = weights.iter().sum();
+    if total <= 0.0 || !total.is_finite() {
+        return vec![1.0 / ratings.len().max(1) as f64; ratings.len()];
+    }
+    weights.iter().map(|w| w / total).collect()
+}
+
 pub struct EloPool {
     pub ratings: BTreeMap<String, f64>,
     pub games: BTreeMap<String, u32>,
@@ -226,4 +249,36 @@ pub fn leaderboard(pool: &EloPool) -> String {
         ));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The number the HUD prints as a win chance has to behave like one: the
+    /// table sums to 1, the favourite leads, and a two-player table agrees
+    /// with the ordinary Elo expectation.
+    #[test]
+    fn win_shares_are_a_distribution_over_the_table() {
+        let table = [1914.0, 1865.0, 1836.0, 1847.0, 1766.0, 1755.0];
+        let shares = win_shares(&table);
+        let total: f64 = shares.iter().sum();
+        assert!((total - 1.0).abs() < 1e-9, "shares sum to {total}");
+        assert!(shares.iter().all(|s| *s > 0.0 && *s < 1.0));
+        // Ordering follows rating, and the favourite beats an even split.
+        assert!(shares[0] > shares[3] && shares[3] > shares[1].min(shares[2]));
+        assert!(shares[0] > 1.0 / table.len() as f64);
+        assert!(shares[5] < 1.0 / table.len() as f64);
+
+        let pair = win_shares(&[1600.0, 1400.0]);
+        assert!((pair[0] - expected(1600.0, 1400.0)).abs() < 1e-12);
+        assert!((pair[1] - expected(1400.0, 1600.0)).abs() < 1e-12);
+
+        // Equal ratings split evenly, and a drifted table cannot overflow.
+        for s in win_shares(&[1500.0; 4]) {
+            assert!((s - 0.25).abs() < 1e-12);
+        }
+        let wide = win_shares(&[40_000.0, 0.0]);
+        assert!((wide[0] + wide[1] - 1.0).abs() < 1e-9 && wide[0] > 0.999);
+    }
 }

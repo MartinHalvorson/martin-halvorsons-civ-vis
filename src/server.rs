@@ -54,6 +54,11 @@ pub struct Params {
     /// the default fleet below IS the league's "advanced" entrant — but the
     /// AIs themselves are unchanged.
     pub league_dir: Option<String>,
+    /// Rate the finished game into `league_dir` (`--league-record`). Off by
+    /// default because the shipped `data/league` roster is a committed
+    /// snapshot: a run that seats from it must not rewrite it. Point this at
+    /// a runtime copy and the table moves with every game played.
+    pub league_record: bool,
 }
 
 pub struct Session {
@@ -77,6 +82,9 @@ pub struct Session {
     league: Option<crate::league::League>,
     /// Per-seat index into `league.strategies` for rated major seats.
     seat_strategy: Vec<Option<usize>>,
+    /// Set once this game's result has been rated, so a winner that is
+    /// stepped past more than once is only ever counted for one game.
+    league_recorded: bool,
 }
 
 #[derive(Clone)]
@@ -841,6 +849,7 @@ impl Session {
             supervisor_request: None,
             league,
             seat_strategy,
+            league_recorded: false,
         }
     }
 
@@ -875,6 +884,9 @@ impl Session {
         let (league, seat_from_roster) = Self::load_params_league(&params);
         let (ais, seat_strategy) = Self::ai_fleet(&game, league.as_ref(), seat_from_roster);
         let chronicle = ChronicleState::from_game(&game);
+        // A match restored with its winner already decided was rated when it
+        // finished; rating it again on the next step would count it twice.
+        let league_recorded = game.winner.is_some();
         Session {
             params,
             game,
@@ -885,6 +897,7 @@ impl Session {
             supervisor_request: None,
             league,
             seat_strategy,
+            league_recorded,
         }
     }
 
@@ -1074,6 +1087,18 @@ impl Session {
                     ))
                 })
                 .collect();
+            // One table, one winner: the seats share out a single win rather
+            // than each answering a separate two-player question.
+            let seat_expected: std::collections::BTreeMap<usize, f64> = if seat_elo.len() > 1 {
+                let ratings: Vec<f64> = seat_elo.values().copied().collect();
+                seat_elo
+                    .keys()
+                    .copied()
+                    .zip(crate::elo::win_shares(&ratings))
+                    .collect()
+            } else {
+                std::collections::BTreeMap::new()
+            };
             if let Some(players) = o["players"].as_array_mut() {
                 for player in players {
                     let Some(id) = player["id"].as_u64().map(|id| id as usize) else {
@@ -1090,9 +1115,9 @@ impl Session {
                     }
                     // League identity: who is playing this seat and how
                     // strong the league currently believes they are on this
-                    // civ. `ai_expected` is the elo-implied mean win
-                    // probability against the other rated majors — the
-                    // number to check winners against over time.
+                    // civ. `ai_expected` is the elo-implied chance of winning
+                    // this table outright, so the seats sum to 1 and the
+                    // number can be checked against winners over time.
                     if let (Some(league), Some(Some(si))) =
                         (self.league.as_ref(), self.seat_strategy.get(id))
                     {
@@ -1104,16 +1129,8 @@ impl Session {
                         player["ai_elo"] = json!(elo.round() as i64);
                         player["ai_elo_rd"] = json!(rd.round() as i64);
                         player["ai_elo_civ"] = json!(civ_specific);
-                        if seat_elo.len() > 1 {
-                            if let Some(mine) = seat_elo.get(&id) {
-                                let expected: f64 = seat_elo
-                                    .iter()
-                                    .filter(|(other, _)| **other != id)
-                                    .map(|(_, r)| crate::elo::expected(*mine, *r))
-                                    .sum::<f64>()
-                                    / (seat_elo.len() - 1) as f64;
-                                player["ai_expected"] = json!((expected * 100.0).round() / 100.0);
-                            }
+                        if let Some(share) = seat_expected.get(&id) {
+                            player["ai_expected"] = json!((share * 100.0).round() / 100.0);
                         }
                     }
                 }
@@ -1160,6 +1177,11 @@ impl Session {
             .since(log_start)
             .map(|(_, action)| action.clone())
             .collect();
+        // Every way of advancing the world funnels through here — the browser
+        // stepping a batch, the headless pacer running an unattended
+        // exhibition, autoplay — so this is the one place a result cannot be
+        // missed.
+        self.record_league_result();
         (pid, actions)
     }
 
@@ -1177,6 +1199,70 @@ impl Session {
             actions,
             world_events,
         }
+    }
+
+    /// Rate a just-decided game into the roster it was seated from. Without
+    /// this a rated exhibition plays hundreds of games against a frozen
+    /// table: the elo on screen is whatever the last offline league run left
+    /// behind, no matter who keeps winning.
+    fn record_league_result(&mut self) {
+        if self.league_recorded || self.game.winner.is_none() || !self.params.league_record {
+            return;
+        }
+        self.league_recorded = true;
+        let (Some(dir), Some(league)) = (self.params.league_dir.clone(), self.league.as_ref())
+        else {
+            return;
+        };
+        // Name every rated seat up front so the roster can be replaced below.
+        let seat_names: Vec<Option<String>> = self
+            .seat_strategy
+            .iter()
+            .enumerate()
+            .map(|(pid, si)| {
+                let p = &self.game.players[pid];
+                match (si, p.is_minor || p.is_barbarian) {
+                    (Some(si), false) => Some(league.strategies[*si].name.clone()),
+                    _ => None,
+                }
+            })
+            .collect();
+        let winner = self.game.winner.unwrap();
+        // Same ordering the league itself uses: winner first, then by score.
+        let mut rated: Vec<usize> = (0..seat_names.len())
+            .filter(|pid| seat_names[*pid].is_some())
+            .collect();
+        rated.sort_by_key(|pid| (*pid != winner, -self.game.score(*pid), *pid));
+        let placements: Vec<(String, String)> = rated
+            .iter()
+            .map(|pid| {
+                (
+                    seat_names[*pid].clone().unwrap(),
+                    self.game.players[*pid].civ.clone(),
+                )
+            })
+            .collect();
+        let victory = self.game.victory_type.clone().unwrap_or_default();
+        let Some(updated) = crate::league::record_game(
+            &dir,
+            &placements,
+            self.game.seed,
+            self.game.turn,
+            &victory,
+        ) else {
+            eprintln!("[league] could not rate this game into {dir}");
+            return;
+        };
+        // Show the new numbers for the rest of the results screen, and let the
+        // next game seat from them.
+        for (pid, slot) in self.seat_strategy.iter_mut().enumerate() {
+            let Some(name) = &seat_names[pid] else {
+                *slot = None;
+                continue;
+            };
+            *slot = updated.strategies.iter().position(|s| &s.name == name);
+        }
+        self.league = Some(updated);
     }
 
     pub fn step_many(&mut self, count: usize) -> Vec<SpectatorStep> {
@@ -1221,6 +1307,7 @@ impl Session {
                 }
                 guard += 1;
             }
+            self.record_league_result();
             played += 1;
         }
         played
@@ -1248,6 +1335,7 @@ impl Session {
                 }
                 guard += 1;
             }
+            self.record_league_result();
         }
         None
     }
@@ -1862,6 +1950,7 @@ mod tests {
             teams: Vec::new(),
             supervised: false,
             league_dir: None,
+            league_record: false,
         }
     }
 
