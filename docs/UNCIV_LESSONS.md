@@ -51,13 +51,13 @@ runtime. The text surface belongs in the mod loader, not in the hot path.
 |---|---|---|---|
 | 1 | Uniques: effects as parameterized data with conditionals | **Adopt (typed)** | FIDELITY.md phase 2 modifier interpreter |
 | 2 | Countables — expression language for numeric parameters | Adopt subset | with (1) |
-| 3 | Ruleset validation with severities + author-controlled suppression | **Adopted** | `civvis validate` |
+| 3 | Ruleset validation with severities + author-controlled suppression | **Adopted** | `civvis validate`, and the gate every mod passes |
 | 4 | Difficulty levels as data, with AI/human handicaps | **Adopted** | `data/difficulties.json` |
 | 5 | Game speeds as data | **Adopted** | `data/speeds.json` |
 | 6 | Leader personalities driving AI weighting | **Adopted** | `data/agendas.json`, sourced from `Leaders.xml` |
 | 7 | Notifications: categorized, located, per-player event stream | **Adopted** | `events` in `obs`, GUI log |
 | 8 | Victories as data with ordered milestones | Adopt next | `data/victories.json` |
-| 9 | Mod folders overlaid on the base ruleset at load | Adopt next | `--mods` overlay for `data/*.json` |
+| 9 | Mod folders overlaid on the base ruleset at load | **Adopted** | `--mods`, see [MODS.md](MODS.md) |
 | 10 | Dev console for state inspection/mutation | Adopt next | GUI console + `civvis console` |
 | 11 | Civilopedia generated from the ruleset | Adopt next | `/pedia` endpoint |
 | 12 | Unit automation + autoplay for the human seat | Adopt next | reuse `AdvancedAi` per-unit |
@@ -165,6 +165,33 @@ it for free.
 Our six victory types are hardcoded, which is fine for fidelity and bad for mods, and it
 means the GUI cannot show "you are 2 of 3 milestones into Science". `data/victories.json`
 with ordered milestones is the fix; the enum of milestone kinds stays typed in Rust.
+
+### 9. Mods — adopted
+
+The reason Unciv's ruleset lives in data is that a mod is a folder of the same
+JSON, dropped in beside it. We had the data and not the loading, which is a
+strange place to stop: `data/*.json` was moddable only by editing the engine's
+own copy and rebuilding.
+
+`--mods` now merges a folder of overlays onto the shipped ruleset, with three
+rules — add, merge field by field, remove on `null` — documented in
+[MODS.md](MODS.md). Two decisions are worth recording:
+
+- **Merging, not replacing.** Unciv replaces whole objects; a mod that wants a
+  cheaper Warrior restates the Warrior. Ours merges recursively, so it writes
+  `{"warrior": {"cost": 20}}`. That makes small mods small, and it makes them
+  survive a base-ruleset change that Unciv-style replacement would silently
+  revert.
+- **Validation is a gate, not a report.** The merged ruleset goes through the
+  checker from idea 3 and is refused if it has errors. Unciv's mod checker is a
+  screen you can choose to look at; ours is the load path. A mod with a
+  dangling technology fails immediately with the file and entry named, rather
+  than crashing a game twenty turns in.
+
+What a mod still cannot do is invent behaviour. Effect keys work because the
+engine has handlers for them, so a mod can move existing effects around and not
+create new kinds — which is exactly the ceiling that idea 1, the typed effect
+interpreter, exists to lift.
 
 ### 14 & 15. What we are not taking
 

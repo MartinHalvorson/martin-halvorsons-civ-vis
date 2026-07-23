@@ -163,6 +163,8 @@ docs/       architecture, AI guide, roadmap
 
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) — design, action protocol, turn lifecycle
 - [AI_GUIDE.md](docs/AI_GUIDE.md) — building and rating agents
+- [MODS.md](docs/MODS.md) — writing a mod, which is a folder of JSON
+- [UNCIV_LESSONS.md](docs/UNCIV_LESSONS.md) — what this engine takes from Unciv
 - [ROADMAP.md](docs/ROADMAP.md) — path to full Civ 6 parity
 
 ## License
