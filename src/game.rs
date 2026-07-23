@@ -9,7 +9,7 @@ use crate::rng::Rng;
 use crate::rules::{AgendaSpec, DifficultySpec, Rules, SpeedSpec, Yields, ERA_NAMES};
 use crate::specmap::SpecMap;
 use crate::setup::{GameSpeed, MapScript, MapSize};
-use crate::world::{DistrictFoundation, RememberedTile, TileBits, TileMemory, WorldMap};
+use crate::world::{DistrictFoundation, RememberedTile, Tile, TileBits, TileMemory, WorldMap};
 use crate::{hex, mapgen, Pos};
 
 pub const CIV_NAMES: [&str; 8] = [
@@ -7680,6 +7680,43 @@ impl VisionCache {
     }
 }
 
+/// Everything about a mover that decides which tiles it could ever stand
+/// on, boiled down to four flags. Two units with equal classes traverse
+/// exactly the same set of tiles, so one connectivity map computed for the
+/// class serves every such unit. Per-edge and per-moment rules — cliffs,
+/// stacking, closed borders, zone of control — are deliberately absent:
+/// they gate individual steps, not which regions exist.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct TraversalClass {
+    /// Naval movement: water, city centers, and canal-like districts.
+    sea: bool,
+    /// A land mover that may enter water (embarkation, or a wading giant).
+    embark: bool,
+    /// May enter deep ocean (ocean navigation, or a wading giant).
+    ocean: bool,
+    /// A worker whose unlocked improvement lets it climb mountains.
+    mountain: bool,
+}
+
+/// Connected regions of the map, one labeling per way of moving.
+///
+/// `zones[i]` labels tile `i` (in map order) with a region id, 0 for tiles
+/// the class can never stand on. Two tiles with the same non-zero label are
+/// linked by a chain of statically-traversable tiles, so the router can
+/// reject a target on a foreign landmass in one lookup instead of flooding
+/// the world to discover the disconnect. Labels over-approximate true
+/// reachability — dynamic blockers like stacking, borders, and foreign
+/// cities are ignored — which is the safe direction: a zone mismatch is
+/// proof no route exists, while a match is still verified by the search.
+///
+/// Region maps are shared (`Arc`) so the AI's per-branch game clones copy a
+/// pointer, not the world.
+#[derive(Clone, Default)]
+pub struct RoutingCache {
+    stamp: u64,
+    zones: Vec<(TraversalClass, std::sync::Arc<Vec<u32>>)>,
+}
+
 /// Everything a player's luxury access is counted from, taken once rather
 /// than once per luxury: their own connected resources, those of the
 /// city-states they are suzerain of, and those of an Amani host.
@@ -9196,6 +9233,10 @@ pub struct Game {
     /// otherwise recompute.
     #[serde(skip)]
     vision: std::cell::RefCell<VisionCache>,
+    /// Derived connectivity regions, same contract as `vision`: never saved,
+    /// rebuilt on demand whenever the world moves under it.
+    #[serde(skip)]
+    routing: std::cell::RefCell<RoutingCache>,
     /// The state of the world each seat's remembered map was last taken
     /// under, and the tiles it was taken over. Empty means "assume nothing".
     #[serde(skip)]
@@ -9381,6 +9422,7 @@ impl From<GameSer> for Game {
         let mut g = Game {
             rules: Rules::shared(),
             vision: std::cell::RefCell::new(VisionCache::default()),
+            routing: std::cell::RefCell::new(RoutingCache::default()),
             remembered_under: Vec::new(),
             rng: s.rng,
             seed: s.seed,
@@ -9668,6 +9710,7 @@ impl Game {
         let mut g = Game {
             rules,
             vision: std::cell::RefCell::new(VisionCache::default()),
+            routing: std::cell::RefCell::new(RoutingCache::default()),
             remembered_under: Vec::new(),
             rng,
             seed,
@@ -15812,8 +15855,27 @@ impl Game {
         let Some(tile) = self.map.get(pos) else {
             return false;
         };
-        let mountain_worker = tile.terrain == "mountain"
-            && ((unit.kind == "builder"
+        let spec = &self.rules.units[unit.kind.as_str()];
+        if spec.domain.as_deref() == Some("air") {
+            return false; // aircraft use rebase/strike missions, never tile steps
+        }
+        // Delegating to the class predicate keeps this answer and the cached
+        // connectivity regions incapable of disagreeing.
+        self.class_can_traverse(self.traversal_class(uid), tile)
+    }
+
+    /// The [`TraversalClass`] a unit moves as, folding its kind and its
+    /// owner's unlocks into the flags the tile predicate reads.
+    fn traversal_class(&self, uid: u32) -> TraversalClass {
+        let unit = &self.units[&uid];
+        let spec = &self.rules.units[unit.kind.as_str()];
+        let sea = spec.domain.as_deref() == Some("sea");
+        let wading_giant = unit.kind == "giant_death_robot";
+        TraversalClass {
+            sea,
+            embark: !sea && (wading_giant || self.has_embarkation(unit.owner, &unit.kind)),
+            ocean: wading_giant || self.tree_effect(unit.owner, "ocean_navigation") > 0.0,
+            mountain: (unit.kind == "builder"
                 && self.unlocked(
                     unit.owner,
                     &self.rules.improvements["ski_resort"].tech,
@@ -15824,7 +15886,15 @@ impl Game {
                         unit.owner,
                         &self.rules.improvements["mountain_tunnel"].tech,
                         &self.rules.improvements["mountain_tunnel"].civic,
-                    )));
+                    )),
+        }
+    }
+
+    /// Whether a unit moving as `class` could ever stand on `tile`. The
+    /// static half of [`Game::unit_can_traverse`], and the predicate the
+    /// cached connectivity regions are flooded from.
+    fn class_can_traverse(&self, class: TraversalClass, tile: &Tile) -> bool {
+        let mountain_worker = tile.terrain == "mountain" && class.mountain;
         let improvement_passage = !tile.pillaged
             && tile.improvement.as_deref().is_some_and(|improvement| {
                 self.rules.improvements[improvement]
@@ -15837,23 +15907,15 @@ impl Game {
         if !self.rules.is_passable(tile) && !mountain_worker && !improvement_passage {
             return false;
         }
-        let spec = &self.rules.units[unit.kind.as_str()];
-        if spec.domain.as_deref() == Some("air") {
-            return false; // aircraft use rebase/strike missions, never tile steps
-        }
         let water = self.rules.is_water(tile);
-        if water
-            && tile.terrain == "ocean"
-            && unit.kind != "giant_death_robot"
-            && self.tree_effect(unit.owner, "ocean_navigation") <= 0.0
-        {
+        if water && tile.terrain == "ocean" && !class.ocean {
             return false;
         }
-        if spec.domain.as_deref() == Some("sea") {
+        if class.sea {
             // Naval units may use water, City Centers, and Canals. This also
             // lets naval melee units attack and capture coastal cities.
             water
-                || self.city_at(pos).is_some()
+                || self.city_at(tile.pos).is_some()
                 || (!tile.pillaged
                     && tile.district.as_deref().is_some_and(|district| {
                         self.rules.districts[district]
@@ -15872,10 +15934,7 @@ impl Game {
                         > 0.0
                 })
         } else {
-            !water
-                || tile.wonder.as_deref() == Some("golden_gate_bridge")
-                || unit.kind == "giant_death_robot"
-                || self.has_embarkation(unit.owner, &unit.kind)
+            !water || tile.wonder.as_deref() == Some("golden_gate_bridge") || class.embark
         }
     }
 
@@ -19920,9 +19979,15 @@ impl Game {
                 return None;
             }
         }
+        if !self.zone_connected(uid, to, range) {
+            return None; // proven: no chain of traversable tiles links them
+        }
 
         // A* keeps known-target routing cheap enough for high-throughput
-        // self-play. Tuple ordering gives deterministic tie-breaking.
+        // self-play: the zone check above has already rejected disconnected
+        // targets, so the consistent hex-distance heuristic bounds the search
+        // to roughly the corridor of the route itself, however long the
+        // detour. Tuple ordering gives deterministic tie-breaking.
         let mut frontier = BinaryHeap::with_capacity(128);
         let mut distance: HashMap<Pos, i32> = HashMap::with_capacity(128);
         let mut parent: HashMap<Pos, Pos> = HashMap::with_capacity(128);
@@ -19933,14 +19998,9 @@ impl Game {
         frontier.push(Reverse((self.wdist(start, to), Reverse(0), start)));
 
         let mut goal = None;
-        let mut expanded = 0;
         while let Some(Reverse((_, Reverse(traveled), cur))) = frontier.pop() {
             if traveled != distance[&cur] {
                 continue;
-            }
-            expanded += 1;
-            if expanded > 64 {
-                break; // avoid exhaustive scans for disconnected landmasses
             }
             if self.wdist(cur, to) <= range {
                 goal = Some(cur);
@@ -19990,10 +20050,112 @@ impl Game {
             .unwrap_or(true)
     }
 
+    /// Whether some chain of statically-traversable tiles links the unit to
+    /// a tile within `range` of `to`. `false` is proof that no route exists;
+    /// `true` still leaves per-step rules for the search to verify. The
+    /// answer is a lookup in a cached region labeling, which is what lets
+    /// the router refuse a target across an unreachable strait without
+    /// flooding the map to find that out, every call, for every unit.
+    fn zone_connected(&self, uid: u32, to: Pos, range: i32) -> bool {
+        let Some(unit) = self.units.get(&uid) else {
+            return false;
+        };
+        let zones = self.routing_zones(self.traversal_class(uid));
+        let start_zone = self.map.tiles.index_of(unit.pos).map_or(0, |i| zones[i]);
+        if start_zone == 0 {
+            // A unit somewhere its class says it cannot stand (a mod or a
+            // scenario teleport): trust the search over the labeling.
+            return true;
+        }
+        let in_start_zone =
+            |p: Pos| self.map.tiles.index_of(p).map_or(0, |i| zones[i]) == start_zone;
+        if range == 0 {
+            in_start_zone(to)
+        } else {
+            // The route may stop on any traversable tile within range.
+            self.wdisk(to, range).into_iter().any(in_start_zone)
+        }
+    }
+
+    /// The region labeling for `class`, rebuilt lazily whenever the world
+    /// stamp moves and shared by every unit of the class until then.
+    fn routing_zones(&self, class: TraversalClass) -> std::sync::Arc<Vec<u32>> {
+        // Cities grant naval passage but live beside the map, so fold their
+        // count in with the tile epoch; the turn bounds any residual
+        // staleness (a found-and-razed pair the same turn) to one turn.
+        let stamp = vision_key(&[
+            self.map.tiles.epoch(),
+            self.turn as u64,
+            self.cities.len() as u64,
+        ]);
+        {
+            let mut cache = self.routing.borrow_mut();
+            if cache.stamp != stamp {
+                cache.stamp = stamp;
+                cache.zones.clear();
+            }
+            if let Some((_, zones)) = cache.zones.iter().find(|(c, _)| *c == class) {
+                return zones.clone();
+            }
+        }
+        // Built outside the borrow: the flood only reads map and rules.
+        let zones = std::sync::Arc::new(self.build_routing_zones(class));
+        let mut cache = self.routing.borrow_mut();
+        if cache.stamp == stamp && !cache.zones.iter().any(|(c, _)| *c == class) {
+            cache.zones.push((class, zones.clone()));
+        }
+        zones
+    }
+
+    /// Label every tile with its connected region under `class`, 0 for
+    /// impassable. A breadth-first flood in map order keeps labels
+    /// deterministic, though only label *equality* ever matters.
+    fn build_routing_zones(&self, class: TraversalClass) -> Vec<u32> {
+        let mut zones = vec![0u32; self.map.tiles.len()];
+        let mut label = 0u32;
+        let mut queue = VecDeque::new();
+        for index in 0..self.map.tiles.len() {
+            if zones[index] != 0 {
+                continue;
+            }
+            let seed = self.map.tiles.values().as_slice()[index].pos;
+            if !self.class_can_traverse(class, &self.map.tiles[&seed]) {
+                continue;
+            }
+            label += 1;
+            zones[index] = label;
+            queue.push_back(seed);
+            while let Some(cur) = queue.pop_front() {
+                for n in self.nbrs(cur) {
+                    let Some(slot) = self.map.tiles.index_of(n) else {
+                        continue;
+                    };
+                    if zones[slot] == 0 && self.class_can_traverse(class, &self.map.tiles[&n]) {
+                        zones[slot] = label;
+                        queue.push_back(n);
+                    }
+                }
+            }
+        }
+        zones
+    }
+
     /// First step toward the nearest reachable member of `goals`. This is
     /// useful for exploration, where the geometrically nearest hidden tile
     /// may be on the far side of an impassable ridge or pre-embarkation sea.
     pub fn route_step_to_any(&self, uid: u32, goals: &HashSet<Pos>) -> Option<Pos> {
+        let unit = self.units.get(&uid)?;
+        let zones = self.routing_zones(self.traversal_class(uid));
+        let start_zone = self.map.tiles.index_of(unit.pos).map_or(0, |i| zones[i]);
+        // Goals the labeling can disprove would each cost the breadth-first
+        // search below a full flood of the unit's region to disprove again.
+        if start_zone != 0
+            && !goals
+                .iter()
+                .any(|p| self.map.tiles.index_of(*p).map_or(0, |i| zones[i]) == start_zone)
+        {
+            return None;
+        }
         self.first_route_step(uid, |p| goals.contains(&p))
     }
 

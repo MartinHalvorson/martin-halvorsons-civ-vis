@@ -751,6 +751,90 @@ mod tests {
         assert_eq!(g.units[&uid].pos, step);
     }
 
+    /// A wall two tiles from the target with its only gap half the world
+    /// away. The old 64-expansion search budget gave up on exactly this
+    /// shape, leaving units parked in the pocket forever; the route must now
+    /// walk the whole detour and actually arrive.
+    #[test]
+    fn route_finding_escapes_deep_local_minima() {
+        let mut g = Game::new_full(1, 40, 20, 17, 30, 0, false);
+        let uid = g
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|id| g.units[id].kind == "warrior")
+            .unwrap();
+        g.map.clear_rivers();
+        for tile in g.map.tiles.values_mut() {
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.cliff_edges = [false; 6];
+        }
+        // Wall along row 10, gap only at column 39; unit and target sit
+        // adjacent to the wall's middle on opposite sides.
+        for col in 0..39 {
+            let pos = crate::hex::offset_to_axial(col, 10);
+            g.map.tiles.get_mut(&pos).unwrap().terrain = "mountain".to_string();
+        }
+        let start = crate::hex::offset_to_axial(20, 11);
+        let target = crate::hex::offset_to_axial(20, 9);
+        let mut g = teleport(&g, uid, start);
+
+        let mut marched = 0;
+        while g.units[&uid].pos != target {
+            let here = g.units[&uid].pos;
+            let step = g
+                .route_step(uid, target, 0)
+                .expect("route around the wall exists");
+            assert_eq!(g.wdist(here, step), 1);
+            g = teleport(&g, uid, step);
+            marched += 1;
+            assert!(marched < 100, "route must converge on the target");
+        }
+        // The only opening is ~19 columns east; a real detour was taken.
+        assert!(marched > 30, "marched {marched} steps");
+    }
+
+    /// A target the unit's way of moving can never reach — another island
+    /// before embarkation — must be refused, and refused cheaply: the cached
+    /// connectivity regions answer without flooding the map per call.
+    #[test]
+    fn route_finding_refuses_disconnected_targets_until_a_bridge_appears() {
+        let mut g = Game::new_full(1, 20, 14, 17, 30, 0, false);
+        let uid = g
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|id| g.units[id].kind == "warrior")
+            .unwrap();
+        g.map.clear_rivers();
+        for tile in g.map.tiles.values_mut() {
+            tile.terrain = "coast".to_string();
+            tile.feature = None;
+            tile.cliff_edges = [false; 6];
+        }
+        let home = crate::hex::offset_to_axial(3, 7);
+        let abroad = crate::hex::offset_to_axial(15, 7);
+        g.map.tiles.get_mut(&home).unwrap().terrain = "plains".to_string();
+        g.map.tiles.get_mut(&abroad).unwrap().terrain = "plains".to_string();
+        let mut g = teleport(&g, uid, home);
+
+        assert_eq!(g.route_step(uid, abroad, 0), None);
+        assert_eq!(g.route_step(uid, abroad, 1), None);
+        let goals: std::collections::HashSet<crate::Pos> = [abroad].into_iter().collect();
+        assert_eq!(g.route_step_to_any(uid, &goals), None);
+
+        // Carving a causeway must be seen the same turn: the region cache
+        // keys on the map epoch, not on end-of-turn bookkeeping.
+        for col in 4..15 {
+            let pos = crate::hex::offset_to_axial(col, 7);
+            g.map.tiles.get_mut(&pos).unwrap().terrain = "plains".to_string();
+        }
+        let step = g
+            .route_step(uid, abroad, 0)
+            .expect("causeway opens the route");
+        assert_eq!(g.wdist(home, step), 1);
+        assert!(g.route_step_to_any(uid, &goals).is_some());
+    }
+
     #[test]
     fn world_wraps_east_west() {
         let g = Game::new_full(2, 20, 14, 5, 30, 0, false);
