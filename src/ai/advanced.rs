@@ -7168,6 +7168,54 @@ impl AdvancedAi {
         patrol
     }
 
+    /// Condemning a foreign Missionary or Apostle destroys it and pushes our
+    /// own Pressure back — the standing military answer to a religious
+    /// offensive. Previously this only fired when an enemy religious unit
+    /// happened to already share our tile, which almost never happens, so
+    /// the counter was effectively dead. Now a military unit will step onto
+    /// an adjacent one and condemn it.
+    fn condemn_step(&mut self, g: &mut Game, pid: usize, uid: u32) -> bool {
+        let condemnable = |game: &Game, at: Pos| -> Option<u32> {
+            game.units_at(at).into_iter().find(|target| {
+                let target = &game.units[target];
+                target.owner != pid
+                    && game.is_at_war(pid, target.owner)
+                    && game.rules.units[target.kind.as_str()].class == "religious"
+            })
+        };
+        let here = g.units[&uid].pos;
+        if let Some(target_unit) = condemnable(g, here) {
+            if g.apply(pid, &Action::CondemnHeretic { unit: uid, target_unit }).is_ok() {
+                return true;
+            }
+        }
+        // Only chase intruders around our own territory: a lone unit running
+        // down missionaries across the map abandons the campaign.
+        let near_home = g
+            .cities
+            .values()
+            .any(|city| city.owner == pid && g.wdist(here, city.pos) <= 6);
+        if !near_home {
+            return false;
+        }
+        let mut targets: Vec<Pos> = g
+            .nbrs(here)
+            .into_iter()
+            .filter(|n| condemnable(g, *n).is_some() && g.can_move(uid, *n))
+            .collect();
+        targets.sort();
+        let Some(to) = targets.first().copied() else {
+            return false;
+        };
+        if g.apply(pid, &Action::Move { unit: uid, to }).is_err() {
+            return false;
+        }
+        if let Some(target_unit) = condemnable(g, to) {
+            let _ = g.apply(pid, &Action::CondemnHeretic { unit: uid, target_unit });
+        }
+        true
+    }
+
     fn advanced_military_step(
         &mut self,
         g: &mut Game,
@@ -7178,23 +7226,8 @@ impl AdvancedAi {
         let unit = g.units[&uid].clone();
         let spec = g.rules.units[unit.kind.as_str()].clone();
         let doctrine = BasicAi::unit_doctrine(g, uid);
-        if self.victory_planning && spec.class == "military" {
-            if let Some(target_unit) = g.units_at(unit.pos).into_iter().find(|target| {
-                let target = &g.units[target];
-                target.owner != pid
-                    && g.is_at_war(pid, target.owner)
-                    && g.rules.units[target.kind.as_str()].class == "religious"
-            }) {
-                return g
-                    .apply(
-                        pid,
-                        &Action::CondemnHeretic {
-                            unit: uid,
-                            target_unit,
-                        },
-                    )
-                    .is_ok();
-            }
+        if self.victory_planning && spec.class == "military" && self.condemn_step(g, pid, uid) {
+            return true;
         }
         let holding_threatened_city = plan.threatened_city.is_some_and(|cid| {
             g.cities
@@ -9451,6 +9484,48 @@ mod tests {
         assert_eq!(missionary.religion.as_deref(), Some("Home Faith"));
         assert_eq!(missionary.pos, game.cities[&faithful_city].pos);
         assert!(game.players[0].faith < 1.0);
+    }
+
+    /// The military answer to a religious offensive: step onto an adjacent
+    /// enemy Missionary inside our own territory and condemn it.
+    #[test]
+    fn military_units_step_onto_and_condemn_enemy_missionaries() {
+        let mut game = Game::new_full(2, 30, 18, 7_631, 200, 0, false);
+        for pid in 0..2 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.current = pid;
+            game.apply(pid, &Action::FoundCity { unit: settler }).unwrap();
+        }
+        game.current = 0;
+        game.at_war.insert((0, 1));
+        let home = game.cities[&game.player_city_ids(0)[0]].pos;
+        let soldier_tile = game
+            .nbrs(home)
+            .into_iter()
+            .find(|p| game.map.get(*p).is_some_and(|t| game.rules.is_passable(t) && !game.rules.is_water(t)))
+            .unwrap();
+        let intruder_tile = game
+            .nbrs(soldier_tile)
+            .into_iter()
+            .find(|p| {
+                *p != home
+                    && game.map.get(*p).is_some_and(|t| game.rules.is_passable(t) && !game.rules.is_water(t))
+            })
+            .unwrap();
+        let soldier = game.spawn_test_unit("warrior", 0, soldier_tile);
+        let missionary = game.spawn_test_unit("missionary", 1, intruder_tile);
+        game.units.get_mut(&missionary).unwrap().religion = Some("Rival Faith".to_string());
+
+        let mut ai = AdvancedAi::new();
+        assert!(ai.condemn_step(&mut game, 0, soldier), "should engage");
+        assert!(
+            !game.units.contains_key(&missionary),
+            "the adjacent missionary should be condemned, not ignored"
+        );
     }
 
     #[test]

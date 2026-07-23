@@ -10,8 +10,9 @@
 //! - `meta.json` — shapes, plane/global names, sample count, config
 //! - `planes.f32` — `samples × planes × height × width` little-endian f32
 //! - `globals.f32` — `samples × globals` little-endian f32
-//! - `dataset.csv` — the 25 scalar `evolve::features` + win label per
-//!   sample, the format `tools/train_valuenet.py` consumes
+//! - `dataset.csv` — the 25 scalar `evolve::features`, the win label, and
+//!   the source game index, the format `tools/train_valuenet.py` consumes
+//!   (the trailing game column lets it hold out whole games)
 //! - `labels.f32` — `samples × 3`: win label (1/0), turn fraction, and
 //!   the source game index (split train/val BY GAME, never by sample:
 //!   snapshots from one game are highly correlated)
@@ -123,7 +124,7 @@ pub fn export(cfg: &SelfPlayCfg) -> std::io::Result<SelfPlayStats> {
             labels_out.write_all(&fraction.to_le_bytes())?;
             labels_out.write_all(&(game_index as f32).to_le_bytes())?;
             let row: Vec<String> = scalars.iter().map(|v| format!("{v:.4}")).collect();
-            writeln!(csv_out, "{},{}", row.join(","), won as u8)?;
+            writeln!(csv_out, "{},{},{}", row.join(","), won as u8, game_index)?;
             samples += 1;
         }
         println!(

@@ -25,12 +25,20 @@ SIZES = [25, 64, 32, 1]
 
 
 def load_rows(path):
+    """Rows of (features, label, game). `civvis selfplay` appends a game
+    index; `civvis evolve`'s older CSV has no game column, in which case
+    every row is its own 'game' and the split degrades to per-sample."""
     rows = []
     with open(path, newline="") as f:
         for row in csv.reader(f):
-            if len(row) != SIZES[0] + 1:
+            if len(row) == SIZES[0] + 2:
+                game = int(float(row[-1]))
+                feats, label = row[:-2], row[-2]
+            elif len(row) == SIZES[0] + 1:
+                game, feats, label = len(rows), row[:-1], row[-1]
+            else:
                 continue
-            rows.append(([float(x) for x in row[:-1]], float(row[-1])))
+            rows.append(([float(x) for x in feats], float(label), game))
     if len(rows) < 200:
         raise SystemExit(f"{path}: only {len(rows)} usable rows; run evolve longer")
     return rows
@@ -158,9 +166,18 @@ def main():
     args = ap.parse_args()
 
     rows = load_rows(os.path.join(args.dir, "dataset.csv"))
-    random.Random(args.seed).shuffle(rows)
-    cut = max(1, len(rows) // 10)
-    val, train = rows[:cut], rows[cut:]
+    # Hold out whole GAMES. Snapshots from one game share its outcome label,
+    # so a per-sample split leaks the answer into validation.
+    games = sorted({game for _, _, game in rows})
+    rng = random.Random(args.seed)
+    rng.shuffle(games)
+    held = set(games[: max(1, len(games) // 5)])
+    val = [(f, y) for f, y, g in rows if g in held]
+    train = [(f, y) for f, y, g in rows if g not in held]
+    if not val or not train:
+        raise SystemExit("need at least two distinct games to hold one out")
+    print(f"{len(games)} games -> {len(held)} held out "
+          f"({len(train)} train / {len(val)} val rows)")
     try:
         weights, biases, loss, backend = train_torch(train, val, args.epochs, args.seed)
     except ImportError:
@@ -171,9 +188,21 @@ def main():
     fixture_x = val[0][0]
     with open(os.path.join(args.dir, "valuenet_fixture.json"), "w") as f:
         json.dump({"input": fixture_x, "output": net_eval(weights, biases, fixture_x)}, f)
-    wins = sum(y for _, y in rows)
+    wins = sum(y for _, y, _ in rows)
+    # Majority-class baseline, always reported: a net that cannot beat a
+    # constant predictor has learned nothing and needs more games.
+    base_rate = sum(y for _, y in train) / max(1, len(train))
+    vy = [y for _, y in val]
+    baseline_acc = max(sum(vy) / len(vy), 1 - sum(vy) / len(vy))
+    p_hat = min(max(base_rate, 1e-7), 1 - 1e-7)
+    baseline_bce = -sum(
+        y * math.log(p_hat) + (1 - y) * math.log(1 - p_hat) for y in vy
+    ) / len(vy)
+    verdict = "BEATS" if loss < baseline_bce - 1e-4 else "DOES NOT BEAT"
     print(f"trained on {len(train)} rows ({wins:.0f}/{len(rows)} wins) "
           f"via {backend}; val BCE {loss:.4f}; wrote {args.dir}/valuenet.json")
+    print(f"baseline (constant p={base_rate:.3f}): BCE {baseline_bce:.4f} "
+          f"acc {baseline_acc:.3f}  ->  model {verdict} baseline")
 
 
 if __name__ == "__main__":
