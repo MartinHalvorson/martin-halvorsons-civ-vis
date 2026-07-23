@@ -3,6 +3,7 @@
 use crate::game::{effective_strength, Action, Game, Item};
 use crate::rng::Rng;
 use crate::Pos;
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
@@ -468,6 +469,11 @@ pub struct BasicAi {
     /// only a short local radius each step strands settlers on shorelines and
     /// can make them reverse course after embarking.
     settler_targets: HashMap<u32, Pos>,
+    /// The source of each generic path step taken this turn. Do not immediately
+    /// traverse the same edge backward: a greedy step into a cul-de-sac would
+    /// otherwise be undone by A* with the unit's next movement point, and the
+    /// identical round trip would repeat forever.
+    last_path_step_from: RefCell<HashMap<u32, (u32, Pos)>>,
 }
 
 impl Default for BasicAi {
@@ -1114,6 +1120,7 @@ impl BasicAi {
             patrol_targets: HashMap::new(),
             patrol_posts: HashMap::new(),
             settler_targets: HashMap::new(),
+            last_path_step_from: RefCell::new(HashMap::new()),
         }
     }
 
@@ -1129,6 +1136,7 @@ impl BasicAi {
             patrol_targets: HashMap::new(),
             patrol_posts: HashMap::new(),
             settler_targets: HashMap::new(),
+            last_path_step_from: RefCell::new(HashMap::new()),
         }
     }
 
@@ -3528,6 +3536,29 @@ impl BasicAi {
         self.step_toward_range(g, pid, uid, target, 0)
     }
 
+    /// Apply one pathing move while refusing to undo this unit's immediately
+    /// preceding path step in the same turn. Waiting in a dead end preserves
+    /// real progress for the auditor, and next turn's route can back out once
+    /// before choosing a different greedy branch.
+    fn path_move(&self, g: &mut Game, pid: usize, uid: u32, to: Pos) -> bool {
+        let from = g.units[&uid].pos;
+        let reverses_last_step = self
+            .last_path_step_from
+            .borrow()
+            .get(&uid)
+            .is_some_and(|(turn, previous)| *turn == g.turn && *previous == to);
+        if reverses_last_step {
+            return false;
+        }
+        if g.apply(pid, &Action::Move { unit: uid, to }).is_err() {
+            return false;
+        }
+        self.last_path_step_from
+            .borrow_mut()
+            .insert(uid, (g.turn, from));
+        true
+    }
+
     /// Settlers have a persistent, path-checked destination, so follow that
     /// route rather than taking the generic cheap greedy shortcut first. A
     /// geometrically closer tile can be a one-hex cul-de-sac; with two
@@ -3538,15 +3569,7 @@ impl BasicAi {
             .route_step(uid, target, 0)
             .filter(|next| g.can_move(uid, *next))
         {
-            return g
-                .apply(
-                    pid,
-                    &Action::Move {
-                        unit: uid,
-                        to: next,
-                    },
-                )
-                .is_ok();
+            return self.path_move(g, pid, uid, next);
         }
         self.step_toward(g, pid, uid, target)
     }
@@ -3579,16 +3602,7 @@ impl BasicAi {
             }
             // A neighbor can still be refused (stacking, ZOC); try the next
             // improving tile before paying for A*.
-            if g
-                .apply(
-                    pid,
-                    &Action::Move {
-                        unit: uid,
-                        to: next,
-                    },
-                )
-                .is_ok()
-            {
+            if self.path_move(g, pid, uid, next) {
                 return true;
             }
         }
@@ -3599,16 +3613,7 @@ impl BasicAi {
             Some(p) if g.can_move(uid, p) => p,
             _ => return false,
         };
-        if g
-            .apply(
-                pid,
-                &Action::Move {
-                    unit: uid,
-                    to: next,
-                },
-            )
-            .is_ok()
-        {
+        if self.path_move(g, pid, uid, next) {
             return true;
         }
         // A peer can take the A* tile first; sidestep at equal distance so
@@ -3616,7 +3621,7 @@ impl BasicAi {
         for p in g.nbrs(cur) {
             if g.wdist(p, target) == g.wdist(cur, target)
                 && g.can_move(uid, p)
-                && g.apply(pid, &Action::Move { unit: uid, to: p }).is_ok()
+                && self.path_move(g, pid, uid, p)
             {
                 return true;
             }
@@ -5554,6 +5559,58 @@ mod tests {
             "the settler must not spend both movement points entering and leaving the trap"
         );
         assert_ne!(game.units[&settler].pos, trap);
+    }
+
+    #[test]
+    fn generic_pathing_does_not_reverse_its_last_step_in_the_same_turn() {
+        let mut game = Game::new_full(1, 20, 14, 91_004, 120, 0, false);
+        for unit in game.player_unit_ids(0) {
+            game.remove_unit(unit);
+        }
+        for tile in game.map.tiles.values_mut() {
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.hills = false;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.district = None;
+            tile.wonder = None;
+            tile.owner_city = None;
+        }
+        let start = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|position| game.wdisk(*position, 4).len() == 61)
+            .expect("test map has an interior tile");
+        let target = game
+            .wdisk(start, 4)
+            .into_iter()
+            .filter(|position| game.wdist(start, *position) == 4)
+            .min()
+            .expect("test map has a target four tiles away");
+        let trap = game
+            .nbrs(start)
+            .into_iter()
+            .filter(|position| game.wdist(*position, target) < game.wdist(start, target))
+            .min_by_key(|position| (game.wdist(*position, target), *position))
+            .expect("target has a geometrically closer neighbor");
+        for position in game.nbrs(trap) {
+            if position != start {
+                game.map.tiles.get_mut(&position).unwrap().terrain = "mountain".to_string();
+            }
+        }
+        let unit = game.spawn_test_unit("warrior", 0, start);
+        let ai = BasicAi::new();
+
+        assert!(ai.step_toward(&mut game, 0, unit, target));
+        assert_eq!(game.units[&unit].pos, trap);
+        assert!(
+            !ai.step_toward(&mut game, 0, unit, target),
+            "the unit should wait instead of spending its next point returning to its source"
+        );
+        assert_eq!(game.units[&unit].pos, trap);
     }
 
     #[test]
