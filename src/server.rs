@@ -1935,6 +1935,7 @@ mod tests {
         // The war log reads the engine's ledger straight out of the
         // observation, so the panel and its source must ship together.
         assert!(EMBEDDED_INDEX.contains("function drawWarLog()"));
+        assert!(EMBEDDED_INDEX.contains("function warsForLog(wars)"));
         assert!(EMBEDDED_INDEX.contains("id=\"warsec\""));
         assert!(EMBEDDED_INDEX.contains("built the world's first"));
         assert!(EMBEDDED_INDEX.contains("changed government from"));
