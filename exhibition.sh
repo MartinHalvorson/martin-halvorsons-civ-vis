@@ -143,8 +143,12 @@ while true; do
             say "staged $build_short in $(( $(date +%s) - build_started ))s"
         else
             # Record nothing on failure, so a later round retries rather than
-            # treating a broken commit as already built.
-            say "build FAILED for $build_short"
+            # treating a broken commit as already built. Carry the compiler's
+            # own first complaint into the log: the next build overwrites
+            # build.log, so "build FAILED" alone is unattributable by the time
+            # anyone reads it.
+            why="$(grep -m1 '^error' "$bin_run/build.log" 2>/dev/null || true)"
+            say "build FAILED for $build_short${why:+: $why}"
         fi
         build_pid=""
     fi

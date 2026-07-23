@@ -160,8 +160,14 @@ while ($true) {
                 Log ("staged $buildShort in {0:n0}s" -f $took)
             } else {
                 # Record nothing on failure, so a later round retries rather
-                # than treating a broken commit as already built.
-                Log "build FAILED for $buildShort"
+                # than treating a broken commit as already built. Carry the
+                # compiler's own first complaint into the log: the next build
+                # overwrites build.err.log, so "build FAILED" on its own is
+                # unattributable by the time anyone reads it.
+                $why = (Select-String -Path "$binRun\build.err.log" -Pattern '^error' `
+                        -ErrorAction SilentlyContinue | Select-Object -First 1).Line
+                if ($why) { Log "build FAILED for ${buildShort}: $why" }
+                else { Log "build FAILED for $buildShort" }
             }
             $build = $null
         }
