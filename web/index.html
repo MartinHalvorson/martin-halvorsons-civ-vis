@@ -599,6 +599,12 @@ const RES_ICON = { wheat:"🌾", cattle:"🐄", sheep:"🐑", stone:"🪨", deer
 // strategic-view discs both read from here, and a unit without an entry falls
 // back to its first letter, which tells you nothing. Grouped by promotion
 // class so a line reads as a family at a glance.
+// Units that cannot fight — captured rather than killed, and the things an
+// empire has to escort. They carry their own plate shape so a glance separates
+// an army from what it is protecting.
+const CIVILIAN_UNITS = new Set(["settler", "builder", "trader", "naturalist",
+  "archaeologist", "rock_band", "spy", "missionary", "apostle", "guru",
+  "inquisitor"]);
 const UNIT_ICON = {
   // civilians & specialists
   settler:"🏕", builder:"🔨", trader:"🐫", naturalist:"🏞", archaeologist:"🏺",
@@ -1655,10 +1661,18 @@ function drawUnitBase(u, x, y) {
   cx.fillStyle = g;
   cx.beginPath(); cx.arc(x, cy, 13.5, 0, 7); cx.fill();
   cx.restore();
-  // A filled disc in the owner's color carries much further than a rim: at map
+  // A filled plate in the owner's color carries much further than a rim: at map
   // zoom the figure itself is only a few pixels of tunic, but the plate under
-  // it stays an unmistakable blob of empire color.
-  cx.beginPath(); cx.ellipse(x, cy, 9.6, 4.1, 0, 0, 7);
+  // it stays an unmistakable blob of empire color. Its shape splits fighting
+  // units from the civilians they escort, matching the disc/slab distinction
+  // the flat view already draws.
+  const civil = CIVILIAN_UNITS.has(u.type);
+  const plate = (rx, ry) => {
+    cx.beginPath();
+    if (civil) cx.roundRect(x - rx * 0.9, cy - ry, rx * 1.8, ry * 2, ry * 0.72);
+    else cx.ellipse(x, cy, rx, ry, 0, 0, 7);
+  };
+  plate(9.6, 4.1);
   cx.fillStyle = pcol(u.owner);
   cx.globalAlpha = spent ? 0.5 : 0.9;
   cx.fill();
@@ -1672,17 +1686,37 @@ function drawUnitBase(u, x, y) {
   cx.stroke();
   if (!spent) {   // ready units get a lit rim so they read before spent ones
     cx.strokeStyle = "#ffffff6b"; cx.lineWidth = 1;
-    cx.beginPath(); cx.ellipse(x, cy, 7.9, 3.0, 0, 0, 7); cx.stroke();
+    plate(7.9, 3.0); cx.stroke();
+  }
+  // A Corps is two units folded into one and an Army three, which is the
+  // difference between a raid and an invasion — and the map said nothing about
+  // it. One bar per unit in the formation, under the plate where it clears the
+  // health bar above and the shoulder shield beside.
+  if (u.formation) {
+    const k = UI_K();                 // hold their size as the map zooms out,
+    const n = u.formation + 1;        // the way the HP bar and type badge do
+    const w = 3.6 * k, gap = 5.0 * k;
+    cx.fillStyle = "#f6efdc"; cx.strokeStyle = "#0d1117"; cx.lineWidth = 0.9;
+    for (let i = 0; i < n; i++) {
+      cx.beginPath();
+      cx.roundRect(x - (n * gap) / 2 + i * gap + gap * 0.14,
+                   cy + 3.6, w, 2.5 * k, 1.1);
+      cx.fill(); cx.stroke();
+    }
   }
 }
+
+// Status marks keep their on-screen size as the map zooms out, so a unit's
+// state stays readable at the scale you actually survey an empire at.
+const UI_K = () => 1 / Math.min(1, Math.max(cam.scale, 0.5));
 
 // Civ 6 hangs a small flag off each unit carrying its icon, because a drawn
 // figure at map scale reads as "somebody's soldier" and nothing more. Same
 // badge glyph the production medallion uses, so a unit looks the same coming
 // off the queue as it does standing on the map.
 function drawUnitBadge(u, x, y) {
-  const k = 1 / Math.min(1, Math.max(cam.scale, 0.5));  // as the HP bar does:
-  const br = 6.4 * k;                                   // stays legible far out
+  const k = UI_K();
+  const br = 6.4 * k;
   const bx = x + 9.5 * k, by = y + 1;
   cx.save();                                   // ambient text state is shared
   cx.fillStyle = "#10151de8";
@@ -2203,7 +2237,7 @@ function draw() {
   // --- units
   const sorted = [...state.units].sort((a, b) =>
     (hexXY(a.pos[0], a.pos[1])[1] - hexXY(b.pos[0], b.pos[1])[1]) ||
-    ((a.type === "settler" || a.type === "builder") ? -1 : 1));
+    (CIVILIAN_UNITS.has(a.type) ? -1 : 1));
   const now = performance.now();
   for (const u of sorted) {
     let [x, y] = worldXY(u.pos);
@@ -2254,19 +2288,22 @@ function draw() {
       drawUnitChar(u, x, y, now, moving);
       drawUnitBadge(u, x, y);
       if (u.fortified) {
-        // A compact shield at the shoulder. The old ring was wider than the
-        // unit itself and read as a selection highlight rather than a state.
-        const sx = x + 8.6, sy = y - 6.5;
+        // A compact shield, mirrored opposite the type badge so the two status
+        // marks stop crowding one shoulder, and scaled with them so it does not
+        // shrink away at survey zoom. The old ring was wider than the unit
+        // itself and read as a selection highlight rather than a state.
+        const k = UI_K(), w = 3.5 * k;
+        const sx = x - 9.5 * k, sy = y + 1;
         cx.beginPath();
-        cx.moveTo(sx - 3.5, sy - 4.2); cx.lineTo(sx + 3.5, sy - 4.2);
-        cx.lineTo(sx + 3.5, sy + 0.5);
-        cx.quadraticCurveTo(sx, sy + 5.2, sx - 3.5, sy + 0.5);
+        cx.moveTo(sx - w, sy - 4.2 * k); cx.lineTo(sx + w, sy - 4.2 * k);
+        cx.lineTo(sx + w, sy + 0.5 * k);
+        cx.quadraticCurveTo(sx, sy + 5.2 * k, sx - w, sy + 0.5 * k);
         cx.closePath();
         cx.fillStyle = "#dee7f4ee"; cx.fill();
         cx.strokeStyle = "#10151d"; cx.lineWidth = 1.2; cx.stroke();
       }
     } else {
-      const civ = (u.type === "settler" || u.type === "builder");
+      const civ = CIVILIAN_UNITS.has(u.type);
       // spent units recede so the ones that can still act carry the eye
       cx.globalAlpha = (u.moves_left !== undefined && u.moves_left <= 0) ? 0.62 : 1;
       cx.save();
