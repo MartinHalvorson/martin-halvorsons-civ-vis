@@ -306,6 +306,31 @@ class SourceSnapshotTests(unittest.TestCase):
         promote.assert_called_once_with()
         metadata.assert_called_once_with("new")
 
+    def test_release_build_embeds_the_canonical_revision(self):
+        calls = []
+
+        def fake_command(*args, **kwargs):
+            calls.append((args, kwargs))
+            if args == ("git", "rev-parse", "--short", "HEAD"):
+                return SimpleNamespace(returncode=0, stdout="abc1234\n")
+            return SimpleNamespace(returncode=0, stdout="")
+
+        with (
+            patch.object(supervisor, "source_snapshot", side_effect=["new", "new"]),
+            patch.object(supervisor, "runtime_matches", return_value=False),
+            patch.object(supervisor, "command", side_effect=fake_command),
+            patch.object(supervisor, "promote_binary"),
+            patch.object(supervisor, "write_runtime_metadata"),
+        ):
+            self.assertTrue(supervisor.build_latest())
+
+        cargo_call = next(
+            kwargs
+            for args, kwargs in calls
+            if Path(args[0]).name in ("cargo", "cargo.exe")
+        )
+        self.assertEqual(cargo_call["environment"]["CIVVIS_COMMIT"], "abc1234")
+
     def test_failed_latest_build_never_promotes_stale_binary(self):
         failed = SimpleNamespace(returncode=1, stdout="compile error")
         with (

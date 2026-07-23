@@ -69,6 +69,7 @@ def command(
     *args: str,
     check: bool = False,
     cwd: Path = ROOT,
+    environment: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
@@ -78,6 +79,7 @@ def command(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             check=check,
+            env=environment,
         )
     except OSError as error:
         # A missing build tool must fail this build attempt, not terminate the
@@ -280,6 +282,11 @@ def build_latest(max_attempts: int = 3) -> bool:
             log("known-good spectator build already matches the latest worktree")
             return True
         log(f"building the latest worktree (attempt {attempt}/{max_attempts})")
+        revision = command(
+            "git", "rev-parse", "--short", "HEAD", check=True, cwd=SOURCE_ROOT
+        ).stdout.strip()
+        build_environment = os.environ.copy()
+        build_environment["CIVVIS_COMMIT"] = revision
         # The visible game does not need to wait for unrelated evaluation
         # binaries to link before its known-good runtime can be promoted.
         result = command(
@@ -289,6 +296,7 @@ def build_latest(max_attempts: int = 3) -> bool:
             "--bin",
             "civvis",
             cwd=SOURCE_ROOT,
+            environment=build_environment,
         )
         if result.returncode != 0:
             log("latest worktree does not build; no new game will use stale code")
