@@ -108,8 +108,15 @@ impl<T: Ai + ?Sized> Ai for Box<T> {
     }
 }
 
+/// Play a game out headlessly. The turn bound is not belt-and-braces: the only
+/// thing that reliably ends a game is the score victory `do_end_turn` awards at
+/// the turn limit, and `set_winner` refuses that when the lobby switched score
+/// off — a setting that is serialized and restored from saves. Without the
+/// bound such a game runs past its limit forever. With score enabled the bound
+/// never fires first, because `set_winner` runs inside `do_end_turn` before
+/// this condition is tested again.
 pub fn run_game<A: Ai>(g: &mut Game, ais: &mut [A]) {
-    while g.winner.is_none() {
+    while g.winner.is_none() && g.turn <= g.max_turns {
         let pid = g.current;
         ais[pid].take_turn(g, pid);
         if g.winner.is_none() && g.current == pid {
@@ -5453,6 +5460,32 @@ impl BasicAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_game_no_enabled_victory_can_end_still_stops_at_its_turn_limit() {
+        // A lobby is free to pin `--victories` without `score`, which removes
+        // the turn-limit tiebreak that is the only thing guaranteeing a winner.
+        // `set_winner` then refuses every path, and before the turn bound this
+        // loop ran past the limit forever.
+        let mut g = Game::new_full(2, 20, 14, 90_210, 12, 0, false);
+        g.victory_conditions = crate::game::VictoryConditions {
+            science: false,
+            culture: false,
+            religious: false,
+            diplomatic: false,
+            domination: false,
+            score: false,
+        };
+        let mut ais = AdvancedAi::fleet(&g);
+        run_game(&mut g, &mut ais);
+        assert_eq!(g.winner, None, "no enabled path could be awarded");
+        assert!(
+            g.turn > g.max_turns,
+            "the game ran to its limit: turn {} of {}",
+            g.turn,
+            g.max_turns
+        );
+    }
 
     fn walled_war_game(seed: u64) -> (Game, u32, u32) {
         let mut g = Game::new_full(2, 20, 14, seed, 40, 0, false);
