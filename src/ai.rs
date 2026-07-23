@@ -5716,6 +5716,73 @@ mod tests {
     }
 
     #[test]
+    fn builder_never_paces_between_tiles_it_cannot_work() {
+        // A project target the Builder cannot stand on (the game places
+        // districts on land, but a mod or a captured layout can leave one
+        // unreachable) must not leave it walking back and forth forever.
+        let mut g = Game::new_full(1, 20, 14, 35, 40, 0, false);
+        let settler = g
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|id| g.units[id].kind == "settler")
+            .unwrap();
+        g.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = g.player_city_ids(0)[0];
+        let spaceport = g.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != g.cities[&city].pos)
+            .unwrap();
+        {
+            let tile = g.map.tiles.get_mut(&spaceport).unwrap();
+            tile.terrain = "mountain".to_string();
+            tile.district = Some("spaceport".to_string());
+        }
+        g.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert("spaceport".to_string(), spaceport);
+        g.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("royal_society".to_string());
+        g.cities.get_mut(&city).unwrap().queue = vec![Item::Project {
+            project: "launch_earth_satellite".to_string(),
+        }];
+        let builder = g.spawn_test_unit("builder", 0, g.cities[&city].pos);
+        g.units.get_mut(&builder).unwrap().charges = 3;
+
+        let ai = BasicAi::new();
+        let mut visited = Vec::new();
+        for _ in 0..12 {
+            if !g.units.contains_key(&builder) {
+                break;
+            }
+            visited.push(g.units[&builder].pos);
+            if !ai.builder_step(&mut g, 0, builder) {
+                break;
+            }
+            let movement = g.rules.units["builder"].moves;
+            let unit = g.units.get_mut(&builder).unwrap();
+            unit.moves_left = movement;
+            unit.moved = false;
+            unit.acted = false;
+        }
+        let charges_spent = g
+            .units
+            .get(&builder)
+            .map(|unit| 3 - unit.charges)
+            .unwrap_or(3);
+        assert!(
+            charges_spent > 0 || visited.iter().collect::<std::collections::BTreeSet<_>>().len() == visited.len(),
+            "Builder paced without working: {visited:?}"
+        );
+    }
+
+    #[test]
     fn builder_routes_to_a_royal_society_project_and_contributes() {
         let mut g = Game::new_full(1, 20, 14, 35, 40, 0, false);
         let settler = g
