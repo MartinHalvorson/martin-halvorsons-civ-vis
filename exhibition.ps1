@@ -85,6 +85,13 @@ function Start-Evolve {
 # leaving the exhibition dark until a later pass happened to succeed. Retry
 # briefly instead, and let the caller carry on either way.
 function Promote-Staged {
+    # Evolve is a background training run holding its own exe open, and it is
+    # restarted from whatever is on disk anyway - so stop it rather than let
+    # it block the promote. Without this the gui copy succeeded, the evolve
+    # copy threw, and the whole promote reported failure: the staged build was
+    # left in place, and the next changeover took a full server restart to
+    # apply a binary that was already running.
+    Get-Process civvis-evolve -ErrorAction SilentlyContinue | Stop-Process -Force
     for ($attempt = 0; $attempt -lt 12; $attempt++) {
         try {
             Copy-Item "$binRun\civvis-next.exe" "$binRun\civvis-gui.exe" -Force -ErrorAction Stop
