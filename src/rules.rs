@@ -245,6 +245,16 @@ pub struct UnitSpec {
     /// ordinary improvement catalog; engineers/archaeologists are explicit).
     #[serde(default)]
     pub builds: Vec<String>,
+    /// The unit this one becomes when upgraded for Gold, from the shipped
+    /// `UnitUpgrades` table. A civilization's unique replacement stands in for
+    /// the base unit whenever it owns one.
+    #[serde(default)]
+    pub upgrade_to: Option<String>,
+    /// The shipped `MandatoryObsoleteTech`. Once its owner researches this,
+    /// the unit can no longer be trained or purchased; existing copies live on
+    /// until they are upgraded.
+    #[serde(default)]
+    pub obsolete_tech: Option<String>,
     /// Data-driven auras and special unit rules. Support units currently use
     /// `adjacent_siege_range`, `adjacent_siege_bombard`, `adjacent_heal`, and
     /// `adjacent_movement`; unknown entries remain forward-compatible.

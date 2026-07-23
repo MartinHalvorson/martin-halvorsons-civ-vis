@@ -1,4 +1,5 @@
 //! CLI: simulate / soak / benchmark (mirrors the Python CLI outputs).
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 use civvis::ai::{run_game, AdvancedAi};
@@ -119,6 +120,23 @@ fn standings(g: &Game) {
         let p = &g.players[pid];
         let cities = g.player_city_ids(pid);
         let pop: i32 = cities.iter().map(|c| g.cities[c].pop).sum();
+        // The army roster is the one part of an empire the score never shows,
+        // and the place where a missing rule hides longest.
+        let mut roster: BTreeMap<&str, usize> = BTreeMap::new();
+        for unit in g.units.values() {
+            if unit.owner == pid && g.rules.units[unit.kind.as_str()].class == "military" {
+                *roster.entry(unit.kind.as_str()).or_default() += 1;
+            }
+        }
+        let mut army: Vec<(&str, usize)> = roster.into_iter().collect();
+        army.sort_by_key(|(kind, count)| (std::cmp::Reverse(*count), *kind));
+        let army: Vec<String> = army
+            .iter()
+            .map(|(kind, count)| {
+                let stale = if g.unit_is_obsolete(pid, kind) { "*" } else { "" };
+                format!("{count}x{kind}{stale}")
+            })
+            .collect();
         println!(
             "  {:<10} score={:<4} cities={} pop={} techs={} {}",
             p.civ,
@@ -128,6 +146,9 @@ fn standings(g: &Game) {
             p.techs.len(),
             if p.alive { "" } else { "(eliminated)" }
         );
+        if !army.is_empty() {
+            println!("             army: {}", army.join(" "));
+        }
     }
     let minors: Vec<&str> = g
         .players
@@ -207,6 +228,44 @@ fn main() {
                         if w.is_minor {
                             flags.push_str(" MINOR-WINNER");
                         }
+                        // An army nobody ever modernizes is invisible in the
+                        // standings and obvious on the map. Count the units
+                        // still fielded after their owner retired them, and
+                        // the ones three eras behind the world besides.
+                        let unit_era = |kind: &str| -> usize {
+                            let spec = &g.rules.units[kind];
+                            let tech = spec
+                                .tech
+                                .as_deref()
+                                .and_then(|node| g.rules.techs.get(node))
+                                .map(|node| node.era);
+                            let civic = spec
+                                .civic
+                                .as_deref()
+                                .and_then(|node| g.rules.civics.get(node))
+                                .map(|node| node.era);
+                            tech.or(civic).unwrap_or(0)
+                        };
+                        let (obsolete, ancient, army) = majors
+                            .iter()
+                            .filter(|p| p.alive)
+                            .flat_map(|p| {
+                                g.units.values().filter(move |unit| unit.owner == p.id)
+                            })
+                            .filter(|unit| g.rules.units[unit.kind.as_str()].class == "military")
+                            .fold((0, 0, 0), |(obsolete, ancient, army), unit| {
+                                (
+                                    obsolete + g.unit_is_obsolete(unit.owner, &unit.kind) as i32,
+                                    ancient
+                                        + (g.world_era.saturating_sub(unit_era(&unit.kind)) >= 3)
+                                            as i32,
+                                    army + 1,
+                                )
+                            });
+                        flags.push_str(&format!(
+                            " ARMY {army} obsolete={obsolete} ancient={ancient} era={}",
+                            g.world_era
+                        ));
                         println!(
                             "seed {:3}  t{:<4} {:<10} {:<8} majors_alive={}/{} cities={:<2} cs_alive={}/{} [{:.2}s]{}",
                             seed,

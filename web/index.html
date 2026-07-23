@@ -161,6 +161,7 @@
   select:focus { border-color: var(--gold); box-shadow: 0 0 0 3px #d7b66a1d; }
   input[type="checkbox"] { accent-color: var(--gold); }
   .small { color: var(--muted); font-size: 10px; line-height: 1.45; }
+  .obsolete { color: #f0b070; }
   .muted { color: var(--muted); }
   .boost { color: var(--blue); text-shadow: 0 0 12px #76cde477; }
   .bar { height: 5px; margin: 7px 0 5px; overflow: hidden; border-radius: 6px; background: #050c0b; box-shadow: inset 0 1px 3px #000b; }
@@ -2761,7 +2762,8 @@ function drawUbar() {
     (u.formation === 1 ? " · Corps/Fleet" : u.formation === 2 ? " · Army/Armada" : "") +
     (u.linked_to ? ` · linked #${u.linked_to}` : "") +
     (u.religion ? ` · ${titleCase(u.religion)}` : "") +
-    (u.charges ? ` · ${u.charges} charges` : "") + `</span><br>`;
+    (u.charges ? ` · ${u.charges} charges` : "") +
+    (u.obsolete ? ` · <span class="obsolete">obsolete</span>` : "") + `</span><br>`;
   for (const a of state.legal_actions) {
     if (a.unit !== u.id && a.with !== u.id) continue;
     if (a.type === "found_city")
@@ -2788,6 +2790,8 @@ function drawUbar() {
       h += `<button onclick='send(${JSON.stringify(a)})'>✈ Air patrol</button>`;
     if (a.type === "fortify")
       h += `<button onclick='send({type:"fortify",unit:${u.id}})'>⛨ Fortify</button>`;
+    if (a.type === "upgrade_unit")
+      h += `<button class="primary" onclick='send({type:"upgrade_unit",unit:${u.id}})'>⬆ Upgrade to ${titleCase(u.upgrade.to)} (${Math.round(u.upgrade.gold)} gold)</button>`;
     if (a.type === "promote") {
       const note = RULES.promotions && RULES.promotions[a.promotion] ? RULES.promotions[a.promotion].note : "";
       h += `<button title="${note}" onclick='send(${JSON.stringify(a)})'>⬆ Promote: ${titleCase(a.promotion)}</button>`;

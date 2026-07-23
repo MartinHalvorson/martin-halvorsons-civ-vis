@@ -86,6 +86,7 @@ INSTALL_CANDIDATES = [
 # Tables we project onto CIVVIS' schema, and the primary key of each.
 TABLE_KEYS = {
     "Units": "UnitType",
+    "UnitUpgrades": ("Unit", "UpgradeUnit"),
     "Technologies": "TechnologyType",
     "Civics": "CivicType",
     "Buildings": "BuildingType",
@@ -310,6 +311,10 @@ def truthy(raw: str | None, default=False) -> bool:
 
 
 def project_units(database: Database) -> dict[str, dict]:
+    upgrades = {
+        slug(row["Unit"], "UNIT_"): slug(row["UpgradeUnit"], "UNIT_")
+        for row in database.rows("UnitUpgrades")
+    }
     projected = {}
     for row in database.rows("Units"):
         entry = {
@@ -330,6 +335,14 @@ def project_units(database: Database) -> dict[str, dict]:
                 number(row.get("ReligiousHealCharges")),
             ),
             "zone_of_control": truthy(row.get("ZoneOfControl")),
+            # UnitUpgrades is a separate table; MandatoryObsoleteTech is the
+            # column that closes a unit's production menu for good.
+            "upgrade_to": upgrades.get(slug(row["UnitType"], "UNIT_")),
+            "obsolete_tech": (
+                slug(row["MandatoryObsoleteTech"], "TECH_")
+                if row.get("MandatoryObsoleteTech")
+                else None
+            ),
         }
         # Units that can only be bought store a production cost in the database
         # that no player ever pays; CIVVIS stores the Faith/Gold price the
@@ -1321,6 +1334,8 @@ UNIT_DEFAULTS = {
     "range": 0,
     "charges": 0,
     "zone_of_control": False,
+    "upgrade_to": None,
+    "obsolete_tech": None,
 }
 
 

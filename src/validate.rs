@@ -271,6 +271,18 @@ fn units(check: &mut Check) {
         check.gates(&subject, spec.tech.as_ref(), spec.civic.as_ref());
         check.civ(&subject, "unique_to", spec.unique_to.as_ref());
         check.reference(&subject, "replaces", spec.replaces.as_ref(), &units, "unit");
+        check.reference(&subject, "upgrade_to", spec.upgrade_to.as_ref(), &units, "unit");
+        let techs = check.rules.techs.clone();
+        check.reference(
+            &subject,
+            "obsolete_tech",
+            spec.obsolete_tech.as_ref(),
+            &techs,
+            "technology",
+        );
+        if spec.upgrade_to.as_deref() == Some(id.as_str()) {
+            check.error(&subject, "upgrades into itself");
+        }
         let resources = check.rules.resources.clone();
         check.reference(
             &subject,
