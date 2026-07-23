@@ -9181,11 +9181,12 @@ impl AdvancedAi {
                 && !before.players[city.original_owner].is_minor
                 && city.original_owner != pid
                 && !before.are_allied(pid, city.original_owner);
+            let imminent_low_value_revolt = development < 35.0 && turns_to_flip <= 4.0;
+            let unsupported_revolt = nearest_core > 9 && turns_to_flip <= 8.0;
             let hopeless_occupation = disposable
                 && matches!(strategy, GrandStrategy::Conquest | GrandStrategy::Recovery)
-                && nearest_core > 9
                 && loyalty_delta <= -8.0
-                && turns_to_flip <= 8.0;
+                && (imminent_low_value_revolt || unsupported_revolt);
             match action {
                 Action::KeepCity { .. } => {
                     value += development;
@@ -15368,6 +15369,42 @@ mod tests {
 
         let mut ai = AdvancedAi::targeting(VictoryTarget::Domination);
         assert!(AdvancedAi::population_loyalty_delta(&game, 0, outpost) <= -8.0);
+
+        // A nearby core is not enough to save a tiny conquest that is already
+        // forecast to revolt in three or four turns. The live Alexandria loop
+        // was one population, six tiles from China, and changed hands five
+        // times in seventeen turns because the older rule treated distance as
+        // an absolute exemption.
+        let mut nearby = game.clone();
+        let near_home_pos = nearby
+            .wdisk(outpost_pos, 6)
+            .into_iter()
+            .find(|position| {
+                nearby.wdist(*position, outpost_pos) == 6
+                    && nearby.city_at(*position).is_none()
+                    && nearby.map.tiles[position].owner_city.is_none()
+                    && nearby.rules.is_passable(&nearby.map.tiles[position])
+                    && !nearby.rules.is_water(&nearby.map.tiles[position])
+            })
+            .expect("test map has a core site six tiles from the captured outpost");
+        nearby.cities.get_mut(&home).unwrap().pos = near_home_pos;
+        assert_eq!(
+            nearby
+                .cities
+                .values()
+                .filter(|city| city.owner == 0 && city.id != outpost)
+                .map(|city| nearby.wdist(city.pos, outpost_pos))
+                .min(),
+            Some(6)
+        );
+        assert!(AdvancedAi::population_loyalty_delta(&nearby, 0, outpost) <= -8.0);
+        let mut nearby_ai = AdvancedAi::targeting(VictoryTarget::Domination);
+        nearby_ai.resolve_city_dispositions(&mut nearby, 0, GrandStrategy::Conquest);
+        assert!(
+            !nearby.cities.contains_key(&outpost),
+            "an imminent low-value revolt should be razed even near a core city"
+        );
+
         ai.resolve_city_dispositions(&mut game, 0, GrandStrategy::Conquest);
 
         assert!(
