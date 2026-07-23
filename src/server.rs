@@ -2211,7 +2211,7 @@ mod tests {
     }
 
     #[test]
-    fn browser_keeps_atlas_art_on_its_owning_tile_footprint() {
+    fn browser_blends_atlas_art_only_across_compatible_tile_footprints() {
         let atlas_drawer = EMBEDDED_INDEX
             .split("function drawAtlasFeatureCell")
             .nth(1)
@@ -2220,12 +2220,29 @@ mod tests {
         assert!(atlas_drawer.contains("tileArtPath(footprint"));
         assert!(atlas_drawer.contains("cx.clip()"));
 
+        let blend_footprint = EMBEDDED_INDEX
+            .split("function blendedTileFootprint")
+            .nth(1)
+            .and_then(|tail| tail.split("function featureBlendKind").next())
+            .expect("compatible-neighbor footprint builder");
+        assert!(blend_footprint.contains("if (!neighbor || !accepts(neighbor)) continue"));
+        assert!(EMBEDDED_INDEX.contains("featureBlendKind(neighbor.feature) === baseFeature"));
+        assert!(EMBEDDED_INDEX.contains("neighbor.terrain === \"mountain\""));
+
+        let terrain_texture = EMBEDDED_INDEX
+            .split("function drawTerrainTexture")
+            .nth(1)
+            .and_then(|tail| tail.split("function drawAtlasFeatureCell").next())
+            .expect("terrain material renderer");
+        assert!(terrain_texture.contains("drawFeathered(t, x, y"));
+        assert!(!terrain_texture.contains("hexPath(x, y"));
+
         let mountain_drawer = EMBEDDED_INDEX
             .split("function drawMountainSprite")
             .nth(1)
             .and_then(|tail| tail.split("function tri(").next())
             .expect("mountain sprite renderer");
-        assert!(mountain_drawer.contains("tileArtPath([{x, y}], true"));
+        assert!(mountain_drawer.contains("tileArtPath(footprint, true"));
         assert!(mountain_drawer.contains("cx.clip()"));
 
         let wonder_placement = EMBEDDED_INDEX

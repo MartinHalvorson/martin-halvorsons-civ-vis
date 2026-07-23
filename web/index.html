@@ -3356,6 +3356,34 @@ function tileArtBounds(footprint) {
     minY:Math.min(...corners.map(p => p[1])), maxY:Math.max(...corners.map(p => p[1]))
   };
 }
+
+// Build a clip from this face and the neighboring faces that are allowed to
+// share its art. The neighbor centers are derived from the axial direction,
+// rather than calling hexXY again, so a cluster remains joined across a
+// horizontally wrapped map. This is the important middle ground between two
+// bad extremes: clipping every sprite to one hex leaves a visible cookie-cutter
+// seam, while leaving atlas art unbounded lets a forest crown or mountain base
+// wander onto unrelated ground. Compatible faces become one local canvas.
+function blendedTileFootprint(t, x, y, accepts) {
+  const footprint = [{x, y}];
+  for (let i = 0; i < DIRS.length; i++) {
+    const direction = DIRS[i];
+    const neighbor = nbrTile(t.pos, direction);
+    if (!neighbor || !accepts(neighbor)) continue;
+    const worldDX = S * SQ3 * (direction[0] + direction[1] / 2);
+    const worldDY = S * 1.5 * direction[1];
+    footprint.push({
+      x:x + COSR * worldDX - SINR * worldDY,
+      y:y + elev(t) + (SINR * worldDX + COSR * worldDY) * YS - elev(neighbor)
+    });
+  }
+  return footprint;
+}
+
+function featureBlendKind(feature) {
+  return ({burning_forest:"forest", burnt_forest:"forest",
+           burning_jungle:"jungle", burnt_jungle:"jungle"})[feature] || feature;
+}
 // Continuous terrain relief: a side face exists only where this tile is
 // actually higher than its neighbor. The earlier renderer extruded every land
 // hex down to a private base, turning plains into a tray of separate blocks.
@@ -3389,12 +3417,10 @@ function shade(hex, f) {
 }
 
 // Paint an AI-authored, photographic material sample onto the world plane.
-// Each tile takes a deterministic crop from its biome swatch, so neighboring
-// tiles share a visual language without producing an obvious repeated stamp.
-// A continuous biome should read as one surface, not a field of hexagons. Each
-// sprite is built once with a soft radial edge, so the stamps overlap and
-// cross-fade into their neighbors instead of butting at a hard seam. A few
-// variants keep the material from looking obviously repeated.
+// Each tile takes a deterministic crop from its biome swatch, and the cached
+// radial mask turns that crop into a broad dab rather than a hex-shaped decal.
+// The dabs are allowed to overlap compatible neighboring faces below, making
+// grass into a field and ocean into a body of water instead of a tile set.
 const BIOME_STAMPS = {};
 function biomeStamp(terrain, variant) {
   const id = terrain + variant;
@@ -3415,26 +3441,31 @@ function biomeStamp(terrain, variant) {
   g.drawImage(TERRAIN_ATLAS, sx, sy, crop, crop, 0, 0, D, D);
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.globalCompositeOperation = "destination-in";
-  const rg = g.createRadialGradient(D / 2, D / 2, D * 0.16, D / 2, D / 2, D * 0.5);
+  const rg = g.createRadialGradient(D / 2, D / 2, D * 0.12, D / 2, D / 2, D * 0.5);
   rg.addColorStop(0, "rgba(0,0,0,1)");
-  rg.addColorStop(0.62, "rgba(0,0,0,.94)");
+  rg.addColorStop(0.55, "rgba(0,0,0,1)");
+  rg.addColorStop(0.82, "rgba(0,0,0,.72)");
   rg.addColorStop(1, "rgba(0,0,0,0)");
   g.fillStyle = rg; g.fillRect(0, 0, D, D);
   BIOME_STAMPS[id] = c;
   return c;
 }
 
-// Water uses the same material stamps as land, but remains fenced to its own
-// face. The former open-sea overlap made directional wave crops look smooth at
-// the cost of putting one cell's art visibly onto the next cell; the bevel can
-// hide a crop seam, while it cannot explain a texture that misses its tile.
 function drawFeathered(t, x, y, alpha) {
   const st = biomeStamp(t.terrain,
     Math.floor(hash2(t.pos[0] * 7 + 1, t.pos[1] * 13 + 5) * 4));
   if (!st) return;
-  const R = S + 2.4;
+  // Flat land may cross-fade with flat land even when the named biome changes;
+  // the same is true within one water level. Height changes remain a real edge
+  // because relief walls, not texture, must explain those. A one-ring clip is
+  // enough for this stamp's radius and prevents any farther overspill.
+  const water = isWater(t);
+  const e = elev(t);
+  const footprint = blendedTileFootprint(t, x, y, neighbor =>
+    isWater(neighbor) === water && Math.abs(elev(neighbor) - e) < 0.35);
+  const R = S * 1.44;
   cx.save();
-  hexPath(x, y, S + 0.25); cx.clip();
+  tileArtPath(footprint); cx.clip();
   cx.globalAlpha = alpha;
   cx.translate(x, y);
   cx.transform(COSR, SINR * YS, -SINR, COSR * YS, 0, 0);
@@ -3446,40 +3477,8 @@ const isWater = t => t.terrain === "coast" || t.terrain === "ocean";
 
 function drawTerrainTexture(t, x, y) {
   if (!ATLAS_READY || !ATLAS_CELL[t.terrain]) return;
-  const water = isWater(t);
-  if (water) return drawFeathered(t, x, y, 0.95);
-  const [col, row] = ATLAS_CELL[t.terrain];
-  const cw = TERRAIN_ATLAS.naturalWidth / 4;
-  const ch = TERRAIN_ATLAS.naturalHeight / 2;
-  const crop = Math.min(cw, ch) * 0.78;
-  const marginX = Math.max(2, cw - crop - 2);
-  const marginY = Math.max(2, ch - crop - 2);
-  const hx = hash2(t.pos[0] * 19 + row * 31, t.pos[1] * 23 + col * 17);
-  const hy = hash2(t.pos[0] * 29 + col * 13, t.pos[1] * 11 + row * 37);
-  const sx = col * cw + 1 + hx * marginX;
-  const sy = row * ch + 1 + hy * marginY;
-
-  cx.save();
-  hexPath(x, y, S + 0.25); cx.clip();
-  cx.globalAlpha = water ? 0.94 : (t.terrain === "snow" ? 0.88 : 0.9);
-  cx.imageSmoothingEnabled = true;
-  cx.imageSmoothingQuality = "high";
-  cx.translate(x, y);
-  // Match the same rotated, vertically-squashed world plane as the hex.
-  cx.transform(COSR, SINR * YS, -SINR, COSR * YS, 0, 0);
-  if (hx > 0.5) cx.scale(-1, 1);
-  cx.drawImage(TERRAIN_ATLAS, sx, sy, crop, crop, -S, -S, S * 2, S * 2);
-  cx.restore();
-
-  // Broad illumination unifies the photo material with the raised tile prism.
-  cx.save();
-  hexPath(x, y, S + 0.25); cx.clip();
-  const light = cx.createLinearGradient(x - S * 0.45, y - S, x + S * 0.35, y + S);
-  light.addColorStop(0, "rgba(255,249,222,.14)");
-  light.addColorStop(0.48, "rgba(255,255,255,0)");
-  light.addColorStop(1, water ? "rgba(0,18,35,.2)" : "rgba(24,17,8,.18)");
-  cx.fillStyle = light; cx.fillRect(x - S * 1.4, y - S, S * 2.8, S * 2);
-  cx.restore();
+  drawFeathered(t, x, y,
+    isWater(t) ? 0.88 : (t.terrain === "snow" ? 0.78 : 0.84));
 }
 
 function drawAtlasFeatureCell(atlas, columns, rows, cell, t, x, y, options = {}) {
@@ -3513,15 +3512,13 @@ function drawAtlasFeatureCell(atlas, columns, rows, cell, t, x, y, options = {})
 }
 
 function drawFeatureSprite(t, x, y) {
-  const baseFeature = ({burning_forest:"forest", burnt_forest:"forest",
-                        burning_jungle:"jungle", burnt_jungle:"jungle"})[t.feature] || t.feature;
+  const baseFeature = featureBlendKind(t.feature);
   const baseCol = FEATURE_CELL[baseFeature];
   if (FEATURE_ATLAS_READY && baseCol !== undefined) {
     const burnt = t.feature === "burnt_forest" || t.feature === "burnt_jungle";
-    // Dense neighboring woods still receive a fuller canopy, but every crown
-    // is clipped back to the owning top face. That preserves the visual mass
-    // of a forest without making the edge trees appear to belong to the next
-    // terrain or resource tile.
+    // A connected wood is a canopy, not a row of circular tree islands. Let
+    // neighboring crowns interlock inside the union of woodland faces; the
+    // cluster clip still stops every crown at the actual forest boundary.
     let knit = 1;
     if (WOODLAND.has(t.feature)) {
       let n = 0;
@@ -3529,10 +3526,12 @@ function drawFeatureSprite(t, x, y) {
         const q = nbrTile(t.pos, DIRS[i]);
         if (q && WOODLAND.has(q.feature)) n++;
       }
-      knit = 1 + 0.035 * n;
+      knit = 1 + 0.045 * n;
     }
+    const footprint = blendedTileFootprint(t, x, y, neighbor =>
+      featureBlendKind(neighbor.feature) === baseFeature);
     drawAtlasFeatureCell(FEATURE_ATLAS, 4, 1, [baseCol, 0], t, x, y,
-      {scale: knit, width:2.08, height:2.0, cropY:0.5,
+      {scale: knit, width:2.12, height:2.04, cropY:0.5, footprint,
        alpha: burnt ? 0.48 : (baseFeature === "forest" || baseFeature === "jungle" ? 0.96 : 0.94)});
     return true;
   }
@@ -3540,6 +3539,8 @@ function drawFeatureSprite(t, x, y) {
   if (!ENVIRONMENT_FEATURE_ATLAS_READY || !cell) return false;
   const volcano = t.feature === "volcano";
   const cropY = cell[1] ? 0.35 : (t.feature === "geothermal_fissure" ? 0.48 : 0.84);
+  const footprint = blendedTileFootprint(t, x, y, neighbor =>
+    featureBlendKind(neighbor.feature) === baseFeature);
   drawAtlasFeatureCell(ENVIRONMENT_FEATURE_ATLAS, 4, 2, cell, t, x, y, {
     width: volcano ? 2.02 : 2.08,
     height: volcano ? 2.18 : 2.0,
@@ -3549,6 +3550,7 @@ function drawFeatureSprite(t, x, y) {
     rotate: !volcano,
     flip: !volcano,
     upright: volcano,
+    footprint,
     squareCrop: !volcano,
     cropY
   });
@@ -3961,10 +3963,12 @@ function drawMountainSprite(t, x, y) {
   // mixing snow, granite, and sandstone inside one connected massif.
   const shapeX = hash2(t.pos[0] * 7 + 3, t.pos[1] * 5 + 11);
   const shapeY = hash2(t.pos[0] * 17 + 5, t.pos[1] * 13 + 7);
-  const w = S * (1.9 + shapeX * 0.18), h = S * (1.92 + shapeY * 0.24);
+  const w = S * (2.30 + shapeX * 0.18), h = S * (2.02 + shapeY * 0.24);
   const flip = hash2(t.pos[0] * 29 + 1, t.pos[1] * 31 + 9) > 0.5;
+  const footprint = blendedTileFootprint(t, x, y, neighbor =>
+    neighbor.terrain === "mountain");
   cx.save();
-  tileArtPath([{x, y}], true, 3.0); cx.clip();
+  tileArtPath(footprint, true, 3.0); cx.clip();
   cx.fillStyle = "#00000042";
   cx.beginPath(); cx.ellipse(x + 2, y + S * 0.22, w * 0.4, S * 0.18, 0, 0, 7); cx.fill();
   cx.imageSmoothingEnabled = true;
@@ -4946,29 +4950,26 @@ function draw() {
     const base = TERRAIN[t.terrain] || "#333";
     const water = (t.terrain === "coast" || t.terrain === "ocean");
     if (beau && !water) drawWalls(t, x, y, base, e);
-    hexPath(x, y, S + 0.6);
+    // Slightly overlap adjacent top faces so antialiasing cannot expose the
+    // backdrop between them. Texture and lighting are painted in a separate
+    // pass below; resetting a gradient inside every hex was itself a grid.
+    hexPath(x, y, S + 0.85);
     if (beau) {
-      const j = 0.94 + 0.12 * hash2(t.pos[0], t.pos[1]);
-      const g = cx.createLinearGradient(x, y - S, x, y + S);
-      g.addColorStop(0, shade(TERRAIN_HI[t.terrain] || base, j));
-      g.addColorStop(1, shade(base, j * 0.92));
-      cx.fillStyle = g;
+      cx.fillStyle = shade(base, 0.98);
     } else {
       cx.fillStyle = base;
     }
     cx.fill();
-    if (beau) {
-      drawTerrainTexture(t, x, y);
-      // A fine two-tone rim keeps all six shoulders readable over photographic
-      // materials. The inset highlight suggests a bevel without turning the
-      // terrain into a heavy board-game grid.
-      hexPath(x, y, S + 0.15);
-      cx.strokeStyle = water ? "#bdefff20" : "#241d1222";
-      cx.lineWidth = 1.05; cx.stroke();
-      hexPath(x, y, S - 1.15);
-      cx.strokeStyle = water ? "#d9f8ff12" : "#fff3cc16";
-      cx.lineWidth = 0.65; cx.stroke();
-    }
+    if (!beau) { hexPath(x, y); cx.strokeStyle = "#00000038"; cx.lineWidth = 1; cx.stroke(); }
+  }
+  // Atlas material is a map-wide layer. Painting all structural faces first
+  // means a later tile cannot erase the soft edge that its neighbor extended
+  // across their shared boundary.
+  for (const t of tiles) {
+    const [x, y0] = hexXY(t.pos[0], t.pos[1]);
+    const y = y0 - elev(t);
+    const water = isWater(t);
+    if (beau) drawTerrainTexture(t, x, y);
     if (beau && water) { // specular glints travel over the photographic swell
       const ph = hash2(t.pos[0], t.pos[1]);
       if (ph > 0.55) {
@@ -4983,15 +4984,8 @@ function draw() {
         cx.globalAlpha = 1;
       }
     }
-    // Translucent civ-color washes make control and unit positions readable
-    // without covering terrain detail. An occupied owned tile intentionally
-    // receives both layers, so units remain easy to locate inside their empire.
-    if (t.owner !== null && t.owner !== undefined) {
-      hexPath(x, y, S + 0.15);
-      cx.globalAlpha = 0.11;
-      cx.fillStyle = pcol(t.owner);
-      cx.fill();
-    }
+    // Unit presence gets a quiet local wash. Territory has its own continuous
+    // layer below the border network, so it is not painted twice here.
     const unitOwner = unitOwnerByTile.get(key(t.pos));
     if (unitOwner !== undefined) {
       hexPath(x, y, S - 0.5);
@@ -5000,7 +4994,6 @@ function draw() {
       cx.fill();
     }
     cx.globalAlpha = 1;
-    if (!beau) { hexPath(x, y); cx.strokeStyle = "#00000038"; cx.lineWidth = 1; cx.stroke(); }
   }
   // The beach/foam seam is the longest line on the map and it was drawn the way
   // the borders and rivers used to be: six exact straights per hex, each one
