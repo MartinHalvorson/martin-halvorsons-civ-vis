@@ -3375,7 +3375,25 @@ impl BasicAi {
     }
 
     fn step_toward(&self, g: &mut Game, pid: usize, uid: u32, target: Pos) -> bool {
+        self.step_toward_range(g, pid, uid, target, 0)
+    }
+
+    /// Move toward a target without insisting on entering its tile. Religious
+    /// units spread from an adjacent hex, so routing them to range zero makes
+    /// the pathfinder reject foreign city centers and can strand an entire
+    /// procession behind a mountain detour.
+    pub(crate) fn step_toward_range(
+        &self,
+        g: &mut Game,
+        pid: usize,
+        uid: u32,
+        target: Pos,
+        stop_range: i32,
+    ) -> bool {
         let cur = g.units[&uid].pos;
+        if g.wdist(cur, target) <= stop_range {
+            return false;
+        }
         let mut local: Vec<Pos> = g
             .nbrs(cur)
             .into_iter()
@@ -3398,7 +3416,7 @@ impl BasicAi {
 
         // The common case above stays as cheap as the original greedy AI;
         // invoke A* only when no legal neighbor makes geometric progress.
-        let next = match g.route_step(uid, target, 0) {
+        let next = match g.route_step(uid, target, stop_range) {
             Some(p) if g.can_move(uid, p) => p,
             _ => return false,
         };
@@ -3599,20 +3617,22 @@ impl BasicAi {
         let upos = g.units[&uid].pos;
         // Own cities first: reconverting the homeland both consolidates
         // pressure and is the entire job of a defensive adopted-faith unit.
-        let target = g
+        let mut targets: Vec<(bool, i32, u32, Pos)> = g
             .cities
             .values()
             .filter(|c| g.city_religion(c) != Some(religion.as_str()) && !g.is_at_war(pid, c.owner))
-            .min_by_key(|c| (c.owner != pid, g.wdist(upos, c.pos), c.id))
-            .map(|c| c.pos);
-        let target = match target {
-            Some(t) => t,
-            None => return false,
-        };
-        if g.wdist(upos, target) <= 1 {
-            return g.apply(pid, &Action::Spread { unit: uid }).is_ok();
+            .map(|city| (city.owner != pid, g.wdist(upos, city.pos), city.id, city.pos))
+            .collect();
+        targets.sort();
+        for (_, _, _, target) in targets {
+            if g.wdist(upos, target) <= 1 {
+                return g.apply(pid, &Action::Spread { unit: uid }).is_ok();
+            }
+            if self.step_toward_range(g, pid, uid, target, 1) {
+                return true;
+            }
         }
-        self.step_toward(g, pid, uid, target)
+        false
     }
 
     fn siege_support_step(&self, g: &mut Game, pid: usize, uid: u32) -> bool {

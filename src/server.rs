@@ -691,6 +691,10 @@ fn respond_json(stream: &mut TcpStream, v: &Value) {
     );
 }
 
+fn request_path(target: &str) -> &str {
+    target.split_once('?').map_or(target, |(path, _)| path)
+}
+
 fn new_game_params(current: &Params, request: &Value) -> Params {
     let mut p = current.clone();
     if let Some(v) = request["num_players"].as_u64() {
@@ -833,7 +837,11 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
     }
     let mut parts = line.split_whitespace();
     let method = parts.next().unwrap_or("").to_string();
-    let path = parts.next().unwrap_or("/").to_string();
+    // Route on the URL path, not its cache-busting/query component. The
+    // supervised spectator tags each successor URL with its server instance
+    // so a long-lived tab loads fresh embedded assets after a binary swap.
+    let request_target = parts.next().unwrap_or("/");
+    let path = request_path(request_target).to_string();
     let mut content_len = 0usize;
     loop {
         let mut h = String::new();
@@ -1056,7 +1064,8 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{
-        chronicle_world_events, new_game_params, ChronicleSnapshot, Params, Session, EMBEDDED_INDEX,
+        chronicle_world_events, new_game_params, request_path, ChronicleSnapshot, Params, Session,
+        EMBEDDED_INDEX,
     };
     use crate::game::{Action, VictoryConditions};
     use crate::setup::{GameSpeed, MapScript};
@@ -1286,6 +1295,13 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("#side {\n    order: -1;"));
         assert!(EMBEDDED_INDEX.contains("<strong>${state.turn}</strong>"));
         assert!(!EMBEDDED_INDEX.contains("${state.turn}/${maxTurns}"));
+    }
+
+    #[test]
+    fn instance_tagged_spectator_url_routes_to_the_embedded_page() {
+        assert_eq!(request_path("/"), "/");
+        assert_eq!(request_path("/?instance=9232"), "/");
+        assert_eq!(request_path("/state?instance=9232"), "/state");
     }
 
     #[test]
