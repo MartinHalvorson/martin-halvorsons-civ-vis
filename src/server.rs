@@ -1706,21 +1706,25 @@ mod tests {
         let event_log = EMBEDDED_INDEX
             .find("<span>Game event log</span>")
             .expect("game event log");
+        let war_log = EMBEDDED_INDEX
+            .find("<span>War log</span>")
+            .expect("war log");
         let strategy = EMBEDDED_INDEX
             .find("<span>Active strategy</span>")
             .expect("active strategy section");
         assert!(
             game_settings < display_settings
                 && display_settings < event_log
-                && event_log < strategy,
-            "left panel should show game settings, display settings, and the event log first"
+                && event_log < war_log
+                && war_log < strategy,
+            "left panel should show game settings, display settings, and the two logs first"
         );
         assert!(EMBEDDED_INDEX.contains("<span>Display settings</span>"));
         assert_eq!(
             EMBEDDED_INDEX
                 .matches("class=\"sidebar-section\"")
                 .count(),
-            6,
+            7,
             "every top-level left-panel section should be collapsible"
         );
         assert!(EMBEDDED_INDEX.contains("function initSidebarSections()"));
@@ -1750,6 +1754,10 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("Spectator · combined summary"));
         assert!(EMBEDDED_INDEX.contains("let eventLogs = new Map()"));
         assert!(EMBEDDED_INDEX.contains("function chronicleWorldEvents(next)"));
+        // The war log reads the engine's ledger straight out of the
+        // observation, so the panel and its source must ship together.
+        assert!(EMBEDDED_INDEX.contains("function drawWarLog()"));
+        assert!(EMBEDDED_INDEX.contains("id=\"warsec\""));
         assert!(EMBEDDED_INDEX.contains("built the world's first"));
         assert!(EMBEDDED_INDEX.contains("changed government from"));
         assert!(!EMBEDDED_INDEX.contains("completed its turn"));

@@ -392,6 +392,11 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool, interactive: bool) -> Value 
                 "until": until,
             }))
             .collect::<Vec<_>>(),
+        // Who is fighting whom, since when, and at what cost. War is the one
+        // part of the world every civilization can see from the outside, and
+        // the diplomacy panel above already names every player, so this is
+        // shown whole rather than through the viewer's fog.
+        "wars": wars_json(g),
         "winner": g.winner,
         "victory_type": g.victory_type,
         // What has happened to this civilization lately, newest last. An
@@ -399,6 +404,55 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool, interactive: bool) -> Value 
         // spectator log follows the same seat as the rest of the frame.
         "events": recent_events(g, pid),
     })
+}
+
+/// Every war in progress, longest-running first, followed by the most recent
+/// peaces. Highlights are trimmed to the last few per war: a client wants the
+/// shape of the war, and the full account of a fifty-turn conquest would cost
+/// more bandwidth every frame than the rest of the observation together.
+fn wars_json(g: &Game) -> Vec<Value> {
+    const RECENT_PEACES: usize = 4;
+    const HIGHLIGHTS: usize = 8;
+    let war_json = |war: &crate::game::WarRecord| {
+        let side = |player: usize| {
+            let losses = war.losses_for(player);
+            json!({
+                "player": player,
+                "units_lost": losses.units,
+                "cities_lost": losses.cities,
+            })
+        };
+        json!({
+            "aggressor": war.aggressor,
+            "defender": war.defender,
+            "started": war.started,
+            "ended": war.ended,
+            "turns": war.ended.unwrap_or(g.turn).saturating_sub(war.started),
+            "sides": [side(war.aggressor), side(war.defender)],
+            "highlights": war.highlights[war.highlights.len().saturating_sub(HIGHLIGHTS)..]
+                .iter()
+                .map(|highlight| json!({
+                    "turn": highlight.turn,
+                    "kind": highlight.kind,
+                    "actor": highlight.actor,
+                    "subject": highlight.subject,
+                    "city": highlight.city,
+                }))
+                .collect::<Vec<_>>(),
+        })
+    };
+    let mut wars: Vec<&crate::game::WarRecord> = g.wars.values().collect();
+    wars.sort_by_key(|war| (war.started, war.aggressor, war.defender));
+    wars.iter()
+        .map(|war| war_json(war))
+        .chain(
+            g.concluded_wars
+                .iter()
+                .rev()
+                .take(RECENT_PEACES)
+                .map(|war| war_json(war)),
+        )
+        .collect()
 }
 
 /// The tail of a civilization's event stream. Bounded because an observation

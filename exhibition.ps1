@@ -98,6 +98,11 @@ Log "supervisor started (port $Port, poll ${PollSec}s, git every ${GitSec}s)"
 $lastGit = [DateTime]::MinValue
 $LaunchGraceSec = 12
 $lastLaunch = (Get-Date).AddSeconds(-$LaunchGraceSec)
+# The running compiler, when there is one. Only ever one at a time.
+$build = $null
+$buildHead = ""
+$buildShort = ""
+$buildStarted = Get-Date
 while ($true) {
     try {
         # 1. revive anything that died. A gui process that is alive but no
@@ -117,10 +122,37 @@ while ($true) {
             if (Test-Path "$binRun\civvis-next.exe") { Promote-Staged }
             if (Test-Path "$binRun\civvis-gui.exe") { Start-Gui; $lastLaunch = Get-Date }
         }
+        # Evolve is a twelve-thread CPU hog and only useful in the background.
+        # Starting it while the server is still generating its map made the
+        # two compete for the machine and stretched the changeover badly, so
+        # it waits until there is a game to be in the background of.
         $evoUp = Get-Process civvis-evolve -ErrorAction SilentlyContinue
-        if (-not $evoUp -and (Test-Path "$binRun\civvis-evolve.exe")) { Start-Evolve }
+        if ($guiUp -and -not $evoUp -and (Test-Path "$binRun\civvis-evolve.exe")) { Start-Evolve }
 
-        # 2. staged binary older than origin/main? build it. The test is the
+        # 2a. collect a finished build. This runs on the fast loop, not the
+        #     git cadence, so a build that lands mid-game is staged and ready
+        #     the moment the game ends rather than half a minute later.
+        if ($null -ne $build -and $build.HasExited) {
+            $took = ((Get-Date) - $buildStarted).TotalSeconds
+            # A process object from Start-Process -PassThru does not carry an
+            # exit code until it has been waited on, and reads as a failure
+            # until then - which reported every successful build as broken and
+            # rebuilt the same commit on a loop. HasExited is already true, so
+            # this returns at once and fills the code in.
+            $build.WaitForExit()
+            if ($build.ExitCode -eq 0) {
+                Copy-Item "$src\target\release\civvis.exe" "$binRun\civvis-next.exe" -Force
+                Set-Content -Path $stamp -Value $buildHead -Encoding ascii
+                Log ("staged $buildShort in {0:n0}s" -f $took)
+            } else {
+                # Record nothing on failure, so a later round retries rather
+                # than treating a broken commit as already built.
+                Log "build FAILED for $buildShort"
+            }
+            $build = $null
+        }
+
+        # 2b. staged binary older than origin/main? build it. The test is the
         #    commit the last build came from, not "did a fetch move something
         #    this round": a build cut short by a restart, or a failed build,
         #    otherwise leaves the exhibition on the previous commit with
@@ -131,24 +163,23 @@ while ($true) {
             git -C $src fetch -q origin main 2>$null
             $head = git -C $src rev-parse FETCH_HEAD
             $built = if (Test-Path $stamp) { (Get-Content $stamp -Raw).Trim() } else { "" }
-            if ($head -and $head -ne $built) {
+            if ($head -and $head -ne $built -and $null -eq $build) {
                 $short = $head.Substring(0, 7)
                 git -C $src reset -q --hard $head 2>$null
                 Log "building $short"
-                $sw = [Diagnostics.Stopwatch]::StartNew()
+                $buildHead = $head
+                $buildShort = $short
+                $buildStarted = Get-Date
+                # Launched rather than run. A release build takes one to two
+                # minutes here, and running it inline stopped the whole loop
+                # for that long - so a game that ended mid-build sat decided,
+                # or the server sat dead, until the compiler finished. That is
+                # where a twenty-one second changeover came from.
                 $env:CARGO_TARGET_DIR = "$src\target"
-                & $cargo build --release --manifest-path "$src\Cargo.toml" 2>$null | Out-Null
-                $ok = $LASTEXITCODE -eq 0
-                $sw.Stop()
-                if ($ok) {
-                    Copy-Item "$src\target\release\civvis.exe" "$binRun\civvis-next.exe" -Force
-                    Set-Content -Path $stamp -Value $head -Encoding ascii
-                    Log ("staged $short in {0:n0}s" -f $sw.Elapsed.TotalSeconds)
-                } else {
-                    # Record nothing on failure, so the next round retries
-                    # rather than treating a broken commit as already built.
-                    Log "build FAILED for $short"
-                }
+                $build = Start-Process -FilePath $cargo -PassThru -WindowStyle Hidden `
+                    -ArgumentList "build","--release","--manifest-path","$src\Cargo.toml" `
+                    -RedirectStandardOutput "$binRun\build.log" `
+                    -RedirectStandardError "$binRun\build.err.log"
             }
 
             # 3. keep the shared checkout moving too, for the sessions working
@@ -180,10 +211,12 @@ while ($true) {
             if (Test-Path "$binRun\civvis-next.exe") {
                 Get-Process civvis-gui -ErrorAction SilentlyContinue | Stop-Process -Force
                 Get-Process civvis-evolve -ErrorAction SilentlyContinue | Stop-Process -Force
-                Start-Sleep -Milliseconds 500
+                Start-Sleep -Milliseconds 200
                 Promote-Staged
                 Start-Gui
-                Start-Evolve
+                # Evolve is deliberately not restarted here. The revive check
+                # brings it back once the server is listening, so the new game
+                # gets the machine to itself while it generates its map.
                 $lastLaunch = Get-Date
                 Log "swapped to latest build between games"
             } else {

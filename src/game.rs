@@ -7285,6 +7285,66 @@ pub struct Emergency {
     pub ends: u32,
 }
 
+/// What one belligerent has had taken from it in a war — never what it
+/// inflicted, so the two sides of a war read as two columns of the same
+/// ledger rather than two versions of it.
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug, Default)]
+pub struct WarLosses {
+    pub units: u32,
+    pub cities: u32,
+}
+
+/// A turning point in a war: its declaration, a city changing hands, the
+/// peace. Unit casualties are counted rather than listed — a war of a hundred
+/// skirmishes would otherwise bury the moments that decided it.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub struct WarHighlight {
+    pub turn: u32,
+    /// `declared`, `city_captured` or `peace`.
+    pub kind: String,
+    /// The player who acted, and the one it happened to.
+    pub actor: usize,
+    pub subject: usize,
+    pub city: Option<String>,
+}
+
+/// The engine's account of one war, so every client and every reloaded save
+/// tells the same story about it. Keyed by the ordered pair of belligerents;
+/// a city-state dragged in by its Suzerain gets its own record, because from
+/// the map's point of view that is a separate front.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub struct WarRecord {
+    pub aggressor: usize,
+    pub defender: usize,
+    pub started: u32,
+    pub ended: Option<u32>,
+    pub losses: BTreeMap<usize, WarLosses>,
+    pub highlights: Vec<WarHighlight>,
+}
+
+impl WarRecord {
+    fn new(aggressor: usize, defender: usize, turn: u32) -> Self {
+        Self {
+            aggressor,
+            defender,
+            started: turn,
+            ended: None,
+            losses: BTreeMap::new(),
+            highlights: vec![WarHighlight {
+                turn,
+                kind: "declared".into(),
+                actor: aggressor,
+                subject: defender,
+                city: None,
+            }],
+        }
+    }
+
+    pub fn losses_for(&self, player: usize) -> WarLosses {
+        self.losses.get(&player).copied().unwrap_or_default()
+    }
+}
+
 /// A pre-negotiated, one-click offer for the human/AI Quick Deals surface.
 /// Values are expressed in equivalent lump Gold and are positive for both
 /// parties by construction.
@@ -8008,6 +8068,11 @@ pub struct Game {
     pub spies: BTreeMap<u32, Spy>,
     pub cities: BTreeMap<u32, City>,
     pub at_war: BTreeSet<(usize, usize)>,
+    /// Running chronicle of every war in progress, keyed by belligerent pair.
+    pub wars: BTreeMap<(usize, usize), WarRecord>,
+    /// The wars that ended, oldest first and bounded — long enough for a
+    /// client to show what a peace cost, short enough not to grow forever.
+    pub concluded_wars: Vec<WarRecord>,
     pub barb_pid: Option<usize>,
     pub barb_camps: BTreeMap<Pos, u32>,
     pub barb_scout_homes: BTreeMap<u32, Pos>,
@@ -8080,6 +8145,10 @@ struct GameSer {
     next_id: u32,
     rng: Rng,
     at_war: Vec<(usize, usize)>,
+    #[serde(default)]
+    wars: Vec<((usize, usize), WarRecord)>,
+    #[serde(default)]
+    concluded_wars: Vec<WarRecord>,
     #[serde(default)]
     barb_pid: Option<usize>,
     #[serde(default)]
@@ -8160,6 +8229,8 @@ impl From<GameSer> for Game {
             spies: s.spies.into_iter().map(|spy| (spy.id, spy)).collect(),
             cities: s.cities.into_iter().map(|c| (c.id, c)).collect(),
             at_war: s.at_war.into_iter().collect(),
+            wars: s.wars.into_iter().collect(),
+            concluded_wars: s.concluded_wars,
             barb_pid: s.barb_pid,
             barb_camps: s.barb_camps.into_iter().collect(),
             barb_scout_homes: s.barb_scout_homes,
@@ -8289,6 +8360,8 @@ impl From<Game> for GameSer {
             next_id: g.next_id,
             rng: g.rng,
             at_war: g.at_war.into_iter().collect(),
+            wars: g.wars.into_iter().collect(),
+            concluded_wars: g.concluded_wars,
             barb_pid: g.barb_pid,
             barb_camps: g.barb_camps.into_iter().collect(),
             barb_scout_homes: g.barb_scout_homes,
@@ -8431,6 +8504,8 @@ impl Game {
             spies: BTreeMap::new(),
             cities: BTreeMap::new(),
             at_war: BTreeSet::new(),
+            wars: BTreeMap::new(),
+            concluded_wars: Vec::new(),
             barb_pid: None,
             barb_camps: BTreeMap::new(),
             barb_scout_homes: BTreeMap::new(),
@@ -9285,6 +9360,111 @@ impl Game {
         a_controller != b_controller
             && (a_controller != a || b_controller != b)
             && self.at_war.contains(&pair(a_controller, b_controller))
+    }
+
+    /// The war ledger is keyed by seat order, but a war is opened by somebody.
+    /// Declaration sites call this so the record knows who started it; every
+    /// other route into a war — a defensive pact, an Emergency, a city-state
+    /// following its Suzerain — is picked up by `sync_war_log`, which cannot
+    /// know and so credits the lower seat.
+    fn open_war_record(&mut self, aggressor: usize, defender: usize) {
+        if aggressor == defender
+            || self.players[aggressor].is_barbarian
+            || self.players[defender].is_barbarian
+        {
+            return;
+        }
+        let key = pair(aggressor, defender);
+        self.wars
+            .entry(key)
+            .or_insert_with(|| WarRecord::new(aggressor, defender, self.turn));
+    }
+
+    /// Reconcile the ledger with the diplomatic state: open a record for any
+    /// war being fought without one, and retire the records whose war is over.
+    /// Cheap enough to run whenever the relation set is touched — the pair
+    /// scan is quadratic in seats, and seats number in the tens.
+    pub fn sync_war_log(&mut self) {
+        let n = self.players.len();
+        let mut active: BTreeSet<(usize, usize)> = BTreeSet::new();
+        for a in 0..n {
+            if self.players[a].is_barbarian {
+                continue;
+            }
+            for b in (a + 1)..n {
+                if !self.players[b].is_barbarian && self.is_at_war(a, b) {
+                    active.insert((a, b));
+                }
+            }
+        }
+        for (a, b) in &active {
+            self.open_war_record(*a, *b);
+        }
+        let ended: Vec<(usize, usize)> = self
+            .wars
+            .keys()
+            .filter(|key| !active.contains(*key))
+            .copied()
+            .collect();
+        for key in ended {
+            let Some(mut war) = self.wars.remove(&key) else {
+                continue;
+            };
+            war.ended = Some(self.turn);
+            war.highlights.push(WarHighlight {
+                turn: self.turn,
+                kind: "peace".into(),
+                actor: war.aggressor,
+                subject: war.defender,
+                city: None,
+            });
+            self.concluded_wars.push(war);
+        }
+        const CONCLUDED_KEPT: usize = 24;
+        if self.concluded_wars.len() > CONCLUDED_KEPT {
+            let excess = self.concluded_wars.len() - CONCLUDED_KEPT;
+            self.concluded_wars.drain(..excess);
+        }
+    }
+
+    /// A war record's mutable half, opened on demand: a unit can die on the
+    /// first turn of a war the ledger has not reconciled yet.
+    fn war_ledger(&mut self, actor: usize, victim: usize) -> Option<&mut WarRecord> {
+        if actor == victim
+            || self.players[actor].is_barbarian
+            || self.players[victim].is_barbarian
+            || !self.is_at_war(actor, victim)
+        {
+            return None;
+        }
+        self.open_war_record(actor, victim);
+        self.wars.get_mut(&pair(actor, victim))
+    }
+
+    /// A military unit lost in a war it belongs to. Barbarian skirmishes are
+    /// deliberately outside the ledger: that war never starts and never ends,
+    /// so counting it would swamp the wars that were chosen.
+    fn record_war_unit_loss(&mut self, killer: usize, victim_owner: usize) {
+        if let Some(war) = self.war_ledger(killer, victim_owner) {
+            war.losses.entry(victim_owner).or_default().units += 1;
+        }
+    }
+
+    /// A city changing hands under arms — the one event a war log should
+    /// never summarize away.
+    fn record_war_city_loss(&mut self, taker: usize, loser: usize, city: &str) {
+        let turn = self.turn;
+        let city = city.to_string();
+        if let Some(war) = self.war_ledger(taker, loser) {
+            war.losses.entry(loser).or_default().cities += 1;
+            war.highlights.push(WarHighlight {
+                turn,
+                kind: "city_captured".into(),
+                actor: taker,
+                subject: loser,
+                city: Some(city),
+            });
+        }
     }
 
     /// Classify a tile from a unit owner's perspective for passive healing.
@@ -27728,8 +27908,13 @@ impl Game {
                 self.at_war.insert(pair(ally, pid));
                 self.cancel_routes_with(ally, pid);
                 self.cancel_trade_deals_with(ally, pid);
+                self.open_war_record(pid, ally);
             }
         }
+        // The declarer is the aggressor here and on every front its
+        // declaration opened, including the allies it pulled in.
+        self.open_war_record(pid, other);
+        self.sync_war_log();
         Ok(())
     }
 
@@ -29463,6 +29648,7 @@ impl Game {
                 city.occupied_from = None;
             }
         }
+        self.sync_war_log();
     }
 
     // -------------------------------------------------- loyalty & governors
@@ -30633,6 +30819,7 @@ impl Game {
             self.cancel_routes_with(*member, proposal.target);
             self.cancel_trade_deals_with(*member, proposal.target);
             self.at_war.insert(pair(*member, proposal.target));
+            self.open_war_record(*member, proposal.target);
         }
         let members_vec: Vec<usize> = members.iter().copied().collect();
         for (index, member) in members_vec.iter().enumerate() {
@@ -31817,6 +32004,10 @@ impl Game {
             self.process_agendas();
             self.process_emergencies();
             self.process_congress();
+            // Backstop for the routes into and out of a war that no single
+            // call site owns — chiefly a city-state changing Suzerain, which
+            // moves it between fronts without touching `at_war`.
+            self.sync_war_log();
             self.check_culture_victory();
             // A score victory is only a turn-limit tiebreak, never an
             // immediate win for crossing an arbitrary score threshold.
@@ -32149,6 +32340,7 @@ impl Game {
         if self.players[victim.owner].is_barbarian {
             bump(&mut self.players[pid], "barbs_killed");
         }
+        self.record_war_unit_loss(pid, victim.owner);
     }
 
     /// The era a wonder belongs to: the era of its unlocking node.
@@ -33646,6 +33838,9 @@ impl Game {
             let message = format!("{taker} {verb} {name} from {loser}");
             self.note(new_owner, "War", message.clone(), Some(pos));
             self.note(old, "War", message, Some(pos));
+            if conquest {
+                self.record_war_city_loss(new_owner, old, &name);
+            }
         }
         let captured_works = self
             .housed_great_works(old)
@@ -41972,6 +42167,91 @@ mod district_mechanics {
 
         game.units.get_mut(&garrison).unwrap().acted = false;
         assert!(game.unit_gold_upgrade_offer(0, garrison).is_some());
+    }
+
+    #[test]
+    fn the_war_ledger_records_a_declaration_its_cost_and_its_peace() {
+        let mut game = emergency_game_with_capitals(3, 5_505, 300);
+        game.turn = 40;
+        game.do_declare_war(0, 1).unwrap();
+
+        let key = pair(0, 1);
+        let war = game.wars.get(&key).expect("the declaration opened a war");
+        assert_eq!((war.aggressor, war.defender, war.started), (0, 1, 40));
+        assert_eq!(war.highlights[0].kind, "declared");
+        assert!(
+            crate::obs::observation(&game, 2)["wars"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry["aggressor"] == 0 && entry["defender"] == 1),
+            "a war is public knowledge to the civilizations watching it"
+        );
+
+        // A casualty on each side, then a city taken, is the whole vocabulary
+        // of the log: two tallies and one moment worth naming.
+        let capital = game.player_city_ids(1)[0];
+        let (loser, near) = {
+            let city = &game.cities[&capital];
+            (city.owner, city.pos)
+        };
+        let victim = game.spawn_unit("warrior", 1, near);
+        let victim_unit = game.units[&victim].clone();
+        game.record_kill(0, Some("warrior"), &victim_unit);
+        let mine = game.spawn_unit("warrior", 0, near);
+        let mine_unit = game.units[&mine].clone();
+        game.record_kill(1, Some("warrior"), &mine_unit);
+        game.turn = 47;
+        game.capture_city(capital, 0);
+
+        let war = game.wars.get(&key).unwrap();
+        assert_eq!(war.losses_for(1).units, 1);
+        assert_eq!(war.losses_for(0).units, 1);
+        assert_eq!(war.losses_for(loser).cities, 1);
+        let taken = war.highlights.last().unwrap();
+        assert_eq!((taken.kind.as_str(), taken.turn, taken.actor), ("city_captured", 47, 0));
+        assert!(taken.city.is_some());
+
+        game.turn = 52;
+        game.do_make_peace(0, 1).unwrap();
+        assert!(game.wars.is_empty(), "peace closes the front");
+        let concluded = game.concluded_wars.last().unwrap();
+        assert_eq!(concluded.ended, Some(52));
+        assert_eq!(concluded.highlights.last().unwrap().kind, "peace");
+        assert_eq!(concluded.losses_for(1).cities, 1);
+    }
+
+    #[test]
+    fn a_city_state_dragged_in_by_its_suzerain_is_its_own_front() {
+        let mut game = emergency_game_with_capitals(2, 5_506, 300);
+        game.players.push(Player::new(2, "Valletta", true));
+        game.players[2].is_minor = true;
+        game.turn = 15;
+        for _ in 0..3 {
+            game.players[1].envoys.push((2, 999));
+        }
+        assert_eq!(game.suzerain_of(2), Some(1));
+
+        game.do_declare_war(0, 1).unwrap();
+        assert!(game.is_at_war(0, 2), "a Suzerain brings its city-state");
+        let front = game
+            .wars
+            .get(&pair(0, 2))
+            .expect("the city-state front has its own record");
+        assert_eq!(front.started, 15);
+
+        // Losing suzerainty takes the city-state back out of the war, and the
+        // ledger follows the relation rather than remembering a stale front.
+        game.players[1].envoys.clear();
+        game.sync_war_log();
+        assert!(!game.wars.contains_key(&pair(0, 2)));
+        assert_eq!(
+            game.concluded_wars
+                .iter()
+                .filter(|war| pair(war.aggressor, war.defender) == pair(0, 2))
+                .count(),
+            1
+        );
     }
 
     #[test]

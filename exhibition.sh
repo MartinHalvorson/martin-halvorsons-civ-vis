@@ -42,6 +42,11 @@ stamp="$bin_run/built.commit"
 src="$(dirname "$repo")/civvis-exhibition-src"
 mkdir -p "$bin_run" "$repo/evolved"
 last_launch=0
+# The running compiler, when there is one. Only ever one at a time.
+build_pid=""
+build_head=""
+build_short=""
+build_started=0
 
 say() { printf '%s %s\n' "$(date '+%m-%d %H:%M:%S')" "$1" >>"$log"; }
 
@@ -117,9 +122,32 @@ while true; do
         promote_staged || true
         [ -x "$bin_run/civvis-gui" ] && start_gui
     fi
-    pgrep -f "civvis-evolve evolve" >/dev/null 2>&1 || {
-        [ -x "$bin_run/civvis-evolve" ] && start_evolve
-    }
+    # Evolve is a CPU hog and only useful in the background. Starting it while
+    # the server is still generating its map made the two compete for the
+    # machine and stretched the changeover, so it waits until there is a game
+    # for it to be in the background of.
+    if curl -fsS -m 3 "http://localhost:$PORT/state" >/dev/null 2>&1; then
+        pgrep -f "civvis-evolve evolve" >/dev/null 2>&1 || {
+            [ -x "$bin_run/civvis-evolve" ] && start_evolve
+        }
+    fi
+
+    # 2a. collect a finished build. This runs on the fast loop, not the git
+    #     cadence, so a build that lands mid-game is staged and ready the
+    #     moment the game ends rather than half a minute later.
+    if [ -n "$build_pid" ] && ! kill -0 "$build_pid" 2>/dev/null; then
+        if wait "$build_pid"; then
+            cp -f "$src/target/release/civvis" "$bin_run/civvis-next"
+            chmod +x "$bin_run/civvis-next"
+            printf '%s' "$build_head" >"$stamp"
+            say "staged $build_short in $(( $(date +%s) - build_started ))s"
+        else
+            # Record nothing on failure, so a later round retries rather than
+            # treating a broken commit as already built.
+            say "build FAILED for $build_short"
+        fi
+        build_pid=""
+    fi
 
     # 2. staged binary older than origin/main? build it. The test is the commit
     #    the last build came from, not "did a fetch move something this round":
@@ -132,22 +160,19 @@ while true; do
         git -C "$src" fetch -q origin main 2>/dev/null || true
         head="$(git -C "$src" rev-parse FETCH_HEAD 2>/dev/null || true)"
         built="$( [ -f "$stamp" ] && tr -d '[:space:]' <"$stamp" || true )"
-        if [ -n "$head" ] && [ "$head" != "$built" ]; then
-            short="${head:0:7}"
+        if [ -n "$head" ] && [ "$head" != "$built" ] && [ -z "$build_pid" ]; then
+            build_short="${head:0:7}"
+            build_head="$head"
             git -C "$src" reset -q --hard "$head" 2>/dev/null || true
-            say "building $short"
-            started=$(date +%s)
-            if CARGO_TARGET_DIR="$src/target" "$cargo_bin" build --release \
-                --manifest-path "$src/Cargo.toml" >/dev/null 2>&1; then
-                cp -f "$src/target/release/civvis" "$bin_run/civvis-next"
-                chmod +x "$bin_run/civvis-next"
-                printf '%s' "$head" >"$stamp"
-                say "staged $short in $(( $(date +%s) - started ))s"
-            else
-                # Record nothing on failure, so the next round retries rather
-                # than treating a broken commit as already built.
-                say "build FAILED for $short"
-            fi
+            say "building $build_short"
+            build_started=$(date +%s)
+            # Launched rather than run. A release build takes a minute or two,
+            # and running it inline stops the whole loop for that long - so a
+            # game that ends mid-build sits decided, or the server sits dead,
+            # until the compiler finishes.
+            ( CARGO_TARGET_DIR="$src/target" "$cargo_bin" build --release \
+                --manifest-path "$src/Cargo.toml" >"$bin_run/build.log" 2>&1 ) &
+            build_pid=$!
         fi
     fi
 
@@ -173,7 +198,9 @@ while true; do
             sleep 1
             promote_staged
             start_gui
-            start_evolve
+            # Evolve is deliberately not restarted here; the revive check
+            # brings it back once the server is listening, so the new game
+            # gets the machine to itself while it generates its map.
             say "swapped to latest build between games"
         else
             deal_next_game
