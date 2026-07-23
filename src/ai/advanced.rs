@@ -3854,6 +3854,11 @@ impl AdvancedAi {
             let bank = g.players[pid].gold;
             let counts = self.counts(g, pid);
             let mut candidates = Vec::new();
+            // Every candidate asks its city for the same yields, twice — once
+            // here and once inside `production_value`. The guard borrows the
+            // game immutably, so those answers cannot go stale before it is
+            // dropped below.
+            let memo = g.yield_memo();
             for action in g.legal_actions(pid) {
                 let (city, item, currency) = match &action {
                     Action::Buy {
@@ -3920,6 +3925,7 @@ impl AdvancedAi {
                     candidates.push((score, std::cmp::Reverse(format!("{action:?}")), action));
                 }
             }
+            drop(memo);
             let best = candidates.into_iter().max_by(|left, right| {
                 left.0
                     .total_cmp(&right.0)
@@ -4044,21 +4050,24 @@ impl AdvancedAi {
             let prayers = Item::Project {
                 project: "holy_site_prayers".to_string(),
             };
-            if let Some(city) = city_ids
-                .iter()
-                .filter(|cid| {
-                    g.cities[cid].queue.is_empty()
-                        && g.cities[cid].districts.contains_key("holy_site")
-                        && g.can_produce(pid, **cid, &prayers)
-                })
-                .max_by(|left, right| {
-                    g.city_yields(**left)
-                        .production
-                        .total_cmp(&g.city_yields(**right).production)
-                        .then_with(|| right.cmp(left))
-                })
-                .copied()
-            {
+            let prayer_city = {
+                let _memo = g.yield_memo();
+                city_ids
+                    .iter()
+                    .filter(|cid| {
+                        g.cities[cid].queue.is_empty()
+                            && g.cities[cid].districts.contains_key("holy_site")
+                            && g.can_produce(pid, **cid, &prayers)
+                    })
+                    .max_by(|left, right| {
+                        g.city_yields(**left)
+                            .production
+                            .total_cmp(&g.city_yields(**right).production)
+                            .then_with(|| right.cmp(left))
+                    })
+                    .copied()
+            };
+            if let Some(city) = prayer_city {
                 let _ = g.apply(
                     pid,
                     &Action::Produce {
@@ -4569,6 +4578,9 @@ impl AdvancedAi {
                     .filter(|city| !occupied.contains(city)),
             );
         }
+        // `max_by` re-evaluates both sides of every comparison, so each city's
+        // yields would otherwise be recomputed a logarithmic number of times.
+        let _memo = g.yield_memo();
         candidates.into_iter().max_by(|left, right| {
             let value = |city_id: u32| {
                 let city = &g.cities[&city_id];
@@ -4802,6 +4814,7 @@ impl AdvancedAi {
         let reserve = 180.0;
         let counts = self.counts(g, pid);
         let mut candidates = Vec::new();
+        let memo = g.yield_memo();
         for action in g.legal_actions(pid) {
             let Action::Buy {
                 city,
@@ -4837,6 +4850,7 @@ impl AdvancedAi {
             let score = strategic + combat * 12.0 - cost * 0.25;
             candidates.push((score, std::cmp::Reverse((*city, unit.clone())), action));
         }
+        drop(memo);
         candidates
             .into_iter()
             .max_by(|left, right| {
@@ -4875,26 +4889,28 @@ impl AdvancedAi {
                 )
             });
         if !already_queued {
-            let project_city = g
-                .player_city_ids(pid)
-                .into_iter()
-                .filter(|cid| {
-                    g.cities[cid].districts.contains_key("spaceport")
-                        && g.can_produce(pid, *cid, &project_item)
-                        && !matches!(
-                            g.cities[cid].queue.first(),
-                            Some(Item::Project { project: queued }) if queued == project
-                        )
-                        && (self.victory_target == Some(VictoryTarget::Science)
-                            || g.cities[cid].queue.is_empty())
-                })
-                .max_by(|a, b| {
-                    g.city_yields(*a)
-                        .production
-                        .partial_cmp(&g.city_yields(*b).production)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                        .then_with(|| b.cmp(a))
-                });
+            let project_city = {
+                let _memo = g.yield_memo();
+                g.player_city_ids(pid)
+                    .into_iter()
+                    .filter(|cid| {
+                        g.cities[cid].districts.contains_key("spaceport")
+                            && g.can_produce(pid, *cid, &project_item)
+                            && !matches!(
+                                g.cities[cid].queue.first(),
+                                Some(Item::Project { project: queued }) if queued == project
+                            )
+                            && (self.victory_target == Some(VictoryTarget::Science)
+                                || g.cities[cid].queue.is_empty())
+                    })
+                    .max_by(|a, b| {
+                        g.city_yields(*a)
+                            .production
+                            .partial_cmp(&g.city_yields(*b).production)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| b.cmp(a))
+                    })
+            };
             if let Some(city) = project_city {
                 let _ = g.apply(
                     pid,

@@ -7846,6 +7846,41 @@ pub struct VisionCache {
     built_wonders: Option<BTreeSet<String>>,
 }
 
+/// Memoized `city_yields` answers, live only while a [`YieldMemo`] guard is
+/// held.
+///
+/// The guard borrows the game immutably, so the borrow checker — not a
+/// hand-written stamp over the citizen plan, worked tiles, districts,
+/// buildings, techs, policies, religion and wonders — is what guarantees the
+/// cache cannot go stale. Nothing can reach a `&mut Game` while an entry is
+/// live, so every cached answer is still the answer.
+#[derive(Default)]
+pub struct YieldCache(std::cell::RefCell<Option<BTreeMap<u32, Yields>>>);
+
+impl Clone for YieldCache {
+    /// A clone starts with no memo: a search branch is about to be played
+    /// forward, and inheriting a parent's answers would be exactly the
+    /// staleness this design rules out.
+    fn clone(&self) -> Self {
+        YieldCache::default()
+    }
+}
+
+/// Scope over which `Game::city_yields` answers from a cache. Dropping the
+/// outermost guard clears it.
+pub struct YieldMemo<'a> {
+    game: &'a Game,
+    outermost: bool,
+}
+
+impl Drop for YieldMemo<'_> {
+    fn drop(&mut self) {
+        if self.outermost {
+            *self.game.city_yield_memo.0.borrow_mut() = None;
+        }
+    }
+}
+
 impl VisionCache {
     fn reset(&mut self, stamp: u64) {
         self.stamp = stamp;
@@ -9546,6 +9581,10 @@ pub struct Game {
     /// rebuilt on demand whenever the world moves under it.
     #[serde(skip)]
     routing: std::cell::RefCell<RoutingCache>,
+    /// Memoized city yields; see [`YieldCache`]. Never saved, cleared by the
+    /// guard that opened it, and empty in any clone.
+    #[serde(skip)]
+    city_yield_memo: YieldCache,
     /// The state of the world each seat's remembered map was last taken
     /// under, and the tiles it was taken over. Empty means "assume nothing".
     #[serde(skip)]
@@ -9815,6 +9854,7 @@ impl From<GameSer> for Game {
             rules: Rules::shared(),
             vision: std::cell::RefCell::new(VisionCache::default()),
             routing: std::cell::RefCell::new(RoutingCache::default()),
+            city_yield_memo: YieldCache::default(),
             remembered_under: Vec::new(),
             track_fog_memory: true,
             rng: s.rng,
@@ -10114,6 +10154,7 @@ impl Game {
             rules,
             vision: std::cell::RefCell::new(VisionCache::default()),
             routing: std::cell::RefCell::new(RoutingCache::default()),
+            city_yield_memo: YieldCache::default(),
             remembered_under: Vec::new(),
             track_fog_memory: true,
             rng,
@@ -23205,7 +23246,39 @@ impl Game {
             .unwrap_or_else(|| self.rules.tile_yields(&unworked))
     }
 
+    /// Open a memo scope for [`Game::city_yields`].
+    ///
+    /// A candidate loop that scores dozens of purchases or productions asks
+    /// the same handful of cities for their yields over and over; one call
+    /// costs about forty microseconds. While the returned guard is alive the
+    /// game cannot be mutated, so those answers can simply be reused.
+    pub fn yield_memo(&self) -> YieldMemo<'_> {
+        let mut slot = self.city_yield_memo.0.borrow_mut();
+        let outermost = slot.is_none();
+        if outermost {
+            *slot = Some(BTreeMap::new());
+        }
+        drop(slot);
+        YieldMemo {
+            game: self,
+            outermost,
+        }
+    }
+
     pub fn city_yields(&self, cid: u32) -> Yields {
+        if let Some(memo) = self.city_yield_memo.0.borrow().as_ref() {
+            if let Some(yields) = memo.get(&cid) {
+                return *yields;
+            }
+        }
+        let yields = self.city_yields_uncached(cid);
+        if let Some(memo) = self.city_yield_memo.0.borrow_mut().as_mut() {
+            memo.insert(cid, yields);
+        }
+        yields
+    }
+
+    fn city_yields_uncached(&self, cid: u32) -> Yields {
         let city = &self.cities[&cid];
         let mut ys = Yields::default();
         let mut center = self.workable_tile_yields(city.pos);
