@@ -1649,7 +1649,8 @@ impl AdvancedAi {
     }
 
     fn advanced_secret_society(&self, g: &mut Game, pid: usize, strategy: GrandStrategy) {
-        if g.players[pid].secret_society.is_some()
+        if !g.game_mode("secret_societies")
+            || g.players[pid].secret_society.is_some()
             || !g.players[pid].civics.contains("code_of_laws")
         {
             return;
@@ -15094,6 +15095,8 @@ mod tests {
         .enumerate()
         {
             let mut game = Game::new(2, 24, 16, 110 + index as u64, 80, 0);
+            // Secret Societies is a New Frontier mode a lobby has to switch on.
+            game.game_modes.insert("secret_societies".to_string());
             game.players[0].civics.insert("code_of_laws".to_string());
             let ai = AdvancedAi::targeting(target);
             ai.advanced_secret_society(&mut game, 0, target.strategy());
