@@ -57,6 +57,11 @@ pub enum StrategyKind {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Strategy {
     pub name: String,
+    /// Player handle shown on leaderboards, themed after the strategy it
+    /// plays (a science bot reads as one). Backfilled on load for leagues
+    /// saved before usernames existed.
+    #[serde(default)]
+    pub username: String,
     pub kind: StrategyKind,
     pub rating: f64,
     pub rd: f64,
@@ -78,6 +83,7 @@ impl Strategy {
     fn new(name: &str, kind: StrategyKind, born_round: u32) -> Strategy {
         Strategy {
             name: name.to_string(),
+            username: String::new(),
             kind,
             rating: BASE_RATING,
             rd: BASE_RD,
@@ -297,6 +303,108 @@ fn target_of(kind: &StrategyKind) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
+// Player handles.
+
+/// Handles per victory lane, so a username announces its strategy.
+fn username_pool(lane: Option<&str>) -> &'static [&'static str] {
+    match lane {
+        Some("science") => &[
+            "TechPriest", "LabRat", "BeakerBaron", "Eureka", "MoonshotMax", "QuantumLeap",
+        ],
+        Some("culture") => &[
+            "CultureVulture", "OperaGhost", "PoetLaureate", "Wonderstruck", "TourismTycoon",
+            "MuseTamer",
+        ],
+        Some("religious") => &[
+            "ProphetMotive", "HolyRoller", "ZealotZed", "ApostlePaula", "FaithHealer",
+            "TitheCollector",
+        ],
+        Some("diplomatic") => &[
+            "SilverTongue", "Peacemonger", "Suzerain", "GrandBroker", "EnvoyElite",
+            "CityStateFan",
+        ],
+        Some("domination") => &[
+            "Warmonger", "SiegeLord", "BloodAndIron", "LegionLarry", "RaiderRex",
+            "CapitalCollector",
+        ],
+        Some("score") => &[
+            "PointHoarder", "ScoreKeeper", "TallyHo", "GrindKing", "MaxiMin", "NumbersNed",
+        ],
+        _ => &[
+            "WildCard", "DarkHorse", "Maverick", "FreeSpirit", "Opportunist", "JackKnife",
+        ],
+    }
+}
+
+/// Founders keep fixed, recognizable handles across every league.
+fn founder_username(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "advanced" => "JackOfAllTrades",
+        "basic" => "TrainingWheels",
+        "advanced_v1" => "OldGuard",
+        "evolved-champ" => "Darwin",
+        "adv-science" => "TechPriest",
+        "adv-culture" => "CultureVulture",
+        "adv-religious" => "ProphetMotive",
+        "adv-diplomatic" => "SilverTongue",
+        "adv-domination" => "Warmonger",
+        "adv-score" => "PointHoarder",
+        _ => return None,
+    })
+}
+
+fn unique_username(base: &str, taken: &std::collections::BTreeSet<String>) -> String {
+    if !taken.contains(base) {
+        return base.to_string();
+    }
+    let mut n = 2u32;
+    loop {
+        let candidate = format!("{base}{n}");
+        if !taken.contains(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+fn lane_of(kind: &StrategyKind) -> Option<String> {
+    target_of(kind)
+}
+
+/// Give every handle-less strategy a themed username. Founders get their
+/// fixed handles; everyone else draws from their lane's pool, seeded by
+/// their own name so backfill is deterministic whatever the roster order.
+fn ensure_usernames(league: &mut League) {
+    let mut taken: std::collections::BTreeSet<String> = league
+        .strategies
+        .iter()
+        .map(|s| s.username.clone())
+        .filter(|u| !u.is_empty())
+        .collect();
+    for i in 0..league.strategies.len() {
+        if !league.strategies[i].username.is_empty() {
+            continue;
+        }
+        let base = match founder_username(&league.strategies[i].name) {
+            Some(handle) => handle.to_string(),
+            None => {
+                let seed = league.strategies[i]
+                    .name
+                    .bytes()
+                    .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+                        (h ^ b as u64).wrapping_mul(0x1_0000_0001_b3)
+                    });
+                let pool = username_pool(lane_of(&league.strategies[i].kind).as_deref());
+                pool[Rng::new(seed).below(pool.len())].to_string()
+            }
+        };
+        let handle = unique_username(&base, &taken);
+        taken.insert(handle.clone());
+        league.strategies[i].username = handle;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // League lifecycle.
 
 /// Founding roster: anchor reference agents, the six fixed victory lanes
@@ -336,17 +444,20 @@ fn seed_league(dir: &str) -> League {
             0,
         ));
     }
-    let league = League {
+    let mut league = League {
         round: 0,
         strategies,
     };
+    ensure_usernames(&mut league);
     save_league(dir, &league);
     league
 }
 
 pub fn load_league(dir: &str) -> Option<League> {
     let raw = fs::read_to_string(Path::new(dir).join("league.json")).ok()?;
-    serde_json::from_str(&raw).ok()
+    let mut league: League = serde_json::from_str(&raw).ok()?;
+    ensure_usernames(&mut league);
+    Some(league)
 }
 
 /// Write via a temp file + rename so a crash mid-write cannot lose the roster.
@@ -530,19 +641,24 @@ fn evolve_league(league: &mut League, cfg: &LeagueCfg, rng: &mut Rng) -> (Vec<St
                 None
             };
             let name = format!("g{}-{}", league.round, league.strategies.len());
-            let mut s = Strategy::new(
-                &name,
-                StrategyKind::Advanced {
-                    weights: child,
-                    target,
-                },
-                league.round,
-            );
+            let kind = StrategyKind::Advanced {
+                weights: child,
+                target,
+            };
+            let taken: std::collections::BTreeSet<String> = league
+                .strategies
+                .iter()
+                .map(|s| s.username.clone())
+                .collect();
+            let pool = username_pool(lane_of(&kind).as_deref());
+            let handle = unique_username(pool[rng.below(pool.len())], &taken);
+            let mut s = Strategy::new(&name, kind, league.round);
+            s.username = handle.clone();
             s.parents = vec![
                 league.strategies[pa].name.clone(),
                 league.strategies[pb].name.clone(),
             ];
-            born.push(name);
+            born.push(handle);
             league.strategies.push(s);
         }
     }
@@ -567,7 +683,7 @@ fn evolve_league(league: &mut League, cfg: &LeagueCfg, rng: &mut Rng) -> (Vec<St
         match candidate {
             Some(i) => {
                 league.strategies[i].retired = true;
-                retired.push(league.strategies[i].name.clone());
+                retired.push(league.strategies[i].username.clone());
             }
             None => break, // nobody is confidently weak yet; keep the crowd
         }
@@ -595,8 +711,8 @@ pub fn standings(league: &League) -> String {
             .cmp(&b.retired)
             .then(b.rating.partial_cmp(&a.rating).unwrap())
     });
-    let mut out = format!("League standings after round {}:\n", league.round);
-    for s in order {
+    let mut out = format!("League players after round {}:\n", league.round);
+    for (rank, s) in order.iter().enumerate() {
         let status = if s.retired {
             "retired"
         } else if s.anchor {
@@ -605,16 +721,18 @@ pub fn standings(league: &League) -> String {
             "active"
         };
         out.push_str(&format!(
-            "  {:<16} {:7.1} ±{:5.1}  games={:<5} wins={:<4} winrate={:3.0}%  {:<14} born r{:<3} {}\n",
-            s.name,
+            "  {:>2}. {:<18} {:6.0} elo ±{:<4.0} {:<14} games={:<5} wins={:<4} winrate={:3.0}%  born r{:<3} {:<7} [{}]\n",
+            rank + 1,
+            s.username,
             s.rating,
             s.rd,
+            s.label(),
             s.games,
             s.wins,
             100.0 * s.wins as f64 / s.games.max(1) as f64,
-            s.label(),
             s.born_round,
             status,
+            s.name,
         ));
     }
     out
@@ -690,7 +808,7 @@ pub fn run_league(cfg: &LeagueCfg) -> League {
                 "round {:>3}: {} games; leader {} {:.1} ±{:.1}{}{}",
                 round,
                 outcomes.len(),
-                league.strategies[leader].name,
+                league.strategies[leader].username,
                 league.strategies[leader].rating,
                 league.strategies[leader].rd,
                 if news.0.is_empty() {
@@ -840,22 +958,93 @@ mod tests {
             max_pop: 7,
             ..LeagueCfg::default()
         };
+        ensure_usernames(&mut league);
+        let handle = |league: &League, name: &str| {
+            league
+                .strategies
+                .iter()
+                .find(|s| s.name == name)
+                .unwrap()
+                .username
+                .clone()
+        };
+        let newborn_handle = handle(&league, "newborn");
+        let anchor_handle = handle(&league, "s0");
         let mut rng = Rng::new(3);
         let (born, retired) = evolve_league(&mut league, &cfg, &mut rng);
         assert!(!born.is_empty());
-        assert!(!retired.contains(&"newborn".to_string()));
-        assert!(!retired.contains(&"s0".to_string()), "anchor retired");
-        // offspring exist, are active, and carry lineage
+        assert!(!retired.contains(&newborn_handle));
+        assert!(!retired.contains(&anchor_handle), "anchor retired");
+        // offspring exist, are active, carry lineage, and have a handle
         let child = league
             .strategies
             .iter()
-            .find(|s| born.contains(&s.name))
+            .find(|s| born.contains(&s.username))
             .unwrap();
+        assert!(!child.username.is_empty());
         assert_eq!(child.parents.len(), 2);
         assert!(!child.retired);
         assert_eq!(child.rd, BASE_RD);
         // roster trimmed back to cap (retirees had games and low rd)
         assert!(league.active().len() <= cfg.max_pop.max(7));
+    }
+
+    /// Usernames are themed to the lane, unique, stable for founders, and
+    /// deterministically backfilled onto rosters saved before the field
+    /// existed (the same league always regrows the same handles).
+    #[test]
+    fn usernames_are_themed_unique_and_deterministic() {
+        let mut league = League {
+            round: 0,
+            strategies: vec![
+                Strategy::new("advanced", StrategyKind::Builtin { ai: "advanced".into() }, 0),
+                Strategy::new(
+                    "adv-science",
+                    StrategyKind::Advanced {
+                        weights: Weights::default(),
+                        target: Some("science".into()),
+                    },
+                    0,
+                ),
+                Strategy::new(
+                    "g4-9",
+                    StrategyKind::Advanced {
+                        weights: Weights::default(),
+                        target: Some("science".into()),
+                    },
+                    4,
+                ),
+                Strategy::new(
+                    "g4-10",
+                    StrategyKind::Advanced {
+                        weights: Weights::default(),
+                        target: Some("domination".into()),
+                    },
+                    4,
+                ),
+            ],
+        };
+        ensure_usernames(&mut league);
+        assert_eq!(league.strategies[0].username, "JackOfAllTrades");
+        assert_eq!(league.strategies[1].username, "TechPriest");
+        assert!(username_pool(Some("science"))
+            .iter()
+            .any(|p| league.strategies[2].username.starts_with(p)));
+        assert!(username_pool(Some("domination"))
+            .iter()
+            .any(|p| league.strategies[3].username.starts_with(p)));
+        let handles: std::collections::BTreeSet<&String> =
+            league.strategies.iter().map(|s| &s.username).collect();
+        assert_eq!(handles.len(), league.strategies.len(), "handle collision");
+        // backfill is a pure function of names: rerunning changes nothing
+        let before: Vec<String> = league.strategies.iter().map(|s| s.username.clone()).collect();
+        ensure_usernames(&mut league);
+        let after: Vec<String> = league.strategies.iter().map(|s| s.username.clone()).collect();
+        assert_eq!(before, after);
+        // the leaderboard lists every player's handle with elo next to it
+        let table = standings(&league);
+        assert!(table.contains("TechPriest"));
+        assert!(table.contains("1500 elo"));
     }
 
     /// Same seed, fresh dirs -> byte-identical league state, so `--jobs`

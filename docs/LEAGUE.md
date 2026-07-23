@@ -23,6 +23,19 @@ fixed victory lane (`science`, `culture`, `religious`, `diplomatic`,
 `advanced` and `basic`, `advanced_v1`, one strategy per victory lane, and
 the GA champion from `evolved/best.json` when present.
 
+## Players
+
+Every strategy plays under a **username themed to what it plays**, listed
+with its Elo on the leaderboard: founders keep fixed handles
+(`JackOfAllTrades` = advanced, `TrainingWheels` = basic, `TechPriest` =
+science lane, `Warmonger` = domination, ...) and bred offspring draw a
+fresh handle from their victory lane's pool (`LabRat`, `SiegeLord`,
+`PointHoarder2`, ...), so a name tells you the strategy at a glance.
+Handles are unique per league and deterministic; rosters saved before
+usernames existed are backfilled on load. `civvis league --standings`
+prints the ranked player table — username, current Elo ± RD, strategy,
+record, birth round, status.
+
 ## Rating: Glicko-2, rounds as rating periods
 
 Each round schedules `--games` tables of `--players` by dealing shuffled
