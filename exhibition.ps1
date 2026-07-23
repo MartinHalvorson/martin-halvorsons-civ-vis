@@ -37,10 +37,18 @@ function Log($msg) {
     Add-Content -Encoding utf8 $log "$(Get-Date -Format 'MM-dd HH:mm:ss') $msg"
 }
 
+# The server prefers web/index.html and web/assets/* from its working
+# directory and falls back to the copies compiled into the binary. Running it
+# from the shared checkout therefore served whatever index.html happened to be
+# sitting there - an older commit, plus whatever a parallel session had
+# half-edited - while the engine underneath came from origin/main. The
+# exhibition looked different on every machine for that reason alone. Running
+# it from bin-run, which has no web/ directory, pins the GUI to the exact
+# commit the binary was built from, so the same build looks the same anywhere.
 function Start-Gui {
     Start-Process -FilePath "$binRun\civvis-gui.exe" `
         -ArgumentList "play","--spectate","--no-open","--port","$Port" `
-        -WorkingDirectory $repo -WindowStyle Hidden `
+        -WorkingDirectory $binRun -WindowStyle Hidden `
         -RedirectStandardOutput "$repo\civvis-play.log" `
         -RedirectStandardError "$repo\civvis-play.err.log"
     Log "gui launched on :$Port"
