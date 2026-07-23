@@ -979,8 +979,11 @@ ENGINE_PARAMETERS = {
     "CULTURE_COST_FIRST_PLOT": 10,  # border growth: 10 + 6 * plots^1.3
     "CULTURE_COST_LATER_PLOT_MULTIPLIER": 6,
     "CULTURE_COST_LATER_PLOT_EXPONENT": 1.3,
+    "GOVERNMENT_BASE_ANARCHY_TURNS": 2,  # game.rs do_government / process_anarchy
     "BARBARIAN_CAMP_MINIMUM_DISTANCE_CITY": 4,  # game.rs spawn_camp
     "BARBARIAN_CAMP_MINIMUM_DISTANCE_ANOTHER_CAMP": 7,
+    "BARBARIAN_TECH_PERCENT": 50,  # game.rs barbarian_phase unit pool
+    "BARBARIAN_NUM_RANDOM_UNIT_CHOICES": 3,
 }
 
 

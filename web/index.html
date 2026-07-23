@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Martin Halvorson's Civilization VIS</title>
+<title>CIVVIS · Civilization VIS</title>
 <style>
   :root {
     --ink: #07110f;
@@ -65,17 +65,17 @@
   }
   .brand { display: flex; align-items: center; gap: 10px; }
   .brand-mark {
-    width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%;
-    color: #172018; font: 700 18px/1 Georgia, serif;
+    flex: 0 0 auto; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%;
+    color: #172018; font: 700 14px/1 Georgia, serif; letter-spacing: .01em;
     background: radial-gradient(circle at 35% 30%, #f8dfa1, #c49c4b 62%, #74541e);
     border: 1px solid #f1d48e; box-shadow: 0 0 0 3px #1a2924, 0 7px 18px #0008;
   }
   .brand-copy { min-width: 0; }
   h1 {
-    color: var(--gold-bright); font: 600 16px/1.05 Georgia, "Times New Roman", serif;
-    letter-spacing: .12em; text-transform: uppercase;
+    color: var(--gold-bright); font: 600 19px/1.05 Georgia, "Times New Roman", serif;
+    letter-spacing: .2em; text-transform: uppercase;
   }
-  .tagline { color: var(--muted); font-size: 9px; letter-spacing: .16em; text-transform: uppercase; margin-top: 4px; }
+  .tagline { color: var(--muted); font-size: 9px; letter-spacing: .13em; text-transform: uppercase; margin-top: 5px; }
   #gameidentity { min-height: 34px; margin-top: 11px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
   .identity-copy { min-width: 0; }
   #gameidentity .civ-name { font: 600 15px/1.2 Georgia, serif; color: var(--text); }
@@ -255,9 +255,39 @@
   }
   .victory-meter { overflow: hidden; background: #020706b3; box-shadow: inset 0 1px 2px #000b; }
   .victory-meter b { display: block; height: 100%; border-radius: inherit; background: currentColor; }
-  .victory-track { padding: 6px 4px 5px; color: var(--track); border-left: 1px solid #ffffff0b; }
+  /* Two of the races are really two races at once — the technology tree and
+     the launches that follow it, the culture a civilization keeps and the
+     tourism it exports — so those rows split their meter down the middle. */
+  .victory-meter.split {
+    display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 4px;
+    height: 4px; overflow: visible; background: none; box-shadow: none;
+  }
+  .victory-half {
+    height: 3px; overflow: hidden; border-radius: 3px;
+    background: #020706b3; box-shadow: inset 0 1px 2px #000b;
+  }
+  .victory-dots { display: flex; align-items: center; gap: 3px; }
+  .victory-dots i {
+    width: 4px; height: 4px; border-radius: 50%; background: #02070699;
+    box-shadow: inset 0 0 0 1px #ffffff2b;
+  }
+  .victory-dots i.on { background: currentColor; box-shadow: 0 0 4px currentColor; }
+  .victory-track {
+    container-type: inline-size; padding: 6px 4px 5px; color: var(--track);
+    border-left: 1px solid #ffffff0b;
+  }
   .victory-heading { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; color: var(--track); }
   .victory-heading b { overflow: hidden; color: #dde5e1; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+  /* Score is decided at the turn limit, so the limit belongs in its heading. */
+  .victory-heading em {
+    margin-left: auto; color: #9aaba5; font-size: 9px; font-style: normal;
+    font-variant-numeric: tabular-nums; letter-spacing: 0; white-space: nowrap;
+  }
+  /* In a narrow window the tracks are barely wider than their own headings,
+     and the word and the count together left "S. 31/500". The crown and the
+     last place in the ribbon name this track well enough on their own, so
+     below that width the count keeps the room and the word steps out. */
+  @container (max-width: 96px) { .victory-heading.with-cap b { display: none; } }
   .victory-list { display: flex; flex-direction: column; gap: 3px; }
   .victory-entry { min-width: 0; }
   /* The rows are already printed in rank order, so the leading "#1/#2/#3"
@@ -689,10 +719,10 @@
 <div id="side">
   <div class="side-head">
     <div class="brand">
-      <div class="brand-mark">VI</div>
+      <div class="brand-mark">VIS</div>
       <div class="brand-copy">
-        <h1>Civilization VIS</h1>
-        <div class="tagline">Strategy simulator</div>
+        <h1>CIVVIS</h1>
+        <div class="tagline">AI strategy simulator · Civ VI</div>
       </div>
     </div>
     <div id="gameidentity"></div>
@@ -3182,7 +3212,20 @@ function draw() {
   // Collected per empire and stroked as one network with round joins, the way
   // the river layer is: a frontier then reads as a single flowing outline
   // rather than six separately-capped hex edges with notches at every corner.
+  // Which frontiers are fronts. The war log names who is fighting whom, but the
+  // map drew the border between two empires at war exactly like the border
+  // between two at peace — so the SHAPE of a war, the thing you actually want
+  // to look at, existed only as text in a side panel.
+  const atWar = new Set();
+  for (const w of state.wars || []) {
+    if (w.ended !== null && w.ended !== undefined) continue;
+    atWar.add(Math.min(w.aggressor, w.defender) + ":" + Math.max(w.aggressor, w.defender));
+  }
+  const contested = (a, b) =>
+    a !== b && a !== null && a !== undefined && b !== null && b !== undefined &&
+    atWar.has(Math.min(a, b) + ":" + Math.max(a, b));
   const borderSegs = new Map();
+  const frontSegs = [];
   for (const t of tiles) {
     if (t.owner === null || t.owner === undefined) continue;
     const [x, yy] = hexXY(t.pos[0], t.pos[1]);
@@ -3196,6 +3239,11 @@ function draw() {
       let segs = borderSegs.get(t.owner);
       if (!segs) { segs = []; borderSegs.set(t.owner, segs); }
       segs.push([ax, ay, bx, by]);
+      // one side is enough: the opposing tile pushes the same edge itself, and
+      // drawing it twice only doubles the alpha along the same line
+      if (n && t.owner < n.owner && contested(t.owner, n.owner)) {
+        frontSegs.push([ax, ay, bx, by]);
+      }
     }
   }
   cx.lineCap = "round"; cx.lineJoin = "round";
@@ -3207,6 +3255,21 @@ function draw() {
       for (const [ax, ay, bx, by] of segs) { cx.moveTo(ax, ay); cx.lineTo(bx, by); }
       cx.stroke();
     }
+  }
+  // A front burns on top of the ordinary ribbon: a hot wash under a broken
+  // line, so a contested border reads as contested from across the map without
+  // hiding whose land is whose underneath it.
+  if (frontSegs.length) {
+    const strokeFront = (w, col, a, dash) => {
+      cx.setLineDash(dash);
+      cx.strokeStyle = col; cx.lineWidth = w; cx.globalAlpha = a;
+      cx.beginPath();
+      for (const [ax, ay, bx, by] of frontSegs) { cx.moveTo(ax, ay); cx.lineTo(bx, by); }
+      cx.stroke();
+    };
+    strokeFront(8.5, "#e0402f", 0.24, []);
+    strokeFront(2.6, "#ff8452", 0.92, [5, 4]);
+    cx.setLineDash([]);
   }
   cx.globalAlpha = 1; cx.lineCap = "butt"; cx.lineJoin = "miter";
   // --- roads: the arteries of an empire, and until now the one piece of tile
@@ -3767,6 +3830,44 @@ function draw() {
       hexPath(x, y); cx.strokeStyle = "#f0c674"; cx.lineWidth = 3; cx.stroke();
     }
   }
+  // --- espionage in progress. A spy is the only piece on the board with no
+  // presence on it at all: it sits inside a city, runs a mission with a known
+  // target and a known end turn, and the map showed nothing whatsoever. A
+  // keyhole on the city it is working, in its owner's colour, with the turns
+  // left before the job lands.
+  // The server sends only spies the observer owns or has captured (a spectator
+  // sees every side), so drawing them reveals nothing that was hidden.
+  for (const sp of state.spies || []) {
+    const m = sp && sp.mission;
+    if (!m || !m.target) continue;
+    const mt = TMAP.get(key(m.target));
+    const [mx, myy] = hexXY(m.target[0], m.target[1]);
+    const my = myy - (mt ? elev(mt) : 0);
+    const k = UI_K();
+    // clear of the settlement, whose footprint widens with population
+    const bx = mx - 21 * k, by = my - 2;
+    const left = Math.max(0, (m.ends || 0) - state.turn);
+    cx.save();
+    cx.fillStyle = "#12161de8";
+    cx.beginPath(); cx.arc(bx, by, 7 * k, 0, 7); cx.fill();
+    cx.strokeStyle = sp.captured_by !== null && sp.captured_by !== undefined
+      ? "#8a8f98" : pcol(sp.owner);
+    cx.lineWidth = 1.6; cx.stroke();
+    cx.fillStyle = "#eae4d4";                          // keyhole
+    cx.beginPath(); cx.arc(bx, by - 1.5 * k, 2.1 * k, 0, 7); cx.fill();
+    cx.beginPath();
+    cx.moveTo(bx - 1.1 * k, by + 0.3 * k); cx.lineTo(bx + 1.1 * k, by + 0.3 * k);
+    cx.lineTo(bx + 2 * k, by + 3.8 * k); cx.lineTo(bx - 2 * k, by + 3.8 * k);
+    cx.closePath(); cx.fill();
+    if (left > 0) {
+      cx.font = "bold " + (8 * k).toFixed(1) + "px sans-serif";
+      cx.textAlign = "center"; cx.textBaseline = "middle";
+      cx.strokeStyle = "#10151d"; cx.lineWidth = 2.6;
+      cx.strokeText(left + "t", bx, by + 11 * k);
+      cx.fillStyle = "#e6dfcd"; cx.fillText(left + "t", bx, by + 11 * k);
+    }
+    cx.restore();
+  }
   // --- units
   const sorted = [...state.units].sort((a, b) =>
     (hexXY(a.pos[0], a.pos[1])[1] - hexXY(b.pos[0], b.pos[1])[1]) ||
@@ -4018,11 +4119,46 @@ function victoryMetric(player, victory) {
   return player.victories?.[victory] || { progress: 0 };
 }
 
+// The turn limit decides the score victory, and a game can be set to run
+// without one.
+function turnCapLabel() {
+  const cap = +state.max_turns;
+  return cap > 0 && cap < 100000 ? String(cap) : "∞";
+}
+
+// The meter under each civilization. Most races are one number against one
+// target; science and culture are two, and are drawn as two half-width
+// meters — the technology tree beside the four space-race launches, the
+// culture a civilization keeps at home beside the tourism it sends abroad.
+function victoryMeter(victory, metric, progress) {
+  const bar = pct => `<b style="width:${Math.max(0, Math.min(100, pct))}%"></b>`;
+  if (victory === "science") {
+    const total = Math.max(1, +metric.tech_total || 1);
+    const launches = +metric.project_target || 4;
+    const done = +metric.projects || 0;
+    const dots = Array.from({ length: launches },
+      (_, i) => `<i${i < done ? ' class="on"' : ""}></i>`).join("");
+    return `<div class="victory-meter split"><span class="victory-half">` +
+      `${bar(100 * (+metric.techs || 0) / total)}</span>` +
+      `<span class="victory-dots">${dots}</span></div>`;
+  }
+  if (victory === "culture") {
+    const leader = Math.max(1, +metric.leading_domestic || 0);
+    return `<div class="victory-meter split">` +
+      `<span class="victory-half">${bar(100 * (+metric.domestic || 0) / leader)}</span>` +
+      `<span class="victory-half">${bar(progress)}</span></div>`;
+  }
+  return `<div class="victory-meter">${bar(progress)}</div>`;
+}
+
 function victoryValue(victory, metric) {
   if (victory === "science") {
+    // The launches are the dots beside this number, so the number itself is
+    // the tree they all wait on — until the last ship is away and the only
+    // thing left moving is the distance to the exoplanet.
     return metric.projects >= metric.project_target
       ? `${compactStat(metric.distance)}/${compactStat(metric.distance_target)}ly`
-      : `${metric.projects || 0}/${metric.project_target || 4}`;
+      : `${metric.techs || 0}/${metric.tech_total || 0}`;
   }
   // Tourist counts run into four digits, and at the topbar's width that value
   // is wide enough to squeeze the civilization name beside it down to an
@@ -4039,14 +4175,22 @@ function victoryValue(victory, metric) {
 
 function victoryDescription(victory, metric) {
   if (victory === "science") {
+    const tree = `${metric.techs || 0} of ${metric.tech_total || 0} technologies researched`;
+    const launches = `${metric.projects || 0} of ${metric.project_target || 4} space-race missions launched`;
     return metric.projects >= metric.project_target
-      ? `${compactStat(metric.distance)} of ${compactStat(metric.distance_target)} light-years travelled`
-      : `${metric.projects || 0} of ${metric.project_target || 4} space-race missions completed`;
+      ? `${tree} · ${compactStat(metric.distance)} of ${compactStat(metric.distance_target)} light-years travelled`
+      : `${tree} · ${launches}`;
   }
-  if (victory === "culture") return `${metric.tourists || 0} of ${metric.target || 1} visiting tourists needed`;
+  if (victory === "culture") {
+    return `${metric.domestic || 0} domestic tourists of their own culture · ` +
+      `${metric.tourists || 0} of ${metric.target || 1} visiting tourists needed`;
+  }
   if (victory === "religious") return `${metric.converted || 0} of ${metric.target || 0} civilizations converted`;
   if (victory === "diplomatic") return `${metric.points || 0} of ${metric.target || 20} victory points`;
-  if (victory === "domination") return `${metric.capitals || 0} of ${metric.target || 0} foreign capitals controlled`;
+  if (victory === "domination") {
+    return `${metric.capitals || 0} of ${metric.target || 0} original capitals controlled, ` +
+      `their own counted`;
+  }
   return `${compactStat(metric.points || 0)} points · meter is relative to the score leader`;
 }
 
@@ -4064,18 +4208,33 @@ function drawTopbar() {
     const ranked = [...contenders]
       .sort((a, b) => {
         const am = victoryMetric(a, track.id), bm = victoryMetric(b, track.id);
-        return (+bm.progress || 0) - (+am.progress || 0) || b.score - a.score || a.id - b.id;
+        // Science progress only moves once the launches start, so for the
+        // whole first half of a game the three names shown were the score
+        // leaders. The tree the meter draws breaks that tie instead; no
+        // other race carries a technology count.
+        return (+bm.progress || 0) - (+am.progress || 0)
+          || (+bm.techs || 0) - (+am.techs || 0)
+          || b.score - a.score || a.id - b.id;
       })
       .slice(0, 3);
+    // Score is settled when the turns run out, so its heading says how many
+    // of them are left to play.
+    const cap = track.id === "score"
+      ? `<em>${state.turn}/${turnCapLabel()}</em>`
+      : "";
+    const headTitle = cap
+      ? ` title="Score · turn ${state.turn} of ${turnCapLabel()}, when the score decides it"`
+      : "";
     return `<section class="victory-track" style="--track:${track.color}" aria-label="${track.label} victory leaders">` +
-      `<div class="victory-heading"><span>${track.icon}</span><b>${track.label}</b></div>` +
+      `<div class="victory-heading${cap ? " with-cap" : ""}"${headTitle}>` +
+      `<span>${track.icon}</span><b>${track.label}</b>${cap}</div>` +
       `<div class="victory-list">` + ranked.map((player, index) => {
         const metric = victoryMetric(player, track.id);
         const progress = Math.max(0, Math.min(100, +metric.progress || 0));
         return `<div class="victory-entry" style="--civ:${pcol(player.id)}" title="#${index + 1} ${player.civ}: ${victoryDescription(track.id, metric)}">` +
           `<div class="victory-line"><span class="victory-civ-dot"></span>` +
           `<span class="victory-civ">${player.civ}</span><span class="victory-value">${victoryValue(track.id, metric)}</span></div>` +
-          `<div class="victory-meter"><b style="width:${progress}%"></b></div></div>`;
+          victoryMeter(track.id, metric, progress) + `</div>`;
       }).join("") + `</div></section>`;
   }).join("");
   document.getElementById("topbar").innerHTML =
@@ -4115,7 +4274,9 @@ function spectatorIdentity(player) {
   }
   return {
     role: player.leader || "Leader unknown",
-    details: player.government ? [titleCase(player.government)] : ["Unformed government"],
+    details: [player.anarchy_turns
+      ? `Anarchy (${player.anarchy_turns} turn${player.anarchy_turns === 1 ? "" : "s"})`
+      : player.government ? titleCase(player.government) : "Unformed government"],
   };
 }
 
@@ -4602,10 +4763,19 @@ function drawSide(force = true) {
   const fullMapSpectator = SPEC && (state.view_player === null || state.view_player === undefined);
   if (!fullMapSpectator && (SPEC || govs.length || me.government || dedications.length || societies.length || congressVotes.length || levies.length || dealReplies.length)) {
     gs.style.display = "block";
+    // Anarchy is a government of sorts: no slots, no yields, and no second
+    // change until the waiting government takes power.
+    const anarchy = me.anarchy_turns || 0;
+    const current = anarchy
+      ? `Anarchy — ${titleCase(me.pending_government || "")} in ${anarchy} turn${anarchy === 1 ? "" : "s"}`
+      : titleCase(me.government || "Unformed");
+    const tried = new Set(me.past_governments || []);
     let politics =
-      `<div class="row"><span class="muted">Current</span><b>${titleCase(me.government || "Unformed")}</b></div>` +
-      (SPEC ? "" : govs.map(a => `<button onclick='send({type:"government",government:"${a.government}"})'>` +
-        titleCase(a.government) + "</button>").join(""));
+      `<div class="row"><span class="muted">Current</span><b>${current}</b></div>` +
+      (SPEC ? "" : govs.map(a => `<button title='${tried.has(a.government)
+        ? "Already tried: this change causes 2 turns of Anarchy" : "A new form of government: free to adopt"}' ` +
+        `onclick='send({type:"government",government:"${a.government}"})'>` +
+        titleCase(a.government) + (tried.has(a.government) ? " ⚠ Anarchy" : "") + "</button>").join(""));
     if (!SPEC && dedications.length) {
       politics += `<div class="row"><span class="muted">Age dedication</span><b>${titleCase(me.age)}</b></div>` +
         dedications.map(a => `<button onclick='send(${JSON.stringify(a)})'>✦ ${titleCase(a.dedication)}</button>`).join("");

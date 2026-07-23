@@ -217,6 +217,110 @@ mod tests {
         assert_eq!(restored.events_for(0).len(), mine.len());
     }
 
+    /// Civ 6's limit on changing governments: a form never run before is
+    /// adopted freely, a return to one already run costs two turns of
+    /// Anarchy — no government, no policy slots, and no Science, Culture,
+    /// Gold or Faith until the new one takes power.
+    #[test]
+    fn returning_to_a_former_government_costs_anarchy() {
+        let mut g = Game::new_with(GameOptions {
+            barbarians: false,
+            ..GameOptions::new(2, 24, 16, 9, 60, 0)
+        });
+        let settler = g
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|uid| g.units[uid].kind == "settler")
+            .unwrap();
+        g.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        g.players[0].civics.insert("code_of_laws".to_string());
+        g.players[0]
+            .civics
+            .insert("political_philosophy".to_string());
+
+        // First adoptions are free: the government takes power at once.
+        for government in ["chiefdom", "autocracy"] {
+            g.apply(
+                0,
+                &Action::Government {
+                    government: government.to_string(),
+                },
+            )
+            .unwrap();
+            assert_eq!(g.players[0].government.as_deref(), Some(government));
+            assert!(!g.in_anarchy(0));
+        }
+        g.apply(
+            0,
+            &Action::SlotPolicy {
+                policy: "urban_planning".to_string(),
+            },
+        )
+        .unwrap();
+        assert!(g.has_policy(0, "urban_planning"));
+
+        // Going back to Chiefdom is a return, so the empire falls apart for
+        // two turns first.
+        g.apply(
+            0,
+            &Action::Government {
+                government: "chiefdom".to_string(),
+            },
+        )
+        .unwrap();
+        assert!(g.in_anarchy(0));
+        assert_eq!(g.players[0].anarchy_turns, crate::game::GOVERNMENT_BASE_ANARCHY_TURNS);
+        assert!(g.players[0].government.is_none());
+        let slots = g.gov_slots(0);
+        assert_eq!(
+            slots.military + slots.economic + slots.diplomatic + slots.wildcard,
+            0
+        );
+        // The card is still in hand but out of its slot, so it does nothing.
+        assert!(!g.has_policy(0, "urban_planning"));
+        assert_eq!(g.policy_effect(0, "production_flat"), 0.0);
+        // No second change until the Anarchy is served.
+        assert!(g
+            .apply(
+                0,
+                &Action::Government {
+                    government: "autocracy".to_string(),
+                },
+            )
+            .is_err());
+        assert!(!g.legal_actions(0).iter().any(|action| matches!(
+            action,
+            Action::Government { .. }
+        )));
+
+        // A turn of Anarchy earns the empire nothing.
+        let (gold, science) = (g.players[0].gold, g.players[0].research_progress);
+        let culture = g.players[0].civic_progress;
+        let faith = g.players[0].faith;
+        for _ in 0..(g.players.len() + 1) {
+            let current = g.current;
+            let _ = g.apply(current, &Action::EndTurn);
+        }
+        assert!(g.in_anarchy(0));
+        assert!(g.players[0].gold <= gold, "gold accrued during Anarchy");
+        assert_eq!(g.players[0].research_progress, science);
+        assert_eq!(g.players[0].civic_progress, culture);
+        assert_eq!(g.players[0].faith, faith);
+
+        // The waiting government takes power on the second turn.
+        for _ in 0..(g.players.len() + 1) {
+            let current = g.current;
+            let _ = g.apply(current, &Action::EndTurn);
+        }
+        assert!(!g.in_anarchy(0));
+        assert_eq!(g.players[0].government.as_deref(), Some("chiefdom"));
+        assert!(g.has_policy(0, "urban_planning"));
+        assert!(g
+            .events_for(0)
+            .iter()
+            .any(|event| event.text.contains("Anarchy")));
+    }
+
     /// Every line of the log opens with the civilization it belongs to. A
     /// spectator reads the seats' streams interleaved and an agent reads its
     /// own tail out of context, so "Founded Antium" is an event without an
@@ -1067,7 +1171,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(g.players[0].policies.len(), 3);
-        // downgrading drops cards until the layout fits again
+        // Going back to a government already lived under costs Anarchy, and
+        // the layout is trimmed when the old government retakes power.
         g.apply(
             0,
             &Action::Government {
@@ -1075,6 +1180,14 @@ mod tests {
             },
         )
         .unwrap();
+        assert!(g.in_anarchy(0));
+        assert!(g.players[0].government.is_none());
+        for _ in 0..(2 * (g.players.len() + 1)) {
+            let current = g.current;
+            let _ = g.apply(current, &Action::EndTurn);
+        }
+        assert!(!g.in_anarchy(0));
+        assert_eq!(g.players[0].government.as_deref(), Some("chiefdom"));
         assert!(g.players[0].policies.len() <= 2);
         // feudalism obsoletes agoge via feudal_contract
         g.players[0].civics.insert("craftsmanship".to_string());

@@ -85,7 +85,10 @@
     ],
     "feature": [
       "volcanic_soil"
-    ]
+    ],
+    "effects": {
+      "adjacent_appeal": -1
+    }
   },
   "quarry": {
     "tech": "mining",
@@ -97,7 +100,10 @@
       "marble",
       "stone"
     ],
-    "resource_only": true
+    "resource_only": true,
+    "effects": {
+      "adjacent_appeal": -1
+    }
   },
   "pasture": {
     "tech": "animal_husbandry",
@@ -174,9 +180,11 @@
       "production": 2
     },
     "feature": [
-      "forest",
-      "jungle"
-    ]
+      "forest"
+    ],
+    "feature_after_civic": {
+      "jungle": "mercantilism"
+    }
   },
   "oil_well": {
     "tech": "refining",
@@ -193,7 +201,10 @@
       "plains",
       "snow",
       "tundra"
-    ]
+    ],
+    "effects": {
+      "adjacent_appeal": -1
+    }
   },
   "offshore_oil_rig": {
     "tech": "plastics",
@@ -208,7 +219,10 @@
     "terrain": [
       "coast",
       "ocean"
-    ]
+    ],
+    "effects": {
+      "adjacent_appeal": -1
+    }
   },
   "wind_farm": {
     "tech": "composites",
@@ -338,7 +352,8 @@
     "builder_buildable": false,
     "requires_flat": true,
     "effects": {
-      "air_slots": 3
+      "air_slots": 3,
+      "adjacent_appeal": -1
     },
     "terrain": [
       "desert",
@@ -429,7 +444,8 @@
     ],
     "effects": {
       "floodplains_culture": 1,
-      "adjacent_wonder_faith": 2
+      "adjacent_wonder_faith": 2,
+      "adjacent_appeal": 1
     }
   },
   "great_wall": {
@@ -549,7 +565,10 @@
       "plains",
       "snow",
       "tundra"
-    ]
+    ],
+    "effects": {
+      "adjacent_appeal": -1
+    }
   },
   "goody_hut": {
     "yields": {},

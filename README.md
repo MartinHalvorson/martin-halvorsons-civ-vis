@@ -2,10 +2,11 @@
 
 ## Martin Halvorson's Civilization VIS (6.5)
 
-![Spectate mode: an AI-vs-AI exhibition match — a renaissance-era siege of Corinth](docs/exhibition.gif)
+![Spectate mode: a timelapse of a whole AI-vs-AI exhibition match, from the first settlers to a diplomatic victory on turn 305](docs/exhibition.gif)
 
-*Spectate mode: eight AI civilizations fight a live exhibition match in the
-browser GUI — here, a renaissance-era war around Corinth.*
+*Spectate mode: a whole exhibition match in ten seconds — eight AI
+civilizations spread across a Pangaea from the ancient era to the information
+era, and Rome takes the World Congress on turn 305.*
 
 An open-source, **headless-first** 4X strategy engine inspired by the mechanics
 of Civilization VI — aiming to be for Civ 6 what [Unciv](https://github.com/yairm210/Unciv)

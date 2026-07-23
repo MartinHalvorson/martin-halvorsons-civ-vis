@@ -991,6 +991,39 @@ mod belief_runtime_tests {
     }
 
     #[test]
+    fn barbarian_camps_field_half_the_leaders_technology() {
+        let mut game = Game::new_full(2, 24, 16, 91_805, 200, 0, true);
+        // Ancient leaders: the camps make do with tech-free units.
+        let ancient = game.barbarian_unit_pool();
+        assert!(ancient.contains(&"warrior".to_string()));
+        assert!(!ancient.contains(&"musketman".to_string()));
+
+        // A leader deep in the tree arms the camps with gunpowder, and the
+        // pool never fields sea, air, support, or unique units.
+        let ranked: Vec<String> = {
+            let mut ranked: Vec<(&String, &crate::rules::TechSpec)> =
+                game.rules.techs.iter().collect();
+            ranked.sort_by(|a, b| {
+                (a.1.era, a.1.cost as i64, a.0).cmp(&(b.1.era, b.1.cost as i64, b.0))
+            });
+            ranked.iter().map(|(name, _)| (*name).clone()).collect()
+        };
+        for tech in ranked.iter().take(70) {
+            game.players[0].techs.insert(tech.clone());
+        }
+        let industrial = game.barbarian_unit_pool();
+        assert!(
+            industrial.contains(&"musketman".to_string()),
+            "half of seventy techs must include gunpowder: {industrial:?}"
+        );
+        for unit in &industrial {
+            let spec = &game.rules.units[unit.as_str()];
+            assert!(spec.unique_to.is_none());
+            assert!(!matches!(spec.domain.as_deref(), Some("sea") | Some("air")));
+        }
+    }
+
+    #[test]
     fn great_work_pieces_track_counters_through_grants_moves_and_deals() {
         let (mut game, _cities) = game_with_capitals(91_803);
         let tally = |game: &Game, pid: usize, kind: &str| {
@@ -2082,6 +2115,57 @@ mod governor_runtime_tests {
         assert!(
             (game.tourism_per_turn(0) - without_curator.tourism_per_turn(0) - 2.0).abs() < 1e-9
         );
+    }
+
+    #[test]
+    fn mines_and_quarries_lower_the_appeal_of_their_neighbours() {
+        let mut game = Game::new_full(1, 24, 16, 91_971, 200, 0, false);
+        let city = found_capital(&mut game, 0);
+        let centre = game.cities[&city].pos;
+        let site = game.nbrs(centre)[0];
+        for position in [centre, site] {
+            let tile = game.map.tiles.get_mut(&position).unwrap();
+            tile.feature = None;
+            tile.improvement = None;
+            tile.pillaged = false;
+        }
+        let before = game.tile_appeal(centre);
+        game.map.tiles.get_mut(&site).unwrap().improvement = Some("mine".to_string());
+        assert_eq!(game.tile_appeal(centre), before - 1);
+        game.map.tiles.get_mut(&site).unwrap().improvement = Some("sphinx".to_string());
+        assert_eq!(game.tile_appeal(centre), before + 1);
+        // Pillaging stops the grant and costs the tile its own Appeal point.
+        game.map.tiles.get_mut(&site).unwrap().pillaged = true;
+        assert_eq!(game.tile_appeal(centre), before - 1);
+    }
+
+    #[test]
+    fn lumber_mills_reach_rainforest_only_at_mercantilism() {
+        let mut game = Game::new_full(1, 24, 16, 91_963, 200, 0, false);
+        let city = found_capital(&mut game, 0);
+        let site = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != game.cities[&city].pos)
+            .unwrap();
+        {
+            let tile = game.map.tiles.get_mut(&site).unwrap();
+            tile.terrain = "plains".to_string();
+            tile.feature = Some("jungle".to_string());
+            tile.hills = false;
+            tile.resource = None;
+            tile.improvement = None;
+        }
+        game.players[0].techs.insert("construction".to_string());
+        assert!(!game.valid_improvements(0, site).contains(&"lumber_mill".to_string()));
+        game.players[0].civics.insert("mercantilism".to_string());
+        assert!(game.valid_improvements(0, site).contains(&"lumber_mill".to_string()));
+
+        // Woods never needed the civic.
+        game.map.tiles.get_mut(&site).unwrap().feature = Some("forest".to_string());
+        game.players[0].civics.remove("mercantilism");
+        assert!(game.valid_improvements(0, site).contains(&"lumber_mill".to_string()));
     }
 
     #[test]
@@ -6743,6 +6827,9 @@ pub const DIPLOMATIC_VICTORY_POINTS: i64 = 20;
 pub const EXOPLANET_DESTINATION: f64 = 50.0;
 pub const TOURISM_PER_VISITOR: f64 = 200.0;
 const STANDARD_DEAL_TURNS: u32 = 30;
+/// Shipped `GOVERNMENT_BASE_ANARCHY_TURNS`: returning to a government the
+/// civilization has already run costs this many turns of Anarchy.
+pub const GOVERNMENT_BASE_ANARCHY_TURNS: u32 = 2;
 
 pub fn effective_strength(base: f64, hp: i32) -> f64 {
     let wounded_penalty = (10.0 - hp.clamp(0, 100) as f64 / 10.0).round();
@@ -7571,6 +7658,17 @@ pub struct Player {
     pub is_barbarian: bool,
     #[serde(default)]
     pub government: Option<String>,
+    /// Every form of government this civilization has already run. Trying one
+    /// for the first time is free; the people remember the rest, and going
+    /// back to one of them costs Anarchy.
+    #[serde(default)]
+    pub past_governments: BTreeSet<String>,
+    /// The government that takes power when Anarchy ends.
+    #[serde(default)]
+    pub pending_government: Option<String>,
+    /// Turns of Anarchy still to serve. Zero when the empire is governed.
+    #[serde(default)]
+    pub anarchy_turns: u32,
     #[serde(default)]
     pub policies: BTreeSet<String>,
     #[serde(default)]
@@ -7706,6 +7804,9 @@ impl Player {
             is_minor,
             is_barbarian: false,
             government: None,
+            past_governments: BTreeSet::new(),
+            pending_government: None,
+            anarchy_turns: 0,
             policies: BTreeSet::new(),
             influence: 0.0,
             envoys_free: 0,
@@ -9255,6 +9356,47 @@ impl Game {
         }
     }
 
+    /// The shipped rule: Barbarians fight with half the leading
+    /// civilization's technology (BARBARIAN_TECH_PERCENT). Rank the tech
+    /// tree the way research walks it and give the camps everything the
+    /// first half of the leader's tech count unlocks - muskets and tanks
+    /// included, late enough.
+    pub(crate) fn barbarian_unit_pool(&self) -> Vec<String> {
+        let leader_techs = self
+            .players
+            .iter()
+            .filter(|p| !p.is_minor)
+            .map(|p| p.techs.len())
+            .max()
+            .unwrap_or(0);
+        let mut ranked: Vec<(&String, &crate::rules::TechSpec)> = self.rules.techs.iter().collect();
+        ranked.sort_by(|a, b| {
+            (a.1.era, a.1.cost as i64, a.0).cmp(&(b.1.era, b.1.cost as i64, b.0))
+        });
+        let known: BTreeSet<&str> = ranked
+            .iter()
+            .take(leader_techs * 50 / 100)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        self.rules
+            .units
+            .iter()
+            .filter(|(_, spec)| {
+                spec.class == "military"
+                    && spec.buildable
+                    && spec.unique_to.is_none()
+                    && !matches!(spec.domain.as_deref(), Some("sea") | Some("air"))
+                    && spec.promotion_class != "support"
+                    && spec.civic.is_none()
+                    && spec
+                        .tech
+                        .as_deref()
+                        .is_none_or(|tech| known.contains(tech))
+            })
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+
     fn barbarian_phase(&mut self) {
         let bpid = match self.barb_pid {
             Some(p) => p,
@@ -9272,22 +9414,7 @@ impl Game {
         let alerted = self.barb_alerted_until.len();
         let cap = 2 + 2 * self.barb_camps.len() + 2 * alerted;
         let mut n_barb = self.player_unit_ids(bpid).len();
-        let era = self
-            .players
-            .iter()
-            .filter(|p| !p.is_minor)
-            .map(|p| p.techs.len())
-            .max()
-            .unwrap_or(1);
-        let pool: &[&str] = if era < 8 {
-            &["warrior"]
-        } else if era < 14 {
-            &["warrior", "spearman", "archer"]
-        } else if era < 22 {
-            &["swordsman", "spearman", "archer"]
-        } else {
-            &["swordsman", "crossbowman", "pikeman"]
-        };
+        let pool = self.barbarian_unit_pool();
         let camps: Vec<(Pos, u32)> = self.barb_camps.iter().map(|(p, n)| (*p, *n)).collect();
         for (pos, nxt) in camps {
             if self.turn < nxt || n_barb >= cap {
@@ -9298,11 +9425,22 @@ impl Game {
                 .iter()
                 .any(|(unit, camp)| *camp == pos && self.units.contains_key(unit));
             let utype = if has_scout {
-                pool[self.rng.below(pool.len())]
+                // The shipped spawn samples three random choices and fields
+                // the strongest (BARBARIAN_NUM_RANDOM_UNIT_CHOICES).
+                (0..3)
+                    .map(|_| pool[self.rng.below(pool.len())].clone())
+                    .max_by(|a, b| {
+                        let strength = |kind: &str| {
+                            let spec = &self.rules.units[kind];
+                            spec.strength.max(spec.ranged_strength) as i64
+                        };
+                        strength(a).cmp(&strength(b)).then_with(|| b.cmp(a))
+                    })
+                    .unwrap_or_else(|| "warrior".to_string())
             } else {
-                "scout"
+                "scout".to_string()
             };
-            if let Some(unit) = self.place_new_unit(utype, bpid, pos) {
+            if let Some(unit) = self.place_new_unit(&utype, bpid, pos) {
                 if utype == "scout" {
                     self.barb_scout_homes.insert(unit, pos);
                 }
@@ -9811,13 +9949,16 @@ impl Game {
     }
 
     pub fn has_policy(&self, pid: usize, name: &str) -> bool {
-        self.players[pid].policies.contains(name)
+        !self.in_anarchy(pid) && self.players[pid].policies.contains(name)
     }
 
     /// Sum a numeric primitive across all currently slotted policy cards.
     /// Policy rules remain data-driven while callers provide the game context
     /// (unit class, district family, city state, and so on).
     pub fn policy_effect(&self, pid: usize, effect: &str) -> f64 {
+        if self.in_anarchy(pid) {
+            return 0.0; // the cards come out of their slots in Anarchy
+        }
         self.players[pid]
             .policies
             .iter()
@@ -9841,6 +9982,9 @@ impl Game {
 
     /// Sums a policy effect over the cards whose era window admits `era`.
     fn policy_effect_for_unit(&self, pid: usize, effect: &str, unit: &str) -> f64 {
+        if self.in_anarchy(pid) {
+            return 0.0;
+        }
         let era = self.unit_era(unit);
         self.players[pid]
             .policies
@@ -14232,6 +14376,10 @@ impl Game {
     }
 
     pub fn gov_slots(&self, pid: usize) -> crate::rules::PolicySlots {
+        // Anarchy has no slots of its own, and none a wonder can lend it.
+        if self.in_anarchy(pid) {
+            return Default::default();
+        }
         let mut slots = match &self.players[pid].government {
             Some(g) => self
                 .rules
@@ -18657,12 +18805,7 @@ impl Game {
                     .map(|spec| spec.appeal.round() as i32)
                     .unwrap_or(0);
             }
-            if matches!(
-                adjacent.improvement.as_deref(),
-                Some("mine" | "quarry" | "oil_well" | "airstrip" | "missile_silo")
-            ) {
-                appeal -= 1;
-            }
+
             if !adjacent.pillaged {
                 appeal += adjacent
                     .improvement
@@ -20896,10 +21039,13 @@ impl Game {
             // Lumber Mills list no terrain at all, so only their feature
             // route exists. An improvement listing none of the three is
             // unrestricted (governor and appeal specials gate elsewhere).
-            let feature_route = t
-                .feature
-                .as_ref()
-                .is_some_and(|feature| spec.feature.contains(feature));
+            let feature_route = t.feature.as_ref().is_some_and(|feature| {
+                spec.feature.contains(feature)
+                    || spec
+                        .feature_after_civic
+                        .get(feature)
+                        .is_some_and(|civic| self.players[pid].civics.contains(civic))
+            });
             let resource_route = visible_resource.is_some_and(|resource| {
                 spec.resources.iter().any(|candidate| candidate == resource)
                     || self.rules.resources[resource].improvement == *name
@@ -23332,7 +23478,9 @@ impl Game {
                     .as_ref()
                     .map(|c| p.civics.contains(c))
                     .unwrap_or(true);
-                if ok && p.government.as_deref() != Some(g.as_str()) {
+                // A second change has to wait out the Anarchy the first one
+                // caused.
+                if ok && p.government.as_deref() != Some(g.as_str()) && p.anarchy_turns == 0 {
                     acts.push(Action::Government {
                         government: g.clone(),
                     });
@@ -25519,9 +25667,18 @@ impl Game {
         mu.acted = true;
         bump(&mut self.players[pid], "improvements");
         if excavates_artifact {
-            // A dig raises something from a past era.
+            // A dig raises something from a past era, left by one of the
+            // world's peoples - the shipped sites record whose history
+            // happened there, and museum theming asks for variety.
             let era = self.rng.below(self.world_era.max(1));
-            self.grant_great_work(pid, "artifact", era, "antiquity");
+            let civs: Vec<String> = self
+                .players
+                .iter()
+                .filter(|player| !player.is_barbarian)
+                .map(|player| player.civ.clone())
+                .collect();
+            let origin = civs[self.rng.below(civs.len().max(1))].clone();
+            self.grant_great_work(pid, "artifact", era, &origin);
         }
         if self.units[&uid].charges <= 0 {
             self.remove_unit(uid);
@@ -27567,6 +27724,12 @@ impl Game {
         Ok(())
     }
 
+    /// Adopt a form of government. Civ 6 charges nothing for a form the
+    /// civilization has never run — "your people are enthusiastic to try this
+    /// new form of government" — and charges Anarchy for going back to one
+    /// they have already lived under. Anarchy is `GOVERNMENT_BASE_ANARCHY_TURNS`
+    /// turns without a government at all: no Science, Culture, Gold or Faith,
+    /// no policy slots, and no second change until it ends.
     fn do_government(&mut self, pid: usize, g: &str) -> Result<(), String> {
         let spec = self
             .rules
@@ -27579,10 +27742,34 @@ impl Game {
                 return Err("government unavailable".into());
             }
         }
+        if p.anarchy_turns > 0 {
+            return Err("the empire is in Anarchy".into());
+        }
         if p.government.as_deref() == Some(g) {
             return Err("already that government".into());
         }
+        if p.past_governments.contains(g) {
+            self.players[pid].anarchy_turns = GOVERNMENT_BASE_ANARCHY_TURNS;
+            self.players[pid].pending_government = Some(g.to_string());
+            self.players[pid].government = None;
+            self.note(
+                pid,
+                "General",
+                format!("fell into Anarchy on the way back to {}", pretty(g)),
+                None,
+            );
+            return Ok(());
+        }
+        self.install_government(pid, g);
+        Ok(())
+    }
+
+    /// Seat a government and reseat the cards under its slot layout.
+    fn install_government(&mut self, pid: usize, g: &str) {
         self.players[pid].government = Some(g.to_string());
+        self.players[pid].past_governments.insert(g.to_string());
+        self.players[pid].pending_government = None;
+        self.players[pid].anarchy_turns = 0;
         // new slot layout: drop slotted cards until they fit again
         while !self.policies_fit(pid, &self.players[pid].policies)
             && !self.players[pid].policies.is_empty()
@@ -27595,7 +27782,31 @@ impl Game {
                 .clone();
             self.players[pid].policies.remove(&drop);
         }
-        Ok(())
+        self.note(pid, "General", format!("adopted {}", pretty(g)), None);
+    }
+
+    /// Is this civilization between governments? Anarchy suspends the
+    /// government's own bonus, its policy slots and the empire's Science,
+    /// Culture, Gold and Faith until the new government takes power.
+    pub fn in_anarchy(&self, pid: usize) -> bool {
+        self.players
+            .get(pid)
+            .is_some_and(|player| player.anarchy_turns > 0)
+    }
+
+    /// Serve a turn of Anarchy, seating the waiting government when the last
+    /// one is served.
+    fn process_anarchy(&mut self, pid: usize) {
+        if self.players[pid].anarchy_turns == 0 {
+            return;
+        }
+        self.players[pid].anarchy_turns -= 1;
+        if self.players[pid].anarchy_turns > 0 {
+            return;
+        }
+        if let Some(government) = self.players[pid].pending_government.clone() {
+            self.install_government(pid, &government);
+        }
     }
 
     fn do_slot_policy(&mut self, pid: usize, policy: &str) -> Result<(), String> {
@@ -32260,6 +32471,7 @@ impl Game {
     // ------------------------------------------------------- turn engine
 
     fn begin_turn(&mut self, pid: usize) {
+        self.process_anarchy(pid);
         self.process_levies(pid);
         self.process_spies(pid);
         self.advance_exoplanet(pid);
@@ -32357,6 +32569,15 @@ impl Game {
                 .sum::<f64>()
                 * 0.10;
         }
+        // Anarchy: an empire between governments collects no Science,
+        // Culture, Gold or Faith. Its upkeep still falls due below.
+        let anarchy = self.in_anarchy(pid);
+        if anarchy {
+            sci = 0.0;
+            cul = 0.0;
+            gold = 0.0;
+            faith = 0.0;
+        }
         if !self.players[pid].is_minor {
             let (mut tourism, film_studio_tourism) = self.tourism_components_per_turn(pid);
             if let Some(partner) = cultural_alliance_partner {
@@ -32373,7 +32594,9 @@ impl Game {
                 film_studio_religious,
             );
         }
-        gold += self.monopoly_bonuses(pid).0;
+        if !anarchy {
+            gold += self.monopoly_bonuses(pid).0;
+        }
         gold -= self.unit_gold_maintenance(pid);
         gold -= self.infrastructure_gold_maintenance(pid);
         gold -= self.nuclear_gold_maintenance(pid);
@@ -32629,7 +32852,11 @@ impl Game {
                 .collect();
             let eras: BTreeSet<usize> = artifacts.iter().map(|piece| piece.era).collect();
             for era in eras {
-                if artifacts.iter().filter(|piece| piece.era == era).count() >= 3 {
+                let of_era: Vec<&&GreatWorkPiece> =
+                    artifacts.iter().filter(|piece| piece.era == era).collect();
+                let origins: BTreeSet<&str> =
+                    of_era.iter().map(|piece| piece.creator.as_str()).collect();
+                if of_era.len() >= 3 && origins.len() >= 3 {
                     themed += 1;
                     culture += 9.0;
                     tourism += 3.0 * self.great_work_tourism(pid, "artifact");
@@ -40269,10 +40496,23 @@ mod great_work_tests {
             .counters
             .insert("great_work:artifact".to_string(), 0);
         let culture_without_artifacts = game.city_yields(city).culture;
-        // Three Ancient-era digs give three same-era artifacts, which also
-        // themes the museum: works and theming bonus, both banded.
+        // Three Ancient-era digs share era zero; whether they theme the
+        // museum depends on drawing three distinct origin civilizations.
+        let artifacts: Vec<&GreatWorkPiece> = game.players[0]
+            .great_work_pieces
+            .iter()
+            .filter(|piece| piece.kind == "artifact")
+            .collect();
+        let origins: BTreeSet<&str> =
+            artifacts.iter().map(|piece| piece.creator.as_str()).collect();
+        let theming = if artifacts.len() >= 3 && origins.len() >= 3 {
+            9.0
+        } else {
+            0.0
+        };
         assert!(
-            (culture_with_artifacts - culture_without_artifacts - (9.0 + 9.0) * 1.1).abs() < 1e-9
+            (culture_with_artifacts - culture_without_artifacts - (9.0 + theming) * 1.1).abs()
+                < 1e-9
         );
         game.players[0]
             .counters

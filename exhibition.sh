@@ -91,6 +91,9 @@ start_evolve() {
 # why. Set it explicitly rather than trusting what cp carried over.
 promote_staged() {
     [ -f "$bin_run/civvis-next" ] || return 1
+    # Evolve holds its own binary open and is restarted from disk anyway, so
+    # stop it rather than let it block the promote.
+    pkill -f "civvis-evolve evolve" >/dev/null 2>&1 || true
     cp -f "$bin_run/civvis-next" "$bin_run/civvis-gui"
     cp -f "$bin_run/civvis-next" "$bin_run/civvis-evolve"
     chmod +x "$bin_run/civvis-gui" "$bin_run/civvis-evolve"

@@ -1122,8 +1122,16 @@ fn mountain_atlas() -> Vec<u8> {
 }
 
 fn respond(stream: &mut TcpStream, code: &str, ctype: &str, body: &[u8]) {
+    // Nothing this server sends is worth reusing from a cache. The page and
+    // its art are compiled into the binary, so a build swap changes them
+    // underneath an open tab - and with no cache headers at all a browser was
+    // free to keep serving the copy it already had, which made a new engine
+    // look like it was still running yesterday's GUI. The state feeds change
+    // every turn by definition.
     let head = format!(
-        "HTTP/1.1 {code}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {code}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\n\
+         Cache-Control: no-store, must-revalidate\r\nPragma: no-cache\r\n\
+         Connection: close\r\n\r\n",
         body.len());
     let _ = stream.write_all(head.as_bytes());
     let _ = stream.write_all(body);
@@ -1395,6 +1403,13 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
                     "winner": game.winner,
                     "victory_type": game.victory_type,
                     "spectate": session.params.spectate,
+                    // Which code is actually playing. A binary swap only
+                    // happens between games, so a running server is always
+                    // somewhat behind origin/main and there was no way to see
+                    // by how much - "is it running old code" could only be
+                    // guessed at from file timestamps. The build stamps this
+                    // in; an unstamped build reports unknown.
+                    "commit": option_env!("CIVVIS_COMMIT").unwrap_or("unknown"),
                 }),
             );
         }

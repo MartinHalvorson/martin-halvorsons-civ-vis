@@ -2696,7 +2696,10 @@ impl BasicAi {
         }
 
         let desired_builders = (self.w.builder_per_city * n_cities as f64).ceil() as usize;
-        if builders < desired_builders && self.buy_gold_unit(g, pid, city_ids, "builder", reserve) {
+        if builders < desired_builders
+            && Self::has_builder_work(g, pid)
+            && self.buy_gold_unit(g, pid, city_ids, "builder", reserve)
+        {
             return true;
         }
 
@@ -2936,7 +2939,9 @@ impl BasicAi {
                 unit: "settler".to_string(),
             });
         }
-        if (builders as f64) < self.w.builder_per_city * n_cities as f64 {
+        if (builders as f64) < self.w.builder_per_city * n_cities as f64
+            && Self::has_builder_work(g, pid)
+        {
             return Some(Item::Unit {
                 unit: "builder".to_string(),
             });
@@ -3864,6 +3869,27 @@ impl BasicAi {
             },
         )
         .is_ok()
+    }
+
+    /// Whether this empire has any tile left for a Builder to work on: an
+    /// improvement to lay or a pillaged one to repair. Builders were produced
+    /// to a flat quota per city regardless, so an empire that had improved
+    /// everything it owned kept paying for Builders that then stood on a tile
+    /// for the rest of the game - the audit counted nearly two hundred of
+    /// them across six games, some idle from turn 25 to the end.
+    fn has_builder_work(g: &Game, pid: usize) -> bool {
+        g.player_city_ids(pid).into_iter().any(|cid| {
+            g.cities[&cid].owned_tiles.iter().any(|pos| {
+                let repairable = g
+                    .map
+                    .get(*pos)
+                    .is_some_and(|tile| tile.pillaged && tile.improvement.is_some());
+                repairable
+                    || g.valid_improvements(pid, *pos)
+                        .iter()
+                        .any(|improvement| g.rules.improvements[improvement].builder_buildable)
+            })
+        })
     }
 
     /// The district a civilization builds in place of `family`: its unique
@@ -4849,6 +4875,42 @@ mod tests {
                 assert!(BasicAi::civ_building(&g, pid, cid, "monument").is_none());
             }
         }
+    }
+
+    /// Builders were produced to a flat quota per city whether or not the
+    /// empire had a tile left to improve, so a built-out empire kept paying
+    /// for Builders that then stood still for the rest of the game.
+    #[test]
+    fn builders_are_only_built_when_there_is_ground_to_work() {
+        let mut g = Game::new_full(1, 20, 14, 29, 40, 0, false);
+        let settler = g
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|id| g.units[id].kind == "settler")
+            .unwrap();
+        g.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let cid = g.player_city_ids(0)[0];
+        assert!(
+            BasicAi::has_builder_work(&g, 0),
+            "a fresh city has tiles worth improving"
+        );
+
+        // Improve everything the city owns; nothing is left for a Builder.
+        for pos in g.cities[&cid].owned_tiles.clone() {
+            let tile = g.map.tiles.get_mut(&pos).unwrap();
+            tile.terrain = "grassland".to_string();
+            tile.feature = None;
+            tile.resource = None;
+            tile.hills = false;
+            tile.improvement = Some("farm".to_string());
+            tile.pillaged = false;
+        }
+        assert!(!BasicAi::has_builder_work(&g, 0));
+
+        // Pillaging one of them is work again: it can be repaired.
+        let pos = g.cities[&cid].owned_tiles[1];
+        g.map.tiles.get_mut(&pos).unwrap().pillaged = true;
+        assert!(BasicAi::has_builder_work(&g, 0));
     }
 
     /// Builders used to take whichever legal improvement sorted first by
