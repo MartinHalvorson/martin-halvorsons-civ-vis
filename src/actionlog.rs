@@ -77,6 +77,23 @@ impl ActionLog {
     }
 }
 
+impl Drop for ActionLog {
+    fn drop(&mut self) {
+        // A uniquely owned persistent log is a linked list of Arcs. Letting the
+        // default Arc destructor walk that list recurses once per action, which
+        // can overflow the stack after a long game. Peel off unique entries
+        // iteratively instead. If a branch still shares the history, its owner
+        // will finish the cleanup when that history becomes unique.
+        let mut cursor = self.last.take();
+        while let Some(entry) = cursor {
+            match Arc::try_unwrap(entry) {
+                Ok(mut entry) => cursor = entry.previous.take(),
+                Err(_) => break,
+            }
+        }
+    }
+}
+
 impl std::fmt::Debug for ActionLog {
     fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         out.debug_list().entries(self.iter()).finish()
@@ -153,5 +170,23 @@ mod tests {
             trunk.iter().map(|(seat, _)| *seat).collect::<Vec<_>>(),
             [0, 1, 2, 7]
         );
+    }
+
+    #[test]
+    fn long_branched_logs_drop_without_recursing() {
+        std::thread::Builder::new()
+            .name("action-log-drop".to_string())
+            .stack_size(64 * 1024)
+            .spawn(|| {
+                let trunk: ActionLog = (0..30_000).map(|_| end(0)).collect();
+                let mut branch = trunk.clone();
+                branch.push(1, Action::EndTurn);
+
+                drop(trunk);
+                drop(branch);
+            })
+            .expect("drop-test thread should start")
+            .join()
+            .expect("dropping a long action log should not overflow its stack");
     }
 }
