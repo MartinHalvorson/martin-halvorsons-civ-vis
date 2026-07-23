@@ -3303,6 +3303,148 @@ mod governor_runtime_tests {
 }
 
 #[cfg(test)]
+mod action_family_tests {
+    use super::*;
+    use crate::ai::{AdvancedAi, Ai};
+
+    const FAMILIES: [ActionFamilies; 4] = [
+        ActionFamilies::UNITS,
+        ActionFamilies::PURCHASES,
+        ActionFamilies::EMPIRE,
+        ActionFamilies::DEALS,
+    ];
+
+    fn labels(actions: &[Action]) -> Vec<String> {
+        actions.iter().map(|action| format!("{action:?}")).collect()
+    }
+
+    /// Is `part` a subsequence of `whole`? Skipping a family must only remove
+    /// actions; it must never add one or reorder the rest, because the order
+    /// of this list is part of what makes a game deterministic.
+    fn is_subsequence(part: &[String], whole: &[String]) -> bool {
+        let mut rest = whole.iter();
+        part.iter().all(|item| rest.any(|other| other == item))
+    }
+
+    /// A settled position: cities to buy in, units to order, rivals to deal
+    /// with, and a congress in session by the time this many turns are up.
+    fn played_in_game() -> Game {
+        let mut game = Game::new_with(GameOptions::new(4, 32, 22, 90_001, 400, 4));
+        let mut ais = AdvancedAi::fleet(&game);
+        while game.turn < 60 && game.winner.is_none() {
+            let pid = game.current;
+            ais[pid].take_turn(&mut game, pid);
+            if game.winner.is_none() && game.current == pid {
+                let _ = game.apply(pid, &Action::EndTurn);
+            }
+        }
+        game
+    }
+
+    #[test]
+    fn action_families_partition_the_full_enumeration() {
+        let game = played_in_game();
+        assert!(game.winner.is_none(), "the position must still be live");
+        let pid = game.current;
+        let all = labels(&game.legal_actions(pid));
+        assert!(all.len() > 40, "expected a rich position, got {}", all.len());
+
+        // Asking for everything is the enumeration callers already relied on.
+        assert_eq!(labels(&game.legal_actions_within(pid, ActionFamilies::ALL)), all);
+
+        // Dropping one family only ever removes actions.
+        for family in FAMILIES {
+            let without = labels(&game.legal_actions_within(pid, ActionFamilies::ALL.without(family)));
+            assert!(
+                is_subsequence(&without, &all),
+                "dropping {family:?} added or reordered actions"
+            );
+            assert!(
+                without.len() < all.len(),
+                "dropping {family:?} removed nothing, so the gate is in the wrong place"
+            );
+        }
+
+        // The cheap core plus the four families cover every action, so no
+        // caller can lose one by naming the family it wants.
+        let mut covered: BTreeSet<String> =
+            labels(&game.legal_actions_within(pid, ActionFamilies::CHEAP))
+                .into_iter()
+                .collect();
+        for family in FAMILIES {
+            covered.extend(labels(&game.legal_actions_within(pid, family)));
+        }
+        assert_eq!(covered, all.into_iter().collect::<BTreeSet<_>>());
+    }
+
+    /// Each narrowed call site in the AI must still see every action of the
+    /// kind it filters for.
+    #[test]
+    fn narrowed_call_sites_still_see_their_own_kinds() {
+        let game = played_in_game();
+        let pid = game.current;
+        let all = game.legal_actions(pid);
+        let cases: [(ActionFamilies, fn(&Action) -> bool); 5] = [
+            (ActionFamilies::CHEAP, |action| {
+                matches!(
+                    action,
+                    Action::FoundCorporation { .. }
+                        | Action::MoveProduct { .. }
+                        | Action::CityStrike { .. }
+                        | Action::EncampmentStrike { .. }
+                        | Action::CombineUnits { .. }
+                        | Action::LinkUnits { .. }
+                        | Action::DeclareWar { .. }
+                        | Action::DeclareWarWithCasusBelli { .. }
+                )
+            }),
+            (ActionFamilies::UNITS, |action| {
+                matches!(
+                    action,
+                    Action::Move { .. }
+                        | Action::Attack { .. }
+                        | Action::Ranged { .. }
+                        | Action::Spread { .. }
+                        | Action::RemoveHeresy { .. }
+                        | Action::TheologicalAttack { .. }
+                )
+            }),
+            (
+                ActionFamilies::PURCHASES | ActionFamilies::EMPIRE,
+                |action| {
+                    matches!(
+                        action,
+                        Action::Buy { .. } | Action::BuyBuilding { .. } | Action::BuyDistrict { .. }
+                    )
+                },
+            ),
+            (ActionFamilies::EMPIRE, |action| {
+                matches!(action, Action::WmdStrike { .. } | Action::SendEnvoy { .. })
+            }),
+            (ActionFamilies::DEALS, |action| {
+                matches!(action, Action::Trade { .. } | Action::CongressVote { .. })
+            }),
+        ];
+        for (families, wanted) in cases {
+            let narrow: Vec<String> = labels(
+                &game
+                    .legal_actions_within(pid, families)
+                    .into_iter()
+                    .filter(wanted)
+                    .collect::<Vec<_>>(),
+            );
+            let full: Vec<String> = labels(
+                &all.iter()
+                    .filter(|action| wanted(action))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            );
+            assert_eq!(narrow, full, "{families:?} lost an action it promised");
+        }
+    }
+}
+
+#[cfg(test)]
 mod trade_deal_tests {
     use super::*;
     use crate::ai::BasicAi;
@@ -9639,6 +9781,53 @@ impl GameOptions {
             disaster_intensity: DEFAULT_DISASTER_INTENSITY,
             game_modes: BTreeSet::new(),
         }
+    }
+}
+
+/// Which of the expensive families of legal action to enumerate.
+///
+/// Everything outside these four is cheap and always enumerated: unit
+/// upgrades, spy missions, links, fortifying, corporations, product moves,
+/// levies, research and civic choices, city strikes, and war, peace and
+/// denouncement. The four families are the blocks worth skipping.
+///
+/// `Buy` and `BuyBuilding` are produced by both `PURCHASES` and `EMPIRE` —
+/// the latter sells Naturalists, Rock Bands and Great Person patronage — so
+/// an agent shopping with a treasury wants both.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ActionFamilies(u8);
+
+impl ActionFamilies {
+    /// Only the cheap blocks: no unit orders, purchases, empire management
+    /// or offers.
+    pub const CHEAP: ActionFamilies = ActionFamilies(0);
+    /// Everything a unit can be ordered to do: movement, attacks, promotions,
+    /// improvements, religious missions, air operations, settling.
+    pub const UNITS: ActionFamilies = ActionFamilies(1);
+    /// `Produce`, `Buy`, `BuyBuilding` and `BuyDistrict` in each city.
+    pub const PURCHASES: ActionFamilies = ActionFamilies(2);
+    /// Governments, policies, governors, religion, great people, envoys,
+    /// trade routes and WMD strikes — the major-only management block.
+    pub const EMPIRE: ActionFamilies = ActionFamilies(4);
+    /// Incoming deals, offers to make, dedications and congress ballots.
+    /// Valuing offers is the single most expensive block of the enumeration.
+    pub const DEALS: ActionFamilies = ActionFamilies(8);
+    pub const ALL: ActionFamilies = ActionFamilies(15);
+
+    pub fn has(self, family: ActionFamilies) -> bool {
+        self.0 & family.0 == family.0
+    }
+
+    pub fn without(self, family: ActionFamilies) -> ActionFamilies {
+        ActionFamilies(self.0 & !family.0)
+    }
+}
+
+impl std::ops::BitOr for ActionFamilies {
+    type Output = ActionFamilies;
+
+    fn bitor(self, other: ActionFamilies) -> ActionFamilies {
+        ActionFamilies(self.0 | other.0)
     }
 }
 
@@ -26367,7 +26556,22 @@ impl Game {
             .collect()
     }
 
+    /// Every action `pid` could legally take right now.
     pub fn legal_actions(&self, pid: usize) -> Vec<Action> {
+        self.legal_actions_within(pid, ActionFamilies::ALL)
+    }
+
+    /// `legal_actions`, skipping the enumeration of families the caller does
+    /// not need.
+    ///
+    /// Four blocks account for almost all of the cost of a full enumeration:
+    /// unit orders, purchases, empire management, and offers. An agent looking
+    /// for one of them — a Gold purchase, a city strike, a corporation —
+    /// otherwise also pays to value every trade offer against every rival and
+    /// to walk every unit's reachable tiles. See [`ActionFamilies`] for which
+    /// kinds live in which family; everything outside the four is cheap enough
+    /// to enumerate unconditionally.
+    pub fn legal_actions_within(&self, pid: usize, families: ActionFamilies) -> Vec<Action> {
         if self.winner.is_some() || self.current != pid {
             return vec![];
         }
@@ -26387,7 +26591,12 @@ impl Game {
         {
             acts.extend(self.legal_spy_actions(pid, spy_id));
         }
-        for uid in self.player_unit_ids(pid) {
+        let unit_order_ids = if families.has(ActionFamilies::UNITS) {
+            self.player_unit_ids(pid)
+        } else {
+            Vec::new()
+        };
+        for uid in unit_order_ids {
             let u = self.units[&uid].clone();
             let spec = self.rules.units[u.kind.as_str()].clone();
             let embarked = self.is_embarked(&u);
@@ -26772,17 +26981,28 @@ impl Game {
                 }
             }
         }
-        let faith_land_units = p.government.as_deref() == Some("theocracy")
-            || self
-                .cities
-                .values()
-                .filter(|city| city.owner == pid)
-                .map(|city| self.city_building_effect(city, "faith_purchase_land_units"))
-                .sum::<f64>()
-                > 0.0;
-        let monumentality = self.dedication_active(pid, "monumentality");
-        let purchasable_units: Vec<String> = self.rules.units.keys().cloned().collect();
-        for cid in self.player_city_ids(pid) {
+        let want_purchases = families.has(ActionFamilies::PURCHASES);
+        let faith_land_units = want_purchases
+            && (p.government.as_deref() == Some("theocracy")
+                || self
+                    .cities
+                    .values()
+                    .filter(|city| city.owner == pid)
+                    .map(|city| self.city_building_effect(city, "faith_purchase_land_units"))
+                    .sum::<f64>()
+                    > 0.0);
+        let monumentality = want_purchases && self.dedication_active(pid, "monumentality");
+        let purchasable_units: Vec<String> = if want_purchases {
+            self.rules.units.keys().cloned().collect()
+        } else {
+            Vec::new()
+        };
+        let purchase_city_ids = if want_purchases {
+            self.player_city_ids(pid)
+        } else {
+            Vec::new()
+        };
+        for cid in purchase_city_ids {
             let producible = self.producible_items(pid, cid);
             for item in &producible {
                 acts.push(Action::Produce {
@@ -26983,7 +27203,7 @@ impl Game {
                 }
             }
         }
-        if !p.is_minor {
+        if families.has(ActionFamilies::EMPIRE) && !p.is_minor {
             for (g, spec) in &self.rules.governments {
                 let ok = spec
                     .civic
@@ -27237,7 +27457,7 @@ impl Game {
                 }
             }
         }
-        if !p.is_minor && !p.is_barbarian {
+        if families.has(ActionFamilies::DEALS) && !p.is_minor && !p.is_barbarian {
             for deal in self
                 .pending_deals
                 .iter()
