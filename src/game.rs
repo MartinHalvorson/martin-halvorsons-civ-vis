@@ -19909,7 +19909,9 @@ impl Game {
     }
 
     fn district_is_family(&self, district: &str, family: &str) -> bool {
-        self.district_family(district) == self.district_family(family)
+        // A district is trivially of its own family, and asking a city whether
+        // it holds a Campus mostly means comparing "campus" with "campus".
+        district == family || self.district_family(district) == self.district_family(family)
     }
 
     pub fn city_has_district_family(&self, city: &City, family: &str) -> bool {
