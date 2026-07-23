@@ -131,6 +131,31 @@ fn stalled_settler_context(g: &Game, id: u32) -> String {
     )
 }
 
+fn idle_city_context(g: &Game, id: u32) -> String {
+    let city = &g.cities[&id];
+    let producible = g.producible_items(city.owner, id);
+    let districts: Vec<_> = city.districts.keys().cloned().collect();
+    format!(
+        "; pop={}, districts={districts:?}, buildings={}, producible={} {producible:?}",
+        city.pop,
+        city.buildings.len(),
+        producible.len(),
+    )
+}
+
+fn bounded_minor_idle(
+    player_is_minor: bool,
+    military: usize,
+    producible: &[civvis::game::Item],
+) -> bool {
+    player_is_minor
+        && military >= 3
+        && !producible.is_empty()
+        && producible
+            .iter()
+            .all(|item| matches!(item, civvis::game::Item::Unit { .. }))
+}
+
 fn audit_turn(g: &Game, history: &mut History, found: &mut Findings) {
     for (id, unit) in &g.units {
         if unit.hp <= 0 || unit.hp > 100 {
@@ -203,10 +228,12 @@ fn audit_turn(g: &Game, history: &mut History, found: &mut Findings) {
                 format!("city {id} ({}) at {} Loyalty", city.name, city.loyalty),
             );
         }
-        if city.hp <= 0 {
+        // Bombard-class attacks may legally deplete a city to exactly zero;
+        // it remains standing until a melee-capable unit captures it.
+        if city.hp < 0 {
             found.violation(
-                "city at zero HP",
-                format!("city {id} ({}) still standing", city.name),
+                "city below zero HP",
+                format!("city {id} ({}) at {} HP", city.name, city.hp),
             );
         }
         let max_walls = g.city_max_wall_hp(city);
@@ -226,16 +253,33 @@ fn audit_turn(g: &Game, history: &mut History, found: &mut Findings) {
 
         // An empty queue is a city converting Production into nothing.
         if city.queue.is_empty() {
+            let producible = g.producible_items(city.owner, *id);
+            let military = g
+                .player_unit_ids(city.owner)
+                .into_iter()
+                .filter(|unit| {
+                    g.rules.units[g.units[unit].kind.as_str()].class == "military"
+                })
+                .count();
+            if bounded_minor_idle(g.players[city.owner].is_minor, military, &producible) {
+                // A one-city state with no remaining infrastructure or
+                // project site deliberately stops at its bounded garrison.
+                // Calling that a production defect would pressure the AI to
+                // fill the map with units solely to silence the auditor.
+                history.city_idle_since.remove(id);
+                continue;
+            }
             let since = history.city_idle_since.entry(*id).or_insert(g.turn);
             if g.turn - *since >= IDLE_TURNS
                 && !history.reported_city.get(id).copied().unwrap_or(false)
             {
                 history.reported_city.insert(*id, true);
+                let context = idle_city_context(g, *id);
                 found.symptom(
                     "city builds nothing for 25+ turns",
                     format!(
-                        "city {id} ({}) of {} idle since turn {since}",
-                        city.name, g.players[city.owner].civ
+                        "city {id} ({}) of {} idle since turn {since}{context}",
+                        city.name, g.players[city.owner].civ,
                     ),
                 );
             }
@@ -447,9 +491,9 @@ fn main() {
 mod tests {
     use std::collections::BTreeMap;
 
-    use civvis::game::{WarHighlight, WarRecord};
+    use civvis::game::{Item, WarHighlight, WarRecord};
 
-    use super::{negotiated_war_ended_early, rapid_recapture_window};
+    use super::{bounded_minor_idle, negotiated_war_ended_early, rapid_recapture_window};
 
     fn concluded_war(kind: &str) -> WarRecord {
         WarRecord {
@@ -478,9 +522,10 @@ mod tests {
     }
 
     #[test]
-    fn the_war_minimum_applies_to_peace_but_not_conquest() {
+    fn the_war_minimum_applies_only_to_negotiated_peace() {
         assert!(negotiated_war_ended_early(&concluded_war("peace")));
         assert!(!negotiated_war_ended_early(&concluded_war("conquest")));
+        assert!(!negotiated_war_ended_early(&concluded_war("coalition")));
     }
 
     #[test]
@@ -500,5 +545,26 @@ mod tests {
             rapid_recapture_window(&war),
             Some(("Loop City".to_string(), 20, 27))
         );
+    }
+
+    #[test]
+    fn bounded_city_state_garrisons_are_not_reported_as_idle_production() {
+        let units = vec![
+            Item::Unit {
+                unit: "builder".to_string(),
+            },
+            Item::Unit {
+                unit: "warrior".to_string(),
+            },
+        ];
+        assert!(bounded_minor_idle(true, 3, &units));
+        assert!(!bounded_minor_idle(false, 3, &units));
+        assert!(!bounded_minor_idle(true, 2, &units));
+
+        let mut investment = units;
+        investment.push(Item::Project {
+            project: "campus_research_grants".to_string(),
+        });
+        assert!(!bounded_minor_idle(true, 3, &investment));
     }
 }
