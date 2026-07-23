@@ -189,11 +189,14 @@ def runtime_matches(snapshot: str) -> bool:
         return False
     try:
         metadata = json.loads(RUNTIME_METADATA.read_text(encoding="utf-8"))
+        binary_hash = hashlib.sha256(RUNTIME_BINARY.read_bytes()).hexdigest()
     except (OSError, ValueError):
         return False
-    return metadata.get("source_snapshot") == snapshot and metadata.get(
-        "binary_sha256"
-    ) == hashlib.sha256(RUNTIME_BINARY.read_bytes()).hexdigest()
+    matches = (
+        metadata.get("source_snapshot") == snapshot
+        and metadata.get("binary_sha256") == binary_hash
+    )
+    return matches
 
 
 def promoted_runtime_id() -> str | None:
@@ -282,6 +285,15 @@ def prepare_live_refresh(port: int, path: Path) -> bool:
         log("fresh build is ready but no safe checkpoint was captured; retrying")
         return False
     return True
+
+
+def prebuild_latest_once() -> bool:
+    """Keep the promoted fallback current without interrupting the live server."""
+    snapshot = source_snapshot()
+    if runtime_matches(snapshot):
+        return True
+    log("source changed during the active game; prebuilding the next runtime")
+    return prepare_latest_once()
 
 
 def read_json(
@@ -622,11 +634,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cooldown",
         type=float,
-        default=15.0,
-        help="keep the rendered result visible and outlive its 10-second browser countdown",
+        default=5.0,
+        help="seconds to keep the rendered result visible before the immediate successor",
     )
     parser.add_argument("--poll", type=float, default=0.5)
     parser.add_argument("--build-retry", type=float, default=15.0)
+    parser.add_argument(
+        "--source-check-interval",
+        type=float,
+        default=30.0,
+        help="prebuild changed source during live play so game boundaries stay instant",
+    )
     parser.add_argument(
         "--unresponsive-timeout",
         type=float,
@@ -697,6 +715,7 @@ def main() -> int:
     busy_until = 0.0
     refresh_pending = False
     refresh_at = 0.0
+    source_check_at = 0.0
 
     def launch_recovery(open_browser: bool = False) -> dict[str, Any]:
         nonlocal process, adopted_pid, running_runtime_id
@@ -877,6 +896,9 @@ def main() -> int:
                         checkpointed_progress = last_progress
                         checkpoint_at = progress_at
                         continue
+                elif not refresh_pending and now >= source_check_at:
+                    source_check_at = now + max(1.0, args.source_check_interval)
+                    prebuild_latest_once()
                 time.sleep(args.poll)
                 continue
 
@@ -896,69 +918,13 @@ def main() -> int:
                 if standings:
                     log(f"standings: {standings}")
 
-            if now < update_retry_at:
-                time.sleep(min(args.poll, update_retry_at - now))
-                continue
-
-            # Keep the completed game's result server available while builds
-            # retry. A broken worktree gets one attempt per retry interval so
-            # this loop can still checkpoint/recover a browser-started game.
-            if not prepare_latest_once():
-                update_retry_at = time.monotonic() + args.build_retry
-                time.sleep(args.poll)
-                continue
-
-            promoted_runtime = promoted_runtime_id()
-            replacement_pending = runtime_replacement_pending(
-                running_runtime_id, promoted_runtime
-            )
-
-            # The page also has a result countdown. If it already created a
-            # successor while compilation ran, leave it alone only when it is
-            # already executing the promoted runtime. An in-process successor
-            # retains the old executable and must be replaced for updates to
-            # reach the watched game.
-            latest_state = read_state(args.port)
-            if (
-                successor_started(latest_state, finished_instance, finished_seed)
-                and not replacement_pending
-            ):
-                log("the browser already began another game; leaving that live match uninterrupted")
-                state = latest_state
-                last_progress = progress_marker(state)
-                progress_at = time.monotonic()
-                finished_key = None
-                continue
-            if successor_started(latest_state, finished_instance, finished_seed):
-                log(
-                    "the server began another game on the previous runtime; "
-                    "deploying the promoted build"
-                )
-
+            # The supervised server rejects every in-process /new request, so
+            # it is safe to leave the result reachable during the short
+            # cooldown. Builds happen during active play; the boundary itself
+            # never waits on Cargo.
             remaining = args.cooldown - (time.monotonic() - finished_seen_at)
             if remaining > 0:
                 time.sleep(remaining)
-            # The server has its own viewer-independent 10-second restart.
-            # Recheck after sleeping so the supervisor does not kill that
-            # brand-new match in a race at the shared cooldown boundary.
-            latest_state = read_state(args.port)
-            if (
-                not replacement_pending
-                and not successor_started(latest_state, finished_instance, finished_seed)
-            ):
-                latest_state = wait_for_successor(
-                    args.port, finished_instance, finished_seed
-                )
-            if (
-                successor_started(latest_state, finished_instance, finished_seed)
-                and not replacement_pending
-            ):
-                log("the server began another game during cooldown; leaving it uninterrupted")
-                state = latest_state
-                last_progress = progress_marker(state)
-                progress_at = time.monotonic()
-                finished_key = None
-                continue
             stop_server(process, adopted_pid)
             process = None
             adopted_pid = None
@@ -966,11 +932,26 @@ def main() -> int:
                 save_path.unlink()
             except FileNotFoundError:
                 pass
+
+            snapshot = source_snapshot()
+            latest_ready = runtime_matches(snapshot)
+            if latest_ready:
+                # A commit changes repository identity without changing the
+                # compiled input snapshot. Reconcile metadata so the promoted
+                # binary records the clean synced revision it exactly matches.
+                write_runtime_metadata(snapshot)
+            else:
+                log(
+                    "latest source is not prebuilt; starting the verified "
+                    "fallback immediately and refreshing it during play"
+                )
             launch_runtime_id = promoted_runtime_id()
             process = start_server(args.port, settings, False)
             running_runtime_id = launch_runtime_id
             state = wait_for_server(args.port, process)
-            refresh_pending = False
+            refresh_pending = not latest_ready
+            refresh_at = time.monotonic()
+            source_check_at = time.monotonic() + max(1.0, args.source_check_interval)
             last_progress = progress_marker(state)
             progress_at = time.monotonic()
             checkpointed_progress = None

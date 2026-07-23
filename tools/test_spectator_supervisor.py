@@ -280,6 +280,23 @@ class SourceSnapshotTests(unittest.TestCase):
             self.assertTrue(supervisor.prepare_live_refresh(8766, checkpoint))
         capture.assert_called_once_with(8766, checkpoint)
 
+    def test_active_prebuild_skips_current_runtime_and_retries_changed_source(self):
+        with (
+            patch.object(supervisor, "source_snapshot", return_value="current"),
+            patch.object(supervisor, "runtime_matches", return_value=True),
+            patch.object(supervisor, "prepare_latest_once") as prepare,
+        ):
+            self.assertTrue(supervisor.prebuild_latest_once())
+        prepare.assert_not_called()
+
+        with (
+            patch.object(supervisor, "source_snapshot", return_value="changed"),
+            patch.object(supervisor, "runtime_matches", return_value=False),
+            patch.object(supervisor, "prepare_latest_once", return_value=True) as prepare,
+        ):
+            self.assertTrue(supervisor.prebuild_latest_once())
+        prepare.assert_called_once_with()
+
 
 class RecoveryTests(unittest.TestCase):
     def test_successor_detection_closes_the_cooldown_restart_race(self):
@@ -416,6 +433,7 @@ class RecoveryTests(unittest.TestCase):
             cooldown=10.0,
             poll=0.5,
             build_retry=15.0,
+            source_check_interval=30.0,
             unresponsive_timeout=20.0,
             stall_timeout=30.0,
             checkpoint_interval=5.0,
@@ -470,6 +488,7 @@ class RecoveryTests(unittest.TestCase):
             cooldown=0.0,
             poll=0.01,
             build_retry=0.01,
+            source_check_interval=30.0,
             unresponsive_timeout=20.0,
             busy_timeout=0.0,
             stall_timeout=30.0,
@@ -519,7 +538,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertLess(events.index(("prepare", None)), events.index(("stop", 321)))
         self.assertIn(("start", checkpoint), events)
 
-    def test_update_is_prepared_before_finished_server_handoff(self):
+    def test_finished_server_starts_successor_without_waiting_for_a_build(self):
         args = SimpleNamespace(
             port=8766,
             players=4,
@@ -532,6 +551,7 @@ class RecoveryTests(unittest.TestCase):
             cooldown=0.0,
             poll=0.01,
             build_retry=0.01,
+            source_check_interval=30.0,
             unresponsive_timeout=20.0,
             busy_timeout=600.0,
             stall_timeout=30.0,
@@ -576,32 +596,22 @@ class RecoveryTests(unittest.TestCase):
                 patch.object(supervisor, "parse_args", return_value=args),
                 patch.object(supervisor, "RUNTIME_BINARY", runtime),
                 patch.object(supervisor, "checkpoint_path", return_value=checkpoint),
+                patch.object(supervisor, "runtime_matches", return_value=False),
                 patch.object(supervisor, "start_server", side_effect=start),
                 patch.object(supervisor, "wait_for_server", side_effect=wait),
                 patch.object(
                     supervisor,
                     "read_state",
-                    side_effect=[finished, finished, finished, KeyboardInterrupt],
+                    side_effect=[finished, KeyboardInterrupt],
                 ),
                 patch.object(supervisor, "stop_server", side_effect=stop),
-                patch.object(
-                    supervisor,
-                    "prepare_latest_once",
-                    side_effect=lambda: events.append(("prepare", None)) or True,
-                ),
-                patch.object(
-                    supervisor,
-                    "promoted_runtime_id",
-                    side_effect=["old", "new", "new"],
-                ),
             ):
                 self.assertEqual(supervisor.main(), 0)
 
         retired = events.index(("stop", 321))
-        prepared = events.index(("prepare", None))
         launched = events.index(("start", 654))
-        self.assertLess(prepared, retired)
         self.assertLess(retired, launched)
+        self.assertNotIn(("prepare", None), events)
 
 
 if __name__ == "__main__":
