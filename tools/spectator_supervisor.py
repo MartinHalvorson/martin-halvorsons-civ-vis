@@ -185,13 +185,18 @@ def runtime_inputs_dirty() -> bool:
     return bool(status.stdout.strip())
 
 
-def write_runtime_metadata(snapshot: str) -> None:
-    revision = command(
+def source_revision() -> str:
+    return command(
         "git", "rev-parse", "--short", "HEAD", check=True, cwd=SOURCE_ROOT
     ).stdout.strip()
+
+
+def write_runtime_metadata(snapshot: str) -> None:
+    revision = source_revision()
     dirty = runtime_inputs_dirty()
     metadata = {
         "revision": revision,
+        "embedded_revision": revision,
         "dirty": dirty,
         "source_snapshot": snapshot,
         "binary_sha256": hashlib.sha256(RUNTIME_BINARY.read_bytes()).hexdigest(),
@@ -241,7 +246,7 @@ def refresh_runtime_metadata(snapshot: str) -> None:
 
 
 def runtime_matches(snapshot: str) -> bool:
-    """Return whether the promoted binary was built from this exact source."""
+    """Return whether the promoted binary and its stamp match this source."""
     if not RUNTIME_BINARY.is_file() or not RUNTIME_METADATA.is_file():
         return False
     try:
@@ -252,6 +257,7 @@ def runtime_matches(snapshot: str) -> bool:
     matches = (
         metadata.get("source_snapshot") == snapshot
         and metadata.get("binary_sha256") == binary_hash
+        and metadata.get("embedded_revision") == source_revision()
     )
     return matches
 
@@ -282,9 +288,7 @@ def build_latest(max_attempts: int = 3) -> bool:
             log("known-good spectator build already matches the latest worktree")
             return True
         log(f"building the latest worktree (attempt {attempt}/{max_attempts})")
-        revision = command(
-            "git", "rev-parse", "--short", "HEAD", check=True, cwd=SOURCE_ROOT
-        ).stdout.strip()
+        revision = source_revision()
         build_environment = os.environ.copy()
         build_environment["CIVVIS_COMMIT"] = revision
         # The visible game does not need to wait for unrelated evaluation

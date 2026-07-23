@@ -414,6 +414,32 @@ class SourceSnapshotTests(unittest.TestCase):
             ):
                 self.assertFalse(supervisor.runtime_matches("same-source"))
 
+    def test_matching_source_rebuilds_an_unstamped_or_stale_revision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "civvis"
+            runtime.write_bytes(b"verified binary")
+            metadata_path = root / "build.json"
+            metadata = {
+                "source_snapshot": "same-source",
+                "binary_sha256": supervisor.hashlib.sha256(
+                    runtime.read_bytes()
+                ).hexdigest(),
+            }
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+            with (
+                patch.object(supervisor, "RUNTIME_BINARY", runtime),
+                patch.object(supervisor, "RUNTIME_METADATA", metadata_path),
+                patch.object(supervisor, "source_revision", return_value="current"),
+            ):
+                self.assertFalse(supervisor.runtime_matches("same-source"))
+                metadata["embedded_revision"] = "previous"
+                metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+                self.assertFalse(supervisor.runtime_matches("same-source"))
+                metadata["embedded_revision"] = "current"
+                metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+                self.assertTrue(supervisor.runtime_matches("same-source"))
+
     def test_single_update_attempt_returns_control_after_a_failed_build(self):
         with (
             patch.object(supervisor, "sync_canonical_source", return_value=True) as sync,
