@@ -291,6 +291,19 @@ class RecoveryTests(unittest.TestCase):
             supervisor.progress_marker(first), supervisor.progress_marker(stepped)
         )
 
+    def test_recovery_recognizes_a_checkpoint_the_browser_already_advanced(self):
+        marker = (7, 12, 1, None)
+        self.assertTrue(
+            supervisor.recovered_checkpoint_game(
+                {"seed": 7, "turn": 14, "current": 3}, marker
+            )
+        )
+        self.assertFalse(
+            supervisor.recovered_checkpoint_game(
+                {"seed": 8, "turn": 1, "current": 0}, marker
+            )
+        )
+
     def test_stall_recovery_respects_an_intentional_browser_pause(self):
         self.assertTrue(supervisor.should_nudge({}, stalled_for=31, timeout=30))
         self.assertFalse(

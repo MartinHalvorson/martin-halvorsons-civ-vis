@@ -365,6 +365,13 @@ def checkpoint_marker(path: Path) -> tuple[Any, ...] | None:
     return progress_marker(value)
 
 
+def recovered_checkpoint_game(
+    state: dict[str, Any], marker: tuple[Any, ...] | None
+) -> bool:
+    """Recognize a resumed game even if the browser already advanced it."""
+    return marker is not None and state.get("seed") == marker[0]
+
+
 def quarantine_checkpoint(path: Path) -> None:
     """Retain a repeatedly failing save for diagnosis without replaying it."""
     if not path.exists():
@@ -704,7 +711,7 @@ def main() -> int:
             recovered = wait_for_server(args.port, process)
             marker = None
 
-        if marker is not None and progress_marker(recovered) == marker:
+        if recovered_checkpoint_game(recovered, marker):
             log(
                 f"resumed checkpoint at turn {recovered.get('turn')} "
                 f"(player {recovered.get('current')})"
