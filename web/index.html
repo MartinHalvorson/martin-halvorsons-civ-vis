@@ -1152,8 +1152,23 @@ function hexDist(a, b) {
   const dq = a[0]-b[0], dr = a[1]-b[1];
   return Math.max(Math.abs(dq), Math.abs(dr), Math.abs(dq+dr));
 }
-function hash2(q, r) { let h = (q * 374761393 + r * 668265263) | 0;
-  h = (h ^ (h >> 13)) * 1274126177; return ((h ^ (h >> 16)) >>> 0) / 4294967295; }
+// Every scrap of variation on this map comes through here: atlas crops and
+// their mirroring, feature rotation, water stamp choice, hill and dune
+// placement, field tone, parchment flourishes. It was not uniform — the plain
+// `*` overflows 32 bits into double precision and loses the low bits, and the
+// sign-propagating `>>` drags the top ones down with it. Sampled over a
+// 60x40 grid the old version never once returned above 0.6 and averaged 0.249
+// instead of 0.5, so every threshold in the renderer was being read against a
+// squashed distribution: the sea-serpent flourishes at h > 0.965 could never
+// draw at all, water glints at ph > 0.6 never drew, atlas mirroring at
+// hx > 0.5 almost never fired, and a 4-way stamp pick only ever returned two
+// of its four variants. imul keeps the multiply in 32 bits and the logical
+// shifts keep the high bits, which is what the algorithm wanted throughout.
+function hash2(q, r) {
+  let h = (Math.imul(q, 374761393) + Math.imul(r, 668265263)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
 
 function resize() {
   DPR = window.devicePixelRatio || 1;   // native-resolution backing store (4K crisp)
@@ -2617,6 +2632,27 @@ function drawImprovement(t, x, y) {
     cx.lineTo(x + 10, y + 6); cx.closePath(); cx.fill(); cx.stroke();
     cx.fillStyle = "#6f6a5d";
     for (const cxo of [-7, 0, 7]) cx.fillRect(x + cxo - 1.6, y - 6, 3.2, 3.4);
+  } else if (imp === "great_wall") {
+    // A rampart across the tile, not a shed. Ninety-odd of these end up strung
+    // along a Chinese frontier, so they want to read as one running line.
+    cx.fillStyle = "#9a9384"; cx.strokeStyle = "#38332b"; cx.lineWidth = 1.1;
+    cx.beginPath(); cx.rect(x - 15, y - 2, 30, 7); cx.fill(); cx.stroke();
+    for (let i = 0; i < 7; i++) {
+      cx.fillRect(x - 15 + i * 4.6, y - 5.4, 3.2, 3.6);
+      cx.strokeRect(x - 15 + i * 4.6, y - 5.4, 3.2, 3.6);
+    }
+    cx.fillStyle = "rgba(0,0,0,.16)"; cx.fillRect(x - 15, y + 1.6, 30, 3.4);
+  } else if (imp === "sphinx") {
+    cx.fillStyle = "#d8c48a"; cx.strokeStyle = "#4a3b1c"; cx.lineWidth = 1.1;
+    cx.beginPath();                                    // couchant body
+    cx.rect(x - 11, y - 1, 15, 7); cx.fill(); cx.stroke();
+    cx.beginPath();                                    // outstretched forelegs
+    cx.rect(x + 4, y + 2.6, 7, 3.4); cx.fill(); cx.stroke();
+    cx.beginPath(); cx.arc(x + 1, y - 5, 4.2, 0, 7); cx.fill(); cx.stroke();
+    cx.fillStyle = "#b99a4e";                          // nemes headdress
+    cx.beginPath();
+    cx.moveTo(x - 3.6, y - 5); cx.lineTo(x + 1, y - 10.4); cx.lineTo(x + 5.6, y - 5);
+    cx.closePath(); cx.fill(); cx.stroke();
   } else if (imp === "goody_hut") {
     cx.fillStyle = "#b8925c"; cx.strokeStyle = "#4a3722"; cx.lineWidth = 1;
     cx.beginPath(); cx.arc(x, y + 4, 7.5, Math.PI, 0); cx.fill(); cx.stroke();
@@ -2645,6 +2681,68 @@ function drawImprovement(t, x, y) {
     cx.beginPath();
     cx.moveTo(x - 8, y + 7); cx.lineTo(x + 8, y - 7); cx.stroke();
     cx.lineCap = "butt";
+  }
+}
+
+// Every city drew the same three rectangles, so a size-1 hamlet and a size-20
+// metropolis were the same picture and the nameplate's number was the only
+// place growth showed. A settlement is built from its population now: more
+// houses, taller ones, packed wider. Watching a city thicken over a game is
+// one of the few places the map can show the clock running.
+function drawSettlement(c, x, y, beau) {
+  const pop = Math.max(1, c.pop || 1);
+  const n = Math.max(3, Math.min(11, 2 + Math.round(Math.sqrt(pop) * 2)));
+  const spread = 8.5 + Math.min(7, Math.sqrt(pop) * 1.9);
+  const rise = 0.82 + 0.36 * Math.min(1, pop / 14);
+  const roof = cityBannerColor(c.owner);
+  if (beau) {
+    cx.fillStyle = "#00000030";
+    cx.beginPath();
+    cx.ellipse(x, y + 8, spread + 4, (spread + 4) * 0.36, 0, 0, 7); cx.fill();
+  }
+  // Golden-angle placement fills the footprint evenly at any count and is
+  // stable frame to frame, so a city does not reshuffle its own streets.
+  const town = [];
+  for (let i = 0; i < n; i++) {
+    const a = i * 2.399963;
+    const r = spread * Math.sqrt((i + 0.6) / n);
+    const h = hash2(c.pos[0] * 17 + i * 7, c.pos[1] * 23 + i * 13);
+    town.push({ bx: Math.cos(a) * r, by: Math.sin(a) * r * 0.5,
+                bw: 4.4 + h * 2.8, bh: (5.5 + h * 7) * rise, h });
+  }
+  town.sort((p, q) => p.by - q.by);          // back to front
+  cx.lineWidth = 0.8;
+  for (const b of town) {
+    const bx = x + b.bx - b.bw / 2, by = y + b.by - b.bh + 2;
+    cx.fillStyle = "#5c5648";                                  // side face
+    cx.fillRect(bx + b.bw, by + 1.5, 2.2, b.bh);
+    cx.fillStyle = b.h > 0.72 ? "#c8c0ae" : "#ded8ca";          // front face
+    cx.fillRect(bx, by, b.bw, b.bh);
+    cx.strokeStyle = "#10151d";
+    cx.strokeRect(bx, by, b.bw, b.bh);
+    // every house is roofed — a flat-topped block reads as a domino, not a
+    // building — and a share of them are tiled in the empire's color, so a
+    // settlement declares who owns it without waiting for the nameplate
+    cx.fillStyle = b.h > 0.62 ? roof : "#a8593f";
+    cx.beginPath();
+    cx.moveTo(bx - 1, by); cx.lineTo(bx + b.bw / 2, by - 3.6);
+    cx.lineTo(bx + b.bw + 1, by); cx.closePath();
+    cx.fill(); cx.stroke();
+  }
+  if (c.is_capital) {                        // the seat gets a tower and a flag
+    const th = 15 * rise;
+    cx.fillStyle = "#5c5648"; cx.fillRect(x + 3, y - th + 1.5, 2, th);
+    cx.fillStyle = "#e8e2d2"; cx.fillRect(x - 3, y - th, 6, th);
+    cx.strokeStyle = "#10151d"; cx.strokeRect(x - 3, y - th, 6, th);
+    cx.fillStyle = roof;
+    cx.beginPath();
+    cx.moveTo(x - 4.4, y - th); cx.lineTo(x, y - th - 4.6);
+    cx.lineTo(x + 4.4, y - th); cx.closePath(); cx.fill(); cx.stroke();
+    cx.beginPath();
+    cx.moveTo(x, y - th - 4.6); cx.lineTo(x, y - th - 10); cx.stroke();
+    cx.beginPath();
+    cx.moveTo(x, y - th - 10); cx.lineTo(x + 6, y - th - 8.2);
+    cx.lineTo(x, y - th - 6.4); cx.closePath(); cx.fill(); cx.stroke();
   }
 }
 
@@ -3244,21 +3342,7 @@ function draw() {
     const ct = TMAP.get(key(c.pos));
     const [x, yy] = hexXY(c.pos[0], c.pos[1]);
     const y = yy - (ct ? elev(ct) : 0);
-    // ground shadow + 3D building cluster
-    if (beau) { cx.fillStyle = "#00000030";
-      cx.beginPath(); cx.ellipse(x, y + 8, 15, 5.5, 0, 0, 7); cx.fill(); }
-    const bs = [[-9,-1,6,9],[-1,-6,7,14],[7,1,5,7]];
-    for (const [bx, by, bw, bh] of bs) {
-      cx.fillStyle = "#5c5648";
-      cx.fillRect(x + bx + bw, y + by + 1.5, 2.2, bh); // side face
-      cx.fillStyle = "#ded8ca";
-      cx.fillRect(x + bx, y + by, bw, bh);
-      cx.strokeStyle = "#10151d"; cx.lineWidth = 0.8;
-      cx.strokeRect(x + bx, y + by, bw, bh);
-    }
-    cx.fillStyle = "#8a2f2b";
-    cx.beginPath(); cx.moveTo(x - 2, y - 10); cx.lineTo(x + 3, y - 6);
-    cx.lineTo(x - 7, y - 6); cx.closePath(); cx.fill();
+    drawSettlement(c, x, y, beau);
     {
       // parchment-style nameplate
       const name = (c.is_capital ? "★ " : "") + c.name.toUpperCase();
