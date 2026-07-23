@@ -272,7 +272,7 @@ fn main() {
             let mut ais = AdvancedAi::fleet(&g);
             run_game(&mut g, &mut ais);
             println!("[{:.3}s]", g0.elapsed().as_secs_f64());
-            standings(&g);
+            if args.iter().any(|a| a == "--dump-state") { println!("{}", serde_json::to_string(&g).unwrap()); } else { standings(&g); }
         }
         "soak" => {
             let players = arg(&args, "--players", 4);

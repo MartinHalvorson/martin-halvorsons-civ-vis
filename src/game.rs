@@ -20263,7 +20263,11 @@ impl Game {
             for position in visible.iter() {
                 player.remembered_tiles.mark_seen(*position, turn);
             }
-            player.explored.extend(visible.iter().copied());
+            // `newly_explored` is exactly `visible - explored`, so extending
+            // by it reaches the same set as extending by everything visible
+            // while inserting only the hexes actually new to this player —
+            // most of what a unit sees on any given step, it has seen before.
+            player.explored.extend(newly_explored.iter().copied());
             for (position, tile) in tiles {
                 player.remembered_tiles.remember(position, tile, turn);
             }
