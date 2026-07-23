@@ -7994,6 +7994,42 @@ impl FromIterator<Player> for Players {
     }
 }
 
+/// The historic moments a game has recorded, shared until written to.
+///
+/// Events only accumulate, and a game cloned to look ahead almost never adds
+/// one — but it was copying every event ever recorded, each with its own
+/// category and prose, and that grew with the length of the game.
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(from = "Vec<Event>", into = "Vec<Event>")]
+pub struct EventLog(Arc<Vec<Event>>);
+
+impl std::ops::Deref for EventLog {
+    type Target = Vec<Event>;
+
+    fn deref(&self) -> &Vec<Event> {
+        &self.0
+    }
+}
+
+/// Taking the log mutably is what copies it.
+impl std::ops::DerefMut for EventLog {
+    fn deref_mut(&mut self) -> &mut Vec<Event> {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+impl From<Vec<Event>> for EventLog {
+    fn from(events: Vec<Event>) -> EventLog {
+        EventLog(Arc::new(events))
+    }
+}
+
+impl From<EventLog> for Vec<Event> {
+    fn from(log: EventLog) -> Vec<Event> {
+        Arc::try_unwrap(log.0).unwrap_or_else(|shared| (*shared).clone())
+    }
+}
+
 fn bump(p: &mut Player, key: &str) {
     *p.counters.entry(key.to_string()).or_insert(0) += 1;
 }
@@ -9508,7 +9544,7 @@ pub struct Game {
     /// Runtime-only (not in saves yet).
     pub log: crate::actionlog::ActionLog,
     /// Per-civilization event stream; see [`Event`].
-    pub events: Vec<Event>,
+    pub events: EventLog,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
@@ -9682,7 +9718,7 @@ impl From<GameSer> for Game {
             speed,
             human_seats: s.human_seats,
             mods: s.mods,
-            events: s.events,
+            events: s.events.into(),
             map_script: s.map_script,
             game_speed,
             max_turns: s.max_turns,
@@ -9822,7 +9858,7 @@ impl From<Game> for GameSer {
             speed: g.game_speed.id().to_string(),
             human_seats: g.human_seats,
             mods: g.mods,
-            events: g.events,
+            events: g.events.into(),
             map_script: g.map_script,
             game_speed: g.game_speed,
             max_turns: g.max_turns,
@@ -10020,7 +10056,7 @@ impl Game {
             occ: BTreeMap::new(),
             city_by_pos: BTreeMap::new(),
             log: crate::actionlog::ActionLog::new(),
-            events: Vec::new(),
+            events: EventLog::default(),
         };
         for i in 0..num_players {
             let mut player = Player::new(i, CIV_NAMES[i % CIV_NAMES.len()], false);
