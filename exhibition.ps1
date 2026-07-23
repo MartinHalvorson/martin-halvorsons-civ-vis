@@ -1,10 +1,11 @@
 # exhibition.ps1 - keep the civvis spectate exhibition running on the latest
 # code. Loop: revive dead processes; fetch origin/main and stage a fresh
-# release build when new commits land; swap binaries in the between-games
-# window (winner on screen) so every new game boots on the newest code.
+# release build the moment new commits land, so the binary is already waiting
+# when the current game ends; then, between games, either swap onto that build
+# or deal the next game in place. Something is always playing on screen.
 # Run hidden:  Start-Process powershell -WindowStyle Hidden -ArgumentList
 #              "-ExecutionPolicy","Bypass","-File","exhibition.ps1"
-param([int]$Port = 8765, [int]$PollSec = 20)
+param([int]$Port = 8765, [int]$PollSec = 10)
 
 $repo = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $repo
@@ -34,6 +35,20 @@ function Start-Evolve {
     Log "evolve launched"
 }
 
+# Deal a fresh game into the running server. POST /new inherits the current
+# session's settings, spectate included - but also its seed, so a new one has
+# to be supplied or every game would replay the last.
+function Start-NextGame {
+    $body = @{ seed = (Get-Random -Minimum 1 -Maximum 2000000000) } | ConvertTo-Json -Compress
+    try {
+        Invoke-RestMethod "http://localhost:$Port/new" -Method Post -Body $body `
+            -ContentType "application/json" -TimeoutSec 20 | Out-Null
+        Log "dealt the next game in place"
+    } catch {
+        Log "could not deal a new game: $_"
+    }
+}
+
 Log "supervisor started (port $Port, poll ${PollSec}s)"
 while ($true) {
     try {
@@ -42,6 +57,8 @@ while ($true) {
         if (-not $guiUp) {
             if (Test-Path "$repo\bin-run\civvis-next.exe") {
                 Copy-Item "$repo\bin-run\civvis-next.exe" "$repo\bin-run\civvis-gui.exe" -Force
+                Copy-Item "$repo\bin-run\civvis-next.exe" "$repo\bin-run\civvis-evolve.exe" -Force
+                Remove-Item "$repo\bin-run\civvis-next.exe" -Force
             }
             if (Test-Path "$repo\bin-run\civvis-gui.exe") { Start-Gui }
         }
@@ -49,7 +66,9 @@ while ($true) {
         if (-not $evoUp -and (Test-Path "$repo\bin-run\civvis-evolve.exe")) { Start-Evolve }
 
         # 2. new commits upstream? pull + build + stage (skip if checkout dirty:
-        #    a parallel session is mid-work; retry next round)
+        #    a parallel session is mid-work; retry next round). Building the
+        #    moment commits land is what has the binary ready before the game
+        #    ends, rather than starting a build during the changeover.
         git fetch -q origin main 2>$null
         $local = git rev-parse HEAD
         $remote = git rev-parse origin/main
@@ -60,24 +79,29 @@ while ($true) {
                 git rebase --abort 2>$null
                 Log "pull failed; will retry"
             } else {
-                Log "pulled $((git rev-parse --short HEAD)); building"
+                $head = git rev-parse --short HEAD
+                Log "pulled $head; building"
+                $sw = [Diagnostics.Stopwatch]::StartNew()
                 & $cargo build --release 2>$null | Out-Null
+                $sw.Stop()
                 if ($LASTEXITCODE -eq 0) {
                     Copy-Item "$repo\target\release\civvis.exe" "$repo\bin-run\civvis-next.exe" -Force
-                    Log "staged new build"
+                    Log ("staged new build in {0:n0}s" -f $sw.Elapsed.TotalSeconds)
                 } else {
-                    Log "build FAILED for $((git rev-parse --short HEAD))"
+                    Log "build FAILED for $head"
                 }
             }
         }
 
-        # 3. staged build + game over (restart countdown window) -> swap now,
-        #    so the next game boots on the latest code
-        if (Test-Path "$repo\bin-run\civvis-next.exe") {
-            $st = $null
-            try { $st = Invoke-RestMethod "http://localhost:$Port/state" -TimeoutSec 5 } catch {}
-            $gameOver = ($null -ne $st) -and ($null -ne $st.winner)
-            if ($gameOver -or ($null -eq $st)) {
+        # 3. game over? start the next one. A staged build is swapped in here,
+        #    in the between-games window, so every game boots on the newest
+        #    code - but the next game starts either way. Gating all of this on
+        #    having a staged build used to leave a decided game frozen on
+        #    screen until some unrelated commit happened to land.
+        $st = $null
+        try { $st = Invoke-RestMethod "http://localhost:$Port/state" -TimeoutSec 5 } catch {}
+        if (($null -ne $st) -and ($null -ne $st.winner)) {
+            if (Test-Path "$repo\bin-run\civvis-next.exe") {
                 Get-Process civvis-gui -ErrorAction SilentlyContinue | Stop-Process -Force
                 Get-Process civvis-evolve -ErrorAction SilentlyContinue | Stop-Process -Force
                 Start-Sleep -Milliseconds 500
@@ -87,6 +111,8 @@ while ($true) {
                 Start-Gui
                 Start-Evolve
                 Log "swapped to latest build between games"
+            } else {
+                Start-NextGame
             }
         }
     } catch {
