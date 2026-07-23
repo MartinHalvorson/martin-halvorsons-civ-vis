@@ -219,8 +219,17 @@ while ($true) {
         #    code - but the next game starts either way. Gating all of this on
         #    having a staged build used to leave a decided game frozen on
         #    screen until some unrelated commit happened to land.
+        # /status carries the winner alone. /state builds close to a megabyte
+        # of observation JSON, and asking for that every few seconds to read
+        # one field made the server stall for whole seconds under load - which
+        # from the browser looks like the game freezing.
         $st = $null
-        try { $st = Invoke-RestMethod "http://localhost:$Port/state" -TimeoutSec 5 } catch {}
+        try { $st = Invoke-RestMethod "http://localhost:$Port/status" -TimeoutSec 5 } catch {}
+        if ($null -eq $st) {
+            # Older binaries predate /status; fall back so a swap onto one
+            # still finds its way to the next game.
+            try { $st = Invoke-RestMethod "http://localhost:$Port/state" -TimeoutSec 5 } catch {}
+        }
         if (($null -ne $st) -and ($null -ne $st.winner)) {
             if (Test-Path "$binRun\civvis-next.exe") {
                 Get-Process civvis-gui -ErrorAction SilentlyContinue | Stop-Process -Force

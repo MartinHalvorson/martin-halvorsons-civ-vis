@@ -1380,6 +1380,24 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
             decorate(&mut o, sh);
             respond_json(stream, &o);
         }
+        // Everything a supervisor needs to know - is there a game, is it over -
+        // without building the whole observation. /state runs close to a
+        // megabyte of JSON on a standard map, and something polling it every
+        // few seconds to read one field spends the server's time on rendering
+        // a view nobody looks at.
+        ("GET", "/status") => {
+            let session = sh.session.lock().unwrap();
+            let game = &session.game;
+            respond_json(
+                stream,
+                &json!({
+                    "turn": game.turn,
+                    "winner": game.winner,
+                    "victory_type": game.victory_type,
+                    "spectate": session.params.spectate,
+                }),
+            );
+        }
         ("POST", "/pace") => {
             if let Some(v) = parsed["ms"].as_u64() {
                 // 0 is the unlimited pace; anything else is a turn budget.

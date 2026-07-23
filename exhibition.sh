@@ -116,7 +116,7 @@ while true; do
     #    promoting a new binary over it.
     settling=0
     [ $(( $(date +%s) - last_launch )) -lt "$LAUNCH_GRACE_SEC" ] && settling=1
-    if ! curl -fsS -m 5 "http://localhost:$PORT/state" >/dev/null 2>&1 && [ "$settling" -eq 0 ]; then
+    if ! curl -fsS -m 5 "http://localhost:$PORT/status" >/dev/null 2>&1 && [ "$settling" -eq 0 ]; then
         pkill -f "civvis-gui play" >/dev/null 2>&1 || true
         sleep 1
         promote_staged || true
@@ -126,7 +126,7 @@ while true; do
     # the server is still generating its map made the two compete for the
     # machine and stretched the changeover, so it waits until there is a game
     # for it to be in the background of.
-    if curl -fsS -m 3 "http://localhost:$PORT/state" >/dev/null 2>&1; then
+    if curl -fsS -m 3 "http://localhost:$PORT/status" >/dev/null 2>&1; then
         pgrep -f "civvis-evolve evolve" >/dev/null 2>&1 || {
             [ -x "$bin_run/civvis-evolve" ] && start_evolve
         }
@@ -190,7 +190,13 @@ while true; do
 
     # 4. game over? start the next one - swapping onto a staged build here, in
     #    the between-games window, but starting the next game either way.
-    state="$(curl -fsS -m 5 "http://localhost:$PORT/state" 2>/dev/null || true)"
+    # /status carries the winner alone; /state builds close to a megabyte of
+    # observation JSON, and asking for that every few seconds to read one
+    # field made the server stall for whole seconds under load.
+    state="$(curl -fsS -m 5 "http://localhost:$PORT/status" 2>/dev/null || true)"
+    # Older binaries predate /status; fall back so a swap onto one still finds
+    # its way to the next game.
+    [ -z "$state" ] && state="$(curl -fsS -m 5 "http://localhost:$PORT/state" 2>/dev/null || true)"
     if [ -n "$state" ] && ! printf '%s' "$state" | grep -q '"winner":null'; then
         if [ -f "$bin_run/civvis-next" ]; then
             pkill -f "civvis-gui play" >/dev/null 2>&1 || true
