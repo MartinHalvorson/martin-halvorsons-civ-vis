@@ -398,20 +398,10 @@ class SourceSnapshotTests(unittest.TestCase):
             self.assertTrue(supervisor.prepare_live_refresh(8766, checkpoint))
         capture.assert_called_once_with(8766, checkpoint)
 
-    def test_active_prebuild_skips_current_runtime_and_retries_changed_source(self):
-        with (
-            patch.object(supervisor, "source_snapshot", return_value="current"),
-            patch.object(supervisor, "runtime_matches", return_value=True),
-            patch.object(supervisor, "prepare_latest_once") as prepare,
-        ):
-            self.assertTrue(supervisor.prebuild_latest_once())
-        prepare.assert_not_called()
-
-        with (
-            patch.object(supervisor, "source_snapshot", return_value="changed"),
-            patch.object(supervisor, "runtime_matches", return_value=False),
-            patch.object(supervisor, "prepare_latest_once", return_value=True) as prepare,
-        ):
+    def test_active_prebuild_always_fetches_canonical_source(self):
+        with patch.object(
+            supervisor, "prepare_latest_once", return_value=True
+        ) as prepare:
             self.assertTrue(supervisor.prebuild_latest_once())
         prepare.assert_called_once_with()
 

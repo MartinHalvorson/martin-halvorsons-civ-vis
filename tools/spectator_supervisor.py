@@ -327,11 +327,7 @@ def prepare_live_refresh(port: int, path: Path) -> bool:
 
 
 def prebuild_latest_once() -> bool:
-    """Keep the promoted fallback current without interrupting the live server."""
-    snapshot = source_snapshot()
-    if runtime_matches(snapshot):
-        return True
-    log("source changed during the active game; prebuilding the next runtime")
+    """Fetch canonical main and keep its promoted fallback current."""
     return prepare_latest_once()
 
 
@@ -959,7 +955,9 @@ def main() -> int:
         # boundary may deliberately start that fallback when source is still
         # changing. Do not make the successor play a whole game before trying
         # the stable source again.
-        refresh_pending = not runtime_matches(source_snapshot())
+        refresh_pending = not runtime_matches(source_snapshot()) or runtime_replacement_pending(
+            running_runtime_id, promoted_runtime_id()
+        )
         refresh_at = time.monotonic()
         if refresh_pending:
             log("active runtime is behind the worktree; scheduling a safe live refresh")
@@ -1073,6 +1071,14 @@ def main() -> int:
                 now = time.monotonic()
                 if prebuild_process is not None and prebuild_process.poll() is not None:
                     prebuild_process = None
+                    if runtime_replacement_pending(
+                        running_runtime_id, promoted_runtime_id()
+                    ):
+                        refresh_pending = True
+                        refresh_at = now
+                        log(
+                            "canonical source advanced; scheduling a safe live refresh"
+                        )
                 marker = progress_marker(state)
                 if marker != last_progress:
                     last_progress = marker
@@ -1133,9 +1139,8 @@ def main() -> int:
                         log("fresh build is ready but no safe checkpoint was captured; retrying")
                 elif not refresh_pending and now >= source_check_at:
                     source_check_at = now + max(1.0, args.source_check_interval)
-                    snapshot = source_snapshot()
-                    if prebuild_process is None and not runtime_matches(snapshot):
-                        log("source changed during the active game; prebuilding in the background")
+                    if prebuild_process is None:
+                        log("checking canonical source for a newer runtime")
                         prebuild_process = start_background_prebuild()
                 time.sleep(args.poll)
                 continue
