@@ -1284,7 +1284,6 @@ function addEvent(icon, text, turn, st, important = false) {
   events.unshift({ icon, text, turn, important, at: performance.now() });
   eventLogs.set(viewKey, events.slice(0, 12));
 }
-
 const SERVER_EVENT_ICONS = {
   General: "✦", Cities: "🏛", War: "⚔", Science: "⌬",
   Culture: "❦", Faith: "☥", People: "★", Diplomacy: "⚖",
@@ -1303,90 +1302,33 @@ function chronicleServer(next) {
   if (seenServerEvents.size > 1200) seenServerEvents = new Set();
 }
 
-function actionSummary(next, batch, includeMovement, includeMilestones = true) {
-  const actions = batch.actions_taken;
-  if (!Array.isArray(actions) || batch.stepped === undefined) return null;
-  const actor = next.players[batch.stepped];
-  if (!actor) return null;
-  const parts = [];
-  const research = actions.find(a => a.type === "research");
-  const civic = actions.find(a => a.type === "civic");
-  const productions = actions.filter(a => a.type === "produce");
-  const improvements = actions.filter(a => a.type === "improve");
-  const upgrades = actions.filter(a => a.type === "upgrade");
-  const attacks = actions.filter(a => ["attack", "ranged", "city_strike", "encampment_strike", "theological_attack", "condemn_heretic"].includes(a.type));
-  const moves = actions.filter(a => a.type === "move" || a.type === "move_to");
-  const war = actions.find(a => a.type === "declare_war");
-  const peace = actions.find(a => a.type === "make_peace");
-  const trade = actions.filter(a => a.type === "trade_route");
-  const deals = actions.filter(a => a.type === "trade");
-  const envoys = actions.filter(a => a.type === "send_envoy");
-  const religion = actions.find(a => a.type === "found_religion");
-  const government = actions.find(a => a.type === "government");
-
-  if (war) parts.push(`declared war on ${(next.players[war.player] || {}).civ || "a rival"}`);
-  if (peace) parts.push(`made peace with ${(next.players[peace.player] || {}).civ || "a rival"}`);
-  if (deals.length) parts.push(`completed ${deals.length} mutually favorable ${deals.length === 1 ? "deal" : "deals"}`);
-  if (research) parts.push(`began ${titleCase(research.tech)}`);
-  if (civic) parts.push(`pursued ${titleCase(civic.civic)}`);
-  if (includeMilestones && government) parts.push(`adopted ${titleCase(government.government)}`);
-  if (includeMilestones && religion) parts.push("founded a religion");
-  if (productions.length) {
-    const first = titleCase(itemName(productions[0].item));
-    parts.push(productions.length === 1 ? `ordered ${first}` : `set ${productions.length} production orders`);
-  }
-  if (improvements.length) parts.push(`built ${improvements.length} improvement${improvements.length === 1 ? "" : "s"}`);
-  if (upgrades.length) parts.push(`modernized ${upgrades.length} unit${upgrades.length === 1 ? "" : "s"}`);
-  if (trade.length) parts.push(`opened ${trade.length} trade route${trade.length === 1 ? "" : "s"}`);
-  if (envoys.length) parts.push(`sent ${envoys.length} envoy${envoys.length === 1 ? "" : "s"}`);
-  if (attacks.length) parts.push(`launched ${attacks.length} attack${attacks.length === 1 ? "" : "s"}`);
-  if (includeMovement && moves.length && parts.length < 4)
-    parts.push(`maneuvered ${moves.length} unit${moves.length === 1 ? "" : "s"}`);
-  return { actor, parts, moves: moves.length };
-}
-function chronicleActions(next) {
-  const batches = Array.isArray(next.step_batches) ? next.step_batches : [next];
-  const viewer = eventViewPlayer(next);
-  if (viewer !== null && viewer !== undefined) {
-    for (const batch of batches) {
-      const summary = actionSummary(next, batch, true);
-      if (!summary || summary.actor.id !== viewer) continue;
-      const shown = summary.parts.slice(0, 4);
-      if (!shown.length) continue;
-      const more = summary.parts.length - shown.length;
-      addEvent("◈", `${summary.actor.civ} ${shown.join(" · ")}` +
-        `${more ? ` · +${more} more` : ""}.`, next.turn, next);
-    }
-    return;
-  }
-
-  // Omniscient spectator paints can contain several simulated turns. Keep
-  // them together as one readable world summary instead of flooding the log
-  // with every unit-level action from every civilization.
-  const summaries = batches.map(batch => actionSummary(next, batch, false, false)).filter(Boolean);
-  if (!summaries.length) return;
-  const majorActivity = summaries.filter(summary => summary.parts.length &&
-    !summary.actor.is_minor && !summary.actor.is_barbarian);
-  const noteworthy = majorActivity.length ? majorActivity :
-    summaries.filter(summary => summary.parts.length);
-  const clauses = noteworthy.slice(0, 3).map(summary =>
-    `${summary.actor.civ}: ${summary.parts.slice(0, 2).join(", ")}`);
-  const omitted = noteworthy.length - clauses.length;
-  if (!clauses.length) return;
-  const text = clauses.join(" • ") +
-    (omitted > 0 ? ` • +${omitted} more civilizations` : "");
-  addEvent("◎", `${text}.`, next.turn, next);
-}
-
 function worldEventPresentation(event, next) {
   const civ = id => (next.players[id] || {}).civ || "An unknown civilization";
+  const losses = (units, cities) =>
+    `${units} unit${units === 1 ? "" : "s"} and ${cities} cit${cities === 1 ? "y" : "ies"}`;
   switch (event.type) {
     case "wonder_built":
       return ["★", `${civ(event.player)} built ${titleCase(event.wonder)}.`];
     case "religion_founded":
       return ["✦", `${civ(event.player)} founded ${titleCase(event.religion)}.`];
     case "district_first":
-      return ["◆", `${civ(event.player)} built the world's first ${titleCase(event.district)}.`];
+      return ["◆", `${civ(event.player)} built the world's first ${titleCase(event.district)}` +
+        `${event.city ? ` in ${event.city}` : ""}.`];
+    case "building_first":
+      return ["▰", `${civ(event.player)} built the world's first ${titleCase(event.building)}` +
+        `${event.city ? ` in ${event.city}` : ""}.`];
+    case "population_milestone":
+      return ["♟", `${civ(event.player)} reached city population ${event.population}` +
+        `${event.city ? ` in ${event.city}` : ""} for the first time.`];
+    case "war_started":
+      return ["⚔", `${civ(event.aggressor)} started a war against ${civ(event.defender)}.`];
+    case "war_progress":
+      return ["⚔", `${civ(event.defender)} has lost ${losses(event.defender_units_lost, event.defender_cities_lost)}; ` +
+        `${civ(event.aggressor)} has lost ${losses(event.aggressor_units_lost, event.aggressor_cities_lost)}.`];
+    case "war_ended":
+      return ["☮", `${civ(event.aggressor)} and ${civ(event.defender)} made peace. Final losses: ` +
+        `${civ(event.defender)} ${losses(event.defender_units_lost, event.defender_cities_lost)}; ` +
+        `${civ(event.aggressor)} ${losses(event.aggressor_units_lost, event.aggressor_cities_lost)}.`];
     case "city_captured":
       return ["⚔", `${civ(event.player)} captured ${event.city} from ${civ(event.former)}.`];
     case "suzerain_changed": {
@@ -1432,11 +1374,6 @@ function chronicle(prev, next) {
   }
   const viewer = eventViewPlayer(next);
   const playerView = viewer !== null && viewer !== undefined;
-  if (next.turn > prev.turn) {
-    const civ = viewer === null ? null : (next.players[viewer] || {}).civ;
-    addEvent("☀", civ ? `Turn ${next.turn} begins for ${civ}.` :
-      `Turn ${next.turn} dawns across the world.`, next.turn, next);
-  }
   const oldCities = new Map(prev.cities.map(c => [c.id, c]));
   for (const city of next.cities) {
     const old = oldCities.get(city.id);
@@ -1447,8 +1384,6 @@ function chronicle(prev, next) {
              (viewer === null || city.owner === viewer || old.owner === viewer)) {
       const former = (prev.players[old.owner] || {}).civ || "its former ruler";
       addEvent("⚔", `${civ} captured ${city.name} from ${former}.`, next.turn, next);
-    } else if (old && city.pop > old.pop && (viewer === null || city.owner === viewer))
-      addEvent("◆", `${city.name} grew to ${city.pop} population.`, next.turn, next);
     oldCities.delete(city.id);
   }
   for (const city of oldCities.values()) {
@@ -1478,7 +1413,6 @@ function chronicle(prev, next) {
     if (majors.length) lastLeaderByView.set(viewKey, majors[0].id);
     chronicleWorldEvents(next);
   }
-  chronicleActions(next);
   chronicleServer(next);
 }
 
