@@ -15,6 +15,30 @@ SPEC.loader.exec_module(supervisor)
 
 
 class CanonicalSyncTests(unittest.TestCase):
+    def test_cargo_resolution_survives_a_minimal_service_environment(self):
+        configured = "/opt/rust/bin/cargo"
+        with patch.dict(supervisor.os.environ, {"CARGO": configured}):
+            self.assertEqual(supervisor.cargo_executable(), configured)
+
+        cargo_name = "cargo.exe" if supervisor.os.name == "nt" else "cargo"
+        with (
+            patch.dict(supervisor.os.environ, {}, clear=True),
+            patch.object(supervisor.shutil, "which", return_value=None),
+            patch.object(supervisor.Path, "home", return_value=Path("/service-user")),
+        ):
+            self.assertEqual(
+                supervisor.cargo_executable(),
+                str(Path("/service-user/.cargo/bin") / cargo_name),
+            )
+
+    def test_missing_executable_is_a_failed_command_not_a_supervisor_crash(self):
+        with patch.object(
+            supervisor.subprocess, "run", side_effect=FileNotFoundError("missing")
+        ):
+            result = supervisor.command("missing-tool")
+        self.assertEqual(result.returncode, 127)
+        self.assertIn("missing-tool unavailable", result.stdout)
+
     def test_deployment_sync_resets_a_private_worktree_without_touching_checkout(self):
         calls = []
 
@@ -238,7 +262,10 @@ class SourceSnapshotTests(unittest.TestCase):
         builds = []
 
         def fake_command(*args, **_kwargs):
-            if args[:3] == ("cargo", "build", "--release"):
+            if Path(args[0]).name in ("cargo", "cargo.exe") and args[1:3] == (
+                "build",
+                "--release",
+            ):
                 builds.append(args)
             return SimpleNamespace(returncode=0, stdout="")
 
@@ -250,7 +277,7 @@ class SourceSnapshotTests(unittest.TestCase):
         ):
             self.assertTrue(supervisor.build_latest())
         self.assertEqual(len(builds), 2)
-        self.assertEqual(builds[0], ("cargo", "build", "--release", "--bin", "civvis"))
+        self.assertEqual(builds[0][1:], ("build", "--release", "--bin", "civvis"))
         promote.assert_called_once_with()
         metadata.assert_called_once_with("new")
 

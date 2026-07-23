@@ -53,19 +53,38 @@ def log(message: str) -> None:
     print(f"[spectator] {message}", flush=True)
 
 
+def cargo_executable() -> str:
+    """Find Cargo even under launchd/Task Scheduler's minimal environment."""
+    configured = os.environ.get("CARGO")
+    if configured:
+        return configured
+    discovered = shutil.which("cargo")
+    if discovered:
+        return discovered
+    cargo_name = "cargo.exe" if os.name == "nt" else "cargo"
+    return str(Path.home() / ".cargo" / "bin" / cargo_name)
+
+
 def command(
     *args: str,
     check: bool = False,
     cwd: Path = ROOT,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        args,
-        cwd=cwd,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=check,
-    )
+    try:
+        return subprocess.run(
+            args,
+            cwd=cwd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=check,
+        )
+    except OSError as error:
+        # A missing build tool must fail this build attempt, not terminate the
+        # long-running supervisor and strand the browser on its final frame.
+        return subprocess.CompletedProcess(
+            args, 127, stdout=f"{args[0]} unavailable: {error}\n"
+        )
 
 
 def sync_canonical_source() -> bool:
@@ -264,7 +283,12 @@ def build_latest(max_attempts: int = 3) -> bool:
         # The visible game does not need to wait for unrelated evaluation
         # binaries to link before its known-good runtime can be promoted.
         result = command(
-            "cargo", "build", "--release", "--bin", "civvis", cwd=SOURCE_ROOT
+            cargo_executable(),
+            "build",
+            "--release",
+            "--bin",
+            "civvis",
+            cwd=SOURCE_ROOT,
         )
         if result.returncode != 0:
             log("latest worktree does not build; no new game will use stale code")
