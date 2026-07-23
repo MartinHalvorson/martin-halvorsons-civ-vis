@@ -1,12 +1,12 @@
 {
-  "wheat": {"class": "bonus", "yields": {"food": 1}, "terrain": ["plains"], "improvement": "farm", "feature": ["floodplains", "plains_floodplains"], "hills": false},
-  "cattle": {"class": "bonus", "yields": {"food": 1}, "terrain": ["grassland"], "improvement": "pasture", "hills": false},
-  "sheep": {"class": "bonus", "yields": {"food": 1}, "terrain": ["desert", "grassland", "plains", "tundra"], "improvement": "pasture", "hills": true},
-  "stone": {"class": "bonus", "yields": {"production": 1}, "terrain": ["grassland"], "improvement": "quarry"},
-  "deer": {"class": "bonus", "yields": {"production": 1}, "feature": ["forest"], "improvement": "camp", "terrain": ["tundra"]},
-  "fish": {"class": "bonus", "yields": {"food": 1}, "terrain": ["coast"], "improvement": "fishing_boats", "feature": ["reef"]},
-  "bananas": {"class": "bonus", "yields": {"food": 1}, "feature": ["jungle"], "improvement": "plantation", "terrain": []},
-  "copper": {"class": "bonus", "yields": {"gold": 2}, "terrain": ["desert", "grassland", "plains", "snow", "tundra"], "improvement": "mine", "hills": true},
+  "wheat": {"class": "bonus", "yields": {"food": 1}, "terrain": ["plains"], "improvement": "farm", "feature": ["floodplains", "plains_floodplains"], "hills": false, "harvest": {"yield": "food", "amount": 20, "tech": "pottery"}},
+  "cattle": {"class": "bonus", "yields": {"food": 1}, "terrain": ["grassland"], "improvement": "pasture", "hills": false, "harvest": {"yield": "food", "amount": 20, "tech": "animal_husbandry"}},
+  "sheep": {"class": "bonus", "yields": {"food": 1}, "terrain": ["desert", "grassland", "plains", "tundra"], "improvement": "pasture", "hills": true, "harvest": {"yield": "food", "amount": 20, "tech": "animal_husbandry"}},
+  "stone": {"class": "bonus", "yields": {"production": 1}, "terrain": ["grassland"], "improvement": "quarry", "harvest": {"yield": "production", "amount": 20, "tech": "masonry"}},
+  "deer": {"class": "bonus", "yields": {"production": 1}, "feature": ["forest"], "improvement": "camp", "terrain": ["tundra"], "harvest": {"yield": "production", "amount": 20, "tech": "animal_husbandry"}},
+  "fish": {"class": "bonus", "yields": {"food": 1}, "terrain": ["coast"], "improvement": "fishing_boats", "feature": ["reef"], "harvest": {"yield": "food", "amount": 20, "tech": "celestial_navigation"}},
+  "bananas": {"class": "bonus", "yields": {"food": 1}, "feature": ["jungle"], "improvement": "plantation", "terrain": [], "harvest": {"yield": "food", "amount": 20, "tech": "irrigation"}},
+  "copper": {"class": "bonus", "yields": {"gold": 2}, "terrain": ["desert", "grassland", "plains", "snow", "tundra"], "improvement": "mine", "hills": true, "harvest": {"yield": "gold", "amount": 40, "tech": "mining"}},
 
   "horses": {"class": "strategic", "tech": "animal_husbandry", "yields": {"food": 1, "production": 1}, "terrain": ["grassland", "plains"], "improvement": "pasture", "hills": false},
   "iron": {"class": "strategic", "tech": "bronze_working", "yields": {"science": 1}, "terrain": ["desert", "grassland", "plains", "tundra"], "improvement": "mine", "hills": true},
@@ -30,7 +30,7 @@
   "cosmetics": {"class": "luxury", "yields": {}},
   "cotton": {"class": "luxury", "yields": {"gold": 3}, "terrain": ["grassland", "plains"], "feature": ["floodplains", "grassland_floodplains", "plains_floodplains"], "improvement": "plantation", "hills": false},
 
-  "crabs": {"class": "bonus", "yields": {"gold": 2}, "terrain": ["coast"], "improvement": "fishing_boats"},
+  "crabs": {"class": "bonus", "yields": {"gold": 2}, "terrain": ["coast"], "improvement": "fishing_boats", "harvest": {"yield": "gold", "amount": 40, "tech": "celestial_navigation"}},
 
   "diamonds": {"class": "luxury", "yields": {"gold": 3}, "terrain": ["desert", "grassland", "plains", "tundra"], "feature": ["jungle"], "improvement": "mine", "hills": true},
   "dyes": {"class": "luxury", "yields": {"faith": 1}, "feature": ["forest", "jungle"], "improvement": "plantation"},
@@ -42,7 +42,7 @@
   "jade": {"class": "luxury", "yields": {"culture": 1}, "terrain": ["grassland", "plains", "tundra"], "improvement": "mine", "hills": false},
   "jeans": {"class": "luxury", "yields": {}},
 
-  "maize": {"class": "bonus", "yields": {"gold": 2}, "terrain": ["grassland", "plains"], "feature": ["grassland_floodplains", "plains_floodplains"], "improvement": "farm", "hills": false},
+  "maize": {"class": "bonus", "yields": {"gold": 2}, "terrain": ["grassland", "plains"], "feature": ["grassland_floodplains", "plains_floodplains"], "improvement": "farm", "hills": false, "harvest": {"yield": "gold", "amount": 40, "tech": "pottery"}},
 
   "marble": {"class": "luxury", "yields": {"culture": 1}, "terrain": ["grassland", "plains"], "improvement": "quarry"},
   "mercury": {"class": "luxury", "yields": {"science": 1}, "terrain": ["plains"], "improvement": "mine", "hills": false},
@@ -50,7 +50,7 @@
   "pearls": {"class": "luxury", "yields": {"faith": 1}, "terrain": ["coast"], "improvement": "fishing_boats"},
   "perfume": {"class": "luxury", "yields": {}},
 
-  "rice": {"class": "bonus", "yields": {"food": 1}, "terrain": ["grassland"], "feature": ["grassland_floodplains", "marsh"], "improvement": "farm", "hills": false},
+  "rice": {"class": "bonus", "yields": {"food": 1}, "terrain": ["grassland"], "feature": ["grassland_floodplains", "marsh"], "improvement": "farm", "hills": false, "harvest": {"yield": "food", "amount": 20, "tech": "pottery"}},
 
   "silver": {"class": "luxury", "yields": {"gold": 3}, "terrain": ["desert", "tundra"], "improvement": "mine"},
   "spices": {"class": "luxury", "yields": {"food": 2}, "feature": ["forest", "jungle"], "improvement": "plantation"},

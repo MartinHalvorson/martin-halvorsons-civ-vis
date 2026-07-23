@@ -94,6 +94,10 @@ pub struct FeatureSpec {
     pub natural_wonder: bool,
     #[serde(default)]
     pub impassable: bool,
+    /// The shipped Feature_Removes yields a Builder collects for clearing
+    /// this feature (base values; the payout scales with the era).
+    #[serde(default)]
+    pub chop: BTreeMap<String, f64>,
     #[serde(default)]
     pub effects: BTreeMap<String, f64>,
 }
@@ -116,10 +120,23 @@ pub struct ResourceSpec {
     /// (Wheat, Rice, Maize, Bananas), None when either form works.
     #[serde(default)]
     pub hills: Option<bool>,
+    /// The shipped Resource_Harvests row: only these bonus resources can be
+    /// harvested by a Builder, for this yield, from this technology on.
+    #[serde(default)]
+    pub harvest: Option<HarvestSpec>,
     /// Empty for luxuries no tile improvement works (Toys, Jeans, Perfume,
     /// Cosmetics — manufactured, never map-placed).
     #[serde(default)]
     pub improvement: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct HarvestSpec {
+    #[serde(rename = "yield")]
+    pub yield_type: String,
+    pub amount: f64,
+    #[serde(default)]
+    pub tech: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

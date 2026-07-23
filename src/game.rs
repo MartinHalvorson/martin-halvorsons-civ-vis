@@ -1580,7 +1580,8 @@ mod governor_runtime_tests {
         let builder = game.spawn_test_unit("builder", 0, harvest);
         let production = game.cities[&city].production;
         game.do_improve(0, builder, "chop_woods").unwrap();
-        assert_eq!(game.cities[&city].production - production, 37.5);
+        // 20 shipped base x 1.5 Black Marketeer at the Ancient era.
+        assert_eq!(game.cities[&city].production - production, 30.0);
 
         game.players[0].techs.insert("iron_working".to_string());
         game.players[0]
@@ -25173,17 +25174,21 @@ impl Game {
             _ => {}
         }
         if let Some(resource) = tile.resource.as_deref() {
-            let key = match resource {
-                "wheat" => "harvest_farm_resources",
-                "cattle" | "sheep" | "deer" => "harvest_pasture_camp_resources",
-                "fish" => "harvest_sea_resources",
-                "bananas" => "harvest_bananas",
-                "stone" => "harvest_stone",
-                "copper" => "harvest_copper",
-                _ => "",
-            };
-            if !key.is_empty() && self.tree_effect(pid, key) > 0.0 {
-                operations.push("harvest_resource".to_string());
+            // Only the resources with a shipped Resource_Harvests row can be
+            // harvested, each from its own technology on.
+            if let Some(harvest) = self
+                .rules
+                .resources
+                .get(resource)
+                .and_then(|spec| spec.harvest.as_ref())
+            {
+                if harvest
+                    .tech
+                    .as_deref()
+                    .is_none_or(|tech| self.players[pid].techs.contains(tech))
+                {
+                    operations.push("harvest_resource".to_string());
+                }
             }
         }
         if tile.feature.is_none()
@@ -25214,18 +25219,21 @@ impl Game {
             return Err("builder cannot perform that operation".into());
         }
         let cid = self.map.tiles[&unit.pos].owner_city.unwrap();
-        let amount = 25.0
-            * (self.world_era as f64 + 1.0)
+        // The shipped Feature_Removes and Resource_Harvests base yields scale
+        // with the era, and Magnus applies to harvests and removals alike.
+        let scale = (self.world_era as f64 + 1.0)
             * (1.0 + self.governor_effect(pid, cid, "harvest_pct") / 100.0);
         let removed_feature = self.map.tiles[&unit.pos].feature.clone();
+        let mut payouts: Vec<(String, f64)> = Vec::new();
         match operation {
-            "chop_woods" | "chop_rainforest" => {
+            "chop_woods" | "chop_rainforest" | "clear_marsh" => {
+                let feature = removed_feature
+                    .clone()
+                    .ok_or_else(|| "no feature to clear".to_string())?;
+                for (yield_type, base) in &self.rules.features[feature.as_str()].chop {
+                    payouts.push((yield_type.clone(), base * scale));
+                }
                 self.map.tiles.get_mut(&unit.pos).unwrap().feature = None;
-                self.cities.get_mut(&cid).unwrap().production += amount;
-            }
-            "clear_marsh" => {
-                self.map.tiles.get_mut(&unit.pos).unwrap().feature = None;
-                self.cities.get_mut(&cid).unwrap().food += amount;
             }
             "plant_woods" => {
                 self.map.tiles.get_mut(&unit.pos).unwrap().feature = Some("forest".to_string());
@@ -25239,19 +25247,30 @@ impl Game {
                     .resource
                     .take()
                     .unwrap();
-                match resource.as_str() {
-                    "stone" => self.cities.get_mut(&cid).unwrap().production += amount,
-                    "copper" => self.players[pid].gold += amount,
-                    _ => self.cities.get_mut(&cid).unwrap().food += amount,
-                }
+                let harvest = self.rules.resources[resource.as_str()]
+                    .harvest
+                    .clone()
+                    .ok_or_else(|| "that resource cannot be harvested".to_string())?;
+                payouts.push((harvest.yield_type.clone(), harvest.amount * scale));
             }
             _ => return Err("unknown builder operation".into()),
+        }
+        for (yield_type, amount) in payouts {
+            match yield_type.as_str() {
+                "production" => self.cities.get_mut(&cid).unwrap().production += amount,
+                "gold" => self.players[pid].gold += amount,
+                _ => self.cities.get_mut(&cid).unwrap().food += amount,
+            }
         }
         if removed_feature.as_deref().is_some_and(|feature| {
             self.congress_effect_active("deforestation_treaty", "A", feature)
         }) && matches!(operation, "chop_woods" | "chop_rainforest" | "clear_marsh")
         {
-            self.players[pid].gold += amount;
+            let total: f64 = removed_feature
+                .as_deref()
+                .map(|feature| self.rules.features[feature].chop.values().sum::<f64>() * scale)
+                .unwrap_or(0.0);
+            self.players[pid].gold += total;
         }
         let builder = self.units.get_mut(&uid).unwrap();
         builder.charges -= 1;
@@ -39300,7 +39319,7 @@ mod victory_conditions {
         g.active_congress_effects
             .push(effect("deforestation_treaty", "A", "forest"));
         let gold_before = g.players[0].gold;
-        let clearing_reward = 25.0 * (g.world_era as f64 + 1.0);
+        let clearing_reward = 20.0 * (g.world_era as f64 + 1.0);
         g.do_improve(0, builder, "chop_woods").unwrap();
         assert_eq!(g.players[0].gold, gold_before + clearing_reward);
 

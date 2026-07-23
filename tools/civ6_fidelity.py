@@ -109,6 +109,8 @@ TABLE_KEYS = {
     "Improvement_ValidResources": ("ImprovementType", "ResourceType"),
     "Improvement_ValidBuildUnits": ("ImprovementType", "UnitType"),
     "Improvement_BonusYieldChanges": ("Id",),
+    "Resource_Harvests": ("ResourceType", "YieldType"),
+    "Feature_Removes": ("FeatureType", "YieldType"),
     "District_Adjacencies": ("DistrictType", "YieldChangeId"),
     "Adjacency_YieldChanges": "ID",
     "Boosts": ("TechnologyType", "CivicType"),
@@ -511,6 +513,12 @@ def project_features(database: Database) -> dict[str, dict]:
     adjacent = yield_map(
         database, "Feature_AdjacentYields", "FeatureType", "FEATURE_", FEATURE_ALIASES
     )
+    chops: dict[str, dict] = {}
+    for row in database.rows("Feature_Removes"):
+        yield_type = slug(row["YieldType"], "YIELD_")
+        chops.setdefault(slug(row["FeatureType"], "FEATURE_"), {})[yield_type] = number(
+            row.get("Yield")
+        )
     projected = {}
     for row in database.rows("Features"):
         name = slug(row["FeatureType"], "FEATURE_")
@@ -521,6 +529,7 @@ def project_features(database: Database) -> dict[str, dict]:
             "impassable": truthy(row.get("Impassable")),
             "natural_wonder": truthy(row.get("NaturalWonder")),
             "defense": number(row.get("DefenseModifier")),
+            "chop": chops.get(name, {}),
         }
         if adjacent.get(name):
             entry["adjacent_yields"] = adjacent[name]
@@ -592,6 +601,15 @@ def project_resources(database: Database) -> dict[str, dict]:
         current = improvements.get(name)
         if current is None or (current in sea_improvements and improvement not in sea_improvements):
             improvements[name] = improvement
+    harvests: dict[str, dict] = {}
+    for row in database.rows("Resource_Harvests"):
+        entry = {
+            "yield": slug(row["YieldType"], "YIELD_"),
+            "amount": number(row.get("Amount")),
+        }
+        if row.get("PrereqTech"):
+            entry["tech"] = slug(row["PrereqTech"], "TECH_")
+        harvests[slug(row["ResourceType"], "RESOURCE_")] = entry
     civvis_features = set(load_ours("features"))
     projected = {}
     for row in database.rows("Resources"):
@@ -611,6 +629,7 @@ def project_resources(database: Database) -> dict[str, dict]:
         }
         if entry["class"] == "artifact":
             entry["hills"] = None  # dig sites spawn where history happened
+        entry["harvest"] = harvests.get(name)
         if row.get("PrereqTech"):
             entry["tech"] = slug(row["PrereqTech"], "TECH_")
         if row.get("PrereqCivic"):
@@ -1488,6 +1507,7 @@ def ours_features() -> dict[str, dict]:
             "impassable": entry.get("impassable", False),
             "natural_wonder": entry.get("natural_wonder", False),
             "defense": ENGINE_FEATURE_DEFENSE.get(name, 0),
+            "chop": entry.get("chop", {}),
         }
         if entry.get("adjacent_yields"):
             row["adjacent_yields"] = entry["adjacent_yields"]
@@ -1514,6 +1534,7 @@ def ours_resources() -> dict[str, dict]:
         for key in ("tech", "civic", "improvement"):
             if entry.get(key):
                 row[key] = entry[key]
+        row["harvest"] = entry.get("harvest")
         out[name] = row
     return out
 
