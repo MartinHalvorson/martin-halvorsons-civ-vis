@@ -6274,7 +6274,7 @@ impl AdvancedAi {
                 return g.apply(pid, &Action::FoundCity { unit: uid }).is_ok();
             }
             if let Some(target) = target {
-                let moved = self.base.step_toward(g, pid, uid, target);
+                let moved = self.base.settler_step_toward(g, pid, uid, target);
                 if !moved {
                     self.settler_targets.remove(&uid);
                 }
@@ -6329,7 +6329,7 @@ impl AdvancedAi {
             }
             return false;
         }
-        let moved = self.base.step_toward(g, pid, uid, target);
+        let moved = self.base.settler_step_toward(g, pid, uid, target);
         if !moved {
             self.settler_targets.remove(&uid);
         }

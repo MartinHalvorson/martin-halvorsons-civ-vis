@@ -3528,6 +3528,29 @@ impl BasicAi {
         self.step_toward_range(g, pid, uid, target, 0)
     }
 
+    /// Settlers have a persistent, path-checked destination, so follow that
+    /// route rather than taking the generic cheap greedy shortcut first. A
+    /// geometrically closer tile can be a one-hex cul-de-sac; with two
+    /// movement points the generic mover enters it and immediately routes
+    /// back out, repeating the same round trip every turn.
+    fn settler_step_toward(&self, g: &mut Game, pid: usize, uid: u32, target: Pos) -> bool {
+        if let Some(next) = g
+            .route_step(uid, target, 0)
+            .filter(|next| g.can_move(uid, *next))
+        {
+            return g
+                .apply(
+                    pid,
+                    &Action::Move {
+                        unit: uid,
+                        to: next,
+                    },
+                )
+                .is_ok();
+        }
+        self.step_toward(g, pid, uid, target)
+    }
+
     /// Move toward a target without insisting on entering its tile. Religious
     /// units spread from an adjacent hex, so routing them to range zero makes
     /// the pathfinder reject foreign city centers and can strand an entire
@@ -3762,7 +3785,7 @@ impl BasicAi {
             }
             return false;
         }
-        let moved = self.step_toward(g, pid, uid, target);
+        let moved = self.settler_step_toward(g, pid, uid, target);
         if !moved {
             self.settler_targets.remove(&uid);
         }
@@ -5474,6 +5497,63 @@ mod tests {
         assert!(ai.settler_step(&mut game, 0, settler));
         assert_eq!(ai.settler_targets.get(&settler), Some(&target));
         assert_ne!(game.units[&settler].pos, source);
+    }
+
+    #[test]
+    fn settler_follows_its_route_past_a_closer_cul_de_sac() {
+        let mut game = Game::new_full(1, 20, 14, 91_003, 120, 0, false);
+        for unit in game.player_unit_ids(0) {
+            game.remove_unit(unit);
+        }
+        for tile in game.map.tiles.values_mut() {
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.hills = false;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.district = None;
+            tile.wonder = None;
+            tile.owner_city = None;
+        }
+        let start = game
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|position| game.wdisk(*position, 4).len() == 61)
+            .expect("test map has an interior tile");
+        let target = game
+            .wdisk(start, 4)
+            .into_iter()
+            .filter(|position| game.wdist(start, *position) == 4)
+            .min()
+            .expect("test map has a target four tiles away");
+        let trap = game
+            .nbrs(start)
+            .into_iter()
+            .filter(|position| game.wdist(*position, target) < game.wdist(start, target))
+            .min_by_key(|position| (game.wdist(*position, target), *position))
+            .expect("target has a geometrically closer neighbor");
+        for position in game.nbrs(trap) {
+            if position != start {
+                game.map.tiles.get_mut(&position).unwrap().terrain = "mountain".to_string();
+            }
+        }
+        let settler = game.spawn_test_unit("settler", 0, start);
+        let routed = game
+            .route_step(settler, target, 0)
+            .expect("the target remains reachable around the cul-de-sac");
+        assert_ne!(routed, trap);
+
+        let mut ai = BasicAi::new();
+        ai.settler_targets.insert(settler, target);
+        assert!(ai.settler_step(&mut game, 0, settler));
+        assert!(ai.settler_step(&mut game, 0, settler));
+        assert_ne!(
+            game.units[&settler].pos, start,
+            "the settler must not spend both movement points entering and leaving the trap"
+        );
+        assert_ne!(game.units[&settler].pos, trap);
     }
 
     #[test]
