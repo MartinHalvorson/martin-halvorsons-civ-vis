@@ -2637,8 +2637,12 @@ function advanceDirector(now = performance.now()) {
   }
   gy = clampCameraY(gy, directorGoal.scale);
   const dx = gx - cam.x, dy = gy - cam.y;
-  const travelEase = 1 - Math.pow(0.075, dt / 1000);
-  const zoomEase = 1 - Math.pow(0.12, dt / 1000);
+  // A character move is brief even at the deliberately lengthened cinema
+  // cadence. Reacquire it with a quick, continuous Google-Maps-style fly-in;
+  // landscapes and narrated events retain the slower, stately dolly.
+  const characterShot = directorGoal.kind === "character";
+  const travelEase = 1 - Math.pow(characterShot ? .004 : .075, dt / 1000);
+  const zoomEase = 1 - Math.pow(characterShot ? .025 : .12, dt / 1000);
   cam.x += dx * travelEase; cam.y += dy * travelEase;
   cam.scale += (directorGoal.scale - cam.scale) * zoomEase;
   cam.y = clampCameraY(cam.y);
