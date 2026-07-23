@@ -1989,18 +1989,21 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("Single player · later"));
         assert!(EMBEDDED_INDEX.contains("Multiplayer · later"));
         assert!(EMBEDDED_INDEX.contains("class=\"sim-actions\""));
-        assert!(EMBEDDED_INDEX.contains("id=\"default-settings\""));
-        assert!(EMBEDDED_INDEX.contains(">Defaults<span class=\"sub\">stock setup</span>"));
         assert!(EMBEDDED_INDEX.contains(
-            ">Restart sim<span class=\"sub\">same settings</span>"
+            "id=\"restart-sim\" title=\"Restart with the same settings and build\">Restart sim<span class=\"sub\">same settings<br>same build</span>"
         ));
-        assert!(EMBEDDED_INDEX.contains("id=\"restart-sim\""));
-        assert!(EMBEDDED_INDEX.contains("id=\"fresh-sim\""));
-        assert!(EMBEDDED_INDEX.contains(">New sim<span class=\"sub\">fresh code</span>"));
-        assert!(EMBEDDED_INDEX.contains("async function startNewSimulation(mode)"));
+        assert!(EMBEDDED_INDEX.contains(
+            "id=\"fresh-sim\" title=\"Start with the same settings on the most recent build\">New sim<span class=\"sub\">same settings<br>most recent build</span>"
+        ));
+        assert!(EMBEDDED_INDEX.contains(
+            "id=\"default-settings\" title=\"Start with default settings on the most recent build\">New sim<span class=\"sub\">default settings<br>most recent build</span>"
+        ));
+        assert!(
+            EMBEDDED_INDEX.contains("async function startNewSimulation(mode, useDefaults = false)")
+        );
         assert!(EMBEDDED_INDEX.contains("function restoreDefaultSimulationSettings()"));
         assert!(EMBEDDED_INDEX.contains(
-            "document.getElementById(\"default-settings\").onclick = restoreDefaultSimulationSettings"
+            "document.getElementById(\"default-settings\").onclick = () => startNewSimulation(\"fresh_code\", true)"
         ));
         assert!(EMBEDDED_INDEX.contains("startNewSimulation(\"restart\")"));
         assert!(EMBEDDED_INDEX.contains("startNewSimulation(\"fresh_code\")"));

@@ -542,8 +542,8 @@
   #newgame-options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: end; }
   #newgame-options button { margin: 0; }
   .sim-actions { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-  .sim-actions button { min-height: 44px; padding: 6px 8px; line-height: 1.25; }
-  .sim-actions .sub { display: block; margin-top: 2px; color: var(--muted); font-size: 8px; font-weight: 600; letter-spacing: .04em; }
+  .sim-actions button { min-height: 52px; padding: 6px 8px; line-height: 1.2; }
+  .sim-actions .sub { display: block; margin-top: 3px; color: var(--muted); font-size: 8px; font-weight: 600; letter-spacing: .04em; }
   .victory-options { grid-column: 1 / -1; padding: 9px 10px 10px; border: 1px solid var(--line-soft); border-radius: 9px; background: #09131080; }
   .victory-options h2 { margin-bottom: 8px; }
   .victory-option-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px 9px; }
@@ -849,9 +849,9 @@
           </div>
         </div>
         <div class="sim-actions">
-          <button id="default-settings" title="Restore the stock simulation setup">Defaults<span class="sub">stock setup</span></button>
-          <button id="restart-sim" title="Start a new run with the current settings">Restart sim<span class="sub">same settings</span></button>
-          <button id="fresh-sim" title="Get the latest code, rebuild, and start a new simulation">New sim<span class="sub">fresh code</span></button>
+          <button class="primary" id="restart-sim" title="Restart with the same settings and build">Restart sim<span class="sub">same settings<br>same build</span></button>
+          <button id="fresh-sim" title="Start with the same settings on the most recent build">New sim<span class="sub">same settings<br>most recent build</span></button>
+          <button id="default-settings" title="Start with default settings on the most recent build">New sim<span class="sub">default settings<br>most recent build</span></button>
         </div>
       </div>
       </div>
@@ -6974,7 +6974,7 @@ function showNewSimulationError(error) {
   errEl.style.display = "block";
   setTimeout(() => errEl.style.display = "none", 4000);
 }
-async function startNewSimulation(mode) {
+async function startNewSimulation(mode, useDefaults = false) {
   if (newSimulationBusy) return;
   const supervised = !!(state && state.supervised);
   if (mode === "fresh_code" && !supervised) {
@@ -6984,6 +6984,7 @@ async function startNewSimulation(mode) {
   const wasPaused = specPaused;
   setNewSimulationBusy(true);
   try {
+    if (useDefaults) restoreDefaultSimulationSettings();
     const payload = newSimulationPayload();
     sel = null; selCity = null;
     clearTimeout(specTimer);
@@ -6999,7 +7000,7 @@ async function startNewSimulation(mode) {
       if (requested.error) throw new Error(requested.error);
       const respawn = document.getElementById("respawn");
       if (respawn) respawn.textContent = mode === "fresh_code"
-        ? "getting fresh code · rebuilding · starting new sim"
+        ? `getting most recent build · starting new sim · ${useDefaults ? "default" : "same"} settings`
         : "restarting sim on existing code";
       waitForSupervisedSuccessor(finishedInstance, finishedSeed);
       return;
@@ -7026,9 +7027,9 @@ async function startNewSimulation(mode) {
     showNewSimulationError(error);
   }
 }
-document.getElementById("default-settings").onclick = restoreDefaultSimulationSettings;
 document.getElementById("restart-sim").onclick = () => startNewSimulation("restart");
 document.getElementById("fresh-sim").onclick = () => startNewSimulation("fresh_code");
+document.getElementById("default-settings").onclick = () => startNewSimulation("fresh_code", true);
 {
   const vs = document.getElementById("viewsel");
   vs.value = VIEW;
