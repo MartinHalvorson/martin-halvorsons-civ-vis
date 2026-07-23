@@ -1040,6 +1040,9 @@
     .hud-section-heading span:last-child { display: none; }
     .victory-turn { padding-inline: 6px; }
     .victory-turn i { font-size: 8px; }
+    body.cinema-mode #cinema-frame .cinema-frame-brand span,
+    body.cinema-mode #cinema-frame .cinema-frame-era span,
+    body.cinema-mode #cinema-frame .cinema-frame-shot span { display: none; }
   }
   @media (max-width: 430px) {
     #playerhud { top: 8px; left: 8px; right: 8px; grid-template-columns: 74px minmax(0, .68fr) minmax(0, 1.32fr); padding: 4px; }
@@ -1050,9 +1053,6 @@
     .diplomacy-leader { margin-top: 1px; font-size: 8px; }
     .ribbon-stat { padding-inline: 0; }
     .ribbon-stat b { font-size: 9px; }
-    body.cinema-mode #cinema-frame .cinema-frame-brand span,
-    body.cinema-mode #cinema-frame .cinema-frame-era span,
-    body.cinema-mode #cinema-frame .cinema-frame-shot span { display: none; }
     body.cinema-mode #cinema-story { left: 18px; width: calc(100% - 36px); }
   }
 </style>
@@ -2448,8 +2448,9 @@ function hideDirectorStory() {
   panel?.classList.remove("visible", "subject-story");
   directorStoryUntil = 0;
 }
-function showDirectorStory(cue, now = performance.now()) {
+function showDirectorStory(cue) {
   if (!cinemaActive() || !cue?.title) return;
+  const now = performance.now();
   const panel = document.getElementById("cinema-story");
   panel.querySelector(".cinema-kicker").textContent = cue.kicker || "World in motion";
   panel.querySelector(".cinema-headline").textContent = cue.title;
@@ -2465,7 +2466,7 @@ function showDirectorStory(cue, now = performance.now()) {
 function revealDirectorGoalStory(goal, now = performance.now()) {
   if (!goal?.story || goal.storyShown) return false;
   goal.storyShown = true;
-  showDirectorStory(goal.story, now);
+  showDirectorStory(goal.story);
   return true;
 }
 function updateDirectorStory(now) {
@@ -3352,13 +3353,19 @@ function tileArtBounds(footprint) {
     minY:Math.min(...corners.map(p => p[1])), maxY:Math.max(...corners.map(p => p[1]))
   };
 }
-// prism side walls: true 3D behavior — an edge's wall is drawn only when it
-// faces the viewer, and its brightness comes from the world-fixed sun, so
-// faces light up and fall into shadow as the camera rotates.
-function drawWalls(x, ytop, baseColor, depth) {
+// Continuous terrain relief: a side face exists only where this tile is
+// actually higher than its neighbor. The earlier renderer extruded every land
+// hex down to a private base, turning plains into a tray of separate blocks.
+// Shared-height edges now disappear; hills, ranges and coastlines keep real
+// silhouettes, lit by the same world-fixed sun as the top faces.
+function drawWalls(t, x, ytop, baseColor, tileElevation) {
   for (let i = 0; i < 6; i++) {
     const aw = Math.PI / 180 * (60 * i);      // world-space outward normal
     if (Math.sin(aw + cam.rot) <= 0.12) continue;  // back-facing this frame
+    const neighbor = nbrTile(t.pos, DIRS[i]);
+    const neighborElevation = neighbor ? elev(neighbor) : -SKIRT;
+    const depth = tileElevation - neighborElevation;
+    if (depth <= .35) continue;
     const f = 0.46 + 0.32 * Math.max(0, Math.cos(aw - SUN));
     const [ax, ay] = corner(x, ytop, S + 0.6, i);
     const [bx, by] = corner(x, ytop, S + 0.6, i + 1);
@@ -4935,7 +4942,7 @@ function draw() {
     const y = y0 - e;
     const base = TERRAIN[t.terrain] || "#333";
     const water = (t.terrain === "coast" || t.terrain === "ocean");
-    if (beau && !water) drawWalls(x, y, base, e + SKIRT);
+    if (beau && !water) drawWalls(t, x, y, base, e);
     hexPath(x, y, S + 0.6);
     if (beau) {
       const j = 0.94 + 0.12 * hash2(t.pos[0], t.pos[1]);
@@ -4953,10 +4960,10 @@ function draw() {
       // materials. The inset highlight suggests a bevel without turning the
       // terrain into a heavy board-game grid.
       hexPath(x, y, S + 0.15);
-      cx.strokeStyle = water ? "#bdefff28" : "#241d1245";
+      cx.strokeStyle = water ? "#bdefff20" : "#241d1222";
       cx.lineWidth = 1.05; cx.stroke();
       hexPath(x, y, S - 1.15);
-      cx.strokeStyle = water ? "#d9f8ff16" : "#fff3cc24";
+      cx.strokeStyle = water ? "#d9f8ff12" : "#fff3cc16";
       cx.lineWidth = 0.65; cx.stroke();
     }
     if (beau && water) { // specular glints travel over the photographic swell

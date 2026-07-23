@@ -2091,6 +2091,8 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("fetchJSON(\"/view\""));
         assert!(EMBEDDED_INDEX.contains("id=\"cinemachk\""));
         assert!(EMBEDDED_INDEX.contains("id=\"cinema-atmosphere\""));
+        assert!(EMBEDDED_INDEX.contains("id=\"cinema-lighting\""));
+        assert!(EMBEDDED_INDEX.contains("id=\"cinema-frame\""));
         assert!(EMBEDDED_INDEX.contains("id=\"cinema-transition\""));
         assert!(EMBEDDED_INDEX.contains("id=\"cinema-prologue\""));
         assert!(EMBEDDED_INDEX.contains("id=\"cinema-story\""));
@@ -2109,6 +2111,7 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("REDUCED_MOTION_QUERY.matches"));
         assert!(EMBEDDED_INDEX.contains("function directorCue(prev, next)"));
         assert!(EMBEDDED_INDEX.contains("function stageDirectorGoal(goal, useCut = false"));
+        assert!(EMBEDDED_INDEX.contains("function cinematicShotGoal(goal, variation = 0)"));
         assert!(EMBEDDED_INDEX.contains("function directorSurveyGoal()"));
         assert!(EMBEDDED_INDEX.contains("function directorAmbientCue()"));
         assert!(EMBEDDED_INDEX.contains("function advanceDirector(now = performance.now())"));
@@ -2135,6 +2138,8 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("class=\"winner-content\""));
         assert!(EMBEDDED_INDEX.contains("cinema-finale"));
         assert!(EMBEDDED_INDEX.contains("function cinematicSurveyUnits(units)"));
+        assert!(EMBEDDED_INDEX.contains("DEFAULT_CINEMA_YS = 0.64"));
+        assert!(EMBEDDED_INDEX.contains("function drawWalls(t, x, ytop, baseColor, tileElevation)"));
         assert!(EMBEDDED_INDEX.contains("function drawUnitFormationBadge"));
         assert!(EMBEDDED_INDEX.contains("specular glints travel"));
         assert!(EMBEDDED_INDEX.contains("cx.lineDashOffset = dash.length"));

@@ -268,6 +268,20 @@ metadata.
 civvis tournament --ais advanced,basic --games 40 --players 4
 ```
 
+The CLI checkpoints every completed game to the tracked
+`data/elo_ratings.json` ledger (override it with `--ratings path`). Ratings are
+keyed by civilization and the strategy actually used for most of that
+player's turns. For agents without an observable strategy, the agent name is
+the strategy. The ledger also retains contributing agent names, game counts,
+and wins, so later agents can distinguish evidence from an unmeasured pairing.
+Writes are atomic and briefly locked per game, allowing concurrent workers to
+share the file without replacing one another's updates.
+
+Entrants use a seeded round-robin seat schedule instead of independent random
+sampling. Across one complete cycle, every fixed civilization seat sees every
+configured entrant exactly once. Score ties are Elo draws; an actual victory
+outranks score even when the winner has fewer score points.
+
 For lower-variance two-player measurement, the paired evaluator runs every map
 twice with seats swapped and reports outcome plus economy/army diagnostics:
 
@@ -276,17 +290,29 @@ cargo run --release --bin ai_eval -- advanced basic --pairs 100 --seed 4000
 ```
 
 ```rust
-use civvis::elo::{run_tournament, leaderboard, TourneyCfg, builtin_ai};
+use civvis::elo::{
+    builtin_ai, leaderboard, run_persistent_tournament, TourneyCfg,
+    DEFAULT_RATINGS_PATH,
+};
 let names = vec!["basic".to_string(), "mybot".to_string()];
-let pool = run_tournament(&names, |name, seed| match name {
+let pool = run_persistent_tournament(&names, |name, seed| match name {
     "mybot" => Box::new(MyBot),
     other => builtin_ai(other, seed),
-}, &TourneyCfg::default());
+}, &TourneyCfg::default(), DEFAULT_RATINGS_PATH)?;
 println!("{}", leaderboard(&pool));
+# Ok::<(), std::io::Error>(())
 ```
 
 Multiplayer games score as pairwise Elo results by final placement
-(K/(n-1) scaling). Deterministic given `cfg.seed`.
+(K/(n-1) scaling). `run_tournament` remains available for an in-memory,
+non-persisted evaluation. Game generation and seating are deterministic given
+`cfg.seed`; persistent ratings also depend on the ledger's prior state.
+
+The seven advanced strategy labels are `expansion`, `science`, `culture`,
+`religion`, `diplomacy`, `conquest`, and `recovery`. Use the shared ledger to
+prioritize low-rated civilization/strategy rows with meaningful sample counts,
+then rerun the same evaluation battery after a strategy change. Missing rows
+are unmeasured, not evidence of parity.
 
 ## External agents over HTTP (any language)
 
