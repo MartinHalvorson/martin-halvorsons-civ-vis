@@ -36,7 +36,7 @@ baseline with optional game modes excluded.
 
 `tools/modifier_coverage.json` holds those judgements with a reason each.
 They are seeded by reading the engine for each effect family and are mostly
-**not** yet verified row by row (92 rows are, so far) — an `implemented` entry is a claim to be checked, and
+**not** yet verified row by row (207 rows are, so far) — an `implemented` entry is a claim to be checked, and
 checking them is the next step. Anything absent from the file counts as
 unmodelled, so newly shipped content raises the backlog rather than hiding.
 
@@ -73,11 +73,21 @@ expressed without building the interpreter.
    the entry `verified`, and demote whatever does not hold. The report prints
    verified rows against covered rows, so the ratchet is visible.
 
-   Four are done so far (92 of 1,165 covered rows), and three of them found
-   real divergences: a city's Commercial Hub or Harbor was granting no Trade
-   Route at all and Merchant Republic none of its two, Theocracy could
-   Faith-buy a Giant Death Robot, and the Statue of Liberty granted no
-   Settlers. The pass is worth running to the end.
+   Six are done so far (207 of 1,165 covered rows), and five of them found
+   real divergences:
+
+   - a city's Commercial Hub or Harbor granted no Trade Route at all, and
+     Merchant Republic none of its two;
+   - Theocracy could Faith-buy a Giant Death Robot;
+   - the Statue of Liberty granted no Settlers;
+   - Laissez-Faire and Nobel Prize each paid one flat number per building tier
+     instead of the shipped 2/4 split, and Military Organization was missing
+     its flat +4 Great General;
+   - Colonial Taxes applied its +25% Gold but not its +10% Production.
+
+   Five errors in six effects is the argument for running the pass to the end:
+   the seeded statuses were inspection judgements, and inspection is not
+   finding these.
 
    `ADJUST_CITY_FREE_POWER` is the clean case and shows the shape: fifteen
    rows, of which twelve execute with the shipped amounts (Geothermal Plant 4,
