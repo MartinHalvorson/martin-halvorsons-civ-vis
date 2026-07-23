@@ -157,7 +157,15 @@ widening `Building_ValidFeatures` rows (Petra on Floodplains), theming (the
 Cultural Heritage Inspiration trigger is data-correct but inert), barbarian
 camp spawn cadence (odds/boldness model), and the meteor-strike goody site.
 
-## Phase 2 (next): the modifier engine
+## Phase 2 (measured): the modifier engine
+
+The size of this phase is no longer a guess. `tools/civ6_modifiers.py`
+censuses the shipped `Modifiers` tables and reports 3,405 rows across 698
+distinct effects, of which CIVVIS covers 825 rows. Crucially the tail is long:
+32 effects reach half the rows, and the other half needs 666 more. See
+[MODIFIERS.md](MODIFIERS.md) for the ranked backlog and the order of work.
+
+### Why an interpreter
 
 Nearly all Civ 6 *content* — leader and civilization abilities, wonders,
 beliefs, policies, governors — is not code. It is rows in the `Modifiers`

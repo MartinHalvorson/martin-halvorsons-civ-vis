@@ -1,0 +1,148 @@
+{
+  "_doc": [
+    "What CIVVIS does with each shipped Civ VI modifier EffectType.",
+    "",
+    "A status describes whether CIVVIS' ENGINE can express the effect for the",
+    "content it models -- not whether every row's owning object exists here.",
+    "Content scope is measured separately, by the 'Only in Civ VI' columns of",
+    "tools/civ6_fidelity.py. An effect is 'implemented' only when a concrete",
+    "execution path exists; when in doubt the honest status is 'partial'.",
+    "",
+    "These are inspection judgements, seeded by reading the engine for each",
+    "effect family. They are not yet verified row by row against the game.",
+    "Per-row verification is what turns this census into a proof, and it is the",
+    "next step; until then treat 'implemented' as a claim to be checked, not a",
+    "guarantee. Anything absent from this file counts as unmodelled, so newly",
+    "shipped content raises the backlog rather than hiding in it."
+  ],
+  "effects": {
+    "ATTACH_MODIFIER": {
+      "status": "unmodelled",
+      "note": "The interpreter primitive: attach another modifier to a collection. CIVVIS hardcodes effects per object, so it has no general way to express this. Implementing it is phase 2 itself, and it gates the long tail behind it."
+    },
+    "ATTACH_MODIFIER_TO_PLAYERTYPE": {
+      "status": "unmodelled",
+      "note": "World Congress outcomes attaching modifiers to a class of players. Congress resolutions are hardcoded per resolution instead."
+    },
+    "DIPLOMACY_SIMPLE_EFFECT": {
+      "status": "out-of-scope",
+      "note": "Bespoke leader agendas, which MECHANICS.md scopes out deliberately. Almost every row is a TraitModifier on a leader CIVVIS does not model."
+    },
+    "ADJUST_PLAYER_STRENGTH_MODIFIER": {
+      "status": "implemented",
+      "note": "Combat Strength modifiers execute from promotions, policy cards, governments, city-state Envoys and wonders (game.rs combat_strength)."
+    },
+    "ADJUST_UNIT_MOVEMENT": {
+      "status": "implemented",
+      "note": "Movement grants execute from promotions, support units and tree_effects (embarked_movement, adjacent_movement)."
+    },
+    "ADJUST_UNIT_EXPERIENCE_MODIFIER": {
+      "status": "implemented",
+      "note": "XP scaling from promotions, Oligarchy and city-state bonuses."
+    },
+    "ADJUST_UNIT_GRANT_EXPERIENCE": {
+      "status": "implemented",
+      "note": "Flat XP grants on training and from Great People."
+    },
+    "ADJUST_UNIT_HEALING_MODIFIERS": {
+      "status": "implemented",
+      "note": "Medic, Supply Convoy and promotion healing all execute."
+    },
+    "ADJUST_UNIT_SPY_OPERATION_CHANCE": {
+      "status": "implemented",
+      "note": "The espionage promotion tree adjusts operation odds."
+    },
+    "ENABLE_UNIT_FAITH_PURCHASE": {
+      "status": "implemented",
+      "note": "Faith purchase gating exists for religious units, Valletta, Grand Master's Chapel and Theocracy."
+    },
+    "ADJUST_TRADE_ROUTE_CAPACITY": {
+      "status": "implemented",
+      "note": "Route capacity from Foreign Trade, Markets, Lighthouses, Great Merchants and districts."
+    },
+    "ADJUST_GREAT_PERSON_POINTS": {
+      "status": "implemented",
+      "note": "GPP from districts, buildings, policies and wonders; audited at zero divergence by the GreatPeople table."
+    },
+    "ADJUST_CITY_TOURISM": {
+      "status": "implemented",
+      "note": "City Tourism from governors, policies and buildings."
+    },
+    "ADJUST_DISTRICT_TOURISM_CHANGE": {
+      "status": "implemented",
+      "note": "Per-district Tourism from buildings and civics."
+    },
+    "ADJUST_CITY_IDENTITY_PER_TURN": {
+      "status": "implemented",
+      "note": "Loyalty per turn from buildings, policies, governors and Great People."
+    },
+    "ADJUST_CITY_FREE_POWER": {
+      "status": "implemented",
+      "note": "Free Power from improvements and Industrial Zone Logistics."
+    },
+    "ADJUST_CITY_GREATWORK_YIELD": {
+      "status": "implemented",
+      "note": "Great Work yields, slots and Culture/Tourism output execute."
+    },
+    "ADJUST_PLAYER_GOVERNOR_POINTS": {
+      "status": "implemented",
+      "note": "Governor titles from civics, Government Plaza buildings and Great People."
+    },
+    "ADJUST_DISTRICT_YIELD_MODIFIER": {
+      "status": "implemented",
+      "note": "Percentage district yield modifiers from policies and governors."
+    },
+    "ADJUST_DISTRICT_YIELD_CHANGE": {
+      "status": "implemented",
+      "note": "Flat district yield changes."
+    },
+    "TERRAIN_ADJACENCY": {
+      "status": "implemented",
+      "note": "District adjacency is audited source by source at zero divergence."
+    },
+    "ADD_RELIGIOUS_BELIEF_YIELD": {
+      "status": "implemented",
+      "note": "Follower and founder belief yields; the Beliefs table audits clean."
+    },
+    "ADJUST_BUILDING_PRODUCTION": {
+      "status": "implemented",
+      "note": "Production toward buildings from policies, governors and Great People (item_prod_mult)."
+    },
+    "ADJUST_PROJECT_PRODUCTION": {
+      "status": "implemented",
+      "note": "Production toward projects."
+    },
+    "ADJUST_UNIT_TAG_ERA_PRODUCTION": {
+      "status": "implemented",
+      "note": "Policy cards granting Production toward a unit class of an era; the dominant policy-card shape."
+    },
+    "ADJUST_CITY_YIELD_MODIFIER": {
+      "status": "implemented",
+      "note": "Percentage city yield modifiers from buildings, policies and governments."
+    },
+    "GRANT_UNIT_IN_CITY": {
+      "status": "implemented",
+      "note": "Free units from wonders, buildings and pantheons."
+    },
+    "GRANT_YIELD": {
+      "status": "implemented",
+      "note": "Instant yields from Great People activation and goody huts."
+    },
+    "ADJUST_BUILDING_YIELD_CHANGE": {
+      "status": "partial",
+      "note": "Buildings carry their shipped yields and named policies adjust them, but there is no general 'this modifier changes that building's yield' path, so unlisted sources are inert."
+    },
+    "ADJUST_PLOT_YIELD": {
+      "status": "partial",
+      "note": "Improvement tech and civic upgrades execute through tree_effects, and named wonder and belief plot effects execute; arbitrary plot-yield grants do not."
+    },
+    "GRANT_ABILITY": {
+      "status": "partial",
+      "note": "Promotions and a fixed set of named unit abilities execute, but the general UnitAbilities system that most of these rows target does not exist. Most rows here are Great Person birth abilities."
+    },
+    "CITY_GRANT_RANDOM_RESOURCE_PRODUCT": {
+      "status": "partial",
+      "note": "Products and Corporations exist and are capped and movable, but the project-completion random grant is not wired."
+    }
+  }
+}

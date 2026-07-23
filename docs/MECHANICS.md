@@ -16,7 +16,7 @@ and projects. Run it after any data change, and see
 [FIDELITY.md](FIDELITY.md) for what the audit covers next.
 
 > **In progress** (claimed by parallel sessions — check before starting a batch):
-> - session MOD: phase 2 measurement — census of the shipped `Modifiers`/`ModifierArguments` tables by `EffectType`, and `tools/civ6_modifiers.py`. Read-only against the rules data
+> - session MOD: phase 2 measurement COMPLETE 2026-07-22 — `tools/civ6_modifiers.py` + `docs/MODIFIERS.md` rank the 698 shipped effects by row count against `tools/modifier_coverage.json`. Claim released; next is row-by-row verification of the 28 implemented/partial entries
 > - session G: continuous-exhibition bug hunt — rules defects observed in full 8-player games, one game at a time. Owns the Pressure/majority core in `src/game.rs` (`city_religion`, `process_pressure`, atheist Pressure); session F owns the religious AI and purchase rules above it
 > - session FID: fidelity expansion COMPLETE 2026-07-22 — all 22 tracked tables at zero divergence (boosts, goody huts, eras, great people, global parameters landed last). Claim released; remaining depth items are listed under "Next inside phase 1" in [FIDELITY.md](FIDELITY.md)
 
