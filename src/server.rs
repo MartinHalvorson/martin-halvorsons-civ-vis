@@ -1973,7 +1973,48 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains(".civ-dossier {"));
         assert!(EMBEDDED_INDEX.contains("changed its grand strategy from"));
         assert!(EMBEDDED_INDEX.contains("e.important && now - e.at < 6000"));
-        assert!(EMBEDDED_INDEX.contains("const cadence = active ? (SPEC ? 32 : 16) : 90"));
+        assert!(EMBEDDED_INDEX.contains("const floor = active ? (SPEC ? 32 : 16) : MODE.idle"));
+        // The repaint rate answers to what a frame actually costs, so the
+        // expensive style degrades to a slower picture rather than a stalled one
+        // on a box that is also running the game.
+        assert!(EMBEDDED_INDEX.contains("Math.max(floor, drawCost * 1.15)"));
+        // Three map styles, and the browser must be able to name each of them.
+        // The idle repaint rate is a property of the style rather than a
+        // constant now: strategic never repaints on its own, balanced ticks
+        // slowly for the pulsing markers, cinematic runs its weather.
+        for style in ["strategic", "balanced", "cinematic"] {
+            assert!(
+                EMBEDDED_INDEX.contains(&format!("<option value=\"{style}\"")),
+                "map style {style} missing from the view selector"
+            );
+            assert!(
+                EMBEDDED_INDEX.contains(&format!("  {style}:")),
+                "map style {style} missing from VIEW_MODES"
+            );
+        }
+        assert!(EMBEDDED_INDEX.contains("const VIEW_MODES = {"));
+        assert!(EMBEDDED_INDEX.contains("localStorage.setItem(\"civvis-view-v3\", v)"));
+        // The style that used to be called cinematic is the one now called
+        // balanced, so a returning browser must land there and not be silently
+        // upgraded into the expensive one.
+        assert!(EMBEDDED_INDEX.contains("localStorage.getItem(\"civvis-view\")"));
+        assert!(EMBEDDED_INDEX.contains("? \"strategic\" : \"balanced\""));
+        // Ground is baked once per style/terrain/relief/variant and blitted
+        // through the world plane; the per-frame clip-and-gradient path it
+        // replaced is what made a full-size map cost eighty milliseconds a
+        // frame. Both halves have to ship together to mean anything.
+        assert!(EMBEDDED_INDEX.contains("function bakeTileArt("));
+        assert!(EMBEDDED_INDEX.contains("function tileArt("));
+        assert!(EMBEDDED_INDEX.contains("cx.drawImage(art, -artR, -artR, artR * 2, artR * 2)"));
+        assert!(EMBEDDED_INDEX.contains("TERRAIN_ATLAS.onload"));
+        assert!(EMBEDDED_INDEX.contains("ATLAS_READY = true; TILE_ART.clear()"));
+        // Only what the camera can reach is drawn.
+        assert!(EMBEDDED_INDEX.contains("const onscreen = []"));
+        // Combat is staged rather than marked: a weapon, a flight, an impact.
+        assert!(EMBEDDED_INDEX.contains("function stageAttack("));
+        assert!(EMBEDDED_INDEX.contains("const SHOT_KIND = {"));
+        assert!(EMBEDDED_INDEX.contains("const SHOT_STYLE = {"));
+        assert!(EMBEDDED_INDEX.contains("function drawAtmosphere("));
         assert!(EMBEDDED_INDEX.contains(".diplomacy-card.allied"));
         assert!(EMBEDDED_INDEX.contains("function cameraYBounds"));
         assert!(EMBEDDED_INDEX.contains("cam.y = clampCameraY(cam.y)"));
