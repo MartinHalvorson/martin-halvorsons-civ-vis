@@ -7234,12 +7234,16 @@ impl Game {
     }
 
     /// Canonicalized in-map neighbors across the wrap seam.
-    pub fn nbrs(&self, p: Pos) -> Vec<Pos> {
-        crate::hex::neighbors(p)
-            .into_iter()
-            .map(|n| hex::canon(n, self.map.width))
-            .filter(|n| self.map.tiles.contains_key(n))
-            .collect()
+    #[inline]
+    pub fn nbrs(&self, p: Pos) -> hex::Neighbors {
+        let mut out = hex::Neighbors::new();
+        for neighbor in crate::hex::neighbors(p) {
+            let neighbor = hex::canon(neighbor, self.map.width);
+            if self.map.tiles.contains_key(&neighbor) {
+                out.push(neighbor);
+            }
+        }
+        out
     }
 
     /// Canonicalized in-map disk across the wrap seam.
@@ -17791,46 +17795,65 @@ impl Game {
             )
     }
 
-    /// The two small cube-coordinate nudges produce both direct corridors
-    /// when a ray lies exactly on a hex edge. A target is visible when either
-    /// corridor is open, matching Civ VI's "half-hidden" hex behavior.
-    fn sight_corridors(&self, from: Pos, to: Pos) -> Vec<Vec<Pos>> {
+    /// The nearest unwrapped image of `to`, so a ray across the seam is drawn
+    /// as the short way round rather than back across the whole cylinder.
+    fn unwrapped_toward(&self, from: Pos, to: Pos) -> Pos {
         let width = self.map.width;
-        let unwrapped = [-width, 0, width]
+        [-width, 0, width]
             .into_iter()
             .map(|shift| (to.0 + shift, to.1))
             .min_by_key(|candidate| hex::distance(from, *candidate))
-            .unwrap_or(to);
-        let distance = hex::distance(from, unwrapped);
-        if distance == 0 {
-            return vec![vec![from]];
-        }
-        let from_cube = (from.0 as f64, from.1 as f64, (-from.0 - from.1) as f64);
-        let to_cube = (
-            unwrapped.0 as f64,
-            unwrapped.1 as f64,
-            (-unwrapped.0 - unwrapped.1) as f64,
-        );
-        let mut corridors = Vec::new();
-        for nudge in [(1e-6, 1e-6, -2e-6), (-1e-6, -1e-6, 2e-6)] {
-            let mut corridor = Vec::new();
-            for step in 0..=distance {
-                let t = step as f64 / distance as f64;
-                let q = from_cube.0 + (to_cube.0 - from_cube.0) * t + nudge.0;
-                let r = from_cube.1 + (to_cube.1 - from_cube.1) * t + nudge.1;
-                let s = from_cube.2 + (to_cube.2 - from_cube.2) * t + nudge.2;
-                let position = hex::canon(cube_round(q, r, s), width);
-                if corridor.last() != Some(&position) {
-                    corridor.push(position);
-                }
-            }
-            if !corridors.contains(&corridor) {
-                corridors.push(corridor);
-            }
-        }
-        corridors
+            .unwrap_or(to)
     }
 
+    /// Walk one hex corridor from `from` to `to`, checking every tile strictly
+    /// between the two endpoints for cover.
+    ///
+    /// The corridor is consumed as it is drawn — one position of lookahead is
+    /// enough to know whether the tile just passed was an interior one — so a
+    /// sight ray costs no allocation at all.
+    #[allow(clippy::too_many_arguments)]
+    fn corridor_is_clear(
+        &self,
+        from: Pos,
+        to: Pos,
+        distance: i32,
+        nudge: (f64, f64, f64),
+        viewer_height: i32,
+        target_height: i32,
+        see_through_woods: bool,
+    ) -> bool {
+        let width = self.map.width;
+        let from_cube = (from.0 as f64, from.1 as f64, (-from.0 - from.1) as f64);
+        let to_cube = (to.0 as f64, to.1 as f64, (-to.0 - to.1) as f64);
+        let mut previous: Option<Pos> = None;
+        let mut distinct = 0usize;
+        for step in 0..=distance {
+            let t = step as f64 / distance as f64;
+            let q = from_cube.0 + (to_cube.0 - from_cube.0) * t + nudge.0;
+            let r = from_cube.1 + (to_cube.1 - from_cube.1) * t + nudge.1;
+            let s = from_cube.2 + (to_cube.2 - from_cube.2) * t + nudge.2;
+            let position = hex::canon(cube_round(q, r, s), width);
+            if previous == Some(position) {
+                continue;
+            }
+            // A position becomes interior once a further one follows it, and
+            // the corridor's own origin is never cover.
+            if distinct >= 2 {
+                let blocker = self.blocker_height(previous.unwrap(), see_through_woods);
+                if blocker > viewer_height && blocker >= target_height {
+                    return false;
+                }
+            }
+            previous = Some(position);
+            distinct += 1;
+        }
+        true
+    }
+
+    /// The two small cube-coordinate nudges produce both direct corridors
+    /// when a ray lies exactly on a hex edge. A target is visible when either
+    /// corridor is open, matching Civ VI's "half-hidden" hex behavior.
     fn tile_has_visibility_line(
         &self,
         from: Pos,
@@ -17841,17 +17864,25 @@ impl Game {
         if self.wdist(from, to) <= 1 {
             return true;
         }
+        let unwrapped = self.unwrapped_toward(from, to);
+        let distance = hex::distance(from, unwrapped);
+        if distance == 0 {
+            return true;
+        }
         let target_height = self.sight_height(to);
-        self.sight_corridors(from, to).into_iter().any(|corridor| {
-            corridor
-                .iter()
-                .skip(1)
-                .take(corridor.len().saturating_sub(2))
-                .all(|position| {
-                    let blocker = self.blocker_height(*position, see_through_woods);
-                    blocker <= viewer_height || blocker < target_height
-                })
-        })
+        [(1e-6, 1e-6, -2e-6), (-1e-6, -1e-6, 2e-6)]
+            .into_iter()
+            .any(|nudge| {
+                self.corridor_is_clear(
+                    from,
+                    unwrapped,
+                    distance,
+                    nudge,
+                    viewer_height,
+                    target_height,
+                    see_through_woods,
+                )
+            })
     }
 
     fn district_viewpoint_bonus(&self, pos: Pos) -> i32 {
@@ -36620,7 +36651,7 @@ mod combat_scenarios {
         assert_eq!(ring.len(), 6);
         g.current = 0;
         g.at_war.insert(pair(0, 1));
-        (g, center, ring)
+        (g, center, ring.to_vec())
     }
 
     fn found_controlled_home(game: &mut Game, center: Pos) -> (u32, Pos) {
@@ -41970,7 +42001,7 @@ mod district_mechanics {
             .get_mut(&district_position)
             .unwrap()
             .owner_city = Some(city);
-        (game, city, district_position, ring)
+        (game, city, district_position, ring.to_vec())
     }
 
     fn adjacency_value(game: &Game, district: &str, source: &str) -> f64 {
