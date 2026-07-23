@@ -218,6 +218,9 @@
   .diplomacy-identity { min-width: 0; }
   .diplomacy-name { display: block; overflow: hidden; color: #f1f4ed; font-size: 14px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
   .diplomacy-leader { display: block; margin-top: 3px; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+  .agenda-mark { margin-left: 3px; font-size: 8px; vertical-align: 1px; }
+  .agenda-mark.up { color: #8fd6a4; }
+  .agenda-mark.down { color: #f2a09b; }
   .ai-plan { font-weight: 850; }
   .ai-plan.expansion { color: #89c990; }
   .ai-plan.science { color: var(--blue); }
@@ -2457,6 +2460,18 @@ function drawPlayerHud() {
         : p.friend ? "Declared Friend"
         : "Neutral standing";
       const relationSummary = strategyText ? `${strategyText} · ${relation}` : relation;
+      // A leader's agenda is public once you have met them, and so is roughly
+      // how they feel about you. The glyph is the quick read; the tooltip
+      // says which agenda is doing the judging.
+      const opinion = +p.opinion_of_me || 0;
+      const stance = opinion >= 15 ? "approves" : opinion <= -15 ? "disapproves" : "";
+      const agendaGlyph = p.id === acting && !SPEC ? ""
+        : stance === "approves" ? `<span class="agenda-mark up" title="Approves of you">▲</span>`
+        : stance === "disapproves" ? `<span class="agenda-mark down" title="Disapproves of you">▼</span>`
+        : "";
+      const agendaText = p.agenda
+        ? ` · ${p.agenda.name}${stance ? ` (${stance} of you)` : ""}: ${p.agenda.description}`
+        : "";
       const strategyLabel = strategy
         ? `<span class="ai-plan ${strategy}">${titleCase(strategy)}</span> plan · `
         : "";
@@ -2472,10 +2487,10 @@ function drawPlayerHud() {
         ["score", "SCORE", p.score, `Score: ${compactStat(p.score)} · rank ${rank}`],
       ];
       return `<button class="diplomacy-card ${stateClass}" style="--civ:${color}" onclick="focusPlayer(${p.id})" ` +
-        `title="Center on ${p.civ} · ${relationSummary}" aria-label="${p.civ}, rank ${rank}, ${relationSummary}">` +
+        `title="Center on ${p.civ} · ${relationSummary}${agendaText}" aria-label="${p.civ}, rank ${rank}, ${relationSummary}">` +
         `<span class="leader-medallion">${initial}</span>` +
         `<span class="diplomacy-identity"><span class="diplomacy-name">${p.id === acting && SPEC ? "◉ " : ""}${p.civ}</span>` +
-        `<span class="diplomacy-leader">${leader} · ${strategyLabel}${relation}</span></span>` +
+        `<span class="diplomacy-leader">${leader}${agendaGlyph} · ${strategyLabel}${relation}</span></span>` +
         `<span class="diplomacy-stats">` + stats.map(([kind, shortLabel, value, label]) =>
           `<span class="ribbon-stat ${kind}" title="${label}"><b>${compactStat(value)}</b><em>${shortLabel}</em></span>`
         ).join("") + `</span></button>`;
