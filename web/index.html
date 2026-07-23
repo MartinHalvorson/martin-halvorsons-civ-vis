@@ -2173,10 +2173,51 @@ function draw() {
     if (visSet.has(key(t.pos))) continue;
     const [x, yy] = hexXY(t.pos[0], t.pos[1]);
     const y = yy - elev(t);
+    // A fogged tile that still touches sight gets a lighter wash, so knowledge
+    // falls off over two steps rather than one hard hex cut. The penumbra is
+    // put on the fogged side only — bleeding haze onto a visible tile would
+    // make it ambiguous which tiles the player can actually see.
+    let edge = false;
+    for (let i = 0; i < 6 && !edge; i++) {
+      const n = nbrTile(t.pos, DIRS[i]);
+      if (n && visSet.has(key(n.pos))) edge = true;
+    }
     hexPath(x, y, S + 0.6);
-    cx.fillStyle = beau ? "rgba(199,181,138,0.52)" : "rgba(6,9,15,0.45)";
+    cx.fillStyle = beau
+      ? (edge ? "rgba(199,181,138,0.3)" : "rgba(199,181,138,0.52)")
+      : (edge ? "rgba(6,9,15,0.26)" : "rgba(6,9,15,0.45)");
     cx.fill();
     if (beau) { cx.strokeStyle = PARCH_GRID; cx.lineWidth = 1; cx.stroke(); }
+  }
+  // --- edge of the known world. The frontier is the longest continuous line on
+  // the map and it was the one that did not flow: surveyed land simply stopped
+  // against blank vellum on a hard hex sawtooth. Each unexplored cell that
+  // touches a known tile now washes parchment a little way past its own border,
+  // and the overlapping halos dissolve the boundary the way an antique map
+  // fades from surveyed coast into empty paper. Feathering outward from the
+  // unknown side, rather than inward per edge, is what keeps it a soft front
+  // instead of a row of chevrons.
+  if (beau) {
+    const haloed = new Set();
+    for (const t of tiles) {
+      for (let i = 0; i < 6; i++) {
+        if (nbrTile(t.pos, DIRS[i])) continue;       // that way lies known land
+        const nq = t.pos[0] + DIRS[i][0], nr = t.pos[1] + DIRS[i][1];
+        const hk = nq + "," + nr;
+        if (haloed.has(hk)) continue;
+        haloed.add(hk);
+        const [px, py] = hexXY(nq, nr);
+        // reach varies per cell, so the front is an irregular fade rather than
+        // a regular scallop — the give-away that it is still a hex grid
+        const rr2 = S * (1.12 + 0.34 * hash2(nq * 13 + 5, nr * 7 + 2));
+        const g = cx.createRadialGradient(px, py, S * 0.5, px, py, rr2);
+        g.addColorStop(0, "rgba(199,181,138,.95)");
+        g.addColorStop(0.55, "rgba(199,181,138,.5)");
+        g.addColorStop(1, "rgba(199,181,138,0)");
+        cx.fillStyle = g;
+        cx.beginPath(); cx.arc(px, py, rr2, 0, 7); cx.fill();
+      }
+    }
   }
   // --- right-drag order line
   if (rdrag && rdragTo && sel) {
