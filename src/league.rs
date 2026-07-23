@@ -588,9 +588,12 @@ fn play_round(league: &League, tables: &[Vec<usize>], cfg: &LeagueCfg, round: u3
         .into_iter()
         .enumerate()
         .map(|(gi, (seed, game))| {
-            let winner = game.winner.unwrap();
+            // A game can end with nobody having won: a lobby that pins
+            // victories without `score` has no turn-limit tiebreak. Ordering
+            // then falls through to score, which is the tiebreak the winner
+            // would have been chosen on anyway.
             let mut ranked: Vec<usize> = (0..cfg.players_per_game).collect();
-            ranked.sort_by_key(|pid| (*pid != winner, -game.score(*pid), *pid));
+            ranked.sort_by_key(|pid| (game.winner != Some(*pid), -game.score(*pid), *pid));
             Outcome {
                 placements: ranked.iter().map(|pid| tables[gi][*pid]).collect(),
                 civs: ranked

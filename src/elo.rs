@@ -524,7 +524,11 @@ where
             }
         }
 
-        let winner = game.winner.unwrap();
+        // A game nobody won is a game nobody won: every seat is rated as a
+        // non-winner, and the ratings fall back to the score ordering they
+        // already carry. Only a lobby that switched the score victory off can
+        // reach this, but it must not take the rating run down with it.
+        let winner = game.winner;
         let results: Vec<RatedPlayer> = (0..cfg.players_per_game)
             .map(|pid| {
                 let strategy = dominant_strategy(&strategy_turns[pid], ais[pid].strategy_label())
@@ -533,19 +537,19 @@ where
                     key: RatingKey::new(game.players[pid].civ.clone(), strategy),
                     agent: seats[pid].clone(),
                     score: game.score(pid),
-                    won: winner == pid,
+                    won: winner == Some(pid),
                 }
             })
             .collect();
-        let wname = if winner < cfg.players_per_game {
-            seats[winner].clone()
-        } else {
-            game.players[winner].civ.clone()
+        let wname = match winner {
+            Some(winner) if winner < cfg.players_per_game => seats[winner].clone(),
+            Some(winner) => game.players[winner].civ.clone(),
+            None => "-".to_string(),
         };
         (
             results,
             wname,
-            game.players[winner].civ.clone(),
+            winner.map_or_else(|| "-".to_string(), |winner| game.players[winner].civ.clone()),
             game.victory_type.clone().unwrap_or_default(),
             game.turn,
         )

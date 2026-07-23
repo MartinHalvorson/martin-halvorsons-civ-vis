@@ -228,9 +228,11 @@ fn play_sampled(
             }
         }
     }
-    let winner = g.winner.unwrap();
-    rows.extend(pending.into_iter().map(|(f, p)| (f, p == winner)));
-    winner == seat
+    // No winner means no positive labels from this game and no win for the
+    // seat under test — a lobby with the score victory switched off can end a
+    // game that way, and a training run must not abort on one.
+    rows.extend(pending.into_iter().map(|(f, p)| (f, g.winner == Some(p))));
+    g.winner == Some(seat)
 }
 
 /// Fishtest-style SPRT match vs the champion: H0 win rate 0.25 (parity at a

@@ -196,12 +196,14 @@ fn main() {
                 .collect();
             run_game(&mut g, &mut ais);
             total_turns += g.turn as u64;
-            let winner = g.winner.unwrap();
+            // A game nobody won scores as a loss for every seat rather than
+            // taking the evaluation down; only a lobby without the score
+            // victory can produce one.
             for (pid, name) in seats.iter().enumerate() {
                 totals
                     .get_mut(*name)
                     .unwrap()
-                    .record(&g, pid, winner == pid);
+                    .record(&g, pid, g.winner == Some(pid));
             }
         }
     }
