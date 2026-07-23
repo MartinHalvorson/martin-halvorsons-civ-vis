@@ -1928,6 +1928,37 @@ impl AdvancedAi {
                 }
             }
         }
+        // A node that unlocks the successor of units already on the map buys
+        // an upgrade for every one of them, not merely the option to train
+        // something new. Counted over a whole game, the commonest reason an
+        // upgrade was unavailable was a node its owner had simply never taken
+        // — Archery, Iron Working, Machinery — while empires holding ten to
+        // thirty technologies still fielded the Slingers and Warriors those
+        // nodes would have retired.
+        let stranded: f64 = g
+            .units
+            .values()
+            .filter(|unit| unit.owner == pid)
+            .filter_map(|unit| {
+                let held = &g.rules.units[unit.kind.as_str()];
+                let successor = g.rules.units.get(held.upgrade_to.as_deref()?)?;
+                (successor.tech.as_deref() == Some(tech)).then(|| {
+                    (successor.strength.max(successor.ranged_attack_strength())
+                        - held.strength.max(held.ranged_attack_strength()))
+                    .max(0.0)
+                })
+            })
+            .sum();
+        // Capped so a large stale army nudges the order rather than dictating
+        // it: at the ceiling this is worth about as much as an embarkation
+        // prerequisite, which is the largest bonus already in this function.
+        value += (stranded
+            * if strategy == GrandStrategy::Conquest {
+                2.4
+            } else {
+                1.4
+            })
+        .min(150.0);
         for building in g
             .rules
             .buildings
@@ -14640,6 +14671,54 @@ mod tests {
             ai.advanced_secret_society(&mut game, 0, target.strategy());
             assert_eq!(game.players[0].secret_society.as_deref(), Some(expected));
         }
+    }
+
+    /// Over a whole six-player game the commonest reason an upgrade was
+    /// unavailable was not distance up the tree but a node its owner had
+    /// simply never taken: Archery, Iron Working and Machinery accounted for
+    /// most of it, with empires holding ten to thirty technologies still
+    /// fielding the Slingers and Warriors those nodes retire.
+    #[test]
+    fn research_prices_the_node_that_retires_the_army_already_in_the_field() {
+        let mut g = Game::new(2, 24, 16, 21, 80, 0);
+        let ai = AdvancedAi::new();
+        let home = g.units[&g.player_unit_ids(0)[0]].pos;
+        let slingers = |g: &Game| {
+            g.units
+                .values()
+                .filter(|unit| unit.owner == 0 && unit.kind == "slinger")
+                .count()
+        };
+        let mut raise = |g: &mut Game, wanted: usize| {
+            let before = slingers(g);
+            for pos in g.wdisk(home, 4) {
+                if slingers(g) >= before + wanted {
+                    break;
+                }
+                g.spawn_test_unit("slinger", 0, pos);
+            }
+            slingers(g) - before
+        };
+
+        // Measure the second batch against the first: the other terms that
+        // read the empire's units settle after the first Slinger, so only the
+        // waiting upgrades separate the two readings.
+        let grown = raise(&mut g, 3);
+        assert!(grown >= 3, "test needs a garrison, spawned {grown}");
+        let three = ai.tech_value(&g, 0, "archery", GrandStrategy::Science);
+        let grown = raise(&mut g, 3);
+        assert!(grown >= 3, "test needs a bigger garrison, spawned {grown}");
+        let six = ai.tech_value(&g, 0, "archery", GrandStrategy::Science);
+
+        // `tech_value` divides by the square root of the technology's cost,
+        // so three more Slingers waiting on Archery (15 to 25 apiece, at the
+        // peacetime rate) read as a few points here, not forty.
+        assert!(six > three + 4.0, "three={three} six={six}");
+        // A node that retires nothing this empire owns gains nothing.
+        assert!(
+            ai.tech_value(&g, 0, "iron_working", GrandStrategy::Science) < six,
+            "no unit here upgrades through Iron Working"
+        );
     }
 
     #[test]
