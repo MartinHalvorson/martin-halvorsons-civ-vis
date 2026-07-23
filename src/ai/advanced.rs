@@ -8957,6 +8957,47 @@ impl AdvancedAi {
         }
     }
 
+    /// Immediate population-pressure component of a captured city's Loyalty
+    /// change. Governors, policies, and projects can improve this later, but a
+    /// city that will revolt in two or three turns cannot wait for them to be
+    /// established. Mirroring the rules engine's pressure equation here lets
+    /// the mandatory keep/raze decision price that short horizon explicitly.
+    fn population_loyalty_delta(g: &Game, pid: usize, city_id: u32) -> f64 {
+        let city = &g.cities[&city_id];
+        let age_factor = |owner: usize| match g.players[owner].age.as_str() {
+            "golden" | "heroic" => 1.5,
+            "dark" => 0.5,
+            _ => 1.0,
+        };
+        let mut domestic = 0.0;
+        let mut foreign = 0.0;
+        for source in g.cities.values() {
+            if g.players[source.owner].is_minor || g.players[source.owner].is_barbarian {
+                continue;
+            }
+            let distance = g.wdist(source.pos, city.pos);
+            if distance > 9 {
+                continue;
+            }
+            let mut pressure = source.pop as f64
+                * (10 - distance) as f64
+                * age_factor(source.owner);
+            if source.is_capital && source.original_owner == source.owner {
+                pressure += source.pop as f64;
+            }
+            if source.owner == pid {
+                domestic += pressure;
+            } else if !g.same_team(pid, source.owner)
+                && !g
+                    .alliance_with(pid, source.owner)
+                    .is_some_and(|alliance| alliance.kind == "cultural")
+            {
+                foreign += pressure;
+            }
+        }
+        (10.0 * (domestic - foreign) / (domestic.min(foreign) + 0.5)).clamp(-20.0, 20.0)
+    }
+
     fn city_disposition_value(
         &self,
         before: &Game,
@@ -9123,6 +9164,21 @@ impl AdvancedAi {
             let development = city.pop.max(1) as f64 * 6.0
                 + city.districts.len() as f64 * 12.0
                 + city.wonders.len() as f64 * 35.0;
+            let loyalty_delta = Self::population_loyalty_delta(before, pid, city_id);
+            let turns_to_flip = if loyalty_delta < 0.0 {
+                city.loyalty.max(0.0) / -loyalty_delta
+            } else {
+                f64::INFINITY
+            };
+            let disposable = !city.is_capital
+                && !before.players[city.original_owner].is_minor
+                && city.original_owner != pid
+                && !before.are_allied(pid, city.original_owner);
+            let hopeless_occupation = disposable
+                && matches!(strategy, GrandStrategy::Conquest | GrandStrategy::Recovery)
+                && nearest_core > 9
+                && loyalty_delta <= -8.0
+                && turns_to_flip <= 8.0;
             match action {
                 Action::KeepCity { .. } => {
                     value += development;
@@ -9132,12 +9188,20 @@ impl AdvancedAi {
                     if strategy == GrandStrategy::Conquest {
                         value += 35.0;
                     }
+                    if hopeless_occupation {
+                        value -= 240.0
+                            + -loyalty_delta * 18.0
+                            + (8.0 - turns_to_flip).max(0.0) * 30.0;
+                    }
                 }
                 Action::RazeCity { .. } => {
                     value -= development * 0.4;
                     if strategy == GrandStrategy::Conquest && nearest_core > 9 && development < 35.0
                     {
                         value += 65.0;
+                    }
+                    if hopeless_occupation {
+                        value += 120.0 + -loyalty_delta * 8.0;
                     }
                 }
                 Action::LiberateCity { .. } => {
@@ -15244,6 +15308,65 @@ mod tests {
         ai.resolve_city_dispositions(&mut conquest, 0, GrandStrategy::Conquest);
         assert_eq!(conquest.cities[&city].owner, 0);
         assert_eq!(conquest.cities[&city].captured_from, None);
+    }
+
+    #[test]
+    fn conquest_razes_a_hopeless_isolated_city_instead_of_recapturing_it() {
+        let mut game = Game::new_full(2, 30, 18, 107_002, 120, 0, false);
+        for pid in 0..2 {
+            game.current = pid;
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        let home = game.player_city_ids(0)[0];
+        let rival_capital = game.player_city_ids(1)[0];
+        let rival_pos = game.cities[&rival_capital].pos;
+        let outpost_pos = game
+            .wdisk(rival_pos, 4)
+            .into_iter()
+            .find(|position| {
+                game.wdist(*position, rival_pos) == 4
+                    && game.wdist(*position, game.cities[&home].pos) > 9
+                    && game.city_at(*position).is_none()
+                    && game.map.tiles[position].owner_city.is_none()
+            })
+            .expect("test map has an isolated rival outpost site");
+        {
+            let tile = game.map.tiles.get_mut(&outpost_pos).unwrap();
+            tile.terrain = "grassland".to_string();
+            tile.feature = None;
+            tile.hills = false;
+        }
+        game.cities.get_mut(&rival_capital).unwrap().pop = 15;
+        game.cities.get_mut(&home).unwrap().pop = 3;
+        let outpost = game.found_city_for(1, outpost_pos, Some("Revolt Loop".to_string()));
+        {
+            let captured = game.cities.get_mut(&outpost).unwrap();
+            captured.owner = 0;
+            captured.pop = 3;
+            captured.loyalty = 50.0;
+            captured.captured_from = Some(1);
+            captured.occupied_from = Some(1);
+        }
+        game.current = 0;
+        assert!(game
+            .legal_city_disposition_actions(0)
+            .iter()
+            .any(|action| matches!(action, Action::RazeCity { city } if *city == outpost)));
+
+        let mut ai = AdvancedAi::targeting(VictoryTarget::Domination);
+        assert!(AdvancedAi::population_loyalty_delta(&game, 0, outpost) <= -8.0);
+        ai.resolve_city_dispositions(&mut game, 0, GrandStrategy::Conquest);
+
+        assert!(
+            !game.cities.contains_key(&outpost),
+            "a city forecast to revolt before support can arrive should be razed once"
+        );
     }
 
     #[test]
