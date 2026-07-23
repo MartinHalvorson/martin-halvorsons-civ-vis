@@ -812,6 +812,34 @@ const BLDG_ICON = { monument:"🗿", granary:"🌾", walls:"🧱", medieval_wall
 const DISTRICT_COLOR = { campus:"#4aa3df", holy_site:"#e8e4ef", commercial_hub:"#e2c04a",
                          harbor:"#5ec8d8", encampment:"#c0392b", theater_square:"#c678dd",
                          industrial_zone:"#e67e22", entertainment_complex:"#e75480" };
+// Every unique district is its parent in a local hat — a Seowon is a Campus,
+// an Ikanda an Encampment — so they share a silhouette and a color. Grouping by
+// family is also what keeps thirty-five kinds down to a set of shapes a player
+// can actually learn.
+const DISTRICT_FAMILY = {
+  campus:"campus", seowon:"campus", observatory:"campus",
+  holy_site:"faith", lavra:"faith",
+  encampment:"war", ikanda:"war", oppidum:"war", thanh:"war",
+  commercial_hub:"trade", suguba:"trade",
+  harbor:"harbor", royal_navy_dockyard:"harbor", cothon:"harbor",
+  theater_square:"culture", acropolis:"culture",
+  industrial_zone:"industry", hansa:"industry",
+  entertainment_complex:"fun", street_carnival:"fun", hippodrome:"fun",
+  copacabana:"fun", water_park:"fun",
+  aqueduct:"water", bath:"water", canal:"water", dam:"water",
+  neighborhood:"homes", mbanza:"homes",
+  aerodrome:"air", spaceport:"air",
+  government_plaza:"civic", diplomatic_quarter:"civic",
+  preserve:"preserve", city_center:"civic",
+};
+const FAMILY_COLOR = {
+  campus:"#4aa3df", faith:"#ece6f4", war:"#c0392b", trade:"#e2c04a",
+  harbor:"#5ec8d8", culture:"#c678dd", industry:"#e67e22", fun:"#e75480",
+  water:"#7fb8d8", homes:"#bda684", air:"#9fb0c4", civic:"#d8c58a",
+  preserve:"#6fbf73",
+};
+const districtColor = d =>
+  DISTRICT_COLOR[d] || FAMILY_COLOR[DISTRICT_FAMILY[d]] || "#ddd";
 const YICON = { food:"🍞", production:"⚙️", gold:"🪙", science:"🔬",
                 culture:"🎭", faith:"✡" };
 const YCOLOR = { food:"#76c893", production:"#d7b66a", gold:"#e8c64c",
@@ -2142,6 +2170,173 @@ function drawUnitBase(u, x, y) {
   }
 }
 
+// A district was a bright rounded chip with one letter stamped on it, which is
+// a label rather than a place — and with only eight of the thirty-five kinds
+// given a color, most of them were a white chip reading "H" or "A". They are
+// built now, in the same painted language as improvements: a terrace in the
+// family's color so the district reads from survey zoom, and a silhouette on it
+// so you know which one without counting letters.
+function drawDistrict(t, x, y) {
+  const fam = DISTRICT_FAMILY[t.district] || "civic";
+  const col = districtColor(t.district);
+  cx.save();
+  if (t.pillaged) cx.globalAlpha = 0.6;
+  cx.lineJoin = "round";
+  cx.fillStyle = "rgba(0,0,0,.26)";                    // footing
+  cx.beginPath(); cx.ellipse(x, y + 8, 13, 4.4, 0, 0, 7); cx.fill();
+  cx.fillStyle = col; cx.strokeStyle = "#12161d"; cx.lineWidth = 1.2;
+  cx.beginPath();                                      // paved terrace
+  cx.moveTo(x - 13, y + 4); cx.lineTo(x, y - 1.5);
+  cx.lineTo(x + 13, y + 4); cx.lineTo(x, y + 9.5); cx.closePath();
+  cx.fill(); cx.stroke();
+  const dark = "#1b202a", pale = "#f2eee2";
+  cx.strokeStyle = dark; cx.lineWidth = 1.1;
+  if (fam === "campus") {                              // observatory dome
+    cx.fillStyle = pale;
+    cx.beginPath(); cx.arc(x, y - 2, 6, Math.PI, 0); cx.fill(); cx.stroke();
+    cx.fillRect(x - 6, y - 2, 12, 2.6); cx.strokeRect(x - 6, y - 2, 12, 2.6);
+    cx.strokeStyle = dark;
+    cx.beginPath(); cx.moveTo(x + 1, y - 5); cx.lineTo(x + 7, y - 10); cx.stroke();
+  } else if (fam === "faith") {                        // temple and spire
+    cx.fillStyle = pale;
+    cx.beginPath();
+    cx.moveTo(x - 6, y + 1); cx.lineTo(x - 6, y - 4); cx.lineTo(x, y - 8);
+    cx.lineTo(x + 6, y - 4); cx.lineTo(x + 6, y + 1); cx.closePath();
+    cx.fill(); cx.stroke();
+    cx.beginPath(); cx.moveTo(x, y - 8); cx.lineTo(x, y - 14); cx.stroke();
+    cx.beginPath(); cx.moveTo(x - 2.4, y - 12); cx.lineTo(x + 2.4, y - 12); cx.stroke();
+  } else if (fam === "war") {                          // crenellated tower
+    cx.fillStyle = "#8d8578";
+    cx.beginPath(); cx.rect(x - 5.5, y - 8, 11, 9); cx.fill(); cx.stroke();
+    for (const cxo of [-5.5, -1.8, 1.8]) cx.fillRect(x + cxo, y - 11, 3.7, 3.2);
+    cx.strokeRect(x - 5.5, y - 11, 11, 3.2);
+  } else if (fam === "trade") {                        // market awning
+    cx.fillStyle = pale;
+    cx.beginPath(); cx.rect(x - 7, y - 3, 14, 4.5); cx.fill(); cx.stroke();
+    cx.fillStyle = "#c94b45";
+    cx.beginPath();
+    cx.moveTo(x - 9, y - 3); cx.lineTo(x - 5, y - 8); cx.lineTo(x + 5, y - 8);
+    cx.lineTo(x + 9, y - 3); cx.closePath(); cx.fill(); cx.stroke();
+  } else if (fam === "harbor") {                       // pier and mast
+    cx.strokeStyle = "#6b5236"; cx.lineWidth = 1.5;
+    cx.beginPath(); cx.moveTo(x - 9, y + 1); cx.lineTo(x + 6, y + 1); cx.stroke();
+    for (const px of [-7, -1, 5]) {
+      cx.beginPath(); cx.moveTo(x + px, y + 1); cx.lineTo(x + px, y + 5); cx.stroke();
+    }
+    cx.strokeStyle = dark; cx.lineWidth = 1.1;
+    cx.beginPath(); cx.moveTo(x + 3, y + 1); cx.lineTo(x + 3, y - 10); cx.stroke();
+    cx.fillStyle = pale;
+    cx.beginPath();
+    cx.moveTo(x + 3.8, y - 10); cx.lineTo(x + 9.5, y - 3); cx.lineTo(x + 3.8, y - 3);
+    cx.closePath(); cx.fill();
+  } else if (fam === "culture") {                      // amphitheatre
+    cx.fillStyle = pale;
+    cx.beginPath(); cx.arc(x, y + 1, 8, Math.PI, 0); cx.fill(); cx.stroke();
+    cx.strokeStyle = dark;
+    cx.beginPath(); cx.arc(x, y + 1, 5, Math.PI, 0); cx.stroke();
+    cx.beginPath(); cx.arc(x, y + 1, 2.4, Math.PI, 0); cx.stroke();
+  } else if (fam === "industry") {                     // works and chimney
+    cx.fillStyle = "#6f6559";
+    cx.beginPath(); cx.rect(x - 8, y - 5, 12, 6.5); cx.fill(); cx.stroke();
+    cx.fillRect(x + 4, y - 12, 4.5, 13.5); cx.strokeRect(x + 4, y - 12, 4.5, 13.5);
+    cx.fillStyle = "#ffffff5c";
+    cx.beginPath(); cx.arc(x + 6, y - 14.5, 3.1, 0, 7); cx.fill();
+  } else if (fam === "fun") {                          // arena with banners
+    cx.fillStyle = pale;
+    cx.beginPath(); cx.ellipse(x, y - 2, 8.5, 5, 0, 0, 7); cx.fill(); cx.stroke();
+    cx.strokeStyle = dark;
+    cx.beginPath(); cx.ellipse(x, y - 2, 4.4, 2.4, 0, 0, 7); cx.stroke();
+    cx.fillStyle = "#e75480";
+    for (const px of [-8, 8]) {
+      cx.beginPath(); cx.moveTo(x + px, y - 6); cx.lineTo(x + px, y - 12); cx.stroke();
+      cx.beginPath();
+      cx.moveTo(x + px, y - 12); cx.lineTo(x + px + 4.2, y - 10.5);
+      cx.lineTo(x + px, y - 9); cx.closePath(); cx.fill();
+    }
+  } else if (fam === "water") {                        // aqueduct arches
+    cx.fillStyle = pale;
+    cx.beginPath(); cx.rect(x - 10, y - 8, 20, 3.4); cx.fill(); cx.stroke();
+    for (const px of [-7, 0, 7]) {
+      cx.beginPath(); cx.moveTo(x + px - 2.6, y + 1); cx.lineTo(x + px - 2.6, y - 3);
+      cx.arc(x + px, y - 3, 2.6, Math.PI, 0);
+      cx.lineTo(x + px + 2.6, y + 1); cx.stroke();
+    }
+  } else if (fam === "homes") {                        // a couple of houses
+    cx.fillStyle = pale;
+    for (const [hx, hy, s] of [[-5, 0, 1], [4.5, -2, 0.85]]) {
+      cx.beginPath(); cx.rect(x + hx - 4 * s, y + hy - 4 * s, 8 * s, 5 * s);
+      cx.fill(); cx.stroke();
+      cx.fillStyle = "#a8593f";
+      cx.beginPath();
+      cx.moveTo(x + hx - 5.2 * s, y + hy - 4 * s); cx.lineTo(x + hx, y + hy - 8.4 * s);
+      cx.lineTo(x + hx + 5.2 * s, y + hy - 4 * s); cx.closePath();
+      cx.fill(); cx.stroke();
+      cx.fillStyle = pale;
+    }
+  } else if (fam === "air") {                          // hangar and strip
+    cx.fillStyle = "#b9c2cc";
+    cx.beginPath(); cx.arc(x - 1, y - 1, 7, Math.PI, 0); cx.fill(); cx.stroke();
+    cx.strokeStyle = pale; cx.lineWidth = 1.6; cx.setLineDash([3, 3]);
+    cx.beginPath(); cx.moveTo(x - 9, y + 4.5); cx.lineTo(x + 10, y + 2); cx.stroke();
+    cx.setLineDash([]); cx.lineWidth = 1.1; cx.strokeStyle = dark;
+  } else if (fam === "preserve") {                     // kept woodland
+    for (const [tx, ty, s] of [[-5, 1, 1], [4, -1, 1.2], [0, 3, 0.8]]) {
+      cx.fillStyle = "#2f6b34";
+      cx.beginPath();
+      cx.moveTo(x + tx - 4.4 * s, y + ty); cx.lineTo(x + tx, y + ty - 9 * s);
+      cx.lineTo(x + tx + 4.4 * s, y + ty); cx.closePath(); cx.fill(); cx.stroke();
+    }
+  } else {                                             // civic colonnade
+    cx.fillStyle = pale;
+    cx.beginPath();
+    cx.moveTo(x - 9, y - 5); cx.lineTo(x, y - 10); cx.lineTo(x + 9, y - 5);
+    cx.closePath(); cx.fill(); cx.stroke();
+    for (const px of [-6, -2, 2, 6]) cx.fillRect(x + px - 1.1, y - 5, 2.2, 6.5);
+    cx.strokeRect(x - 7.4, y - 5, 14.8, 6.5);
+  }
+  cx.restore();
+  if (t.pillaged) {
+    cx.strokeStyle = "#d8443a"; cx.lineWidth = 2.4; cx.lineCap = "round";
+    cx.beginPath(); cx.moveTo(x - 9, y + 8); cx.lineTo(x + 9, y - 10); cx.stroke();
+    cx.lineCap = "butt";
+  }
+}
+
+// A wonder is the rarest thing that ever lands on a tile and it was drawing a
+// gold coin with a W on it. It gets a lit monument on a plinth instead.
+function drawWonder(x, y) {
+  cx.save();
+  cx.lineJoin = "round";
+  const glow = cx.createRadialGradient(x, y - 3, 1, x, y - 3, 23);
+  glow.addColorStop(0, "rgba(255,222,120,.46)");
+  glow.addColorStop(1, "rgba(255,222,120,0)");
+  cx.fillStyle = glow;
+  cx.beginPath(); cx.arc(x, y - 3, 23, 0, 7); cx.fill();
+  cx.fillStyle = "rgba(0,0,0,.3)";
+  cx.beginPath(); cx.ellipse(x, y + 8, 12, 4, 0, 0, 7); cx.fill();
+  // Pale gold on pale ground is no contrast at all, and a wonder is the one
+  // thing on the map that should never be missed: dark outline throughout, and
+  // a lit face against a shadowed one so it reads as carved stone.
+  cx.strokeStyle = "#33280c"; cx.lineWidth = 1.6;
+  cx.fillStyle = "#b08f45";                            // plinth
+  cx.beginPath();
+  cx.moveTo(x - 11, y + 5); cx.lineTo(x, y + 1); cx.lineTo(x + 11, y + 5);
+  cx.lineTo(x, y + 9); cx.closePath(); cx.fill(); cx.stroke();
+  cx.fillStyle = "#d4ac4f";                            // monument, shadow side
+  cx.beginPath();
+  cx.moveTo(x - 6, y + 2); cx.lineTo(x - 3.4, y - 11); cx.lineTo(x + 3.4, y - 11);
+  cx.lineTo(x + 6, y + 2); cx.closePath(); cx.fill(); cx.stroke();
+  cx.fillStyle = "#ffeaa8";                            // lit side
+  cx.beginPath();
+  cx.moveTo(x - 6, y + 2); cx.lineTo(x - 3.4, y - 11); cx.lineTo(x, y - 11);
+  cx.lineTo(x, y + 2); cx.closePath(); cx.fill();
+  cx.fillStyle = "#fff6d2";
+  cx.beginPath();
+  cx.moveTo(x, y - 19); cx.lineTo(x + 4.4, y - 11); cx.lineTo(x - 4.4, y - 11);
+  cx.closePath(); cx.fill(); cx.stroke();
+  cx.restore();
+}
+
 // Below this zoom the fine pass inside a motif — furrows, patchwork, doorways —
 // lands at or under a pixel, so it costs a clip and a dozen strokes per tile to
 // draw nothing anyone can see. A developed empire is mostly improvements, so
@@ -2771,19 +2966,8 @@ function draw() {
       cx.font = "12px sans-serif";
       cx.fillText(RES_ICON[t.resource] || "●", x + 10, y + 9.5);
     }
-    if (t.district) {
-      cx.fillStyle = DISTRICT_COLOR[t.district] || "#ddd";
-      cx.strokeStyle = "#10151d"; cx.lineWidth = 1.6;
-      cx.beginPath(); cx.roundRect(x - 10, y - 7, 20, 14, 3.5); cx.fill(); cx.stroke();
-      cx.fillStyle = "#10151d"; cx.font = "bold 11px sans-serif";
-      cx.fillText(t.district[0].toUpperCase(), x, y + 0.5);
-    }
-    if (t.wonder) {
-      cx.fillStyle = "#f2d06b";
-      cx.beginPath(); cx.arc(x, y, 8, 0, Math.PI * 2); cx.fill();
-      cx.fillStyle = "#302508"; cx.font = "bold 10px serif"; cx.textAlign = "center";
-      cx.fillText("W", x, y + 3);
-    }
+    if (t.district) drawDistrict(t, x, y);
+    if (t.wonder) drawWonder(x, y);
     if (SHOW_YIELDS && !t.district && !t.wonder) drawTileYields(t, x, y, workedSet.has(k));
   }
   // --- settler lens
@@ -2956,7 +3140,9 @@ function draw() {
           cx.stroke();
           cx.lineCap = "butt";
         }
-        cx.fillStyle = it.district ? (DISTRICT_COLOR[it.district] || "#f0ead8") : "#f0ead8";
+        // family fallback here too, so the twenty-seven districts with no color
+        // of their own stop coming off the queue as the same plain cream glyph
+        cx.fillStyle = it.district ? districtColor(it.district) : "#f0ead8";
         cx.font = "10px 'Segoe UI Symbol', 'Segoe UI Emoji', sans-serif";
         cx.fillText(prodGlyph(it), mx, my + 0.5);
       }
