@@ -534,8 +534,9 @@
   }
   body.cinema-mode #cinema-follow.active {
     position: absolute; z-index: 11; left: 50%; bottom: 31px;
-    display: flex; align-items: center; gap: 8px; max-width: min(430px, calc(100% - 48px));
+    display: flex; align-items: center; gap: 8px; max-width: min(500px, calc(100% - 48px));
     margin: 0; padding: 7px 12px 7px 10px; overflow: hidden;
+    transform: translateX(-50%);
     color: #e7eee9; background: #06100dd6; border: 1px solid #d8bd7948;
     border-radius: 999px; box-shadow: 0 9px 28px #000a; backdrop-filter: blur(14px);
     font-size: 9px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
@@ -544,7 +545,8 @@
     content: ""; width: 7px; height: 7px; flex: 0 0 auto; border: 1px solid #f1d58d;
     border-radius: 50%; box-shadow: 0 0 0 3px #d7b66a20, 0 0 10px #e4c6757a;
   }
-  #cinema-follow b { overflow: hidden; color: #f6e4ac; text-overflow: ellipsis; white-space: nowrap; }
+  #cinema-follow span, #cinema-follow em { flex: 0 0 auto; white-space: nowrap; }
+  #cinema-follow b { min-width: 0; overflow: hidden; color: #f6e4ac; text-overflow: ellipsis; white-space: nowrap; }
   #cinema-follow em { color: #9fb0aa; font-style: normal; letter-spacing: .03em; }
   body.cinema-mode #cinema-chrome {
     position: absolute; z-index: 15; top: 31px; right: 30px; display: flex; align-items: center; gap: 5px;
@@ -6726,7 +6728,7 @@ function updateCameraFollowChip() {
   const owner = state.players[unit.owner];
   chip.querySelector("span").textContent = manual ? "Following" : "Director follows";
   chip.querySelector("b").textContent = `${owner?.civ || "Unknown"} · ${titleCase(unit.type)}`;
-  chip.querySelector("em").textContent = manual ? "click to release" : "click to take control";
+  chip.querySelector("em").textContent = manual ? "release" : "take control";
   chip.title = manual ? "Stop following this unit" : "Take camera control from the director";
 }
 function stopCameraFollow() {
