@@ -6247,9 +6247,13 @@ mod district_building_wonder_runtime_tests {
     #[test]
     fn meteors_pepper_open_land_and_grant_advanced_heavy_cavalry() {
         let (mut game, city, _) = one_city(90_4441);
+        // A stock lobby has the Apocalypse mode off and so never sees one.
+        game.turn = game.max_turns;
+        game.process_meteors();
+        assert_eq!(game.meteor_strikes, 0, "meteors are an Apocalypse-mode rule");
+        game.game_modes.insert("apocalypse".to_string());
         // At the turn limit every remaining strike is forced in, and the
         // budget never exceeds the shipped six per game.
-        game.turn = game.max_turns;
         for expected in 1..=6u32 {
             game.process_meteors();
             assert_eq!(game.meteor_strikes, expected);
@@ -6617,6 +6621,22 @@ mod district_building_wonder_runtime_tests {
             .unwrap()
             .buildings
             .push("library".to_string());
+
+        // Secret Societies is a New Frontier mode: a stock lobby is never
+        // offered one, and asking anyway is refused.
+        assert!(!game
+            .legal_actions(0)
+            .iter()
+            .any(|action| matches!(action, Action::ChooseSecretSociety { .. })));
+        assert!(game
+            .apply(
+                0,
+                &Action::ChooseSecretSociety {
+                    society: "hermetic_order".to_string(),
+                },
+            )
+            .is_err());
+        game.game_modes.insert("secret_societies".to_string());
 
         let choices: Vec<Action> = game
             .legal_actions(0)
@@ -7606,6 +7626,10 @@ pub fn growth_threshold(pop: i32) -> f64 {
 
 /// Gathering Storm victory thresholds on standard speed.
 pub const DIPLOMATIC_VICTORY_POINTS: i64 = 20;
+/// The New Frontier game modes CIVVIS models. Each is a lobby checkbox that
+/// is off in a stock Gathering Storm game and in every tournament lobby.
+pub const GAME_MODES: [&str; 2] = ["apocalypse", "secret_societies"];
+
 pub const EXOPLANET_DESTINATION: f64 = 50.0;
 pub const TOURISM_PER_VISITOR: f64 = 200.0;
 const STANDARD_DEAL_TURNS: u32 = 30;
@@ -7673,6 +7697,13 @@ impl Game {
 
     pub fn max_religions(&self) -> usize {
         self.map_size().max_religions
+    }
+
+    /// Whether the lobby switched on one of the New Frontier game modes.
+    /// Nothing outside a mode's own rules may consult this: a mode is a
+    /// pre-game setting, not a mid-game state.
+    pub fn game_mode(&self, mode: &str) -> bool {
+        self.game_modes.contains(mode)
     }
 
     pub fn tech_cost(&self, technology: &str) -> f64 {
@@ -9383,6 +9414,9 @@ pub struct GameOptions {
     pub teams: Vec<Option<usize>>,
     /// Gathering Storm's disaster intensity, 0 (none) to 4 (hyperreal).
     pub disaster_intensity: u8,
+    /// New Frontier game modes to switch on. Empty — the stock Gathering
+    /// Storm ruleset every tournament lobby plays — is the default.
+    pub game_modes: BTreeSet<String>,
 }
 
 impl GameOptions {
@@ -9408,6 +9442,7 @@ impl GameOptions {
             human_seats: BTreeSet::new(),
             teams: Vec::new(),
             disaster_intensity: DEFAULT_DISASTER_INTENSITY,
+            game_modes: BTreeSet::new(),
         }
     }
 }
@@ -9581,6 +9616,10 @@ pub struct Game {
     /// The lobby's disaster-intensity setting, 0 (none) to 4 (hyperreal).
     #[serde(default = "default_disaster_intensity")]
     pub disaster_intensity: u8,
+    /// The New Frontier game modes this lobby switched on. Empty is the stock
+    /// Gathering Storm ruleset, which is what a tournament lobby plays.
+    #[serde(default)]
+    pub game_modes: BTreeSet<String>,
     /// Storm systems currently crossing the map.
     #[serde(default)]
     pub storms: Vec<Storm>,
@@ -9729,6 +9768,8 @@ struct GameSer {
     #[serde(default = "default_disaster_intensity")]
     disaster_intensity: u8,
     #[serde(default)]
+    game_modes: BTreeSet<String>,
+    #[serde(default)]
     storms: Vec<Storm>,
     #[serde(default)]
     droughts: Vec<Drought>,
@@ -9812,6 +9853,7 @@ impl From<GameSer> for Game {
             climate_phase: s.climate_phase,
             meteor_strikes: s.meteor_strikes,
             disaster_intensity: s.disaster_intensity,
+            game_modes: s.game_modes,
             storms: s.storms,
             droughts: s.droughts,
             retired_great_people: s.retired_great_people,
@@ -9948,6 +9990,7 @@ impl From<Game> for GameSer {
             climate_phase: g.climate_phase,
             meteor_strikes: g.meteor_strikes,
             disaster_intensity: g.disaster_intensity,
+            game_modes: g.game_modes,
             storms: g.storms,
             droughts: g.droughts,
             retired_great_people: g.retired_great_people,
@@ -10040,6 +10083,7 @@ impl Game {
             human_seats,
             teams,
             disaster_intensity,
+            game_modes,
         } = options;
         assert!(
             teams.is_empty() || teams.len() == num_players,
@@ -10107,6 +10151,7 @@ impl Game {
             climate_phase: 0,
             meteor_strikes: 0,
             disaster_intensity,
+            game_modes,
             storms: Vec::new(),
             droughts: Vec::new(),
             retired_great_people: BTreeSet::new(),
@@ -11012,7 +11057,10 @@ impl Game {
     /// before the turn limit.
     fn process_meteors(&mut self) {
         const PER_GAME: u32 = 6;
-        if self.meteor_strikes >= PER_GAME || self.max_turns == 0 {
+        // Meteor showers arrived with the New Frontier Pass' Apocalypse mode,
+        // not with Gathering Storm. A stock lobby — and every tournament one,
+        // which disables all game modes — sees none.
+        if !self.game_mode("apocalypse") || self.meteor_strikes >= PER_GAME || self.max_turns == 0 {
             return;
         }
         let mut rng = Rng::new(
@@ -13366,7 +13414,8 @@ impl Game {
     }
 
     fn do_choose_secret_society(&mut self, pid: usize, society: &str) -> Result<(), String> {
-        if self.players[pid].is_minor
+        if !self.game_mode("secret_societies")
+            || self.players[pid].is_minor
             || self.players[pid].is_barbarian
             || self.players[pid].secret_society.is_some()
             || !self.players[pid].civics.contains("code_of_laws")
@@ -26777,7 +26826,10 @@ impl Game {
                     }
                 }
             }
-            if p.secret_society.is_none() && p.civics.contains("code_of_laws") {
+            if self.game_mode("secret_societies")
+                && p.secret_society.is_none()
+                && p.civics.contains("code_of_laws")
+            {
                 for society in ["hermetic_order", "owls_of_minerva", "voidsingers"] {
                     acts.push(Action::ChooseSecretSociety {
                         society: society.to_string(),

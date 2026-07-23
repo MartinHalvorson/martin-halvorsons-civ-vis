@@ -47,7 +47,7 @@ this is the flag that pins it:
 | Tribal Villages: ENABLED | default (`data/goody_huts.json`) |
 | Teams Share Visibility: ENABLED | implied by `--teams` |
 | Start Era: Ancient | default |
-| All Game Modes: DISABLED | default (no NFP modes) |
+| All Game Modes: DISABLED | default; `--game-modes apocalypse,secret_societies` opts back in |
 | Duplicate Civs and Leaders: ALLOWED | seats past the eighth reuse the roster |
 | Start Position: Balanced | not ported — see the gaps table below |
 | World Age / Temperature / Rainfall / Sea Level | not exposed by the generator |

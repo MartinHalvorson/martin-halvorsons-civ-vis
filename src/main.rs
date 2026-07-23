@@ -1,11 +1,11 @@
 //! CLI: simulate / soak / benchmark (mirrors the Python CLI outputs).
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 use civvis::ai::{run_game, AdvancedAi, Ai};
 use civvis::game::{
     default_difficulty, default_speed, Game, GameOptions, VictoryConditions,
-    DEFAULT_DISASTER_INTENSITY,
+    DEFAULT_DISASTER_INTENSITY, GAME_MODES,
 };
 use civvis::rules::Rules;
 use civvis::setup::{GameSpeed, MapScript, MapSize};
@@ -161,6 +161,24 @@ fn game_options(args: &[String], players: i64, seed: u64) -> GameOptions {
         // A lobby checkbox like any other: competitive team events play with
         // barbarians off, so a preset has to be able to say so.
         barbarians: arg_toggle(args, "--barbarians", true),
+        // Off is the stock Gathering Storm ruleset and what every tournament
+        // lobby plays; naming a mode is an opt-in to New Frontier content.
+        game_modes: {
+            let requested = arg_text(args, "--game-modes", "");
+            let modes: BTreeSet<String> = requested
+                .split(',')
+                .map(str::trim)
+                .filter(|mode| !mode.is_empty())
+                .map(str::to_string)
+                .collect();
+            for mode in &modes {
+                if !GAME_MODES.contains(&mode.as_str()) {
+                    eprintln!("unknown game mode {mode:?}; choose from {GAME_MODES:?}");
+                    std::process::exit(2);
+                }
+            }
+            modes
+        },
         ..GameOptions::new(
             player_count,
             auto_dimension(args, "--width", players, true),
@@ -732,6 +750,7 @@ fn main() {
                       [--difficulty settler|chieftain|warlord|prince|king|emperor|immortal|deity] \
                       [--speed online|quick|standard|epic|marathon] \
                       [--disasters 0|1|2|3|4] [--barbarians on|off] \
+                      [--game-modes apocalypse,secret_societies] \
                       [--human-seats 0,1] [--teams 0,0,1,1] [--mods path/to/mod,path/to/other] \
                       [--victories science,culture,religious,diplomatic,domination,score] \
                       [--spectate] [--supervised] [--resume checkpoint.json] [--strict] \

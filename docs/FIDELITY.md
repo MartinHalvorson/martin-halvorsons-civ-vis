@@ -208,7 +208,10 @@ It reports zero unwaived keys across 629, with five waived in
 after any refactor that moves yield code.
 
 **Eighth wave (the meteor):** the Apocalypse pack's meteor shower lands in
-the engine — about six strikes per game (the shipped Moderate frequency)
+the engine, **behind its game-mode checkbox** (`--game-modes apocalypse`;
+Secret Societies is the other one CIVVIS models). New Frontier modes are
+off in a stock lobby and in every tournament lobby, so the baseline
+ruleset sees none of this — about six strikes per game (the shipped Moderate frequency)
 on the shipped strike terrains outside anyone's territory, each leaving
 the `METEOR_GOODIES` site whose one-entry table grants the most advanced
 Heavy Cavalry the finder can field, in their nearest city, exempt from
