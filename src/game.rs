@@ -1498,6 +1498,50 @@ mod governor_runtime_tests {
     }
 
     #[test]
+    fn losing_a_governors_city_clears_live_and_legacy_assignments() {
+        let mut game = Game::new_full(2, 28, 18, 91_779, 200, 0, false);
+        let capital = found_capital(&mut game, 0);
+        found_capital(&mut game, 1);
+        let capital_pos = game.cities[&capital].pos;
+        let second_pos = game
+            .map
+            .tiles
+            .iter()
+            .find_map(|(position, tile)| {
+                (tile.owner_city.is_none()
+                    && game.rules.is_passable(tile)
+                    && !game.rules.is_water(tile)
+                    && game.wdist(*position, capital_pos) >= 4)
+                    .then_some(*position)
+            })
+            .unwrap();
+        let second = game.found_city_for(0, second_pos, Some("Governor Test".to_string()));
+        appoint_established(&mut game, 0, "victor", second, &["garrison_commander"]);
+
+        let mut captured = game.clone();
+        captured.capture_city(second, 1);
+        assert_eq!(
+            captured.players[0].governor_roster["victor"].city,
+            None,
+            "a live ownership change displaces the Governor immediately"
+        );
+
+        // A checkpoint written by an older runtime can still contain the
+        // assignment after the city was razed. Recreate that stale shape and
+        // run the exact Loyalty path that used to index the missing city.
+        let removed = game.cities.remove(&second).unwrap();
+        game.city_by_pos.remove(&removed.pos);
+        for position in removed.owned_tiles {
+            if game.map.tiles[&position].owner_city == Some(second) {
+                game.map.tiles.get_mut(&position).unwrap().owner_city = None;
+            }
+        }
+        assert!(!game.governor_established(0, "victor"));
+        game.process_loyalty(0);
+        assert!(game.cities.contains_key(&capital));
+    }
+
+    #[test]
     fn amani_executes_messenger_resources_puppeteer_and_emissary() {
         let mut game = Game::new_full(2, 26, 16, 91_780, 200, 1, false);
         found_capital(&mut game, 0);
@@ -31444,7 +31488,19 @@ impl Game {
         let Some(spec) = self.rules.governors.get(governor) else {
             return false;
         };
-        state.city.is_some()
+        let Some(city) = state.city.and_then(|city| self.cities.get(&city)) else {
+            return false;
+        };
+        // Capturing or razing a Governor's city displaces that Governor. Amani
+        // is the one exception to domestic ownership because she may be
+        // assigned to a living city-state. Validate this here as well as at
+        // assignment time so old saves with a stale city id cannot reactivate
+        // an aura or panic a turn after the city is gone.
+        let valid_assignment = city.owner == pid
+            || (governor == "amani"
+                && self.players[city.owner].is_minor
+                && !self.players[city.owner].is_barbarian);
+        valid_assignment
             && self.turn >= state.assigned_turn + self.standard_duration(spec.establish_turns)
             && self.turn >= state.disabled_until
     }
@@ -36009,6 +36065,11 @@ impl Game {
         }
         for p in self.players.iter_mut() {
             p.governors.retain(|g| *g != cid);
+            for governor in p.governor_roster.values_mut() {
+                if governor.city == Some(cid) {
+                    governor.city = None;
+                }
+            }
         }
         let recalled = self
             .routes
