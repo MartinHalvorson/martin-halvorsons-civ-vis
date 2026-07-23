@@ -36,7 +36,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from civ6_fidelity import LOAD_ORDER, PACK_EXCLUDE, find_install  # noqa: E402
+from civ6_fidelity import LOAD_ORDER, PACK_EXCLUDE, find_install, truthy  # noqa: E402
 
 # Every gameplay file can carry modifiers, so unlike the rules-data audit there
 # is no useful filename filter; a full parse of the three load-order
@@ -65,6 +65,10 @@ class Modifiers:
         self.arguments: dict[str, dict[str, str]] = collections.defaultdict(dict)
         self.attachments: dict[str, list[str]] = collections.defaultdict(list)
         self.owners: dict[str, list[str]] = collections.defaultdict(list)
+        self.requirements: dict[str, dict] = {}
+        self.requirement_arguments: dict[str, dict[str, str]] = collections.defaultdict(dict)
+        self.requirement_sets: dict[str, list[str]] = collections.defaultdict(list)
+        self.set_kinds: dict[str, str] = {}
 
     def apply_file(self, path: Path) -> None:
         try:
@@ -89,6 +93,28 @@ class Modifiers:
                     row = fields(node)
                     if "ModifierId" in row and "Name" in row:
                         self.arguments[row["ModifierId"]][row["Name"]] = row.get("Value", "")
+            elif table.tag == "Requirements":
+                for node in table:
+                    row = fields(node)
+                    if "RequirementId" in row:
+                        self.requirements.setdefault(row["RequirementId"], {}).update(row)
+            elif table.tag == "RequirementArguments":
+                for node in table:
+                    row = fields(node)
+                    if "RequirementId" in row and "Name" in row:
+                        self.requirement_arguments[row["RequirementId"]][row["Name"]] = row.get(
+                            "Value", ""
+                        )
+            elif table.tag == "RequirementSets":
+                for node in table:
+                    row = fields(node)
+                    if "RequirementSetId" in row:
+                        self.set_kinds[row["RequirementSetId"]] = row.get("RequirementSetType", "")
+            elif table.tag == "RequirementSetRequirements":
+                for node in table:
+                    row = fields(node)
+                    if "RequirementSetId" in row and "RequirementId" in row:
+                        self.requirement_sets[row["RequirementSetId"]].append(row["RequirementId"])
             elif table.tag.endswith("Modifiers"):
                 # An expansion can detach a modifier it no longer wants. Not
                 # honouring that reports rules the shipped ruleset removed.
@@ -120,6 +146,30 @@ class Modifiers:
                     )
                     self.attachments[row["ModifierId"]].append(table.tag)
                     self.owners[row["ModifierId"]].append(owner)
+
+    def condition(self, modifier_id: str) -> str:
+        """The requirement set on a modifier, spelled out.
+
+        A modifier row is only half a rule; the other half is the condition
+        under which it fires. Reading the amount without the condition is how
+        a base-game row gets mistaken for the shipped one.
+        """
+        row = self.rows.get(modifier_id, {})
+        set_id = row.get("SubjectRequirementSetId") or row.get("OwnerRequirementSetId")
+        if not set_id:
+            return ""
+        parts = []
+        for requirement_id in self.requirement_sets.get(set_id, []):
+            requirement = self.requirements.get(requirement_id, {})
+            kind = requirement.get("RequirementType", requirement_id)
+            arguments = self.requirement_arguments.get(requirement_id, {})
+            negated = "NOT " if truthy(requirement.get("Inverse")) else ""
+            rendered = kind.replace("REQUIREMENT_", "")
+            if arguments:
+                rendered += "(" + ", ".join(f"{k}={v}" for k, v in arguments.items()) + ")"
+            parts.append(negated + rendered)
+        joiner = " OR " if self.set_kinds.get(set_id) == "REQUIREMENTSET_TEST_ANY" else " AND "
+        return f"{set_id}: " + (joiner.join(parts) if parts else "(no requirements)")
 
     def resolve(self, modifier_id: str) -> tuple[str, str]:
         """The (EffectType, CollectionType) a modifier row resolves to.
@@ -295,6 +345,8 @@ def main() -> int:
                 for table, obj in dict.fromkeys(zip(attached, objects))
             )
             print(f"{modifier_id}\n    {collection}  {owners}\n    {arguments}")
+            if condition := modifiers.condition(modifier_id):
+                print(f"    when {condition}")
         return 0
 
     entries = census(modifiers)
