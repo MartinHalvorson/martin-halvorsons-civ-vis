@@ -10478,6 +10478,18 @@ impl Game {
         if self.at_war.contains(&pair(a, b)) {
             return true;
         }
+        // What follows can only find a war that one of these two was dragged
+        // into by a patron, so it needs a city-state to drag and a war to
+        // drag it into. Deciding a city-state's patron is expensive, and this
+        // is asked tens of millions of times in a long game.
+        let is_client = |player: usize| {
+            self.players
+                .get(player)
+                .is_some_and(|seat| seat.is_minor && !seat.is_barbarian)
+        };
+        if self.at_war.is_empty() || (!is_client(a) && !is_client(b)) {
+            return false;
+        }
         // A city-state follows its Suzerain into wars and peace. Keep the
         // explicit relation set between the declaring civilizations, then
         // derive city-state participation so it changes immediately when
@@ -31701,16 +31713,18 @@ impl Game {
             .collect()
     }
 
-    fn governor_established(&self, pid: usize, governor: &str) -> bool {
-        let Some(state) = self.players[pid].governor_roster.get(governor) else {
-            return false;
-        };
-        let Some(spec) = self.rules.governors.get(governor) else {
-            return false;
-        };
-        let Some(city) = state.city.and_then(|city| self.cities.get(&city)) else {
-            return false;
-        };
+    /// The city an established Governor holds, if that Governor is established
+    /// at all.
+    ///
+    /// Deciding a city-state's patron asks this of every major, and war checks
+    /// go through that, so it runs hundreds of millions of times in a long
+    /// game. Both questions — whether, and where — are answered from one
+    /// lookup rather than from two of the same one.
+    fn established_governor_at(&self, pid: usize, governor: &str) -> Option<u32> {
+        let state = self.players.get(pid)?.governor_roster.get(governor)?;
+        let spec = self.rules.governors.get(governor)?;
+        let city_id = state.city?;
+        let city = self.cities.get(&city_id)?;
         // Capturing or razing a Governor's city displaces that Governor. Amani
         // is the one exception to domestic ownership because she may be
         // assigned to a living city-state. Validate this here as well as at
@@ -31720,23 +31734,18 @@ impl Game {
             || (governor == "amani"
                 && self.players[city.owner].is_minor
                 && !self.players[city.owner].is_barbarian);
-        valid_assignment
+        (valid_assignment
             && self.turn >= state.assigned_turn + self.standard_duration(spec.establish_turns)
-            && self.turn >= state.disabled_until
+            && self.turn >= state.disabled_until)
+            .then_some(city_id)
+    }
+
+    fn governor_established(&self, pid: usize, governor: &str) -> bool {
+        self.established_governor_at(pid, governor).is_some()
     }
 
     fn established_governor_city(&self, pid: usize, governor: &str) -> Option<u32> {
-        // Whether a Governor is established is more than a date check — a
-        // displaced one still names a city that is gone or no longer this
-        // player's — so that decision stays in one place.
-        self.governor_established(pid, governor)
-            .then(|| {
-                self.players[pid]
-                    .governor_roster
-                    .get(governor)
-                    .and_then(|state| state.city)
-            })
-            .flatten()
+        self.established_governor_at(pid, governor)
     }
 
     fn amani_city_state_for_effect(&self, pid: usize, effect: &str) -> Option<(u32, usize)> {
