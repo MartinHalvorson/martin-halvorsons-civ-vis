@@ -313,8 +313,9 @@ A searching agent does not read fogged-tile memory between the root and the
 leaf, so `game.set_fog_memory(false)` stops maintaining it: explored ground and
 Natural-Wonder discovery are kept (they change the game), while the remembered
 map of fogged tiles and cities — which only feeds observations — is left alone.
-Outcomes are identical; a clone-and-move drops about a fifth. Turn it back on
-at a node you intend to observe. `civvis rollouts` reports both.
+Outcomes are identical; a clone-and-move drops about a fifth and ending a turn
+about a sixth. Turn it back on at a node you intend to observe. `civvis
+rollouts` reports both, for a move and for a turn boundary.
 
 An agent that searches spends its time cloning a position and stepping it
 forward, not playing whole games, so `civvis rollouts` times that directly:

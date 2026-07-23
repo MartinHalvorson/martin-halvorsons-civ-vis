@@ -77,7 +77,7 @@ fn play_one(cfg: &SelfPlayCfg, game_index: usize) -> PlayedGame {
     let mut last_sampled: Option<u32> = None;
     while g.winner.is_none() && g.turn <= cfg.max_turns {
         let pid = g.current;
-        if g.turn % cfg.every == 0 && last_sampled != Some(g.turn) {
+        if g.turn.is_multiple_of(cfg.every) && last_sampled != Some(g.turn) {
             last_sampled = Some(g.turn);
             let fraction = g.turn as f32 / cfg.max_turns.max(1) as f32;
             for player in 0..g.players.len() {

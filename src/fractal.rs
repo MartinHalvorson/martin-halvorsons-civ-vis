@@ -216,7 +216,7 @@ impl Fractal {
             }
             // Square: the edge midpoints, wrapping in x and folding at the poles.
             for row in (0..=LATTICE).step_by(half) {
-                let offset = if (row / half) % 2 == 0 { half } else { 0 };
+                let offset = if (row / half).is_multiple_of(2) { half } else { 0 };
                 for col in (offset..LATTICE).step_by(step) {
                     let mut total = self.get(col + half, row) + self.get(col + LATTICE - half, row);
                     let mut count = 2.0;

@@ -444,6 +444,8 @@ fn main() {
                 }
                 start.elapsed().as_secs_f64() / samples as f64 * 1e6
             });
+            let mut fast = g.clone();
+            fast.set_fog_memory(false);
             let end_start = Instant::now();
             for _ in 0..samples {
                 let mut branch = g.clone();
@@ -451,10 +453,15 @@ fn main() {
                 sink += branch.units.len();
             }
             let end_us = end_start.elapsed().as_secs_f64() / samples as f64 * 1e6;
+            let fast_end_start = Instant::now();
+            for _ in 0..samples {
+                let mut branch = fast.clone();
+                let _ = branch.apply(seat, &civvis::game::Action::EndTurn);
+                sink += branch.units.len();
+            }
+            let fast_end_us = fast_end_start.elapsed().as_secs_f64() / samples as f64 * 1e6;
             // The same move on a position that is not maintaining fogged
             // memory — what a search that never observes mid-rollout pays.
-            let mut fast = g.clone();
-            fast.set_fog_memory(false);
             let fast_us = mover.as_ref().map(|action| {
                 let start = Instant::now();
                 for _ in 0..samples {
@@ -483,6 +490,7 @@ fn main() {
                     1e6 / us
                 );
             }
+            println!("clone + end (no fog) {fast_end_us:6.1} us  = {:.0}/sec", 1e6 / fast_end_us);
             let _ = sink;
         }
         "tournament" => {

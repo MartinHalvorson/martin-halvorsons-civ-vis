@@ -540,7 +540,7 @@ fn wars_json(g: &Game) -> Vec<Value> {
                 .iter()
                 .rev()
                 .take(RECENT_PEACES)
-                .map(|war| war_json(war)),
+                .map(war_json),
         )
         .collect()
 }

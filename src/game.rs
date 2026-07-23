@@ -17506,7 +17506,7 @@ impl Game {
             .map
             .tiles
             .iter()
-            .filter(|(_, tile)| spec.terrains.iter().any(|terrain| *terrain == tile.terrain))
+            .filter(|(_, tile)| spec.terrains.contains(&tile.terrain))
             .map(|(position, _)| *position)
             .collect();
         if sources.is_empty() {
@@ -35931,7 +35931,7 @@ impl Game {
                             self.team_score_rank_key(representative),
                             -(representative as i64),
                         );
-                        if best.is_none() || key > best.clone().unwrap() {
+                        if best.is_none() || key > best.unwrap() {
                             best = Some(key);
                             best_pid = representative;
                         }
@@ -35940,7 +35940,7 @@ impl Game {
                 if best.is_none() {
                     for pl in &self.players {
                         let key = (self.score_rank_key(pl.id), -(pl.id as i64));
-                        if best.is_none() || key > best.clone().unwrap() {
+                        if best.is_none() || key > best.unwrap() {
                             best = Some(key);
                             best_pid = pl.id;
                         }

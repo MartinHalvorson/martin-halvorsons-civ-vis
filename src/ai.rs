@@ -776,7 +776,7 @@ impl BasicAi {
                         .any(|city| g.wdist(g.cities[city].pos, unit.pos) <= 6)
             })
             .count();
-        (4 + (nearby_hostiles + 1) / 2).min(7)
+        (4 + nearby_hostiles.div_ceil(2)).min(7)
     }
 
     pub(crate) fn desired_navy(g: &Game, pid: usize) -> usize {
@@ -2606,7 +2606,7 @@ impl BasicAi {
         // while the more advanced tower is unavailable and at least one
         // ancient wall is a live target.
         for unit in ["siege_tower", "battering_ram"] {
-            let useful = unit == "siege_tower" || wall_levels.iter().any(|walls| *walls == 1);
+            let useful = unit == "siege_tower" || wall_levels.contains(&1);
             if useful
                 && g.can_produce(
                     pid,

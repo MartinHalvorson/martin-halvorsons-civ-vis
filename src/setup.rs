@@ -121,7 +121,7 @@ impl GameSpeed {
     }
 
     pub fn scale_turns(self, standard: u32) -> u32 {
-        ((standard as u64 * self.cost_percent() as u64 + 99) / 100).max(1) as u32
+        (standard as u64 * self.cost_percent() as u64).div_ceil(100).max(1) as u32
     }
 
     pub fn from_id(id: &str) -> Option<Self> {
