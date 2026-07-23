@@ -144,8 +144,10 @@ while ($true) {
             $l = git -C $repo rev-parse HEAD
             $r = git -C $repo rev-parse origin/main
             if ($l -ne $r) {
-                git -C $repo pull --rebase -q 2>$null
-                if ($LASTEXITCODE -ne 0) { git -C $repo rebase --abort 2>$null }
+                git -C $repo merge --ff-only -q origin/main 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                    Log "shared checkout is not a fast-forward of origin/main; preserving it"
+                }
             }
         }
 

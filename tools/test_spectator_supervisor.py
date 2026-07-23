@@ -14,6 +14,35 @@ supervisor = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(supervisor)
 
 
+class CanonicalSyncTests(unittest.TestCase):
+    def test_deployment_sync_uses_main_even_when_another_branch_is_checked_out(self):
+        calls = []
+
+        def fake_command(*args, **_kwargs):
+            calls.append(args)
+            if args == ("git", "rev-parse", "HEAD"):
+                return SimpleNamespace(returncode=0, stdout="old\n")
+            if args == ("git", "rev-parse", "origin/main"):
+                return SimpleNamespace(returncode=0, stdout="new\n")
+            if args == ("git", "rev-parse", "--short", "HEAD"):
+                return SimpleNamespace(returncode=0, stdout="new\n")
+            return SimpleNamespace(returncode=0, stdout="")
+
+        with (
+            patch.object(supervisor, "SYNC_REMOTE", "origin"),
+            patch.object(supervisor, "SYNC_BRANCH", "main"),
+            patch.object(supervisor, "command", side_effect=fake_command),
+        ):
+            supervisor.sync_current_branch()
+
+        self.assertIn(("git", "fetch", "--prune", "origin", "main"), calls)
+        self.assertIn(("git", "merge", "--ff-only", "origin/main"), calls)
+        self.assertNotIn(
+            ("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"),
+            calls,
+        )
+
+
 class SessionSettingsTests(unittest.TestCase):
     def test_preserves_live_map_and_player_settings(self):
         state = {

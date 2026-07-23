@@ -38,6 +38,8 @@ RUNTIME_METADATA = RUNTIME_BINARY.parent / "build.json"
 CHECKPOINT_DIR = RUNTIME_BINARY.parent / "checkpoints"
 RESULTS_DIR = RUNTIME_BINARY.parent / "results"
 RUNTIME_INPUTS = ("Cargo.toml", "Cargo.lock", "build.rs", "src", "data", "web")
+SYNC_REMOTE = os.environ.get("CIVVIS_SYNC_REMOTE", "origin")
+SYNC_BRANCH = os.environ.get("CIVVIS_SYNC_BRANCH", "main")
 
 
 def log(message: str) -> None:
@@ -55,47 +57,35 @@ def command(*args: str, check: bool = False) -> subprocess.CompletedProcess[str]
     )
 
 
-def current_upstream() -> str | None:
-    result = command(
-        "git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"
-    )
-    return result.stdout.strip() if result.returncode == 0 else None
-
-
 def sync_current_branch() -> None:
-    """Fetch and safely fast-forward the checked-out branch when possible."""
-    upstream = current_upstream()
-    if not upstream or "/" not in upstream:
-        log("no upstream is configured; building the current worktree")
-        return
-
-    remote = upstream.split("/", 1)[0]
-    fetched = command("git", "fetch", "--prune", remote)
+    """Safely fast-forward the deployment checkout to the canonical branch."""
+    target = f"{SYNC_REMOTE}/{SYNC_BRANCH}"
+    fetched = command("git", "fetch", "--prune", SYNC_REMOTE, SYNC_BRANCH)
     if fetched.returncode != 0:
         log("update check could not reach the remote; continuing with local code")
         return
 
     head = command("git", "rev-parse", "HEAD", check=True).stdout.strip()
-    remote_head = command("git", "rev-parse", upstream, check=True).stdout.strip()
+    remote_head = command("git", "rev-parse", target, check=True).stdout.strip()
     if head == remote_head:
-        log(f"{upstream} is already current ({head[:8]})")
+        log(f"{target} is already current ({head[:8]})")
         return
 
-    behind = command("git", "merge-base", "--is-ancestor", "HEAD", upstream)
+    behind = command("git", "merge-base", "--is-ancestor", "HEAD", target)
     if behind.returncode == 0:
-        merged = command("git", "merge", "--ff-only", upstream)
+        merged = command("git", "merge", "--ff-only", target)
         if merged.returncode == 0:
             new_head = command("git", "rev-parse", "--short", "HEAD", check=True).stdout.strip()
-            log(f"fast-forwarded to {upstream} at {new_head}")
+            log(f"fast-forwarded to {target} at {new_head}")
         else:
             log("remote is newer but local edits overlap it; preserving local work and continuing")
         return
 
-    ahead = command("git", "merge-base", "--is-ancestor", upstream, "HEAD")
+    ahead = command("git", "merge-base", "--is-ancestor", target, "HEAD")
     if ahead.returncode == 0:
-        log(f"local branch is ahead of {upstream}; building the newer local worktree")
+        log(f"local branch is ahead of {target}; building the newer local worktree")
     else:
-        log(f"local branch and {upstream} diverged; preserving local work for manual reconciliation")
+        log(f"local branch and {target} diverged; preserving local work for manual reconciliation")
 
 
 def promote_binary() -> None:

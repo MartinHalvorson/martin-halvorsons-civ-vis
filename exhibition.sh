@@ -145,7 +145,8 @@ while true; do
     #    but only when it is clean, and nothing above depends on it.
     if [ -z "$(git -C "$repo" status --porcelain --untracked-files=no)" ]; then
         if [ "$(git -C "$repo" rev-parse HEAD)" != "$(git -C "$repo" rev-parse origin/main)" ]; then
-            git -C "$repo" pull --rebase -q 2>/dev/null || git -C "$repo" rebase --abort 2>/dev/null || true
+            git -C "$repo" merge --ff-only -q origin/main 2>/dev/null || \
+                say "shared checkout is not a fast-forward of origin/main; preserving it"
         fi
     fi
 
