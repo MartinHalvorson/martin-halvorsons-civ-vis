@@ -72,7 +72,6 @@ struct ChronicleCity {
     name: String,
     owner: usize,
     pop: i32,
-    pos: Pos,
     occupied_from: Option<usize>,
 }
 
@@ -212,7 +211,6 @@ impl ChronicleSnapshot {
                             name: city.name.clone(),
                             owner: city.owner,
                             pop: city.pop,
-                            pos: city.pos,
                             occupied_from: city.occupied_from,
                         },
                     )
@@ -2030,7 +2028,7 @@ mod tests {
             .get_mut(&first_city)
             .unwrap()
             .buildings
-            .push("monument".to_string());
+            .push("granary".to_string());
         game.cities.get_mut(&first_city).unwrap().pop = 4;
         game.players[0].religion = Some("Test Faith".to_string());
         game.players[0].government = Some("classical_republic".to_string());
