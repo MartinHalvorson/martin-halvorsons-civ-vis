@@ -17234,22 +17234,46 @@ impl Game {
         if !self.resource_visible_to(pid, res) {
             return own;
         }
-        own + self
-            .players
+        self.controlled_resource_count_via(pid, res, &self.suzerained_minors(pid))
+    }
+
+    /// The city-states this player is suzerain of. Suzerainty does not depend
+    /// on which resource is being counted, so a caller sweeping every resource
+    /// works it out once rather than re-deciding every city-state's patron for
+    /// each luxury in the ruleset.
+    fn suzerained_minors(&self, pid: usize) -> Vec<usize> {
+        self.players
             .iter()
             .filter(|player| {
                 player.is_minor && !player.is_barbarian && self.suzerain_of(player.id) == Some(pid)
             })
-            .map(|minor| self.connected_resource_count_unchecked(minor.id, res))
+            .map(|player| player.id)
+            .collect()
+    }
+
+    fn controlled_resource_count_via(&self, pid: usize, res: &str, minors: &[usize]) -> i32 {
+        let own = self.connected_resource_count(pid, res);
+        if !self.resource_visible_to(pid, res) {
+            return own;
+        }
+        own + minors
+            .iter()
+            .map(|minor| self.connected_resource_count_unchecked(*minor, res))
             .sum::<i32>()
     }
 
-    fn world_resource_count(&self, resource: &str) -> i32 {
-        self.map
-            .tiles
-            .values()
-            .filter(|tile| tile.resource.as_deref() == Some(resource) && !tile.submerged)
-            .count() as i32
+    /// How many copies of every resource the world holds, in one pass.
+    fn world_resource_counts(&self) -> BTreeMap<&str, i32> {
+        let mut counts: BTreeMap<&str, i32> = BTreeMap::new();
+        for tile in self.map.tiles.values() {
+            if tile.submerged {
+                continue;
+            }
+            if let Some(resource) = tile.resource.as_deref() {
+                *counts.entry(resource).or_default() += 1;
+            }
+        }
+        counts
     }
 
     fn city_economic_improvement(&self, city: &City) -> Option<(String, bool)> {
@@ -17337,12 +17361,31 @@ impl Game {
         let mut gold = 0.0;
         let mut tourism_percent = 0.0;
         let mut monopolies = 0usize;
+        // Both the world's resource census and every player's roster of
+        // client city-states are the same for all twenty-odd luxuries, so
+        // they are settled once instead of inside the sweep.
+        let world_counts = self.world_resource_counts();
+        let mut minors: Vec<Vec<usize>> = vec![Vec::new(); self.players.len()];
+        for minor in self
+            .players
+            .iter()
+            .filter(|player| player.is_minor && !player.is_barbarian)
+        {
+            if let Some(patron) = self.suzerain_of(minor.id) {
+                if let Some(clients) = minors.get_mut(patron) {
+                    clients.push(minor.id);
+                }
+            }
+        }
         for (resource, spec) in &self.rules.resources {
             if spec.class != "luxury" {
                 continue;
             }
-            let total = self.world_resource_count(resource);
-            let controlled = self.controlled_resource_count(pid, resource);
+            let total = world_counts
+                .get(resource.as_str())
+                .copied()
+                .unwrap_or_default();
+            let controlled = self.controlled_resource_count_via(pid, resource, &minors[pid]);
             if total <= 0 || controlled * 100 < total * 60 {
                 continue;
             }
@@ -17362,7 +17405,11 @@ impl Game {
                         && player.alive
                         && !player.is_minor
                         && !player.is_barbarian
-                        && self.controlled_resource_count(player.id, resource) == 0
+                        && self.controlled_resource_count_via(
+                            player.id,
+                            resource,
+                            &minors[player.id],
+                        ) == 0
                 })
                 .count() as f64;
             let developed = self.cities.values().any(|city| {
@@ -18275,6 +18322,24 @@ impl Game {
         self.refresh_visibility_snapshot(pid, visible);
     }
 
+    /// Whether a player's memory of one tile already matches what is there.
+    /// Only `seen_turn` differs on a tile nobody has touched, and refreshing
+    /// that in place saves cloning the tile — the common case by far, since
+    /// most of what a unit sees when it moves is unchanged terrain.
+    fn remembered_tile_is_current(&self, pid: usize, position: Pos) -> bool {
+        let Some(tile) = self.map.get(position) else {
+            return true;
+        };
+        let Some(remembered) = self.players[pid].remembered_tiles.get(&position) else {
+            return false;
+        };
+        let owner = tile
+            .owner_city
+            .and_then(|city| self.cities.get(&city))
+            .map(|city| city.owner);
+        remembered.owner == owner && &remembered.tile == tile
+    }
+
     fn refresh_visibility_snapshot(&mut self, pid: usize, visible: BTreeSet<Pos>) {
         let newly_explored: Vec<Pos> = visible
             .difference(&self.players[pid].explored)
@@ -18282,6 +18347,7 @@ impl Game {
             .collect();
         let tiles: Vec<(Pos, RememberedTile)> = visible
             .iter()
+            .filter(|position| !self.remembered_tile_is_current(pid, **position))
             .filter_map(|position| self.snapshot_tile(*position).map(|tile| (*position, tile)))
             .collect();
         let cities: Vec<RememberedCity> = self
@@ -18291,8 +18357,14 @@ impl Game {
             .map(|city| self.remember_city(city))
             .collect();
         let live_city_ids: BTreeSet<u32> = self.cities.keys().copied().collect();
+        let turn = self.turn;
         {
             let player = &mut self.players[pid];
+            for position in visible.iter() {
+                if let Some(remembered) = player.remembered_tiles.get_mut(position) {
+                    remembered.seen_turn = turn;
+                }
+            }
             player.explored.extend(visible.iter().copied());
             for (position, tile) in tiles {
                 player.remembered_tiles.insert(position, tile);
