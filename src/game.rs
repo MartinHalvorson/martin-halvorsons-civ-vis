@@ -260,6 +260,166 @@ mod religious_purchase_tests;
 mod score_tests;
 
 #[cfg(test)]
+mod city_state_rule_tests {
+    use super::*;
+
+    fn city_state_start(difficulty: &str, seed: u64) -> Game {
+        let mut options = GameOptions::new(1, 32, 20, seed, 120, 1);
+        options.barbarians = false;
+        options.difficulty = difficulty.to_string();
+        Game::new_with(options)
+    }
+
+    fn settled_two_player_game(seed: u64) -> Game {
+        let mut game = Game::new_full(2, 24, 16, seed, 120, 0, false);
+        for pid in 0..2 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.found_city_for(pid, game.units[&settler].pos, None);
+        }
+        game
+    }
+
+    #[test]
+    fn city_state_starting_defenses_follow_difficulty() {
+        for (difficulty, warriors, walls) in [
+            ("prince", 2_usize, false),
+            ("emperor", 3_usize, false),
+            ("immortal", 4_usize, true),
+            ("deity", 5_usize, true),
+        ] {
+            let game = city_state_start(difficulty, 551_000 + warriors as u64);
+            let minor = game
+                .players
+                .iter()
+                .find(|player| player.is_minor && !player.is_barbarian)
+                .unwrap()
+                .id;
+            let city = game.player_city_ids(minor)[0];
+            let army = game
+                .units
+                .values()
+                .filter(|unit| unit.owner == minor)
+                .collect::<Vec<_>>();
+
+            assert_eq!(army.len(), warriors, "{difficulty} city-state army");
+            assert!(army.iter().all(|unit| unit.kind == "warrior"));
+            assert_eq!(
+                game.cities[&city].buildings.contains(&"walls".to_string()),
+                walls,
+                "{difficulty} starting Walls"
+            );
+            assert_eq!(game.cities[&city].wall_hp, if walls { 100 } else { 0 });
+        }
+    }
+
+    #[test]
+    fn city_states_cannot_settle_seek_wonders_run_projects_or_declare_war() {
+        let mut game = settled_two_player_game(551_010);
+        let city = game.player_city_ids(0)[0];
+        let settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game.players[0].is_minor = true;
+
+        assert!(!game.can_produce(
+            0,
+            city,
+            &Item::Unit {
+                unit: "settler".to_string()
+            }
+        ));
+        assert!(!game.can_found_city(settler));
+        assert_eq!(
+            game.do_found_city(0, settler).unwrap_err(),
+            "city-states do not found cities"
+        );
+        assert!(!game.can_produce(
+            0,
+            city,
+            &Item::Wonder {
+                wonder: "pyramids".to_string(),
+                pos: game.cities[&city].pos,
+            }
+        ));
+        assert!(!game.can_produce(
+            0,
+            city,
+            &Item::Project {
+                project: "campus_research_grants".to_string()
+            }
+        ));
+        assert!(!game
+            .legal_actions(0)
+            .iter()
+            .any(|action| matches!(action, Action::DeclareWar { .. } | Action::FoundCity { .. })));
+        assert_eq!(
+            game.apply(0, &Action::DeclareWar { player: 1 })
+                .unwrap_err(),
+            "city-states do not declare war independently"
+        );
+
+        game.turn = 4;
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("walls".to_string());
+        game.cities.get_mut(&city).unwrap().wall_hp = 50;
+        assert!(game.can_produce(
+            0,
+            city,
+            &Item::Project {
+                project: "repair_outer_defenses".to_string()
+            }
+        ));
+    }
+
+    #[test]
+    fn city_states_must_raze_captures_unless_the_city_is_unrazable() {
+        let mut raze = settled_two_player_game(551_020);
+        raze.players[0].is_minor = true;
+        let captured = raze.player_city_ids(1)[0];
+        {
+            let city = raze.cities.get_mut(&captured).unwrap();
+            city.owner = 0;
+            city.captured_from = Some(1);
+            city.is_capital = false;
+        }
+        assert_eq!(
+            raze.legal_city_disposition_actions(0),
+            vec![Action::RazeCity { city: captured }]
+        );
+        assert_eq!(
+            raze.do_keep_city(0, captured).unwrap_err(),
+            "city-states must raze captured cities when possible"
+        );
+        raze.apply(0, &Action::RazeCity { city: captured }).unwrap();
+        assert!(!raze.cities.contains_key(&captured));
+
+        let mut keep = settled_two_player_game(551_021);
+        keep.players[0].is_minor = true;
+        let capital = keep.player_city_ids(1)[0];
+        {
+            let city = keep.cities.get_mut(&capital).unwrap();
+            city.owner = 0;
+            city.captured_from = Some(1);
+        }
+        assert_eq!(
+            keep.legal_city_disposition_actions(0),
+            vec![Action::KeepCity { city: capital }]
+        );
+        keep.apply(0, &Action::KeepCity { city: capital }).unwrap();
+        assert_eq!(keep.cities[&capital].captured_from, None);
+    }
+}
+
+#[cfg(test)]
 mod gold_building_purchase_tests {
     use super::*;
 
@@ -3926,7 +4086,7 @@ mod project_runtime_tests {
     }
 
     #[test]
-    fn city_states_can_run_only_ordinary_repeatable_district_investments() {
+    fn city_states_cannot_run_ordinary_district_projects() {
         let (mut game, city, positions) = project_game();
         install_district(&mut game, city, positions[0], "campus");
         install_district(&mut game, city, positions[1], "entertainment_complex");
@@ -3938,7 +4098,7 @@ mod project_runtime_tests {
             project: "bread_and_circuses".to_string(),
         };
 
-        assert!(game.can_produce(0, city, &grants));
+        assert!(!game.can_produce(0, city, &grants));
         assert!(!game.can_produce(0, city, &loyalty));
         game.players[0].is_barbarian = true;
         assert!(!game.can_produce(0, city, &grants));
@@ -10440,9 +10600,25 @@ impl Game {
             let pid = g.players.len();
             let name = CITY_STATE_NAMES[pid - num_players];
             g.players.push(Player::new(pid, name, true));
-            g.found_city_for(pid, pos, Some(name.to_string()));
-            g.place_new_unit("warrior", pid, pos);
-            g.place_new_unit("slinger", pid, pos);
+            let city = g.found_city_for(pid, pos, Some(name.to_string()));
+            // Gathering Storm's Ancient-era minor start is two Warriors, with
+            // one more per difficulty step from Emperor onward. City-states do
+            // not receive the major AI's Builders or Settlers from the general
+            // handicap table.
+            let warriors = 2 + g.difficulty_spec().order.saturating_sub(4);
+            for _ in 0..warriors {
+                g.place_city_state_starting_unit("warrior", pid, pos);
+            }
+            // The shipped starting-building table grants completed Ancient
+            // Walls to every city-state on Immortal and Deity. They exist even
+            // before that state researches Masonry, just like other start-era
+            // buildings granted by setup.
+            if g.difficulty_spec().order >= 6 {
+                let state = g.cities.get_mut(&city).unwrap();
+                state.buildings.push("walls".to_string());
+                state.building_eras.insert("walls".to_string(), 0);
+                state.wall_hp = 100;
+            }
         }
         if barbarians {
             let pid = g.players.len();
@@ -10491,6 +10667,32 @@ impl Game {
                 (room, tile.pos)
             })
             .map(|tile| tile.pos)
+    }
+
+    /// Setup can grant more same-class units than fit on a coastal city's
+    /// center and first ring. Ordinary production rightly fails when that local
+    /// placement area is full; starting forces instead spill into the nearest
+    /// legal empty tile inside the city-state's local defense area.
+    fn place_city_state_starting_unit(&mut self, kind: &str, owner: usize, center: Pos) {
+        if self.place_new_unit(kind, owner, center).is_some() {
+            return;
+        }
+        let want_sea = self.rules.units[kind].domain.as_deref() == Some("sea");
+        let mut candidates = self.wdisk(center, 6);
+        candidates.sort_by_key(|position| (self.wdist(center, *position), *position));
+        let position = candidates.into_iter().find(|position| {
+            self.map.get(*position).is_some_and(|tile| {
+                self.rules.is_passable(tile)
+                    && self.rules.is_water(tile) == want_sea
+                    && self.units_at(*position).is_empty()
+                    && tile
+                        .owner_city
+                        .is_none_or(|city| self.cities[&city].owner == owner)
+            })
+        });
+        if let Some(position) = position {
+            self.spawn_unit(kind, owner, position);
+        }
     }
 
     // -------------------------------------------------- difficulty and speed
@@ -21621,6 +21823,9 @@ impl Game {
 
     pub fn can_found_city(&self, uid: u32) -> bool {
         let u = &self.units[&uid];
+        if self.players[u.owner].is_minor {
+            return false;
+        }
         let t = &self.map.tiles[&u.pos];
         // Founding clears the centre tile's feature, so a Settler standing on
         // a natural wonder would erase it. Civ VI blocks the site outright.
@@ -25688,9 +25893,12 @@ impl Game {
         if matches!(unit, "rock_band" | "naturalist") {
             return false; // Faith purchase only (Civ VI)
         }
-        // Isolationism closes the frontier while it is slotted: the empire it
-        // pays cannot train or buy a Settler at all.
-        if unit == "settler" && self.policy_effect(pid, "no_settling") > 0.0 {
+        // A city-state is permanently one city. This is an engine rule rather
+        // than an AI preference so captured, granted, and externally commanded
+        // minor Settlers cannot turn it into an ordinary empire.
+        if unit == "settler"
+            && (self.players[pid].is_minor || self.policy_effect(pid, "no_settling") > 0.0)
+        {
             return false;
         }
         if !spec.buildable || !self.unlocked(pid, &spec.tech, &spec.civic) {
@@ -25984,6 +26192,9 @@ impl Game {
                 self.district_sites(cid, district).contains(pos)
             }
             Item::Wonder { wonder, pos } => {
+                if self.players[pid].is_minor {
+                    return false;
+                }
                 let Some(spec) = self.rules.wonders.get(wonder) else {
                     return false;
                 };
@@ -26032,23 +26243,17 @@ impl Game {
                             || city.encampment_wall_hp < max_wall)
                         && self.turn.saturating_sub(city.encampment_last_attacked) >= 3;
                 }
+                // Repairs keep the one city functional; ordinary district,
+                // Great Person, loyalty, victory, and conversion projects are
+                // major-civilization activity and are never a minor fallback.
+                if self.players[pid].is_minor {
+                    return false;
+                }
                 let spec = match self.rules.projects.get(project) {
                     Some(s) => s,
                     None => return false,
                 };
                 if self.players[pid].is_barbarian {
-                    return false;
-                }
-                // City-states need a durable production sink after their
-                // single city and bounded army are developed. Permit only the
-                // ordinary repeatable district investments that convert
-                // Production into yields or Great Person points. This keeps
-                // one-off, loyalty, space-race, reactor, nuclear, and climate
-                // projects reserved for major civilizations.
-                if self.players[pid].is_minor
-                    && (!spec.repeatable
-                        || (spec.ongoing_yields.is_empty() && spec.completion_gpp.is_empty()))
-                {
                     return false;
                 }
                 if spec
@@ -26153,10 +26358,13 @@ impl Game {
                 // `wonder_sites` already applies the complete world-unique,
                 // unlock, prerequisite, and placement validation used by the
                 // `Item::Wonder` arm of `can_produce`.
-                items.push(Item::Wonder {
+                let item = Item::Wonder {
                     wonder: name.clone(),
                     pos,
-                });
+                };
+                if self.can_produce(pid, cid, &item) {
+                    items.push(item);
+                }
             }
         }
         let city = &self.cities[&cid];
@@ -26252,11 +26460,15 @@ impl Game {
             .values()
             .filter(|city| city.owner == pid && city.captured_from.is_some())
         {
-            actions.push(Action::KeepCity { city: city.id });
-            if self.city_can_be_razed_by(pid, city) {
+            let can_raze = self.city_can_be_razed_by(pid, city);
+            if !self.players[pid].is_minor || !can_raze {
+                actions.push(Action::KeepCity { city: city.id });
+            }
+            if can_raze {
                 actions.push(Action::RazeCity { city: city.id });
             }
-            if city.original_owner != pid
+            if !self.players[pid].is_minor
+                && city.original_owner != pid
                 && city.captured_from != Some(city.original_owner)
                 && self
                     .players
@@ -26572,7 +26784,7 @@ impl Game {
                     }
                 }
             }
-            if u.kind == "settler" && self.can_found_city(uid) {
+            if u.kind == "settler" && !p.is_minor && self.can_found_city(uid) {
                 acts.push(Action::FoundCity { unit: uid });
             }
             if (u.kind == "builder" || !spec.builds.is_empty()) && u.charges > 0 {
@@ -27450,7 +27662,8 @@ impl Game {
                                 });
                             }
                         }
-                    } else if !self.are_friends(pid, o.id)
+                    } else if !p.is_minor
+                        && !self.are_friends(pid, o.id)
                         && !self.are_allied(pid, o.id)
                         && self.peace_treaty_until(pid, o.id).is_none()
                     {
@@ -28926,6 +29139,9 @@ impl Game {
         }
         if self.players[pid].is_barbarian {
             return Err("barbarians do not found cities".into());
+        }
+        if self.players[pid].is_minor {
+            return Err("city-states do not found cities".into());
         }
         if !self.can_found_city(uid) {
             return Err("cannot found city here".into());
@@ -31971,6 +32187,9 @@ impl Game {
         }
         if self.players[pid].is_barbarian || self.players[other].is_barbarian {
             return Err("barbarians are always at war".into());
+        }
+        if self.players[pid].is_minor {
+            return Err("city-states do not declare war independently".into());
         }
         if self.is_at_war(pid, other) {
             return Err("already at war".into());
@@ -38721,6 +38940,9 @@ impl Game {
 
     fn do_keep_city(&mut self, pid: usize, cid: u32) -> Result<(), String> {
         let defeated = self.pending_city_capture(pid, cid)?;
+        if self.players[pid].is_minor && self.city_can_be_razed_by(pid, &self.cities[&cid]) {
+            return Err("city-states must raze captured cities when possible".into());
+        }
         self.cities.get_mut(&cid).unwrap().captured_from = None;
         self.capture_rewards(pid, defeated, 50.0);
         self.request_city_capture_emergency(pid, cid, defeated);
@@ -38770,6 +38992,9 @@ impl Game {
     }
 
     fn do_liberate_city(&mut self, pid: usize, cid: u32) -> Result<(), String> {
+        if self.players[pid].is_minor {
+            return Err("city-states do not liberate captured cities".into());
+        }
         let defeated = self.pending_city_capture(pid, cid)?;
         let original_owner = self.cities[&cid].original_owner;
         if original_owner == pid || original_owner == defeated {

@@ -13,6 +13,11 @@ use std::collections::{HashMap, HashSet};
 /// stepping into a dangerous attack envelope.
 const FIRST_MOVE_SCORE_BONUS: f64 = 4.0;
 
+/// Unlevied city-state forces defend the state and its immediate approaches;
+/// ownership transfers to the Suzerain while levied, so those units naturally
+/// use the major civilization's unrestricted tactical doctrine instead.
+const MINOR_DEFENSE_RADIUS: i32 = 6;
+
 mod advanced;
 pub use advanced::{
     AdvancedAi, ForceDomain, ForceGroup, ForcePosture, GrandStrategy, StrategicPlan, VictoryTarget,
@@ -533,6 +538,15 @@ impl BasicAi {
             })
     }
 
+    fn civic_leads_to(g: &Game, candidate: &str, target: &str) -> bool {
+        candidate == target
+            || g.rules.civics.get(target).is_some_and(|spec| {
+                spec.requires
+                    .iter()
+                    .any(|parent| Self::civic_leads_to(g, candidate, parent))
+            })
+    }
+
     fn has_building_family(g: &Game, pid: usize, family: &str) -> bool {
         g.player_city_ids(pid).into_iter().any(|cid| {
             g.cities[&cid].buildings.iter().any(|building| {
@@ -580,6 +594,28 @@ impl BasicAi {
                             g.rules.techs[*a]
                                 .cost
                                 .partial_cmp(&g.rules.techs[*b].cost)
+                                .unwrap()
+                                .then(a.cmp(b))
+                        })
+                        .cloned()
+                })
+        })
+    }
+
+    fn civic_step_toward(g: &Game, avail: &[String], goal: Option<&str>) -> Option<String> {
+        goal.and_then(|goal| {
+            avail
+                .iter()
+                .find(|civic| civic.as_str() == goal)
+                .cloned()
+                .or_else(|| {
+                    avail
+                        .iter()
+                        .filter(|civic| Self::civic_leads_to(g, civic, goal))
+                        .min_by(|a, b| {
+                            g.rules.civics[*a]
+                                .cost
+                                .partial_cmp(&g.rules.civics[*b].cost)
                                 .unwrap()
                                 .then(a.cmp(b))
                         })
@@ -759,11 +795,9 @@ impl BasicAi {
             .map(|player| player.id)
             .collect();
         if enemies.is_empty() {
-            // A city-state at peace still keeps its garrison current as the
-            // eras pass. Holding it at three for the whole game left mature
-            // city-states with nothing they were allowed to build, so their
-            // Production went nowhere and their treasury only grew.
-            return 3 + (g.world_era as usize) / 2;
+            // Once its three-unit garrison is filled, a peaceful city-state
+            // may develop infrastructure or simply leave Production idle.
+            return 3;
         }
         let cities = g.player_city_ids(pid);
         let nearby_hostiles = g
@@ -777,6 +811,53 @@ impl BasicAi {
             })
             .count();
         (4 + nearby_hostiles.div_ceil(2)).min(7)
+    }
+
+    fn minor_home(g: &Game, pid: usize) -> Option<Pos> {
+        g.cities
+            .values()
+            .filter(|city| city.owner == pid)
+            .min_by_key(|city| (city.original_owner != pid, city.id))
+            .map(|city| city.pos)
+    }
+
+    fn minor_enemy_near_home(g: &Game, pid: usize, enemy: usize) -> bool {
+        let Some(home) = Self::minor_home(g, pid) else {
+            return false;
+        };
+        g.units
+            .values()
+            .any(|unit| unit.owner == enemy && g.wdist(home, unit.pos) <= MINOR_DEFENSE_RADIUS)
+            || g.cities
+                .values()
+                .any(|city| city.owner == enemy && g.wdist(home, city.pos) <= MINOR_DEFENSE_RADIUS)
+            || (g.barb_pid == Some(enemy)
+                && g.barb_camps
+                    .keys()
+                    .any(|camp| g.wdist(home, *camp) <= MINOR_DEFENSE_RADIUS))
+    }
+
+    fn minor_district_family(g: &Game, pid: usize) -> &'static str {
+        match Game::cs_type(&g.players[pid].civ) {
+            "scientific" => "campus",
+            "cultural" => "theater_square",
+            "religious" => "holy_site",
+            "militaristic" => "encampment",
+            "industrial" => "industrial_zone",
+            _ => "commercial_hub",
+        }
+    }
+
+    fn minor_tech_goal(g: &Game, pid: usize) -> Option<&'static str> {
+        let goal = match Game::cs_type(&g.players[pid].civ) {
+            "scientific" => "writing",
+            "religious" => "astrology",
+            "militaristic" => "bronze_working",
+            "industrial" => "apprenticeship",
+            "trade" => "currency",
+            _ => return None,
+        };
+        (!g.players[pid].techs.contains(goal)).then_some(goal)
     }
 
     pub(crate) fn desired_navy(g: &Game, pid: usize) -> usize {
@@ -1220,10 +1301,17 @@ impl Ai for BasicAi {
         self.barb = g.players[pid].is_barbarian;
         self.resolve_city_dispositions(g, pid, false, false);
         if !self.barb {
-            self.research(g, pid);
-            self.corporations(g, pid);
-            self.diplomacy(g, pid);
-            self.spies(g, pid);
+            if self.minor {
+                // Minor civilizations keep a technology/civic tree and develop
+                // their city, but do not run a player's corporations, diplomacy,
+                // espionage, government, religion, governor, or envoy agenda.
+                self.minor_research(g, pid);
+            } else {
+                self.research(g, pid);
+                self.corporations(g, pid);
+                self.diplomacy(g, pid);
+                self.spies(g, pid);
+            }
             self.cities(g, pid);
         }
         Self::upgrade_units(g, pid);
@@ -1431,7 +1519,9 @@ impl BasicAi {
             let can_raze = legal
                 .iter()
                 .any(|action| matches!(action, Action::RazeCity { city } if *city == cid));
-            let action = if diplomatic_liberation {
+            let action = if self.minor && can_raze {
+                Action::RazeCity { city: cid }
+            } else if diplomatic_liberation {
                 Action::LiberateCity { city: cid }
             } else if can_raze && prefer_conquest && !durable_value {
                 Action::RazeCity { city: cid }
@@ -1446,6 +1536,58 @@ impl BasicAi {
 
     fn research(&self, g: &mut Game, pid: usize) {
         self.research_with_government(g, pid, true);
+    }
+
+    /// City-states research enough to defend and express their type without
+    /// inheriting the major civilization's ancillary government/religion pass.
+    /// Lower difficulties reach Masonry first; Immortal and Deity already have
+    /// setup-granted Walls and can move directly toward their specialty.
+    fn minor_research(&self, g: &mut Game, pid: usize) {
+        if g.players[pid].research.is_none() {
+            let avail = g.available_techs(pid);
+            if !avail.is_empty() {
+                let has_walls = g.player_city_ids(pid).into_iter().any(|city| {
+                    g.cities[&city]
+                        .buildings
+                        .iter()
+                        .any(|building| building == "walls")
+                });
+                let defensive_goal =
+                    (!has_walls && !g.players[pid].techs.contains("masonry")).then_some("masonry");
+                let pick = Self::research_step_toward(g, &avail, defensive_goal)
+                    .or_else(|| {
+                        Self::research_step_toward(g, &avail, Self::minor_tech_goal(g, pid))
+                    })
+                    .or_else(|| {
+                        Self::research_step_toward(g, &avail, Self::economic_research_goal(g, pid))
+                    })
+                    .or_else(|| {
+                        TECH_PRIORITY
+                            .iter()
+                            .find(|tech| avail.iter().any(|candidate| candidate == *tech))
+                            .map(|tech| tech.to_string())
+                    })
+                    .unwrap_or_else(|| avail[0].clone());
+                let _ = g.apply(pid, &Action::Research { tech: pick });
+            }
+        }
+        if g.players[pid].civic.is_none() {
+            let avail = g.available_civics(pid);
+            if !avail.is_empty() {
+                let cultural_goal = (Game::cs_type(&g.players[pid].civ) == "cultural"
+                    && !g.players[pid].civics.contains("drama_poetry"))
+                .then_some("drama_poetry");
+                let pick = Self::civic_step_toward(g, &avail, cultural_goal)
+                    .or_else(|| {
+                        CIVIC_PRIORITY
+                            .iter()
+                            .find(|civic| avail.iter().any(|candidate| candidate == *civic))
+                            .map(|civic| civic.to_string())
+                    })
+                    .unwrap_or_else(|| avail[0].clone());
+                let _ = g.apply(pid, &Action::Civic { civic: pick });
+            }
+        }
     }
 
     /// Choose research and run the baseline ancillary pass without allowing
@@ -3084,6 +3226,33 @@ impl BasicAi {
             })
     }
 
+    fn minor_district_item(g: &Game, pid: usize, cid: u32) -> Option<Item> {
+        let family = Self::minor_district_family(g, pid);
+        if g.city_has_district_family(&g.cities[&cid], family) {
+            return None;
+        }
+        let district = Self::civ_district(g, pid, family);
+        g.district_sites(cid, &district)
+            .into_iter()
+            .filter_map(|pos| {
+                let item = Item::District {
+                    district: district.clone(),
+                    pos,
+                };
+                g.can_produce(pid, cid, &item).then_some((
+                    g.district_yields(&district, pos).total(),
+                    std::cmp::Reverse(pos),
+                    item,
+                ))
+            })
+            .max_by(|left, right| {
+                left.0
+                    .total_cmp(&right.0)
+                    .then_with(|| left.1.cmp(&right.1))
+            })
+            .map(|(_, _, item)| item)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn pick_item(
         &self,
@@ -3125,6 +3294,16 @@ impl BasicAi {
         {
             return Some(repair);
         }
+        if self.minor {
+            for project in ["repair_outer_defenses", "repair_encampment"] {
+                let repair = Item::Project {
+                    project: project.to_string(),
+                };
+                if g.can_produce(pid, cid, &repair) {
+                    return Some(repair);
+                }
+            }
+        }
         let city_pop = g.cities[&cid].pop;
         let at_major_war = g.players.iter().any(|player| {
             player.id != pid
@@ -3139,6 +3318,16 @@ impl BasicAi {
             && g.players[pid].gold_per_turn < -0.5
             && g.players[pid].gold < recovery_reserve;
         let emergency_defense = at_major_war && military < n_cities.max(1);
+        if self.minor && !emergency_defense {
+            for building in ["walls", "medieval_walls", "renaissance_walls"] {
+                let wall = Item::Building {
+                    building: building.to_string(),
+                };
+                if g.can_produce(pid, cid, &wall) {
+                    return Some(wall);
+                }
+            }
+        }
         if economic_recovery && !emergency_defense {
             return self
                 .economic_recovery_item(g, pid, cid, traders)
@@ -3150,7 +3339,7 @@ impl BasicAi {
                 return Some(Item::Unit { unit: m });
             }
         }
-        if can_add_military && siege_support == 0 && melee >= 2 {
+        if !self.minor && can_add_military && siege_support == 0 && melee >= 2 {
             if let Some(unit) = self.siege_support_unit(g, pid, cid) {
                 return Some(Item::Unit { unit });
             }
@@ -3259,13 +3448,21 @@ impl BasicAi {
                 unit: "trader".to_string(),
             });
         }
+        if self.minor {
+            if let Some(district) = Self::minor_district_item(g, pid, cid) {
+                return Some(district);
+            }
+        }
         if let Some(monument) = Self::civ_building(g, pid, cid, "monument") {
             return Some(monument);
         }
         // Coastal infrastructure is part of the water strategy, not an
         // accidental fallback after every land district. A harbor also gives
         // later naval production somewhere sensible to concentrate.
-        if Self::city_is_coastal(g, cid) && !g.city_has_district_family(&g.cities[&cid], "harbor") {
+        if !self.minor
+            && Self::city_is_coastal(g, cid)
+            && !g.city_has_district_family(&g.cities[&cid], "harbor")
+        {
             let harbor = Self::civ_district(g, pid, "harbor");
             let sites = g.district_sites(cid, &harbor);
             if let Some(pos) = sites.into_iter().max_by(|a, b| {
@@ -3294,6 +3491,9 @@ impl BasicAi {
                 self.w.d_theater,
             ])
             .collect();
+        if self.minor {
+            dpri.clear();
+        }
         dpri.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         for (family, _) in dpri {
             if family == "holy_site" && g.players[pid].religion.is_none() {
@@ -3364,12 +3564,12 @@ impl BasicAi {
                 }
             }
         }
-        if self.culture_focus {
+        if !self.minor && self.culture_focus {
             if let Some(amphitheater) = Self::civ_building(g, pid, cid, "amphitheater") {
                 return Some(amphitheater);
             }
         }
-        if self.culture_focus {
+        if !self.minor && self.culture_focus {
             let empire_wonders = g
                 .cities
                 .values()
@@ -3406,18 +3606,17 @@ impl BasicAi {
             });
         }
         // developed cities turn to wonders
-        if g.cities[&cid].buildings.len() as f64 >= self.w.wonder_min_bld {
+        if !self.minor && g.cities[&cid].buildings.len() as f64 >= self.w.wonder_min_bld {
             if let Some(wonder) = Self::cheapest_available_wonder(g, pid, cid) {
                 return Some(wonder);
             }
         }
-        // Repeatable district projects are a developed-city fallback. If
+        // Repeatable district projects are a developed major-city fallback. If
         // considered with mandatory projects above, their low early base cost
         // makes a basic AI loop them forever before building Monuments,
-        // districts, or district buildings. The engine limits city-states to
-        // ordinary yield/GPP investments, giving their bounded one-city
-        // economies useful work after finite infrastructure and wonders end.
-        if !self.barb {
+        // districts, or district buildings. A completely developed city-state
+        // may instead leave its production queue empty.
+        if !self.barb && !self.minor {
             let mut projects: Vec<Item> = g
                 .rules
                 .projects
@@ -3672,9 +3871,14 @@ impl BasicAi {
         };
         let stay = score(g, upos);
         let holding_role_position = g.wdist(upos, target) == preferred_range;
+        let within_minor_front = |position: Pos| {
+            !self.minor
+                || Self::minor_home(g, pid)
+                    .is_some_and(|home| g.wdist(home, position) <= MINOR_DEFENSE_RADIUS)
+        };
         let mut best: Option<(f64, Pos)> = None;
         for n in g.nbrs(upos) {
-            if !g.can_move(uid, n) {
+            if !within_minor_front(n) || !g.can_move(uid, n) {
                 continue;
             }
             let sc = score(g, n);
@@ -3697,7 +3901,7 @@ impl BasicAi {
                 // turns keep the original cheap local tactic, while a unit at
                 // a genuine obstacle can take the first safe detour step.
                 let n = match g.route_step(uid, target, preferred_range) {
-                    Some(n) if g.can_move(uid, n) => n,
+                    Some(n) if within_minor_front(n) && g.can_move(uid, n) => n,
                     _ => return false,
                 };
                 let routed = score(g, n) + 2.5;
@@ -3732,6 +3936,19 @@ impl BasicAi {
     /// before choosing a different greedy branch.
     fn path_move(&self, g: &mut Game, pid: usize, uid: u32, to: Pos) -> bool {
         let from = g.units[&uid].pos;
+        if self.minor {
+            let Some(home) = Self::minor_home(g, pid) else {
+                return false;
+            };
+            let from_home = g.wdist(home, from);
+            let to_home = g.wdist(home, to);
+            // Once local, never step back outside the defense area. A unit
+            // already stranded beyond it may still take a pathfinder detour
+            // around terrain while returning home.
+            if from_home <= MINOR_DEFENSE_RADIUS && to_home > MINOR_DEFENSE_RADIUS {
+                return false;
+            }
+        }
         let reverses_last_step = self
             .last_path_step_from
             .borrow()
@@ -4572,7 +4789,11 @@ impl BasicAi {
         };
         let mut best: Option<(i32, Pos)> = None;
         for c in g.cities.values() {
-            if enemy_ids.contains(&c.owner) {
+            if enemy_ids.contains(&c.owner)
+                && (!self.minor
+                    || Self::minor_home(g, pid)
+                        .is_some_and(|home| g.wdist(home, c.pos) <= MINOR_DEFENSE_RADIUS))
+            {
                 let d = g.wdist(pos, c.pos);
                 if best.map(|b| (d, c.pos) < b).unwrap_or(true) {
                     best = Some((d, c.pos));
@@ -4580,7 +4801,11 @@ impl BasicAi {
             }
         }
         for u in g.units.values() {
-            if enemy_ids.contains(&u.owner) {
+            if enemy_ids.contains(&u.owner)
+                && (!self.minor
+                    || Self::minor_home(g, pid)
+                        .is_some_and(|home| g.wdist(home, u.pos) <= MINOR_DEFENSE_RADIUS))
+            {
                 if Some(u.owner) == g.barb_pid
                     && (!near_home(u.pos)
                         || self.exchange_score(g, uid, u.pos, ranged)
@@ -4630,13 +4855,24 @@ impl BasicAi {
         }
         g.units
             .values()
-            .filter(|enemy| enemy_ids.contains(&enemy.owner) && Self::waterborne(g, enemy.id))
+            .filter(|enemy| {
+                enemy_ids.contains(&enemy.owner)
+                    && Self::waterborne(g, enemy.id)
+                    && (!self.minor
+                        || Self::minor_home(g, pid)
+                            .is_some_and(|home| g.wdist(home, enemy.pos) <= MINOR_DEFENSE_RADIUS))
+            })
             .map(|enemy| (g.wdist(unit.pos, enemy.pos), 0, enemy.pos))
             .chain(
                 g.cities
                     .values()
                     .filter(|city| {
-                        enemy_ids.contains(&city.owner) && Self::city_is_coastal(g, city.id)
+                        enemy_ids.contains(&city.owner)
+                            && Self::city_is_coastal(g, city.id)
+                            && (!self.minor
+                                || Self::minor_home(g, pid).is_some_and(|home| {
+                                    g.wdist(home, city.pos) <= MINOR_DEFENSE_RADIUS
+                                }))
                     })
                     .map(|city| (g.wdist(unit.pos, city.pos), 1, city.pos)),
             )
@@ -4882,16 +5118,7 @@ impl BasicAi {
             .route_step_to_any(uid, &friendly_tiles)
             .filter(|pos| g.can_move(uid, *pos))
         {
-            return Some(
-                g.apply(
-                    pid,
-                    &Action::Move {
-                        unit: uid,
-                        to: next,
-                    },
-                )
-                .is_ok(),
-            );
+            return Some(self.path_move(g, pid, uid, next));
         }
 
         // If home is unreachable (for example, an isolated naval unit), wait
@@ -4900,6 +5127,20 @@ impl BasicAi {
     }
 
     fn military_step(&mut self, g: &mut Game, pid: usize, uid: u32) -> bool {
+        if self.minor {
+            let Some(home) = Self::minor_home(g, pid) else {
+                return self.fortify_or_stop(g, pid, uid);
+            };
+            if g.wdist(g.units[&uid].pos, home) > MINOR_DEFENSE_RADIUS {
+                if let Some(next) = g
+                    .route_step(uid, home, 0)
+                    .filter(|next| g.can_move(uid, *next))
+                {
+                    return self.path_move(g, pid, uid, next) || self.fortify_or_stop(g, pid, uid);
+                }
+                return self.fortify_or_stop(g, pid, uid);
+            }
+        }
         if let Some(acted) = self.healing_step(g, pid, uid) {
             return acted;
         }
@@ -4927,8 +5168,10 @@ impl BasicAi {
             // walk onto a Settler this civilization cannot use.
             return self.fortify_or_stop(g, pid, uid);
         }
-        if let Some(action) = self.doctrine_action(g, pid, uid) {
-            return g.apply(pid, &action).is_ok();
+        if !self.minor {
+            if let Some(action) = self.doctrine_action(g, pid, uid) {
+                return g.apply(pid, &action).is_ok();
+            }
         }
         if matches!(doctrine, UnitDoctrine::AirDefense | UnitDoctrine::AirStrike) {
             return false;
@@ -4936,7 +5179,12 @@ impl BasicAi {
         let enemy_ids: Vec<usize> = g
             .players
             .iter()
-            .filter(|o| o.id != pid && o.alive && g.is_at_war(pid, o.id))
+            .filter(|o| {
+                o.id != pid
+                    && o.alive
+                    && g.is_at_war(pid, o.id)
+                    && (!self.minor || Self::minor_enemy_near_home(g, pid, o.id))
+            })
             .map(|o| o.id)
             .collect();
         if !enemy_ids.is_empty() {
@@ -4954,6 +5202,9 @@ impl BasicAi {
                 if pos == upos
                     || g.map.get(pos).is_none()
                     || !self.is_enemy_tile(g, pos, &enemy_ids)
+                    || (self.minor
+                        && Self::minor_home(g, pid)
+                            .is_none_or(|home| g.wdist(home, pos) > MINOR_DEFENSE_RADIUS))
                 {
                     continue;
                 }
@@ -5033,7 +5284,8 @@ impl BasicAi {
                     }
                 }
             }
-            if doctrine == UnitDoctrine::Recon
+            if !self.minor
+                && doctrine == UnitDoctrine::Recon
                 && self.should_explore(g, pid, uid, true)
                 && self.explore_step(g, pid, uid)
             {
@@ -5066,6 +5318,12 @@ impl BasicAi {
             .nbrs(origin)
             .into_iter()
             .filter_map(|position| {
+                if self.minor
+                    && Self::minor_home(g, pid)
+                        .is_none_or(|home| g.wdist(home, position) > MINOR_DEFENSE_RADIUS)
+                {
+                    return None;
+                }
                 let value = g
                     .units_at(position)
                     .into_iter()
@@ -5599,23 +5857,28 @@ mod tests {
         g.apply(0, &Action::FoundCity { unit: settler }).unwrap();
         let cid = g.player_city_ids(0)[0];
         g.players[0].is_minor = true;
+        g.players[0].civ = "Zanzibar".to_string();
         g.cities
             .get_mut(&cid)
             .unwrap()
             .buildings
-            .push("market".to_string());
+            .extend(["market".to_string(), "walls".to_string()]);
         grant_tech_with_prerequisites(&mut g, 0, "education");
-        g.players[0].techs.insert("sailing".to_string());
+        g.players[0]
+            .techs
+            .extend(["sailing".to_string(), "currency".to_string()]);
         g.players[0].research = None;
+        let mut ai = BasicAi::new();
+        ai.minor = true;
 
         assert_eq!(BasicAi::economic_research_goal(&g, 0), Some("banking"));
         assert!(g.available_techs(0).iter().any(|tech| tech == "stirrups"));
-        BasicAi::new().research(&mut g, 0);
+        ai.minor_research(&mut g, 0);
         assert_eq!(g.players[0].research.as_deref(), Some("stirrups"));
 
         g.players[0].techs.insert("stirrups".to_string());
         g.players[0].research = None;
-        BasicAi::new().research(&mut g, 0);
+        ai.minor_research(&mut g, 0);
         assert_eq!(g.players[0].research.as_deref(), Some("banking"));
     }
 
@@ -5704,6 +5967,8 @@ mod tests {
             .map(|player| player.id)
             .unwrap();
         assert_eq!(BasicAi::minor_military_budget(&g, minor), 3);
+        g.world_era = 6;
+        assert_eq!(BasicAi::minor_military_budget(&g, minor), 3);
 
         let major_units = g.player_unit_ids(0);
         for unit in major_units {
@@ -5782,7 +6047,93 @@ mod tests {
     }
 
     #[test]
-    fn developed_city_states_run_district_projects_instead_of_idling() {
+    fn city_states_research_and_build_ancient_walls_first() {
+        let mut g = Game::new_full(1, 24, 16, 91_772, 120, 0, false);
+        let settler = g
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| g.units[unit].kind == "settler")
+            .unwrap();
+        g.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        let city = g.player_city_ids(0)[0];
+        g.players[0].is_minor = true;
+        g.players[0].civ = "Geneva".to_string();
+        let mut ai = BasicAi::new();
+        ai.minor = true;
+
+        ai.minor_research(&mut g, 0);
+        assert_eq!(g.players[0].research.as_deref(), Some("mining"));
+        g.players[0].research = None;
+        g.players[0].techs.insert("mining".to_string());
+        ai.minor_research(&mut g, 0);
+        assert_eq!(g.players[0].research.as_deref(), Some("masonry"));
+
+        g.players[0].research = None;
+        g.players[0].techs.insert("masonry".to_string());
+        let item = ai.pick_item(&g, 0, city, 1, 0, 10, 0, 0, 3, 2, 1).unwrap();
+        assert_eq!(
+            item,
+            Item::Building {
+                building: "walls".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn every_city_state_type_prioritizes_its_matching_district() {
+        for (civilization, family) in [
+            ("Geneva", "campus"),
+            ("Mohenjo-Daro", "theater_square"),
+            ("Yerevan", "holy_site"),
+            ("Kabul", "encampment"),
+            ("Auckland", "industrial_zone"),
+            ("Zanzibar", "commercial_hub"),
+        ] {
+            let mut g = Game::new_full(1, 24, 16, 91_800, 120, 0, false);
+            let settler = g
+                .player_unit_ids(0)
+                .into_iter()
+                .find(|unit| g.units[unit].kind == "settler")
+                .unwrap();
+            g.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+            let city = g.player_city_ids(0)[0];
+            g.players[0].is_minor = true;
+            g.players[0].civ = civilization.to_string();
+            g.players[0].techs = g.rules.techs.keys().cloned().collect();
+            g.players[0].civics = g.rules.civics.keys().cloned().collect();
+            let center = g.cities[&city].pos;
+            for position in g.wdisk(center, 3) {
+                if g.map.tiles[&position].owner_city.is_none() {
+                    g.map.tiles.get_mut(&position).unwrap().owner_city = Some(city);
+                    g.cities.get_mut(&city).unwrap().owned_tiles.push(position);
+                }
+            }
+            {
+                let state = g.cities.get_mut(&city).unwrap();
+                state.pop = 10;
+                state.buildings.extend([
+                    "walls".to_string(),
+                    "medieval_walls".to_string(),
+                    "renaissance_walls".to_string(),
+                    "monument".to_string(),
+                ]);
+                state.wall_hp = 300;
+            }
+            let mut ai = BasicAi::new();
+            ai.minor = true;
+            let item = ai
+                .pick_item(&g, 0, city, 1, 0, 10, 10, 10, 99, 99, 99)
+                .unwrap_or_else(|| panic!("{civilization} found no specialty district"));
+            assert!(
+                matches!(&item, Item::District { district, .. }
+                    if g.district_family(district) == family),
+                "{civilization} selected {item:?} instead of {family}"
+            );
+        }
+    }
+
+    #[test]
+    fn fully_developed_city_states_can_idle() {
         let mut g = Game::new_full(1, 24, 16, 91_770, 120, 0, false);
         let settler = g
             .player_unit_ids(0)
@@ -5823,17 +6174,10 @@ mod tests {
         let mut ai = BasicAi::new();
         ai.minor = true;
 
-        let item = ai
-            .pick_item(&g, 0, city, 1, 0, 10, 10, 10, 99, 99, 99)
-            .expect("a developed city-state has a repeatable production sink");
-        assert!(
-            matches!(item, Item::Project { ref project }
-                if g.rules.projects[project].repeatable
-                    && (!g.rules.projects[project].ongoing_yields.is_empty()
-                        || !g.rules.projects[project].completion_gpp.is_empty())),
-            "city-state selected {item:?}"
+        assert_eq!(
+            ai.pick_item(&g, 0, city, 1, 0, 10, 10, 10, 99, 99, 99),
+            None
         );
-        assert!(g.can_produce(0, city, &item));
     }
 
     #[test]
@@ -7146,6 +7490,107 @@ mod tests {
         let _ = ai.military_step(&mut game, 0, warrior);
         assert_eq!(game.units[&settler].owner, 1);
         assert_ne!(game.units[&warrior].pos, target);
+    }
+
+    #[test]
+    fn unlevied_city_state_forces_return_to_the_local_defense_area() {
+        let mut game = Game::new_full(2, 28, 18, 91_769, 120, 0, false);
+        for pid in 0..2 {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.found_city_for(pid, game.units[&settler].pos, None);
+        }
+        for unit in game.units.keys().copied().collect::<Vec<_>>() {
+            game.remove_unit(unit);
+        }
+        game.players[0].is_minor = true;
+        game.at_war.insert((0, 1));
+        let home = game.cities[&game.player_city_ids(0)[0]].pos;
+        let candidates = game
+            .map
+            .tiles
+            .values()
+            .filter(|tile| {
+                game.wdist(home, tile.pos) > MINOR_DEFENSE_RADIUS + 1
+                    && game.rules.is_passable(tile)
+                    && !game.rules.is_water(tile)
+                    && game.city_at(tile.pos).is_none()
+                    && tile.owner_city.is_none()
+            })
+            .map(|tile| tile.pos)
+            .collect::<Vec<_>>();
+        let warrior = candidates
+            .into_iter()
+            .find_map(|position| {
+                let unit = game.spawn_test_unit("warrior", 0, position);
+                if game
+                    .route_step(unit, home, 0)
+                    .is_some_and(|next| game.can_move(unit, next))
+                {
+                    Some(unit)
+                } else {
+                    game.remove_unit(unit);
+                    None
+                }
+            })
+            .expect("test map has a remote land route home");
+        let start = game.units[&warrior].pos;
+        let mut ai = BasicAi::new();
+        ai.minor = true;
+
+        for _ in 0..30 {
+            if game.wdist(home, game.units[&warrior].pos) <= MINOR_DEFENSE_RADIUS {
+                break;
+            }
+            game.turn += 1;
+            let unit = game.units.get_mut(&warrior).unwrap();
+            unit.moves_left = 10.0;
+            unit.moved = false;
+            assert!(ai.military_step(&mut game, 0, warrior));
+        }
+        assert!(
+            game.wdist(home, game.units[&warrior].pos) <= MINOR_DEFENSE_RADIUS,
+            "remote defender did not return from {start:?}; stopped at {:?}; last action {:?}",
+            game.units[&warrior].pos,
+            game.log.last()
+        );
+
+        let (boundary, outside) = game
+            .map
+            .tiles
+            .values()
+            .filter(|tile| {
+                game.wdist(home, tile.pos) == MINOR_DEFENSE_RADIUS
+                    && game.rules.is_passable(tile)
+                    && !game.rules.is_water(tile)
+                    && game.city_at(tile.pos).is_none()
+            })
+            .find_map(|tile| {
+                game.nbrs(tile.pos).into_iter().find_map(|outside| {
+                    game.map
+                        .get(outside)
+                        .is_some_and(|candidate| {
+                            game.wdist(home, outside) > MINOR_DEFENSE_RADIUS
+                                && game.rules.is_passable(candidate)
+                                && !game.rules.is_water(candidate)
+                                && game.city_at(outside).is_none()
+                        })
+                        .then_some((tile.pos, outside))
+                })
+            })
+            .expect("test map has a passable defense boundary");
+        {
+            let unit = game.units.get_mut(&warrior).unwrap();
+            unit.pos = boundary;
+            unit.moves_left = 10.0;
+            unit.moved = false;
+        }
+        assert!(game.can_move(warrior, outside));
+        assert!(!ai.path_move(&mut game, 0, warrior, outside));
+        assert_eq!(game.units[&warrior].pos, boundary);
     }
 
     #[test]
