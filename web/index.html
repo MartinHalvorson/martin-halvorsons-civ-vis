@@ -3862,11 +3862,24 @@ function draw() {
     // own. Amber as it goes, red and pulsing when it is close to gone. Same
     // vocabulary as a roused barbarian camp, because it means the same thing —
     // trouble on this tile, now.
-    if (c.loyalty !== undefined && c.loyalty !== null && c.loyalty < 99.5) {
-      const f = Math.max(0, Math.min(1, c.loyalty / 100));
+    // Unhappiness rides the same ring rather than claiming a badge of its own.
+    // A city is already carrying a nameplate, a production medallion, a faith
+    // badge and sometimes a spy keyhole; a fourth mark would cost more in
+    // clutter than it returns in information. Both of these say the same thing
+    // — this city is in trouble and may stop being yours — so they share one
+    // mark, coloured by whichever is worse. Displeased (-1, -2) stays quiet;
+    // the ring starts at Unhappy, where yields actually suffer.
+    const disloyal = c.loyalty !== undefined && c.loyalty !== null && c.loyalty < 99.5;
+    const am = c.amenity_surplus;
+    const unhappy = am !== undefined && am !== null && am <= -3;
+    if (disloyal || unhappy) {
+      const loyF = disloyal ? Math.max(0, Math.min(1, c.loyalty / 100)) : 1;
+      const amF = unhappy ? Math.max(0, 1 + am / 7) : 1;   // -7 is revolt
+      const f = Math.min(loyF, amF);
       const col = f > 0.6 ? "#e8c64c" : f > 0.3 ? "#e0913c" : "#e0483a";
       const beat = f < 0.35 ? 0.55 + 0.45 * Math.sin(performance.now() / 240) : 0.9;
       const k = UI_K();
+      const label = amF < loyF ? am.toString() : Math.round(c.loyalty).toString();
       cx.save();
       cx.setLineDash([6, 5]);
       cx.strokeStyle = col; cx.lineWidth = 2.4 * k; cx.globalAlpha = beat;
@@ -3878,10 +3891,12 @@ function draw() {
       cx.strokeStyle = "#10151d"; cx.lineWidth = 3;
       // below the ring, not above it: above is where the nameplate lives and
       // the number simply vanished behind it
+      // an amenity deficit reads as a negative number, loyalty as a bare one,
+      // so the figure says which of the two is the problem without a legend
       const ly = y + S * 0.84 + 7 * k;
-      cx.strokeText(Math.round(c.loyalty), x, ly);
+      cx.strokeText(label, x, ly);
       cx.fillStyle = col;
-      cx.fillText(Math.round(c.loyalty), x, ly);
+      cx.fillText(label, x, ly);
       cx.restore();
     }
     drawSettlement(c, x, y, beau);
