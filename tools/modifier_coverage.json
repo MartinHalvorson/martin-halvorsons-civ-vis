@@ -185,6 +185,11 @@
       "status": "implemented",
       "verified": true,
       "note": "Raid and Total War multiply pillage yields by 2 -- the shipped Amount is a multiplier, not a percentage. CIVVIS read it as +50%."
+    },
+    "ADJUST_BUILDING_YIELD_MODIFIERS_FOR_DISTRICT": {
+      "status": "implemented",
+      "verified": true,
+      "note": "Rationalism, Free Market, Grand Opera and Simultaneum each ship twice. The base rows double a named building's yield outright; the Gathering Storm rows replace that with two conditional halves, +50% where the city has 15 Population and +50% where the district already earns 4 of that yield from adjacency, which is what the Gathering Storm description states. CIVVIS carried the flat double -- strictly stronger than the shipped card in every city that meets neither condition, which early on is all of them."
     }
   }
 }

@@ -2118,6 +2118,52 @@ mod governor_runtime_tests {
     }
 
     #[test]
+    fn rationalism_pays_in_halves_not_a_flat_double() {
+        let mut game = Game::new_full(1, 24, 16, 91_989, 200, 0, false);
+        let city = found_capital(&mut game, 0);
+        let site = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .find(|position| *position != game.cities[&city].pos)
+            .unwrap();
+        set_district(&mut game, city, site, "campus");
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .push("library".to_string());
+        game.cities.get_mut(&city).unwrap().pop = 4;
+        let plain = game.city_yields(city).science;
+        game.players[0].policies = ["rationalism".to_string()].into_iter().collect();
+
+        // A small city with a low-adjacency Campus gets nothing at all. Under
+        // the old flat +100% the Library's 2 Science doubled here.
+        assert_eq!(game.city_yields(city).science, plain);
+
+        // Fifteen Population pays one half of the card, and exactly half:
+        // doubling the card's rating doubles what that half is worth.
+        game.cities.get_mut(&city).unwrap().pop = 15;
+        let with_card = game.city_yields(city).science;
+        game.players[0].policies.clear();
+        let without = game.city_yields(city).science;
+        let half = with_card - without;
+        assert!(half > 0.0, "15 Population earns one half of the card");
+
+        game.rules
+            .policies
+            .get_mut("rationalism")
+            .unwrap()
+            .effects
+            .insert("campus_building_science_pct".to_string(), 200.0);
+        game.players[0].policies = ["rationalism".to_string()].into_iter().collect();
+        assert!(
+            ((game.city_yields(city).science - without) - 2.0 * half).abs() < 1e-9,
+            "the Population clause is exactly half the card"
+        );
+    }
+
+    #[test]
     fn finest_hour_and_the_pillage_cards_pay_what_they_ship_with() {
         let mut game = Game::new_full(1, 24, 16, 91_983, 200, 0, false);
         let city = found_capital(&mut game, 0);
@@ -20505,24 +20551,48 @@ impl Game {
                     .copied()
                     .unwrap_or(0) as f64;
             }
-            match building.district.as_deref() {
-                Some("campus") => {
-                    yields.science *=
-                        1.0 + self.policy_effect(city.owner, "campus_building_science_pct") / 100.0;
+            // Rationalism, Free Market, Grand Opera and Simultaneum each pay
+            // in two halves in Gathering Storm rather than one flat double:
+            // half where the city has 15 Population, half where the district
+            // already earns 4 of that yield from adjacency.
+            if let Some(family) = building.district.as_deref() {
+                let (key, yield_of) = match family {
+                    "campus" => ("campus_building_science_pct", 0),
+                    "commercial_hub" => ("commercial_building_gold_pct", 1),
+                    "theater_square" => ("theater_building_culture_pct", 2),
+                    "holy_site" => ("holy_site_building_faith_pct", 3),
+                    _ => ("", usize::MAX),
+                };
+                if yield_of != usize::MAX {
+                    let half = self.policy_effect(city.owner, key) / 2.0;
+                    let mut pct = 0.0;
+                    if city.pop >= 15 {
+                        pct += half;
+                    }
+                    if self
+                        .city_district_family_position(city, family)
+                        .map(|position| {
+                            let adjacency = self.district_yields(family, position);
+                            match yield_of {
+                                0 => adjacency.science,
+                                1 => adjacency.gold,
+                                2 => adjacency.culture,
+                                _ => adjacency.faith,
+                            }
+                        })
+                        .unwrap_or(0.0)
+                        >= 4.0
+                    {
+                        pct += half;
+                    }
+                    let multiplier = 1.0 + pct / 100.0;
+                    match yield_of {
+                        0 => yields.science *= multiplier,
+                        1 => yields.gold *= multiplier,
+                        2 => yields.culture *= multiplier,
+                        _ => yields.faith *= multiplier,
+                    }
                 }
-                Some("commercial_hub") => {
-                    yields.gold *= 1.0
-                        + self.policy_effect(city.owner, "commercial_building_gold_pct") / 100.0;
-                }
-                Some("theater_square") => {
-                    yields.culture *= 1.0
-                        + self.policy_effect(city.owner, "theater_building_culture_pct") / 100.0;
-                }
-                Some("holy_site") => {
-                    yields.faith *= 1.0
-                        + self.policy_effect(city.owner, "holy_site_building_faith_pct") / 100.0;
-                }
-                _ => {}
             }
             if let Some(district) = building.district.as_deref() {
                 if let Some(position) = self.city_district_family_position(city, district) {
