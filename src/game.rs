@@ -8700,37 +8700,21 @@ impl Game {
                     continue;
                 }
                 self.players[observer].agenda_view.insert(subject, stance);
-                let leader = self.leader_name(observer);
+                let observer_civ = self.civ_name(observer);
+                let subject_civ = self.civ_name(subject);
                 let agenda = self
                     .agenda_of(observer)
                     .map(|spec| spec.name.clone())
                     .unwrap_or_default();
-                let (theirs, mine) = match stance {
-                    1 => (
-                        format!("{leader} approves of you ({agenda})"),
-                        format!("You approve of {} ({agenda})", self.civ_name(subject)),
-                    ),
-                    -1 => (
-                        format!("{leader} disapproves of you ({agenda})"),
-                        format!("You disapprove of {} ({agenda})", self.civ_name(subject)),
-                    ),
-                    _ => (
-                        format!("{leader} no longer holds a strong view of you"),
-                        format!("Your view of {} has cooled", self.civ_name(subject)),
-                    ),
+                let message = match stance {
+                    1 => format!("{observer_civ} approves of {subject_civ} ({agenda})"),
+                    -1 => format!("{observer_civ} disapproves of {subject_civ} ({agenda})"),
+                    _ => format!("{observer_civ}'s view of {subject_civ} has cooled"),
                 };
-                self.note(subject, "Diplomacy", theirs, None);
-                self.note(observer, "Diplomacy", mine, None);
+                self.note(subject, "Diplomacy", message.clone(), None);
+                self.note(observer, "Diplomacy", message, None);
             }
         }
-    }
-
-    fn leader_name(&self, pid: usize) -> String {
-        self.players
-            .get(pid)
-            .and_then(|player| self.rules.civs.get(player.civ.as_str()))
-            .map(|civ| civ.leader.clone())
-            .unwrap_or_else(|| self.civ_name(pid))
     }
 
     // --------------------------------------------------------------- events
@@ -12406,7 +12390,8 @@ impl Game {
         }
         self.players[pid].gpp.insert(kind.to_string(), 0.0);
         self.retired_great_people.insert(id.clone());
-        self.note(pid, "People", format!("{} joined you", spec.name), None);
+        let civ = self.civ_name(pid);
+        self.note(pid, "People", format!("{} joined {civ}", spec.name), None);
         self.players[pid].great_people.push(id);
         *self.players[pid]
             .gp_claimed
@@ -27424,8 +27409,9 @@ impl Game {
             bump(&mut self.players[pid], "casus_belli");
         }
         let (aggressor, defender) = (self.civ_name(pid), self.civ_name(other));
-        self.note(pid, "War", format!("You declared war on {defender}"), None);
-        self.note(other, "War", format!("{aggressor} declared war on you"), None);
+        let message = format!("{aggressor} declared war on {defender}");
+        self.note(pid, "War", message.clone(), None);
+        self.note(other, "War", message, None);
         self.cancel_routes_with(pid, other);
         self.cancel_trade_deals_with(pid, other);
         self.players[pid].open_borders_until.remove(&other);
@@ -29172,8 +29158,9 @@ impl Game {
     fn conclude_peace(&mut self, first: usize, second: usize) {
         self.at_war.remove(&pair(first, second));
         let (a, b) = (self.civ_name(first), self.civ_name(second));
-        self.note(first, "Diplomacy", format!("You made peace with {b}"), None);
-        self.note(second, "Diplomacy", format!("You made peace with {a}"), None);
+        let message = format!("{a} made peace with {b}");
+        self.note(first, "Diplomacy", message.clone(), None);
+        self.note(second, "Diplomacy", message, None);
         for city in self.cities.values_mut() {
             if (city.owner == first && city.occupied_from == Some(second))
                 || (city.owner == second && city.occupied_from == Some(first))
@@ -33340,8 +33327,9 @@ impl Game {
             };
             let verb = if conquest { "captured" } else { "took over" };
             let (taker, loser) = (self.civ_name(new_owner), self.civ_name(old));
-            self.note(new_owner, "War", format!("You {verb} {name} from {loser}"), Some(pos));
-            self.note(old, "War", format!("{taker} {verb} {name}"), Some(pos));
+            let message = format!("{taker} {verb} {name} from {loser}");
+            self.note(new_owner, "War", message.clone(), Some(pos));
+            self.note(old, "War", message, Some(pos));
         }
         let captured_works = self
             .housed_great_works(old)

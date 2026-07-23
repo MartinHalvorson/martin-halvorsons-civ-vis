@@ -1709,6 +1709,16 @@ mod tests {
             "left panel should show game settings, display settings, and the event log first"
         );
         assert!(EMBEDDED_INDEX.contains("<span>Display settings</span>"));
+        assert_eq!(
+            EMBEDDED_INDEX
+                .matches("class=\"sidebar-section\"")
+                .count(),
+            6,
+            "every top-level left-panel section should be collapsible"
+        );
+        assert!(EMBEDDED_INDEX.contains("function initSidebarSections()"));
+        assert!(EMBEDDED_INDEX.contains("civvis-sidebar-sections-v1"));
+        assert!(EMBEDDED_INDEX.contains("function civilizationEventText(text, next)"));
         assert!(!EMBEDDED_INDEX.contains("Simulator settings"));
         assert!(EMBEDDED_INDEX.contains("Quick Deals"));
         assert!(EMBEDDED_INDEX.contains("function drawQuickDeals()"));

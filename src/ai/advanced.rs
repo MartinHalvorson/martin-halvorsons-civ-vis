@@ -7041,24 +7041,74 @@ impl AdvancedAi {
         self.base.fortify_or_stop(g, pid, uid)
     }
 
+    /// Candidate attacks on one tactical victim. `Game::legal_actions` also
+    /// enumerates production, diplomacy, spies, purchases, every movement,
+    /// and every other unit target; calling it at each reply-search node made
+    /// late-game turns spend most of their time proving irrelevant actions
+    /// irrelevant. Build the small target-specific superset here and let
+    /// `Game::apply` remain the authoritative legality check.
+    fn forcing_attacks_to(
+        position: &Game,
+        enemy: usize,
+        victim_pos: Pos,
+        only_unit: Option<u32>,
+    ) -> Vec<Action> {
+        let mut replies = Vec::new();
+        for unit in position.units.values().filter(|unit| {
+            unit.owner == enemy && only_unit.is_none_or(|candidate| candidate == unit.id)
+        }) {
+            if unit.moves_left <= 0.0 || unit.attacks_left <= 0 {
+                continue;
+            }
+            let spec = &position.rules.units[unit.kind.as_str()];
+            let distance = position.wdist(unit.pos, victim_pos);
+            if spec.domain.as_deref() == Some("air") {
+                if distance <= position.unit_attack_range(unit.id) {
+                    replies.push(Action::AirStrike {
+                        unit: unit.id,
+                        target: victim_pos,
+                    });
+                }
+                continue;
+            }
+            if spec.class != "military" || position.is_embarked(unit) {
+                continue;
+            }
+            if spec.has_ranged_attack() && distance <= position.unit_attack_range(unit.id) {
+                replies.push(Action::Ranged {
+                    unit: unit.id,
+                    target: victim_pos,
+                });
+            }
+            if spec.is_melee_capable() && distance == 1 {
+                replies.push(Action::Attack {
+                    unit: unit.id,
+                    target: victim_pos,
+                });
+            }
+        }
+        if only_unit.is_none() {
+            for city in position.cities.values().filter(|city| city.owner == enemy) {
+                replies.push(Action::CityStrike {
+                    city: city.id,
+                    target: victim_pos,
+                });
+                replies.push(Action::EncampmentStrike {
+                    city: city.id,
+                    target: victim_pos,
+                });
+            }
+        }
+        replies
+    }
+
     fn forcing_reply_line(&self, position: &Game, enemy: usize, victim: u32, depth: usize) -> f64 {
         if depth == 0 || !position.units.contains_key(&victim) {
             return 0.0;
         }
         let victim_hp = position.units[&victim].hp;
         let victim_pos = position.units[&victim].pos;
-        let replies: Vec<Action> = position
-            .legal_actions(enemy)
-            .into_iter()
-            .filter(|reply| match reply {
-                Action::Attack { target, .. }
-                | Action::Ranged { target, .. }
-                | Action::AirStrike { target, .. }
-                | Action::CityStrike { target, .. }
-                | Action::EncampmentStrike { target, .. } => *target == victim_pos,
-                _ => false,
-            })
-            .collect();
+        let replies = Self::forcing_attacks_to(position, enemy, victim_pos, None);
 
         let mut reply_branches = Vec::new();
         let mut direct_attackers = BTreeSet::new();
@@ -7109,18 +7159,8 @@ impl AdvancedAi {
                 if moved.apply(enemy, &movement).is_err() {
                     continue;
                 }
-                let followups: Vec<Action> = moved
-                    .legal_actions(enemy)
-                    .into_iter()
-                    .filter(|action| match action {
-                        Action::Attack { unit, target }
-                        | Action::Ranged { unit, target }
-                        | Action::AirStrike { unit, target } => {
-                            *unit == attacker && *target == victim_pos
-                        }
-                        _ => false,
-                    })
-                    .collect();
+                let followups =
+                    Self::forcing_attacks_to(&moved, enemy, victim_pos, Some(attacker));
                 for followup in followups {
                     let mut branch = moved.clone();
                     if branch.apply(enemy, &followup).is_err() {

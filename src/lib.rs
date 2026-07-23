@@ -188,14 +188,22 @@ mod tests {
         assert!(mine
             .iter()
             .any(|e| e.category == "Cities" && e.text.contains("Testopolis") && e.pos == Some(pos)));
+        let (aggressor, defender) = (g.players[0].civ.clone(), g.players[1].civ.clone());
+        let declaration = format!("{aggressor} declared war on {defender}");
         assert!(mine
             .iter()
-            .any(|e| e.category == "War" && e.text.contains("You declared war")));
+            .any(|e| e.category == "War" && e.text == declaration));
         // The other side hears about the war, and about nothing else of ours.
         let theirs = g.events_for(1);
         assert!(theirs
             .iter()
-            .any(|e| e.category == "War" && e.text.contains("declared war on you")));
+            .any(|e| e.category == "War" && e.text == declaration));
+        assert!(g.events.iter().all(|event| {
+            !event
+                .text
+                .split(|character: char| !character.is_alphabetic())
+                .any(|word| word.eq_ignore_ascii_case("you") || word.eq_ignore_ascii_case("your"))
+        }));
         assert!(!theirs.iter().any(|e| e.text.contains("Testopolis")));
 
         let observed = crate::obs::observation(&g, 0);
@@ -329,7 +337,9 @@ mod tests {
             .map(|event| event.text.as_str())
             .collect();
         assert!(
-            disapproval.iter().any(|text| text.contains("disapproves of you")),
+            disapproval.iter().any(|text| {
+                text.contains(&format!("Scythia disapproves of {}", g.players[a].civ))
+            }),
             "no disapproval reached the aggressor: {disapproval:?}"
         );
         // Repeating the pass says nothing new.
@@ -341,7 +351,11 @@ mod tests {
         let repeats = g
             .events_for(a)
             .iter()
-            .filter(|event| event.text.contains("disapproves of you"))
+            .filter(|event| {
+                event
+                    .text
+                    .contains(&format!("Scythia disapproves of {}", g.players[a].civ))
+            })
             .count();
         assert_eq!(repeats, 1, "a settled stance was announced twice");
         assert!(g.events_for(a).len() >= before);
@@ -1661,15 +1675,15 @@ mod tests {
             })
             .collect();
         assert!(!nw.is_empty(), "no natural wonders generated");
-        // Crater Lake is a one-tile passable wonder that acts as a Lake; the
-        // impassable ones are Uluru, Yosemite, Everest and Pamukkale.
+        // Crater Lake keeps its shipped impassable spelling; a fidelity waiver
+        // records the Lake flag represented by this one-tile feature.
         if let Some(t) = g
             .map
             .tiles
             .values()
             .find(|t| t.feature.as_deref() == Some("crater_lake"))
         {
-            assert!(g.rules.is_passable(t));
+            assert!(!g.rules.is_passable(t));
             assert_eq!(g.rules.tile_yields(t).faith, 5.0);
         }
         if let Some(t) = g

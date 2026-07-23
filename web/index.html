@@ -87,27 +87,59 @@
   }
   .live-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #66d38b; box-shadow: 0 0 0 4px #66d38b1c; }
   .side-scroll {
-    flex: 1; min-height: 0; padding: 11px 11px 20px; overflow-y: auto; overflow-anchor: none;
+    flex: 1; min-height: 0; padding: 12px 11px 22px; overflow-y: auto; overflow-anchor: none;
     scrollbar-color: #385148 transparent; scrollbar-width: thin; scrollbar-gutter: stable;
+    background: linear-gradient(90deg, #ffffff02, transparent 14%, transparent 86%, #0002);
   }
   .side-scroll::-webkit-scrollbar { width: 7px; }
   .side-scroll::-webkit-scrollbar-thumb { background: #385148; border-radius: 9px; }
   .side-footer { flex: 0 0 auto; padding: 12px 14px 14px; border-top: 1px solid var(--line); background: #0b1513f2; box-shadow: 0 -12px 30px #0005; }
 
   .sec {
-    position: relative; padding: 12px 13px; margin-bottom: 8px; border-radius: 12px;
-    background: linear-gradient(145deg, #172723e8, #101b19e8);
-    border: 1px solid var(--line); box-shadow: 0 8px 25px #0002;
+    position: relative; padding: 13px 14px; border-radius: 0 0 13px 13px;
+    background: linear-gradient(145deg, #172723f2, #0d1917f2);
+    border: 1px solid var(--line); border-top: 0; box-shadow: 0 10px 28px #0003;
   }
-  .sec::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; border-top: 1px solid #ffffff08; }
-  .sec h2, .section-label {
+  .sec::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: inset 1px 0 #ffffff05; }
+  .sec h2 {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
     margin-bottom: 9px; color: var(--muted); font-size: 9px; font-weight: 800;
     letter-spacing: .18em; text-transform: uppercase;
   }
-  .section-label { margin: 18px 4px 8px; }
-  .section-label:first-child { margin-top: 2px; }
-  .section-label .rule { height: 1px; flex: 1; background: linear-gradient(90deg, var(--line), transparent); }
+  .sidebar-section { margin: 0 0 10px; }
+  .section-label {
+    min-height: 39px; display: flex; align-items: center; gap: 9px; padding: 7px 8px 7px 9px;
+    color: #bac8c2; background: linear-gradient(135deg, #162622, #101c19);
+    border: 1px solid var(--line); border-radius: 13px 13px 0 0; cursor: pointer;
+    font-size: 9px; font-weight: 850; letter-spacing: .16em; text-transform: uppercase;
+    box-shadow: inset 0 1px #ffffff08; list-style: none; user-select: none;
+    transition: color .15s ease, border-color .15s ease, background .15s ease;
+  }
+  .section-label::-webkit-details-marker { display: none; }
+  .section-label:hover { color: var(--text); border-color: #4a685e; background: linear-gradient(135deg, #1b302a, #12211d); }
+  .section-label:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+  .section-title { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .section-icon {
+    width: 22px; height: 22px; display: grid; place-items: center; border-radius: 7px;
+    color: var(--gold-bright); background: #d7b66a10; border: 1px solid #d7b66a24;
+    font-size: 11px; line-height: 1; letter-spacing: 0;
+  }
+  .section-meta { min-width: 0; flex: 1; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+  .section-label .rule { height: 1px; min-width: 12px; flex: 1; background: linear-gradient(90deg, var(--line), transparent); }
+  .section-chevron {
+    width: 22px; height: 22px; flex: 0 0 22px; display: grid; place-items: center;
+    border-radius: 7px; color: var(--gold); background: #08120f66; border: 1px solid #30473f;
+  }
+  .section-chevron::before {
+    content: ""; width: 6px; height: 6px; border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor; transform: translateY(-1px) rotate(45deg);
+    transition: transform .18s ease;
+  }
+  .sidebar-section:not([open]) .section-label { border-radius: 13px; }
+  .sidebar-section:not([open]) .section-chevron::before { transform: translateY(1px) rotate(-45deg); }
+  .sidebar-section:not([open]) .section-label { color: #8fa19a; background: linear-gradient(135deg, #13211e, #0d1816); }
+  .sidebar-section[open] > .sec { animation: section-reveal .16s ease-out; }
+  @keyframes section-reveal { from { opacity: .35; transform: translateY(-3px); } }
   .split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .split .sec { min-width: 0; }
   .strategy-sec { padding: 0; overflow: hidden; }
@@ -122,7 +154,7 @@
   .strategy-track.culture .strategy-heading span::before { background: var(--violet); box-shadow: 0 0 9px #c49be877; }
   .progress-slot { height: 55px; min-height: 55px; display: flex; align-items: center; }
   .progress-slot > * { width: 100%; }
-  #govsec { min-height: 70px; }
+  #govsec > .sec { min-height: 70px; }
   .settings-sec { padding: 11px 13px; }
   .settings-sec h2 { margin-bottom: 7px; }
   .observer-settings { display: none; }
@@ -137,7 +169,7 @@
   .utility-panel[open] summary { border-bottom: 1px solid var(--line-soft); }
   .utility-body { padding: 12px 13px 13px; }
   .utility-group + .utility-group { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line-soft); }
-  .event-scope { color: var(--gold); font-size: 8px; letter-spacing: .07em; white-space: nowrap; }
+  .event-scope { overflow: hidden; color: var(--gold); font-size: 8px; letter-spacing: .04em; text-overflow: ellipsis; white-space: nowrap; text-transform: none; }
 
   button {
     color: var(--text); background: linear-gradient(180deg, #263c36, #1b2e2a);
@@ -573,8 +605,12 @@
     <div id="gameidentity"></div>
   </div>
   <div class="side-scroll">
-    <div class="section-label"><span>Game settings</span><span class="rule"></span></div>
-    <div class="sec settings-sec" id="game-settings">
+    <details class="sidebar-section" data-section="game-settings">
+      <summary class="section-label">
+        <span class="section-title"><span class="section-icon" aria-hidden="true">⚙</span><span>Game settings</span></span>
+        <span class="section-meta"><span class="rule"></span><span class="section-chevron" aria-hidden="true"></span></span>
+      </summary>
+      <div class="sec settings-sec" id="game-settings">
       <div id="newgame-options">
         <label class="small">Game mode<select id="gamemode" style="margin-top:4px">
           <option value="ai_sim" selected>AI-only simulation</option>
@@ -618,10 +654,15 @@
           <button id="fresh-sim" title="Get the latest code, rebuild, and start a new simulation">New sim · fresh code</button>
         </div>
       </div>
-    </div>
+      </div>
+    </details>
 
-    <div class="section-label"><span>Display settings</span><span class="rule"></span></div>
-    <div class="sec settings-sec" id="display-settings">
+    <details class="sidebar-section" data-section="display-settings">
+      <summary class="section-label">
+        <span class="section-title"><span class="section-icon" aria-hidden="true">◈</span><span>Display settings</span></span>
+        <span class="section-meta"><span class="rule"></span><span class="section-chevron" aria-hidden="true"></span></span>
+      </summary>
+      <div class="sec settings-sec" id="display-settings">
       <div class="utility-group">
         <h2>Display</h2>
         <select id="viewsel" aria-label="Map style">
@@ -658,15 +699,22 @@
           <span><kbd>Y</kbd>Tile yields</span><span><kbd>↵</kbd>End / pause</span>
         </div>
       </details>
-    </div>
+      </div>
+    </details>
 
-    <div id="eventsec">
-      <div class="section-label"><span>Game event log</span><span class="event-scope" id="eventscope"></span></div>
+    <details class="sidebar-section" id="eventsec" data-section="event-log" open>
+      <summary class="section-label">
+        <span class="section-title"><span class="section-icon" aria-hidden="true">☷</span><span>Game event log</span></span>
+        <span class="section-meta"><span class="event-scope" id="eventscope"></span><span class="section-chevron" aria-hidden="true"></span></span>
+      </summary>
       <div class="sec"><div id="events" class="event-list"><div class="empty-state">The world is quiet—for now.</div></div></div>
-    </div>
+    </details>
 
-    <div id="strategysec">
-      <div class="section-label"><span>Active strategy</span><span class="rule"></span></div>
+    <details class="sidebar-section" id="strategysec" data-section="active-strategy" open>
+      <summary class="section-label">
+        <span class="section-title"><span class="section-icon" aria-hidden="true">◆</span><span>Active strategy</span></span>
+        <span class="section-meta"><span class="rule"></span><span class="section-chevron" aria-hidden="true"></span></span>
+      </summary>
       <div class="sec strategy-sec">
         <div class="strategy-track">
           <div class="strategy-heading"><span>Research</span><span><button class="mini" onclick='openPedia()'>Pedia</button> <button class="mini" onclick='openTree("techs")'>Tree</button></span></div>
@@ -677,9 +725,21 @@
           <div id="civics" class="progress-slot"></div>
         </div>
       </div>
-    </div>
-    <div class="sec" id="govsec" style="display:none"><h2>Government</h2><div id="gov"></div></div>
-    <div class="sec" id="citysec" style="display:none"><h2>City command</h2><div id="citypanel"></div></div>
+    </details>
+    <details class="sidebar-section" id="govsec" data-section="government" style="display:none" open>
+      <summary class="section-label">
+        <span class="section-title"><span class="section-icon" aria-hidden="true">♜</span><span>Government</span></span>
+        <span class="section-meta"><span class="rule"></span><span class="section-chevron" aria-hidden="true"></span></span>
+      </summary>
+      <div class="sec"><div id="gov"></div></div>
+    </details>
+    <details class="sidebar-section" id="citysec" data-section="city-command" style="display:none" open>
+      <summary class="section-label">
+        <span class="section-title"><span class="section-icon" aria-hidden="true">⌂</span><span>City command</span></span>
+        <span class="section-meta"><span class="rule"></span><span class="section-chevron" aria-hidden="true"></span></span>
+      </summary>
+      <div class="sec"><div id="citypanel"></div></div>
+    </details>
 
   </div>
   <div class="side-footer">
@@ -699,6 +759,21 @@
 </div>
 <script>
 "use strict";
+const SIDEBAR_SECTION_STATE_KEY = "civvis-sidebar-sections-v1";
+function initSidebarSections() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(SIDEBAR_SECTION_STATE_KEY) || "{}"); }
+  catch (_) { saved = {}; }
+  for (const section of document.querySelectorAll("#side details.sidebar-section[data-section]")) {
+    const key = section.dataset.section;
+    if (Object.prototype.hasOwnProperty.call(saved, key)) section.open = !!saved[key];
+    section.addEventListener("toggle", () => {
+      saved[key] = section.open;
+      localStorage.setItem(SIDEBAR_SECTION_STATE_KEY, JSON.stringify(saved));
+    });
+  }
+}
+initSidebarSections();
 // ---------------------------------------------------------------- constants
 const S = 36, SQ3 = Math.sqrt(3);
 const TERRAIN = { grassland:"#5e9440", plains:"#ab9e4e", desert:"#d8c184",
@@ -885,7 +960,8 @@ if (VIEW === "simple" || VIEW === "minimal") VIEW = "strategic";
 // ---------------------------------------------------- unit animation layer
 // moves: id -> tween; floats: damage numbers; sparks: hit flashes;
 // deaths: fading casualties; strike: attacker lunge. All fast (<=250ms).
-const anim = { moves: new Map(), floats: [], sparks: [], deaths: [], strike: null };
+const anim = { moves: new Map(), floats: [], sparks: [], deaths: [],
+               claims: [], strike: null };
 const facing = new Map(); // unit id -> -1|1 (last horizontal direction)
 let pendingStrike = null;
 function worldXY(p) {
@@ -896,6 +972,12 @@ function worldXY(p) {
 function hexDistUI(a, b) {
   const dq = a[0] - b[0], dr = a[1] - b[1];
   return Math.max(Math.abs(dq), Math.abs(dr), Math.abs(dq + dr));
+}
+function claimPulse(c) {
+  const k = key(c.pos);
+  const at = anim.claims.findIndex(p => key(p.pos) === k);
+  if (at >= 0) anim.claims.splice(at, 1);   // restart it, never double it
+  anim.claims.push(c);
 }
 function animateDiff(prev, next) {
   if (!prev || !prev.units) return;
@@ -959,6 +1041,35 @@ function animateDiff(prev, next) {
       }
       anim.sparks.push({ x, y, t0: now });
     }
+  }
+  // Territory changing hands is the clearest sign a strategy map is moving —
+  // borders creep as a city grows and flip wholesale on conquest — and it was
+  // the one event that simply redrew between frames with nothing to catch the
+  // eye. A tile losing its owner counts too: land going back to nobody is how
+  // a razing reads from above.
+  const prevOwn = new Map();
+  for (const t of prev.map.tiles) prevOwn.set(key(t.pos), t.owner);
+  const seized = [];
+  for (const t of next.map.tiles) {
+    const k = key(t.pos);
+    if (!prevOwn.has(k)) continue;              // newly surveyed, not seized
+    const po = prevOwn.get(k);
+    if (po === t.owner) continue;
+    const own = (t.owner === null || t.owner === undefined) ? po : t.owner;
+    if (own === null || own === undefined) continue;
+    seized.push({ pos: t.pos, owner: own, t0: now });
+  }
+  // A difference this wide is a fresh world or a change of observed player,
+  // not a conquest. Pulsing every tile then is noise rather than news.
+  // One live pulse per tile: watched at speed, a contested border can change
+  // hands several times inside a single fade, and stacked pulses would just
+  // pile alpha onto the same hex until it read as a permanent stain.
+  if (seized.length <= 80) for (const s of seized) claimPulse(s);
+  const prevCityOwner = new Map((prev.cities || []).map(c => [c.id, c.owner]));
+  for (const nc of next.cities || []) {
+    const po = prevCityOwner.get(nc.id);
+    if (po !== undefined && po === nc.owner) continue;   // nothing happened
+    claimPulse({ pos: nc.pos, owner: nc.owner, t0: now, big: true });
   }
   if (pendingStrike) {
     const a = nextU.get(pendingStrike.id) || prevU.get(pendingStrike.id);
@@ -1319,14 +1430,26 @@ const SERVER_EVENT_ICONS = {
   Culture: "❦", Faith: "☥", People: "★", Diplomacy: "⚖",
 };
 let seenServerEvents = new Set();
+function civilizationEventText(text, next) {
+  const viewer = eventViewPlayer(next);
+  const civilization = viewer === null || viewer === undefined
+    ? null : (next.players[viewer] || {}).civ;
+  if (!civilization) return text;
+  // Old saves can still carry event copy written in the former second-person
+  // style. Keep the browser log civilization-centric while those age out.
+  return text
+    .replace(/\byour\b/gi, `${civilization}'s`)
+    .replace(/\byou\b/gi, civilization);
+}
 function chronicleServer(next) {
   const events = Array.isArray(next.events) ? next.events : [];
   const viewKey = eventViewKey(next);
   for (const event of events) {
-    const key = `${viewKey}|${event.turn}|${event.category}|${event.text}`;
+    const text = civilizationEventText(event.text, next);
+    const key = `${viewKey}|${event.turn}|${event.category}|${text}`;
     if (seenServerEvents.has(key)) continue;
     seenServerEvents.add(key);
-    addEvent(SERVER_EVENT_ICONS[event.category] || "✦", event.text, event.turn,
+    addEvent(SERVER_EVENT_ICONS[event.category] || "✦", text, event.turn,
       next, event.category === "General");
   }
   if (seenServerEvents.size > 1200) seenServerEvents = new Set();
@@ -1465,7 +1588,8 @@ function render(st, recordChronicle = true) {
     animateDiff(sameWorld ? state : null, st);
   } else {
     anim.moves.clear(); anim.floats.length = 0; anim.sparks.length = 0;
-    anim.deaths.length = 0; anim.strike = null; pendingStrike = null;
+    anim.deaths.length = 0; anim.claims.length = 0;
+    anim.strike = null; pendingStrike = null;
     sel = null; selCity = null;
   }
   if (!sameWorld) directorGoal = null;
@@ -3014,6 +3138,26 @@ function draw() {
       cx.fill();
     }
   }
+  // --- land changing hands: a ring in the claiming empire's color, opening out
+  // of the tile and fading. A city growing sends up one; a conquest sends up a
+  // wave of them, which is exactly the difference the eye should register.
+  for (let i = anim.claims.length - 1; i >= 0; i--) {
+    const cl = anim.claims[i];
+    const e = (performance.now() - cl.t0) / (cl.big ? 1500 : 1050);
+    if (e >= 1) { anim.claims.splice(i, 1); continue; }
+    const t2 = TMAP.get(key(cl.pos));
+    const [cx2, cyy] = hexXY(cl.pos[0], cl.pos[1]);
+    const cy2 = cyy - (t2 ? elev(t2) : 0);
+    const col = pcol(cl.owner);
+    const grow = cl.big ? 0.55 : 0.3;
+    cx.globalAlpha = (1 - e) * (cl.big ? 0.42 : 0.28);
+    cx.fillStyle = col;
+    hexPath(cx2, cy2, S * (0.55 + e * grow)); cx.fill();
+    cx.globalAlpha = (1 - e) * (cl.big ? 1 : 0.8);
+    cx.strokeStyle = col; cx.lineWidth = cl.big ? 3.4 : 2.2;
+    hexPath(cx2, cy2, S * (0.7 + e * (grow + 0.3))); cx.stroke();
+    cx.globalAlpha = 1;
+  }
   // --- movement / attack highlights
   for (const k in hl) {
     const [q, r] = k.split(",").map(Number);
@@ -3474,8 +3618,8 @@ function drawTopbar() {
   const speedName = titleCase(state.game_speed || "standard");
   const mapLabel = `${mapName} · ${state.map.size_name || "Custom"} ${state.map.width}×${state.map.height} · ${speedName}`;
   const profile = spectatorIdentity(identity);
-  const climateLabel = (Number(me.global_co2) || 0) !== 0 || Number(eraRaw) >= 4
-    ? `Global lifetime carbon emissions: ${compactStat(me.global_co2)} CO₂`
+  const climateLabel = (Number(state.me.global_co2) || 0) !== 0 || Number(eraRaw) >= 4
+    ? `Global lifetime carbon emissions: ${compactStat(state.me.global_co2)} CO₂`
     : null;
   const meta = [...profile.details, mapLabel, climateLabel].filter(Boolean).join(" · ");
   document.getElementById("gameidentity").innerHTML =
