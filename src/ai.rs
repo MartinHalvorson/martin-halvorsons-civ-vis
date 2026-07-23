@@ -2787,10 +2787,15 @@ impl BasicAi {
             }
         }
         if !self.minor && !self.barb {
-            let has_spaceport = g
-                .cities
-                .values()
-                .any(|c| c.owner == pid && c.districts.contains_key("spaceport"));
+            let has_spaceport = g.cities.values().any(|city| {
+                city.owner == pid
+                    && (g.city_has_district_family(city, "spaceport")
+                        || matches!(
+                            city.queue.first(),
+                            Some(Item::District { district, .. })
+                                if g.district_family(district) == "spaceport"
+                        ))
+            });
             if !has_spaceport && g.players[pid].techs.contains("rocketry") {
                 if let Some(pos) = g.district_sites(cid, "spaceport").into_iter().next() {
                     let item = Item::District {
@@ -5997,6 +6002,72 @@ mod tests {
         assert_eq!(
             BasicAi::new().pick_item(&g, 0, cid, 1, 0, 0, 0, 0, 6, 3, 3),
             None
+        );
+    }
+
+    #[test]
+    fn one_queued_spaceport_reserves_the_empire_launch_site() {
+        let mut game = Game::new_full(1, 30, 20, 324_001, 100, 0, false);
+        let first_settler = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|unit| game.units[unit].kind == "settler")
+            .unwrap();
+        game
+            .apply(0, &Action::FoundCity { unit: first_settler })
+            .unwrap();
+        let first_center = game.cities[&game.player_city_ids(0)[0]].pos;
+        let second_center = game
+            .map
+            .tiles
+            .iter()
+            .filter(|(position, tile)| {
+                game.wdist(**position, first_center) >= 4
+                    && game.rules.is_passable(tile)
+                    && !game.rules.is_water(tile)
+                    && game.units_at(**position).is_empty()
+            })
+            .map(|(position, _)| *position)
+            .next()
+            .expect("map has a second legal city site");
+        let second_settler = game.spawn_test_unit("settler", 0, second_center);
+        game
+            .apply(0, &Action::FoundCity { unit: second_settler })
+            .unwrap();
+        game.players[0].techs.insert("rocketry".to_string());
+        let cities = game.player_city_ids(0);
+        for city in &cities {
+            game.cities.get_mut(city).unwrap().pop = 10;
+            assert!(
+                !game.district_sites(*city, "spaceport").is_empty(),
+                "both cities must be able to repeat the archived overbuild"
+            );
+        }
+
+        let ai = BasicAi::new();
+        let launch_city = cities[0];
+        let first = ai
+            .pick_item(&game, 0, launch_city, 2, 2, 2, 2, 1, 10, 5, 5)
+            .expect("the empire needs its first launch site");
+        assert!(matches!(
+            &first,
+            Item::District { district, .. } if district == "spaceport"
+        ));
+        game
+            .apply(
+                0,
+                &Action::Produce {
+                    city: launch_city,
+                    item: first,
+                },
+            )
+            .unwrap();
+
+        let other = cities[1];
+        let next = ai.pick_item(&game, 0, other, 2, 2, 2, 2, 1, 10, 5, 5);
+        assert!(
+            !matches!(next, Some(Item::District { ref district, .. }) if district == "spaceport"),
+            "a queued Spaceport must stop every other city reserving another one: {next:?}"
         );
     }
 
