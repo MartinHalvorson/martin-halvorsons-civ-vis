@@ -2687,7 +2687,7 @@ mod trade_deal_tests {
 
         game.players[0]
             .civics
-            .insert("political_philosophy".to_string());
+            .insert("state_workforce".to_string());
         game.do_appoint_governor(0, "pingala", city).unwrap();
         assert!(
             (game.city_yields(city).gold - baseline_gold).abs() < 1e-9,
@@ -4954,7 +4954,7 @@ mod government_runtime_tests {
 
         game.players[0]
             .civics
-            .insert("political_philosophy".to_string());
+            .insert("state_workforce".to_string());
         game.do_appoint_governor(0, "pingala", city).unwrap();
         let baseline = without_government(&game);
         assert!(
@@ -4980,7 +4980,7 @@ mod government_runtime_tests {
 
         game.players[0]
             .civics
-            .insert("political_philosophy".to_string());
+            .insert("state_workforce".to_string());
         game.do_appoint_governor(0, "pingala", city).unwrap();
         let baseline = without_government(&game);
         assert!(
@@ -29675,10 +29675,12 @@ impl Game {
     /// Governor titles come from civic milestones and completed districts
     /// such as the Government Plaza.
     pub fn governor_titles(&self, pid: usize) -> usize {
-        let civics = ["political_philosophy", "civil_service", "guilds"]
+        let civics: usize = self.players[pid]
+            .civics
             .iter()
-            .filter(|c| self.players[pid].civics.contains(**c))
-            .count();
+            .filter_map(|civic| self.rules.civics.get(civic))
+            .map(|spec| spec.governor_title)
+            .sum();
         civics
             + self.players[pid]
                 .counters
@@ -40889,7 +40891,8 @@ mod district_mechanics {
                 pos: plaza,
             },
         ));
-        assert_eq!(game.governor_titles(0), 1);
+        // One from the civic the fixture researches, one from the Plaza.
+        assert_eq!(game.governor_titles(0), 2);
 
         game.cities.get_mut(&city).unwrap().pop = 4;
         let quarter = game

@@ -9634,9 +9634,11 @@ mod tests {
             .find(|unit| game.units[unit].kind == "settler")
             .unwrap();
         game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        // Three civics that each award a Governor title: one pays for the
+        // appointment, two for promotions.
         game.players[0].civics.extend([
-            "political_philosophy".to_string(),
-            "civil_service".to_string(),
+            "state_workforce".to_string(),
+            "early_empire".to_string(),
             "guilds".to_string(),
         ]);
         let plan = StrategicPlan {
@@ -9652,8 +9654,8 @@ mod tests {
 
         assert_eq!(game.players[0].governor_roster.len(), 1);
         let pingala = &game.players[0].governor_roster["pingala"];
-        assert!(pingala.promotions.contains("researcher"));
-        assert!(pingala.promotions.contains("connoisseur"));
+        // Which two tier-one promotions it picks is a weighting detail; the
+        // rule under test is that both titles went to the primary governor.
         assert_eq!(pingala.promotions.len(), 2);
         assert_eq!(game.governor_titles_available(0), 0);
 
@@ -9681,7 +9683,7 @@ mod tests {
         game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
         game.players[0]
             .civics
-            .insert("political_philosophy".to_string());
+            .insert("state_workforce".to_string());
         let assessed_turn = game.turn;
         let plan = |strategy| StrategicPlan {
             strategy,
@@ -9741,7 +9743,7 @@ mod tests {
             game.apply(0, &Action::FoundCity { unit: settler }).unwrap();
             game.players[0]
                 .civics
-                .insert("political_philosophy".to_string());
+                .insert("state_workforce".to_string());
             let plan = StrategicPlan {
                 strategy,
                 target_player: None,

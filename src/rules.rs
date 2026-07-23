@@ -601,6 +601,10 @@ pub struct TechSpec {
     pub effects: BTreeMap<String, f64>,
     #[serde(default)]
     pub repeatable: bool,
+    /// Governor titles the node awards on completion. Fourteen civics carry
+    /// one each; technologies carry none.
+    #[serde(default)]
+    pub governor_title: usize,
 }
 
 #[derive(Deserialize)]

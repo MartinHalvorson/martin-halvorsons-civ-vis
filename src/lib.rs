@@ -1789,9 +1789,7 @@ mod tests {
         assert_eq!(g.cities[&cid].loyalty, 100.0);
         // governor titles come from civic milestones
         assert_eq!(g.governor_titles(0), 0);
-        g.players[0]
-            .civics
-            .insert("political_philosophy".to_string());
+        g.players[0].civics.insert("state_workforce".to_string());
         assert_eq!(g.governor_titles(0), 1);
         g.apply(0, &Action::AssignGovernor { city: cid }).unwrap();
         assert!(g.apply(0, &Action::AssignGovernor { city: cid }).is_err());

@@ -1233,7 +1233,7 @@
     "power": 1,
     "effects": {
       "powered_production": 2,
-      "air_unit_xp_pct": 25,
+      "air_unit_xp_pct": 50,
       "air_slots": 1,
       "airlift": 1
     }

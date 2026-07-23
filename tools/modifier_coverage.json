@@ -42,7 +42,8 @@
     },
     "ADJUST_UNIT_EXPERIENCE_MODIFIER": {
       "status": "implemented",
-      "note": "XP scaling from promotions, Oligarchy and city-state bonuses."
+      "verified": true,
+      "note": "Verified row by row. Barracks, Armory, Basilikoi Paides, Lighthouse and Hangar all grant 25% to the units they train, matching. Two did not: After Action Reports is +50% and CIVVIS had 25, and Airport-trained aircraft gain 50% where CIVVIS had 25. Elite Forces (+100%) is a card CIVVIS does not carry."
     },
     "ADJUST_UNIT_GRANT_EXPERIENCE": {
       "status": "implemented",
@@ -98,7 +99,11 @@
     },
     "ADJUST_PLAYER_GOVERNOR_POINTS": {
       "status": "implemented",
-      "note": "Governor titles from civics, Government Plaza buildings and Great People."
+      "verified": true,
+      "note": "Verified row by row, and it found the biggest single gap yet. Fourteen civics each award a Governor title -- State Workforce, Early Empire, Defensive Tactics, Recorded History, Guilds, Medieval Faires, Civil Engineering, Nationalism, Mass Media, Mobilization, Globalization, Social Media, Near Future Governance and Future Civic. CIVVIS hardcoded three, two of which (Political Philosophy and Civil Service) award none in the shipped tree, so a full game yielded roughly a quarter of the titles it should. The grant is now a governor_title field on the civic. The Government Plaza district and its buildings award one each, and Casa de Contratacion three, all already present.",
+      "leads": [
+        "Casa de Contratacion's three titles are modelled as governor_titles 3 on the wonder; confirm they arrive once rather than per building."
+      ]
     },
     "ADJUST_DISTRICT_YIELD_MODIFIER": {
       "status": "implemented",
