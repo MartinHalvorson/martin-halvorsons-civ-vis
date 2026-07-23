@@ -960,7 +960,8 @@ if (VIEW === "simple" || VIEW === "minimal") VIEW = "strategic";
 // ---------------------------------------------------- unit animation layer
 // moves: id -> tween; floats: damage numbers; sparks: hit flashes;
 // deaths: fading casualties; strike: attacker lunge. All fast (<=250ms).
-const anim = { moves: new Map(), floats: [], sparks: [], deaths: [], strike: null };
+const anim = { moves: new Map(), floats: [], sparks: [], deaths: [],
+               claims: [], strike: null };
 const facing = new Map(); // unit id -> -1|1 (last horizontal direction)
 let pendingStrike = null;
 function worldXY(p) {
@@ -971,6 +972,12 @@ function worldXY(p) {
 function hexDistUI(a, b) {
   const dq = a[0] - b[0], dr = a[1] - b[1];
   return Math.max(Math.abs(dq), Math.abs(dr), Math.abs(dq + dr));
+}
+function claimPulse(c) {
+  const k = key(c.pos);
+  const at = anim.claims.findIndex(p => key(p.pos) === k);
+  if (at >= 0) anim.claims.splice(at, 1);   // restart it, never double it
+  anim.claims.push(c);
 }
 function animateDiff(prev, next) {
   if (!prev || !prev.units) return;
@@ -1034,6 +1041,35 @@ function animateDiff(prev, next) {
       }
       anim.sparks.push({ x, y, t0: now });
     }
+  }
+  // Territory changing hands is the clearest sign a strategy map is moving —
+  // borders creep as a city grows and flip wholesale on conquest — and it was
+  // the one event that simply redrew between frames with nothing to catch the
+  // eye. A tile losing its owner counts too: land going back to nobody is how
+  // a razing reads from above.
+  const prevOwn = new Map();
+  for (const t of prev.map.tiles) prevOwn.set(key(t.pos), t.owner);
+  const seized = [];
+  for (const t of next.map.tiles) {
+    const k = key(t.pos);
+    if (!prevOwn.has(k)) continue;              // newly surveyed, not seized
+    const po = prevOwn.get(k);
+    if (po === t.owner) continue;
+    const own = (t.owner === null || t.owner === undefined) ? po : t.owner;
+    if (own === null || own === undefined) continue;
+    seized.push({ pos: t.pos, owner: own, t0: now });
+  }
+  // A difference this wide is a fresh world or a change of observed player,
+  // not a conquest. Pulsing every tile then is noise rather than news.
+  // One live pulse per tile: watched at speed, a contested border can change
+  // hands several times inside a single fade, and stacked pulses would just
+  // pile alpha onto the same hex until it read as a permanent stain.
+  if (seized.length <= 80) for (const s of seized) claimPulse(s);
+  const prevCityOwner = new Map((prev.cities || []).map(c => [c.id, c.owner]));
+  for (const nc of next.cities || []) {
+    const po = prevCityOwner.get(nc.id);
+    if (po !== undefined && po === nc.owner) continue;   // nothing happened
+    claimPulse({ pos: nc.pos, owner: nc.owner, t0: now, big: true });
   }
   if (pendingStrike) {
     const a = nextU.get(pendingStrike.id) || prevU.get(pendingStrike.id);
@@ -1552,7 +1588,8 @@ function render(st, recordChronicle = true) {
     animateDiff(sameWorld ? state : null, st);
   } else {
     anim.moves.clear(); anim.floats.length = 0; anim.sparks.length = 0;
-    anim.deaths.length = 0; anim.strike = null; pendingStrike = null;
+    anim.deaths.length = 0; anim.claims.length = 0;
+    anim.strike = null; pendingStrike = null;
     sel = null; selCity = null;
   }
   if (!sameWorld) directorGoal = null;
@@ -3100,6 +3137,26 @@ function draw() {
       cx.fillStyle = `rgba(80,255,120,${(0.12 + 0.5 * v / mxv).toFixed(2)})`;
       cx.fill();
     }
+  }
+  // --- land changing hands: a ring in the claiming empire's color, opening out
+  // of the tile and fading. A city growing sends up one; a conquest sends up a
+  // wave of them, which is exactly the difference the eye should register.
+  for (let i = anim.claims.length - 1; i >= 0; i--) {
+    const cl = anim.claims[i];
+    const e = (performance.now() - cl.t0) / (cl.big ? 1500 : 1050);
+    if (e >= 1) { anim.claims.splice(i, 1); continue; }
+    const t2 = TMAP.get(key(cl.pos));
+    const [cx2, cyy] = hexXY(cl.pos[0], cl.pos[1]);
+    const cy2 = cyy - (t2 ? elev(t2) : 0);
+    const col = pcol(cl.owner);
+    const grow = cl.big ? 0.55 : 0.3;
+    cx.globalAlpha = (1 - e) * (cl.big ? 0.42 : 0.28);
+    cx.fillStyle = col;
+    hexPath(cx2, cy2, S * (0.55 + e * grow)); cx.fill();
+    cx.globalAlpha = (1 - e) * (cl.big ? 1 : 0.8);
+    cx.strokeStyle = col; cx.lineWidth = cl.big ? 3.4 : 2.2;
+    hexPath(cx2, cy2, S * (0.7 + e * (grow + 0.3))); cx.stroke();
+    cx.globalAlpha = 1;
   }
   // --- movement / attack highlights
   for (const k in hl) {
