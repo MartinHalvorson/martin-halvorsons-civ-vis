@@ -10,17 +10,24 @@
 #   ./exhibition.sh                              # foreground
 #   nohup ./exhibition.sh >/dev/null 2>&1 &      # background
 #
-# Env: PORT (default 8765), POLL_SEC (default 10), CARGO (default
+# Env: PORT (default 8765), POLL_SEC (default 3), GIT_SEC (default 30), CARGO (default
 # ~/.cargo/bin/cargo), EVOLVE_THREADS (default 8).
 set -uo pipefail
 
 PORT="${PORT:-8765}"
-POLL_SEC="${POLL_SEC:-10}"
+# POLL_SEC paces the cheap checks - is the server up, has the game been decided.
+# It is the whole gap between games: a decided game waits out one poll, and
+# relaunching the server onto a fresh map measures about two seconds. Fetching
+# origin that often would be pointless load, so git and build work runs on its
+# own slower cadence, GIT_SEC.
+POLL_SEC="${POLL_SEC:-3}"
+GIT_SEC="${GIT_SEC:-30}"
+last_git=0
 EVOLVE_THREADS="${EVOLVE_THREADS:-8}"
 # A freshly launched server generates its map before it binds the port. Judged
 # faster than that, the revive check below kills it and starts another, which
 # never finishes either - a loop that shows a black screen rather than a game.
-LAUNCH_GRACE_SEC="${LAUNCH_GRACE_SEC:-45}"
+LAUNCH_GRACE_SEC="${LAUNCH_GRACE_SEC:-12}"
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$repo"
@@ -97,7 +104,7 @@ if [ ! -f "$src/Cargo.toml" ]; then
     fi
 fi
 
-say "supervisor started (port $PORT, poll ${POLL_SEC}s)"
+say "supervisor started (port $PORT, poll ${POLL_SEC}s, git every ${GIT_SEC}s)"
 while true; do
     # 1. revive anything that died. A server process that is alive but no
     #    longer listening still holds its exe open, so clear the corpse before
@@ -118,7 +125,10 @@ while true; do
     #    the last build came from, not "did a fetch move something this round":
     #    a build cut short by a restart, or a failed build, otherwise leaves the
     #    exhibition on the previous commit with nothing left to trigger a retry.
-    if [ -f "$src/Cargo.toml" ]; then
+    did_git=0
+    if [ -f "$src/Cargo.toml" ] && [ $(( $(date +%s) - last_git )) -ge "$GIT_SEC" ]; then
+        last_git=$(date +%s)
+        did_git=1
         git -C "$src" fetch -q origin main 2>/dev/null || true
         head="$(git -C "$src" rev-parse FETCH_HEAD 2>/dev/null || true)"
         built="$( [ -f "$stamp" ] && tr -d '[:space:]' <"$stamp" || true )"
@@ -142,8 +152,11 @@ while true; do
     fi
 
     # 3. keep the shared checkout moving too, for the sessions working in it -
-    #    but only when it is clean, and nothing above depends on it.
-    if [ -z "$(git -C "$repo" status --porcelain --untracked-files=no)" ]; then
+    #    but only when it is clean, and nothing above depends on it. Shares the
+    #    git cadence: the fast poll exists for the changeover, and dragging a
+    #    status call through it every few seconds would only slow that down.
+    if [ "$did_git" -eq 1 ] &&
+        [ -z "$(git -C "$repo" status --porcelain --untracked-files=no)" ]; then
         if [ "$(git -C "$repo" rev-parse HEAD)" != "$(git -C "$repo" rev-parse origin/main)" ]; then
             git -C "$repo" merge --ff-only -q origin/main 2>/dev/null || \
                 say "shared checkout is not a fast-forward of origin/main; preserving it"

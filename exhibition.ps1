@@ -10,7 +10,12 @@
 # fire freely and the exhibition heals itself after a kill or a reboot.
 # By hand:     Start-Process powershell -WindowStyle Hidden -ArgumentList
 #              "-ExecutionPolicy","Bypass","-File","exhibition.ps1"
-param([int]$Port = 8765, [int]$PollSec = 10)
+# PollSec paces the cheap checks - is the server up, has the game been decided.
+# It is the whole gap between games: a decided game waits out one poll, and
+# relaunching the server onto a fresh map measures about two seconds. Fetching
+# origin every few seconds to match would be pointless load, so the git and
+# build work runs on its own slower cadence, GitSec.
+param([int]$Port = 8765, [int]$PollSec = 3, [int]$GitSec = 30)
 
 # One supervisor per port. Two of them fight: both build, both stop the gui
 # mid-swap, and the log stops meaning anything. The kernel drops this handle
@@ -89,7 +94,10 @@ if (-not (Test-Path "$src\Cargo.toml")) {
     else { Log "could not create build worktree at $src" }
 }
 
-Log "supervisor started (port $Port, poll ${PollSec}s)"
+Log "supervisor started (port $Port, poll ${PollSec}s, git every ${GitSec}s)"
+$lastGit = [DateTime]::MinValue
+$LaunchGraceSec = 12
+$lastLaunch = (Get-Date).AddSeconds(-$LaunchGraceSec)
 while ($true) {
     try {
         # 1. revive anything that died. A gui process that is alive but no
@@ -97,12 +105,17 @@ while ($true) {
         #    below then throws every round: the copy fails, Start-Gui is never
         #    reached, and the exhibition stays dark for good. Clear the corpse
         #    first so reviving cannot get stuck behind it.
+        #    A server generates its map before it binds, which measures about
+        #    two seconds - close enough to the poll interval that judging a
+        #    launch immediately would kill it and start another that never
+        #    finishes either. Give each launch a few seconds of quiet first.
+        $settling = ((Get-Date) - $lastLaunch).TotalSeconds -lt $LaunchGraceSec
         $guiUp = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-        if (-not $guiUp) {
+        if (-not $guiUp -and -not $settling) {
             Get-Process civvis-gui -ErrorAction SilentlyContinue | Stop-Process -Force
             Start-Sleep -Milliseconds 300
             if (Test-Path "$binRun\civvis-next.exe") { Promote-Staged }
-            if (Test-Path "$binRun\civvis-gui.exe") { Start-Gui }
+            if (Test-Path "$binRun\civvis-gui.exe") { Start-Gui; $lastLaunch = Get-Date }
         }
         $evoUp = Get-Process civvis-evolve -ErrorAction SilentlyContinue
         if (-not $evoUp -and (Test-Path "$binRun\civvis-evolve.exe")) { Start-Evolve }
@@ -112,7 +125,9 @@ while ($true) {
         #    this round": a build cut short by a restart, or a failed build,
         #    otherwise leaves the exhibition on the previous commit with
         #    nothing left to trigger a retry.
-        if (Test-Path "$src\Cargo.toml") {
+        if ((Test-Path "$src\Cargo.toml") -and
+            ((Get-Date) - $lastGit).TotalSeconds -ge $GitSec) {
+            $lastGit = Get-Date
             git -C $src fetch -q origin main 2>$null
             $head = git -C $src rev-parse FETCH_HEAD
             $built = if (Test-Path $stamp) { (Get-Content $stamp -Raw).Trim() } else { "" }
@@ -135,18 +150,21 @@ while ($true) {
                     Log "build FAILED for $short"
                 }
             }
-        }
 
-        # 3. keep the shared checkout moving too, for the sessions working in
-        #    it - but only when it is clean, and nothing above depends on it.
-        $localDirty = git -C $repo status --porcelain --untracked-files=no
-        if (-not $localDirty) {
-            $l = git -C $repo rev-parse HEAD
-            $r = git -C $repo rev-parse origin/main
-            if ($l -ne $r) {
-                git -C $repo merge --ff-only -q origin/main 2>$null
-                if ($LASTEXITCODE -ne 0) {
-                    Log "shared checkout is not a fast-forward of origin/main; preserving it"
+            # 3. keep the shared checkout moving too, for the sessions working
+            #    in it - but only when it is clean, and nothing above depends
+            #    on it. Shares the git cadence: the fast poll exists for the
+            #    changeover, and dragging a status call through it every few
+            #    seconds would only slow that down.
+            $localDirty = git -C $repo status --porcelain --untracked-files=no
+            if (-not $localDirty) {
+                $l = git -C $repo rev-parse HEAD
+                $r = git -C $repo rev-parse origin/main
+                if ($l -ne $r) {
+                    git -C $repo merge --ff-only -q origin/main 2>$null
+                    if ($LASTEXITCODE -ne 0) {
+                        Log "shared checkout is not a fast-forward of origin/main; preserving it"
+                    }
                 }
             }
         }
@@ -166,6 +184,7 @@ while ($true) {
                 Promote-Staged
                 Start-Gui
                 Start-Evolve
+                $lastLaunch = Get-Date
                 Log "swapped to latest build between games"
             } else {
                 Start-NextGame
