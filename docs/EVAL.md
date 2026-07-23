@@ -212,3 +212,49 @@ typical ~325) shows why: a one-ply evaluator happily spends the treasury on
 whatever looks locally good. This is the expected first rung, and it maps
 the remaining work precisely: a policy head trained on far more self-play,
 multi-ply search, and credit assignment past one action.
+
+## 2026-07-23 — the GPU loop actually runs (session F)
+
+**The Blackwell card needs `cu128`.** `pip install torch` (default) gives a
+CPU build; the `cu126` wheel reports `cuda True` but dies at the first
+kernel with `no kernel image is available for execution on the device`,
+because its arch list stops at `sm_90` and an RTX PRO 6000 Blackwell is
+`sm_120`. The working recipe is:
+
+```bash
+pip install --force-reinstall --no-deps torch     --index-url https://download.pytorch.org/whl/cu128
+python -c "import torch; print(torch.cuda.get_arch_list())"  # must list sm_120
+```
+
+`--force-reinstall` matters: pip sees the same version number across index
+URLs and otherwise does nothing.
+
+**First real GPU training run** — 144 self-play games, 18,405 samples, 28
+games held out *by game*:
+
+| | val BCE | verdict |
+|---|---|---|
+| constant-predictor baseline | 0.5623 | — |
+| trained net (`torch/cuda`) | **0.3685** | **BEATS baseline** |
+
+Both trainers now hold out whole games and print this baseline comparison,
+so a leaked or useless model cannot be mistaken for a good one.
+
+## 2026-07-23 — condemnation: correct rule, no balance change (session F)
+
+Civ 6's standing military answer to a religious offensive is condemning
+foreign Missionaries with military units (only while at war, or when the
+World Congress allows it). The engine had the rule implemented correctly,
+but `AdvancedAi` only invoked it when an enemy religious unit *already
+shared its tile* — which essentially never happens — so the counter was
+dead code. Military units near home now step onto an adjacent intruder and
+condemn it.
+
+**It did not change the balance.** On the same seeds (100-107) the victory
+mix is identical before and after: 5 religious, 2 diplomatic, 1 culture.
+That is worth stating plainly rather than claiming a win — and it points at
+the actual blocker: condemnation requires *being at war* with the religious
+leader, and these AIs largely are not. The remaining lever for the religion
+runaway is therefore in `victory_denial`'s willingness to open a war (or
+push the Congress vote) against a runaway faith, not in the condemn
+mechanic itself.
