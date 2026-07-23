@@ -2899,8 +2899,8 @@ impl AdvancedAi {
     /// A peacetime tile from which a ground force can begin the selected
     /// campaign without trespassing through the target's borders. Keeping the
     /// ring several tiles outside the city leaves room for different combat
-    /// roles to assemble while still putting the army within one operational
-    /// move of the front once war begins.
+    /// roles to assemble while keeping the army close enough to exploit the
+    /// opening turns of the war.
     fn campaign_staging_position(
         &self,
         g: &Game,
@@ -2914,7 +2914,7 @@ impl AdvancedAi {
             return false;
         };
         let distance = g.wdist(position, objective);
-        if !(3..=7).contains(&distance)
+        if !(3..=5).contains(&distance)
             || g.rules.is_water(tile)
             || g.city_at(position).is_some()
             || !g.unit_can_traverse(uid, position)
@@ -3018,7 +3018,7 @@ impl AdvancedAi {
 
         let current = unit.pos;
         let goals: HashSet<Pos> = g
-            .wdisk(objective, 7)
+            .wdisk(objective, 5)
             .into_iter()
             .filter(|position| {
                 self.campaign_staging_position(
@@ -10605,7 +10605,7 @@ mod tests {
             .wdisk(objective, 7)
             .into_iter()
             .filter(|position| {
-                (3..=7).contains(&game.wdist(*position, objective))
+                (3..=5).contains(&game.wdist(*position, objective))
                     && game.city_at(*position).is_none()
             })
             .take(army.len())
