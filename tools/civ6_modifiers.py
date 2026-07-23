@@ -64,6 +64,7 @@ class Modifiers:
         self.rows: dict[str, dict] = {}
         self.arguments: dict[str, dict[str, str]] = collections.defaultdict(dict)
         self.attachments: dict[str, list[str]] = collections.defaultdict(list)
+        self.owners: dict[str, list[str]] = collections.defaultdict(list)
 
     def apply_file(self, path: Path) -> None:
         try:
@@ -93,8 +94,22 @@ class Modifiers:
                 # the tables that bind a modifier to the object that owns it.
                 for node in table:
                     row = fields(node)
-                    if "ModifierId" in row:
-                        self.attachments[row["ModifierId"]].append(table.tag)
+                    if "ModifierId" not in row:
+                        continue
+                    # The other column names the object that owns the modifier
+                    # -- PolicyType, BuildingType, BeliefType and so on.
+                    # Without it a drill can say "some policy does this" but
+                    # cannot say which, which is the whole job.
+                    owner = next(
+                        (
+                            value
+                            for key, value in row.items()
+                            if key not in ("ModifierId", "Name", "Id")
+                        ),
+                        "",
+                    )
+                    self.attachments[row["ModifierId"]].append(table.tag)
+                    self.owners[row["ModifierId"]].append(owner)
 
     def resolve(self, modifier_id: str) -> tuple[str, str]:
         """The (EffectType, CollectionType) a modifier row resolves to.
@@ -262,7 +277,13 @@ def main() -> int:
             if effect != wanted:
                 continue
             arguments = modifiers.arguments.get(modifier_id, {})
-            owners = ",".join(modifiers.attachments.get(modifier_id) or ["(unattached)"])
+            attached = modifiers.attachments.get(modifier_id) or ["(unattached)"]
+            objects = list(modifiers.owners.get(modifier_id) or [])
+            objects += [""] * (len(attached) - len(objects))
+            owners = ", ".join(
+                f"{table}:{obj}" if obj else table
+                for table, obj in dict.fromkeys(zip(attached, objects))
+            )
             print(f"{modifier_id}\n    {collection}  {owners}\n    {arguments}")
         return 0
 

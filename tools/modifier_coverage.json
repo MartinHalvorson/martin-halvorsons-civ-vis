@@ -66,7 +66,8 @@
     },
     "ADJUST_GREAT_PERSON_POINTS": {
       "status": "implemented",
-      "note": "GPP from districts, buildings, policies and wonders; audited at zero divergence by the GreatPeople table."
+      "verified": true,
+      "note": "Verified row by row, and it found three wrong policy cards. Laissez-Faire is +4 Great Merchant empire-wide plus 2 per Bank, 4 per Stock Exchange, 4 Great Admiral per Seaport and 2 per Shipyard; Nobel Prize is +4 Great Scientist plus 2 per University, 4 per Research Lab, 2 Great Engineer per Factory and 4 per Power Plant; Military Organization was missing its flat +4 Great General. CIVVIS had collapsed the first two into one flat number per building tier. Strategos, Inspiration, Revelation, Literary Tradition, Navigation, Traveling Merchants, Frescoes, Invention and Symphonies were already exact. Divine Spark and the Commemoration/Zhangye Danxia rows are pantheon and content scope."
     },
     "ADJUST_CITY_TOURISM": {
       "status": "implemented",

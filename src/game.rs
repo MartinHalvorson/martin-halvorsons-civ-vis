@@ -1749,6 +1749,69 @@ mod governor_runtime_tests {
     }
 
     #[test]
+    fn late_great_person_cards_pay_their_shipped_amounts_per_building() {
+        // Laissez-Faire, Nobel Prize and Military Organization each combine a
+        // flat empire grant with a different amount per building tier; a
+        // single number per card is not what the game ships.
+        let mut game = Game::new_full(1, 24, 16, 91_921, 200, 0, false);
+        let city = found_capital(&mut game, 0);
+        let center = game.cities[&city].pos;
+        let sites: Vec<Pos> = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .filter(|position| *position != center)
+            .collect();
+        // Buildings only pay out while their district stands.
+        for (index, district) in ["commercial_hub", "harbor", "campus", "industrial_zone", "encampment"]
+            .into_iter()
+            .enumerate()
+        {
+            set_district(&mut game, city, sites[index], district);
+        }
+        for building in [
+            "bank",
+            "stock_exchange",
+            "seaport",
+            "shipyard",
+            "university",
+            "research_lab",
+            "factory",
+            "coal_power_plant",
+            "armory",
+            "military_academy",
+        ] {
+            game.cities
+                .get_mut(&city)
+                .unwrap()
+                .buildings
+                .push(building.to_string());
+        }
+        // Districts and buildings pay their own Great Person points, so
+        // measure what each card adds on top rather than the total.
+        let earned = |game: &mut Game, card: &str, kind: &str| {
+            let mut collect = |policies: BTreeSet<String>| {
+                game.players[0].policies = policies;
+                game.players[0].gpp.clear();
+                game.process_great_people(0);
+                game.players[0].gpp.get(kind).copied().unwrap_or(0.0)
+            };
+            let baseline = collect(BTreeSet::new());
+            collect([card.to_string()].into_iter().collect()) - baseline
+        };
+        // 4 empire-wide, 2 from the Bank, 4 from the Stock Exchange.
+        assert_eq!(earned(&mut game, "laissez_faire", "merchant"), 10.0);
+        // 4 from the Seaport and 2 from the Shipyard, with no flat grant.
+        assert_eq!(earned(&mut game, "laissez_faire", "admiral"), 6.0);
+        // 4 empire-wide, 2 from the University, 4 from the Research Lab.
+        assert_eq!(earned(&mut game, "nobel_prize", "scientist"), 10.0);
+        // 2 from the Factory and 4 from the Coal Power Plant.
+        assert_eq!(earned(&mut game, "nobel_prize", "engineer"), 6.0);
+        // 4 empire-wide, 2 from the Armory, 4 from the Military Academy.
+        assert_eq!(earned(&mut game, "military_organization", "general"), 10.0);
+    }
+
+    #[test]
     fn pingala_executes_population_gpp_space_and_curator_effects() {
         let mut game = Game::new_full(1, 24, 16, 91_784, 200, 0, false);
         let city = found_capital(&mut game, 0);
@@ -11162,35 +11225,65 @@ impl Game {
                     ),
                     _ => {}
                 }
-                if matches!(b.as_str(), "bank" | "stock_exchange") {
+                // Laissez-Faire and Nobel Prize grant a different amount per
+                // building tier rather than one flat number per card.
+                if b.as_str() == "bank" {
                     add(
                         &mut city_earn,
                         "merchant",
-                        self.policy_effect(pid, "late_economic_gpp"),
+                        self.policy_effect(pid, "gpp_merchant_per_bank"),
                     );
                 }
-                if matches!(b.as_str(), "shipyard" | "seaport") {
+                if b.as_str() == "stock_exchange" {
+                    add(
+                        &mut city_earn,
+                        "merchant",
+                        self.policy_effect(pid, "gpp_merchant_per_stock_exchange"),
+                    );
+                }
+                if b.as_str() == "shipyard" {
                     add(
                         &mut city_earn,
                         "admiral",
-                        self.policy_effect(pid, "late_economic_gpp"),
+                        self.policy_effect(pid, "gpp_admiral_per_shipyard"),
                     );
                 }
-                if matches!(b.as_str(), "university" | "research_lab") {
+                if b.as_str() == "seaport" {
+                    add(
+                        &mut city_earn,
+                        "admiral",
+                        self.policy_effect(pid, "gpp_admiral_per_seaport"),
+                    );
+                }
+                if b.as_str() == "university" {
                     add(
                         &mut city_earn,
                         "scientist",
-                        self.policy_effect(pid, "late_science_industry_gpp"),
+                        self.policy_effect(pid, "gpp_scientist_per_university"),
+                    );
+                }
+                if b.as_str() == "research_lab" {
+                    add(
+                        &mut city_earn,
+                        "scientist",
+                        self.policy_effect(pid, "gpp_scientist_per_research_lab"),
+                    );
+                }
+                if b.as_str() == "factory" {
+                    add(
+                        &mut city_earn,
+                        "engineer",
+                        self.policy_effect(pid, "gpp_engineer_per_factory"),
                     );
                 }
                 if matches!(
                     b.as_str(),
-                    "factory" | "coal_power_plant" | "oil_power_plant" | "nuclear_power_plant"
+                    "coal_power_plant" | "oil_power_plant" | "nuclear_power_plant"
                 ) {
                     add(
                         &mut city_earn,
                         "engineer",
-                        self.policy_effect(pid, "late_science_industry_gpp"),
+                        self.policy_effect(pid, "gpp_engineer_per_power_plant"),
                     );
                 }
             }
