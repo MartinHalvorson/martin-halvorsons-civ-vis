@@ -8030,6 +8030,11 @@ impl From<EventLog> for Vec<Event> {
     }
 }
 
+// `track_fog_memory` is `#[serde(skip, default = "yes")]`, so this is the
+// deserialization default that keeps fog tracking on for every save and the
+// normal runtime path. `skip` elides the call site the compiler can see, so it
+// reports the function as unused; it is not.
+#[allow(dead_code)]
 fn yes() -> bool {
     true
 }
