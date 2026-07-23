@@ -968,21 +968,22 @@ def main() -> int:
             if manual_request is not None:
                 mode, requested_settings = manual_request
                 if mode == "fresh_code":
-                    if prebuild_process is None:
-                        log("fresh-code sim requested; fetching and rebuilding")
-                        prebuild_process = start_background_prebuild()
-                        time.sleep(args.poll)
-                        continue
-                    build_status = prebuild_process.poll()
-                    if build_status is None:
-                        time.sleep(args.poll)
-                        continue
-                    prebuild_process = None
-                    if build_status != 0 or not runtime_matches(source_snapshot()):
-                        log("fresh-code build is not ready; preserving the current sim and retrying")
-                        time.sleep(max(0.1, args.build_retry))
-                        continue
-                    log("fresh-code build is ready; starting a new simulation")
+                    snapshot = source_snapshot()
+                    latest_ready = runtime_matches(snapshot)
+                    if prebuild_process is not None and prebuild_process.poll() is not None:
+                        prebuild_process = None
+                        snapshot = source_snapshot()
+                        latest_ready = runtime_matches(snapshot)
+                    if latest_ready:
+                        log("fresh-code build is ready; starting a new simulation")
+                    else:
+                        if prebuild_process is None:
+                            log("fresh-code sim requested; rebuilding in the background")
+                            prebuild_process = start_background_prebuild()
+                        log(
+                            "fresh code is not ready; starting the verified fallback "
+                            "immediately and refreshing it during play"
+                        )
                 else:
                     log("restart requested; starting a new simulation on existing code")
 
@@ -994,15 +995,17 @@ def main() -> int:
                 except FileNotFoundError:
                     pass
                 settings = requested_settings
+                launch_runtime_id = promoted_runtime_id()
                 process = start_server(args.port, settings, False)
+                running_runtime_id = launch_runtime_id
                 state = wait_for_server(args.port, process)
                 unavailable_since = None
                 last_progress = progress_marker(state)
                 progress_at = time.monotonic()
                 checkpointed_progress = None
                 checkpoint_at = 0.0
-                refresh_pending = False
-                refresh_at = 0.0
+                refresh_pending = not runtime_matches(source_snapshot())
+                refresh_at = time.monotonic()
                 source_check_at = time.monotonic() + max(1.0, args.source_check_interval)
                 continue
 

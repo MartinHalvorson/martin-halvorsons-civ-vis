@@ -465,7 +465,7 @@ class RecoveryTests(unittest.TestCase):
         build.assert_not_called()
         self.assertFalse(checkpoint.exists())
 
-    def test_fresh_code_request_waits_for_successful_build_before_restarting(self):
+    def test_fresh_code_request_starts_fallback_while_build_runs(self):
         requested = {
             "players": 4,
             "width": 60,
@@ -490,7 +490,7 @@ class RecoveryTests(unittest.TestCase):
         }
         replacement = {"seed": 10, "turn": 1, "current": 0, "winner": None}
         process = SimpleNamespace(pid=654)
-        worker = SimpleNamespace(pid=777, poll=lambda: 0)
+        worker = SimpleNamespace(pid=777, poll=lambda: None)
         with tempfile.TemporaryDirectory() as directory:
             checkpoint = Path(directory) / "save.json"
             with (
@@ -498,15 +498,21 @@ class RecoveryTests(unittest.TestCase):
                 patch.object(supervisor, "checkpoint_path", return_value=checkpoint),
                 patch.object(supervisor, "process_alive", return_value=True),
                 patch.object(supervisor, "source_snapshot", return_value="current"),
-                patch.object(supervisor, "runtime_matches", return_value=True),
+                patch.object(
+                    supervisor,
+                    "runtime_matches",
+                    side_effect=[True, False, False],
+                ),
                 patch.object(
                     supervisor,
                     "read_state",
-                    side_effect=[active, active, active, KeyboardInterrupt],
+                    side_effect=[active, active, replacement, KeyboardInterrupt],
                 ),
                 patch.object(
                     supervisor, "start_background_prebuild", return_value=worker
                 ) as build,
+                patch.object(supervisor, "stop_background_prebuild"),
+                patch.object(supervisor, "capture_checkpoint", return_value=False),
                 patch.object(supervisor, "start_server", return_value=process) as start,
                 patch.object(supervisor, "wait_for_server", return_value=replacement),
                 patch.object(supervisor, "stop_server"),
