@@ -413,7 +413,11 @@
       "plains",
       "snow",
       "tundra"
-    ]
+    ],
+    "effects": {
+      "floodplains_culture": 1,
+      "adjacent_wonder_faith": 2
+    }
   },
   "great_wall": {
     "tech": "masonry",

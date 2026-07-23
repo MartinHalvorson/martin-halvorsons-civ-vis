@@ -26,8 +26,8 @@
     "moves": 3,
     "strength": 10,
     "promotion_class": "recon",
-    "upgrades_to": "skirmisher",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "skirmisher"
   },
   "warrior": {
     "class": "military",
@@ -35,8 +35,9 @@
     "moves": 2,
     "strength": 20,
     "promotion_class": "melee",
-    "upgrades_to": "swordsman",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "swordsman",
+    "obsolete_tech": "gunpowder"
   },
   "slinger": {
     "class": "military",
@@ -46,7 +47,8 @@
     "ranged_strength": 15,
     "range": 1,
     "promotion_class": "ranged",
-    "upgrades_to": "archer"
+    "upgrade_to": "archer",
+    "obsolete_tech": "machinery"
   },
   "archer": {
     "class": "military",
@@ -58,7 +60,8 @@
     "range": 2,
     "tech": "archery",
     "promotion_class": "ranged",
-    "upgrades_to": "crossbowman"
+    "upgrade_to": "crossbowman",
+    "obsolete_tech": "ballistics"
   },
   "spearman": {
     "class": "military",
@@ -68,8 +71,9 @@
     "strength": 25,
     "tech": "bronze_working",
     "promotion_class": "anti_cavalry",
-    "upgrades_to": "pikeman",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "pikeman",
+    "obsolete_tech": "metal_casting"
   },
   "swordsman": {
     "class": "military",
@@ -81,8 +85,9 @@
     "requires_resource": "iron",
     "resource_cost": 20,
     "promotion_class": "melee",
-    "upgrades_to": "man_at_arms",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "man_at_arms",
+    "obsolete_tech": "replaceable_parts"
   },
   "horseman": {
     "class": "military",
@@ -95,8 +100,9 @@
     "resource_cost": 20,
     "cavalry": true,
     "promotion_class": "light_cavalry",
-    "upgrades_to": "courser",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "courser",
+    "obsolete_tech": "synthetic_materials"
   },
   "catapult": {
     "class": "military",
@@ -109,7 +115,8 @@
     "tech": "engineering",
     "siege": true,
     "promotion_class": "siege",
-    "upgrades_to": "trebuchet"
+    "upgrade_to": "trebuchet",
+    "obsolete_tech": "steel"
   },
   "crossbowman": {
     "class": "military",
@@ -121,7 +128,8 @@
     "range": 2,
     "tech": "machinery",
     "promotion_class": "ranged",
-    "upgrades_to": "field_cannon"
+    "upgrade_to": "field_cannon",
+    "obsolete_tech": "advanced_ballistics"
   },
   "pikeman": {
     "class": "military",
@@ -131,8 +139,9 @@
     "strength": 45,
     "tech": "military_tactics",
     "promotion_class": "anti_cavalry",
-    "upgrades_to": "pike_and_shot",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "pike_and_shot",
+    "obsolete_tech": "composites"
   },
   "knight": {
     "class": "military",
@@ -145,8 +154,9 @@
     "resource_cost": 20,
     "cavalry": true,
     "promotion_class": "heavy_cavalry",
-    "upgrades_to": "cuirassier",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "cuirassier",
+    "obsolete_tech": "composites"
   },
   "musketman": {
     "class": "military",
@@ -158,8 +168,9 @@
     "requires_resource": "niter",
     "resource_cost": 20,
     "promotion_class": "melee",
-    "upgrades_to": "line_infantry",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "line_infantry",
+    "obsolete_tech": "advanced_ballistics"
   },
   "galley": {
     "class": "military",
@@ -170,8 +181,9 @@
     "domain": "sea",
     "tech": "sailing",
     "promotion_class": "naval_melee",
-    "upgrades_to": "caravel",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "caravel",
+    "obsolete_tech": "steam_power"
   },
   "quadrireme": {
     "class": "military",
@@ -184,8 +196,9 @@
     "domain": "sea",
     "tech": "shipbuilding",
     "promotion_class": "naval_ranged",
-    "upgrades_to": "frigate",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "frigate",
+    "obsolete_tech": "steel"
   },
   "caravel": {
     "class": "military",
@@ -197,8 +210,9 @@
     "domain": "sea",
     "tech": "cartography",
     "promotion_class": "naval_melee",
-    "upgrades_to": "ironclad",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "ironclad",
+    "obsolete_tech": "combined_arms"
   },
   "frigate": {
     "class": "military",
@@ -213,8 +227,9 @@
     "requires_resource": "niter",
     "resource_cost": 20,
     "promotion_class": "naval_ranged",
-    "upgrades_to": "battleship",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "battleship",
+    "obsolete_tech": "lasers"
   },
   "privateer": {
     "class": "military",
@@ -227,8 +242,9 @@
     "domain": "sea",
     "civic": "mercantilism",
     "promotion_class": "naval_raider",
-    "upgrades_to": "submarine",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "submarine",
+    "obsolete_tech": "lasers"
   },
   "ironclad": {
     "class": "military",
@@ -243,8 +259,8 @@
     "resource_cost": 1,
     "resource_maintenance": 1,
     "promotion_class": "naval_melee",
-    "upgrades_to": "destroyer",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "destroyer"
   },
   "battleship": {
     "class": "military",
@@ -262,8 +278,8 @@
     "anti_air_strength": 90,
     "anti_air_range": 1,
     "promotion_class": "naval_ranged",
-    "upgrades_to": "missile_cruiser",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "missile_cruiser"
   },
   "submarine": {
     "class": "military",
@@ -279,7 +295,7 @@
     "resource_cost": 1,
     "resource_maintenance": 1,
     "promotion_class": "naval_raider",
-    "upgrades_to": "nuclear_submarine"
+    "upgrade_to": "nuclear_submarine"
   },
   "destroyer": {
     "class": "military",
@@ -394,7 +410,7 @@
     "maintenance": 1,
     "moves": 2,
     "tech": "masonry",
-    "upgrades_to": "siege_tower"
+    "upgrade_to": "siege_tower"
   },
   "siege_tower": {
     "class": "support",
@@ -402,7 +418,7 @@
     "maintenance": 2,
     "moves": 2,
     "tech": "machinery",
-    "upgrades_to": "medic"
+    "upgrade_to": "medic"
   },
   "legion": {
     "class": "military",
@@ -416,8 +432,9 @@
     "unique_to": "Rome",
     "replaces": "swordsman",
     "promotion_class": "melee",
-    "upgrades_to": "man_at_arms",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "man_at_arms",
+    "obsolete_tech": "replaceable_parts"
   },
   "hoplite": {
     "class": "military",
@@ -429,8 +446,9 @@
     "unique_to": "Greece",
     "replaces": "spearman",
     "promotion_class": "anti_cavalry",
-    "upgrades_to": "pikeman",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "pikeman",
+    "obsolete_tech": "metal_casting"
   },
   "eagle_warrior": {
     "class": "military",
@@ -440,8 +458,9 @@
     "unique_to": "Aztec",
     "replaces": "warrior",
     "promotion_class": "melee",
-    "upgrades_to": "swordsman",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "swordsman",
+    "obsolete_tech": "gunpowder"
   },
   "war_cart": {
     "class": "military",
@@ -451,8 +470,9 @@
     "unique_to": "Sumeria",
     "cavalry": true,
     "promotion_class": "heavy_cavalry",
-    "upgrades_to": "knight",
-    "zone_of_control": true
+    "zone_of_control": true,
+    "upgrade_to": "knight",
+    "obsolete_tech": "stirrups"
   },
   "pitati_archer": {
     "class": "military",
@@ -466,7 +486,8 @@
     "unique_to": "Nubia",
     "replaces": "archer",
     "promotion_class": "ranged",
-    "upgrades_to": "crossbowman"
+    "upgrade_to": "crossbowman",
+    "obsolete_tech": "ballistics"
   },
   "maryannu_chariot_archer": {
     "class": "military",
@@ -480,7 +501,8 @@
     "unique_to": "Egypt",
     "cavalry": true,
     "promotion_class": "ranged",
-    "upgrades_to": "crossbowman"
+    "upgrade_to": "crossbowman",
+    "obsolete_tech": "ballistics"
   },
   "saka_horse_archer": {
     "class": "military",
@@ -494,7 +516,8 @@
     "unique_to": "Scythia",
     "cavalry": true,
     "promotion_class": "ranged",
-    "upgrades_to": "crossbowman"
+    "upgrade_to": "crossbowman",
+    "obsolete_tech": "ballistics"
   },
   "crouching_tiger": {
     "class": "military",
@@ -508,27 +531,37 @@
     "unique_to": "China",
     "replaces": "crossbowman",
     "promotion_class": "ranged",
-    "upgrades_to": "field_cannon"
+    "upgrade_to": "field_cannon",
+    "obsolete_tech": "advanced_ballistics"
   },
   "heavy_chariot": {
     "class": "military", "cost": 65, "maintenance": 1, "moves": 2, "strength": 28,
-    "tech": "wheel", "cavalry": true, "promotion_class": "heavy_cavalry", "upgrades_to": "knight", "zone_of_control": true
+    "tech": "wheel", "cavalry": true, "promotion_class": "heavy_cavalry", "zone_of_control": true,
+    "upgrade_to": "knight",
+    "obsolete_tech": "combustion"
   },
   "man_at_arms": {
     "class": "military", "cost": 160, "maintenance": 3, "moves": 2, "strength": 45,
-    "tech": "apprenticeship", "requires_resource": "iron", "resource_cost": 20, "promotion_class": "melee", "upgrades_to": "musketman", "zone_of_control": true
+    "tech": "apprenticeship", "requires_resource": "iron", "resource_cost": 20, "promotion_class": "melee", "zone_of_control": true,
+    "upgrade_to": "musketman",
+    "obsolete_tech": "replaceable_parts"
   },
   "courser": {
     "class": "military", "cost": 200, "maintenance": 3, "moves": 5, "strength": 46,
-    "tech": "castles", "requires_resource": "horses", "resource_cost": 20, "cavalry": true, "promotion_class": "light_cavalry", "upgrades_to": "cavalry", "zone_of_control": true
+    "tech": "castles", "requires_resource": "horses", "resource_cost": 20, "cavalry": true, "promotion_class": "light_cavalry", "zone_of_control": true,
+    "upgrade_to": "cavalry",
+    "obsolete_tech": "synthetic_materials"
   },
   "skirmisher": {
     "class": "military", "cost": 150, "maintenance": 2, "moves": 3, "strength": 20,
-    "ranged_strength": 30, "range": 1, "tech": "machinery", "promotion_class": "recon", "upgrades_to": "ranger"
+    "ranged_strength": 30, "range": 1, "tech": "machinery", "promotion_class": "recon",
+    "upgrade_to": "ranger"
   },
   "trebuchet": {
     "class": "military", "cost": 200, "maintenance": 3, "moves": 2, "strength": 35,
-    "bombard_strength": 45, "range": 2, "tech": "military_engineering", "siege": true, "promotion_class": "siege", "upgrades_to": "bombard"
+    "bombard_strength": 45, "range": 2, "tech": "military_engineering", "siege": true, "promotion_class": "siege",
+    "upgrade_to": "bombard",
+    "obsolete_tech": "steel"
   },
   "military_engineer": {
     "class": "support", "cost": 170, "maintenance": 2, "moves": 2, "charges": 2,
@@ -538,77 +571,97 @@
   "bombard": {
     "class": "military", "cost": 280, "maintenance": 4, "moves": 2, "strength": 45,
     "bombard_strength": 55, "range": 2, "tech": "metal_casting", "requires_resource": "niter", "resource_cost": 20,
-    "siege": true, "promotion_class": "siege", "upgrades_to": "artillery"
+    "siege": true, "promotion_class": "siege",
+    "upgrade_to": "artillery",
+    "obsolete_tech": "guidance_systems"
   },
   "pike_and_shot": {
     "class": "military", "cost": 250, "maintenance": 4, "moves": 2, "strength": 55,
-    "tech": "metal_casting", "promotion_class": "anti_cavalry", "upgrades_to": "at_crew", "zone_of_control": true
+    "tech": "metal_casting", "promotion_class": "anti_cavalry", "zone_of_control": true,
+    "upgrade_to": "at_crew",
+    "obsolete_tech": "combined_arms"
   },
   "cavalry": {
     "class": "military", "cost": 330, "maintenance": 5, "moves": 5, "strength": 62,
     "tech": "military_science", "requires_resource": "horses", "resource_cost": 20, "cavalry": true,
-    "promotion_class": "light_cavalry", "upgrades_to": "helicopter", "zone_of_control": true
+    "promotion_class": "light_cavalry", "zone_of_control": true,
+    "upgrade_to": "helicopter"
   },
   "line_infantry": {
     "class": "military", "cost": 360, "maintenance": 5, "moves": 2, "strength": 65,
-    "tech": "military_science", "requires_resource": "niter", "resource_cost": 20, "promotion_class": "melee", "upgrades_to": "infantry", "zone_of_control": true
+    "tech": "military_science", "requires_resource": "niter", "resource_cost": 20, "promotion_class": "melee", "zone_of_control": true,
+    "upgrade_to": "infantry",
+    "obsolete_tech": "satellites"
   },
   "cuirassier": {
     "class": "military", "cost": 330, "maintenance": 5, "moves": 4, "strength": 64,
     "tech": "ballistics", "requires_resource": "iron", "resource_cost": 20, "cavalry": true,
-    "promotion_class": "heavy_cavalry", "upgrades_to": "tank", "zone_of_control": true
+    "promotion_class": "heavy_cavalry", "zone_of_control": true,
+    "upgrade_to": "tank",
+    "obsolete_tech": "combustion"
   },
   "field_cannon": {
     "class": "military", "cost": 330, "maintenance": 5, "moves": 2, "strength": 50,
-    "ranged_strength": 60, "range": 2, "tech": "ballistics", "promotion_class": "ranged", "upgrades_to": "machine_gun"
+    "ranged_strength": 60, "range": 2, "tech": "ballistics", "promotion_class": "ranged",
+    "upgrade_to": "machine_gun",
+    "obsolete_tech": "telecommunications"
   },
   "ranger": {
     "class": "military", "cost": 380, "maintenance": 5, "moves": 3, "strength": 45,
-    "ranged_strength": 60, "range": 1, "tech": "rifling", "promotion_class": "recon", "upgrades_to": "spec_ops"
+    "ranged_strength": 60, "range": 1, "tech": "rifling", "promotion_class": "recon",
+    "upgrade_to": "spec_ops"
   },
   "infantry": {
     "class": "military", "cost": 430, "maintenance": 6, "moves": 2, "strength": 75,
-    "tech": "replaceable_parts", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1, "promotion_class": "melee", "upgrades_to": "mechanized_infantry", "zone_of_control": true
+    "tech": "replaceable_parts", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1, "promotion_class": "melee", "zone_of_control": true,
+    "upgrade_to": "mechanized_infantry"
   },
   "artillery": {
     "class": "military", "cost": 430, "maintenance": 6, "moves": 2, "strength": 60,
     "bombard_strength": 80, "range": 2, "tech": "steel", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1,
-    "siege": true, "promotion_class": "siege", "upgrades_to": "rocket_artillery"
+    "siege": true, "promotion_class": "siege",
+    "upgrade_to": "rocket_artillery"
   },
   "biplane": {
     "class": "military", "cost": 430, "maintenance": 6, "moves": 6, "strength": 80,
     "ranged_strength": 75, "range": 4, "sight": 4, "tech": "flight", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1,
-    "requires_district": "aerodrome", "domain": "air", "promotion_class": "air_fighter", "upgrades_to": "fighter"
+    "requires_district": "aerodrome", "domain": "air", "promotion_class": "air_fighter",
+    "upgrade_to": "fighter"
   },
-  "observation_balloon": {"class": "support", "cost": 240, "maintenance": 2, "moves": 2, "tech": "flight", "sight": 3, "upgrades_to": "drone", "effects": {"adjacent_siege_range": 1}},
-  "medic": {"class": "support", "cost": 370, "maintenance": 5, "moves": 2, "tech": "sanitation", "upgrades_to": "supply_convoy", "effects": {"adjacent_heal": 20}},
+  "observation_balloon": {"class": "support", "cost": 240, "maintenance": 2, "moves": 2, "tech": "flight", "sight": 3, "effects": {"adjacent_siege_range": 1}, "upgrade_to": "drone"},
+  "medic": {"class": "support", "cost": 370, "maintenance": 5, "moves": 2, "tech": "sanitation", "effects": {"adjacent_heal": 20}, "upgrade_to": "supply_convoy"},
   "tank": {
     "class": "military", "cost": 480, "maintenance": 6, "moves": 4, "strength": 85,
     "tech": "combustion", "requires_resource": "oil", "resource_cost": 1, "resource_maintenance": 1, "cavalry": true,
-    "promotion_class": "heavy_cavalry", "upgrades_to": "modern_armor", "zone_of_control": true
+    "promotion_class": "heavy_cavalry", "zone_of_control": true,
+    "upgrade_to": "modern_armor"
   },
   "supply_convoy": {"class": "support", "cost": 450, "maintenance": 2, "moves": 4, "tech": "combustion", "effects": {"adjacent_heal": 20, "adjacent_movement": 1}},
   "fighter": {
     "class": "military", "cost": 520, "maintenance": 7, "moves": 8, "strength": 100,
     "ranged_strength": 100, "range": 5, "sight": 4, "tech": "advanced_flight", "requires_resource": "aluminum", "resource_cost": 1, "resource_maintenance": 1,
-    "requires_district": "aerodrome", "domain": "air", "promotion_class": "air_fighter", "upgrades_to": "jet_fighter"
+    "requires_district": "aerodrome", "domain": "air", "promotion_class": "air_fighter",
+    "upgrade_to": "jet_fighter"
   },
   "bomber": {
     "class": "military", "cost": 560, "maintenance": 7, "moves": 10, "strength": 85,
     "bombard_strength": 110, "range": 10, "sight": 4, "tech": "advanced_flight", "requires_resource": "aluminum", "resource_cost": 1, "resource_maintenance": 1,
-    "requires_district": "aerodrome", "domain": "air", "promotion_class": "air_bomber", "upgrades_to": "jet_bomber", "siege": true
+    "requires_district": "aerodrome", "domain": "air", "promotion_class": "air_bomber", "siege": true,
+    "upgrade_to": "jet_bomber"
   },
   "anti_air_gun": {
     "class": "support", "cost": 455, "maintenance": 2, "moves": 2,
-    "anti_air_strength": 90, "anti_air_range": 1, "tech": "advanced_ballistics", "upgrades_to": "mobile_sam"
+    "anti_air_strength": 90, "anti_air_range": 1, "tech": "advanced_ballistics",
+    "upgrade_to": "mobile_sam"
   },
   "machine_gun": {
     "class": "military", "cost": 540, "maintenance": 6, "moves": 2, "strength": 70,
     "ranged_strength": 85, "range": 2, "tech": "advanced_ballistics", "promotion_class": "ranged"
   },
   "at_crew": {
-    "class": "military", "cost": 400, "maintenance": 4, "moves": 2, "strength": 80,
-    "tech": "chemistry", "promotion_class": "anti_cavalry", "upgrades_to": "modern_at", "zone_of_control": true
+    "class": "military", "cost": 400, "maintenance": 4, "moves": 2, "strength": 75,
+    "tech": "chemistry", "promotion_class": "anti_cavalry", "zone_of_control": true,
+    "upgrade_to": "modern_at"
   },
   "drone": {"class": "support", "cost": 420, "maintenance": 3, "moves": 3, "tech": "computers", "sight": 5, "effects": {"adjacent_siege_range": 1, "adjacent_siege_bombard": 5}},
   "modern_armor": {

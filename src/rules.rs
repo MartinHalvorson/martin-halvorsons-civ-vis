@@ -223,11 +223,6 @@ pub struct UnitSpec {
     pub unique_to: Option<String>, // civ that alone may build this unit
     #[serde(default)]
     pub replaces: Option<String>, // base unit this unique replaces
-    /// Direct Gathering Storm upgrade successor. Runtime replacement
-    /// resolution substitutes the owner's unique unit when it replaces this
-    /// target, keeping upgrade chains data-driven for every unit class.
-    #[serde(default)]
-    pub upgrades_to: Option<String>,
     #[serde(default)]
     pub promotion_class: String,
     #[serde(default)]
@@ -250,6 +245,16 @@ pub struct UnitSpec {
     /// ordinary improvement catalog; engineers/archaeologists are explicit).
     #[serde(default)]
     pub builds: Vec<String>,
+    /// The unit this one becomes when upgraded for Gold, from the shipped
+    /// `UnitUpgrades` table. A civilization's unique replacement stands in for
+    /// the base unit whenever it owns one.
+    #[serde(default)]
+    pub upgrade_to: Option<String>,
+    /// The shipped `MandatoryObsoleteTech`. Once its owner researches this,
+    /// the unit can no longer be trained or purchased; existing copies live on
+    /// until they are upgraded.
+    #[serde(default)]
+    pub obsolete_tech: Option<String>,
     /// Data-driven auras and special unit rules. Support units currently use
     /// `adjacent_siege_range`, `adjacent_siege_bombard`, `adjacent_heal`, and
     /// `adjacent_movement`; unknown entries remain forward-compatible.
@@ -1274,7 +1279,7 @@ mod tests {
             .units
             .iter()
             .filter_map(|(unit, spec)| {
-                spec.upgrades_to
+                spec.upgrade_to
                     .as_deref()
                     .map(|target| (unit.as_str(), target))
             })
@@ -1294,7 +1299,7 @@ mod tests {
             let mut cursor = Some(*source);
             while let Some(unit) = cursor {
                 assert!(seen.insert(unit), "unit upgrade cycle reaches {unit}");
-                cursor = rules.units[unit].upgrades_to.as_deref();
+                cursor = rules.units[unit].upgrade_to.as_deref();
             }
         }
     }

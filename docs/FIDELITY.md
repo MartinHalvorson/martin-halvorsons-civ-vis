@@ -148,6 +148,23 @@ audited — 22 tables at zero unwaived divergences. The finds this wave:
 | Great Person costs | Recruit costs follow the shipped per-era ladder (30…1320); two prophets carried invented prices |
 | Constants verified | Growth curve/thresholds, housing bands, fresh-water housing, amenity demand (GS zeroes the free Amenity), city spacing, corps/army bonuses, amphibious/river combat modifiers, barbarian XP caps — and the damage roll: CIVVIS' 30·e^(Δ/25)·U(0.8, 1.2) is the same distribution as the shipped 24 base with its 1.0–1.5 spread |
 
+**Fifth wave (the unit lifecycle):** `UnitUpgrades` and the `Units` column
+`MandatoryObsoleteTech` are now projected alongside every other unit field,
+which closed the largest remaining behavioural hole in the audit: CIVVIS
+carried neither, so no unit ever retired and no unit ever upgraded. An
+Information-era empire still fielded — and still trained — Slingers.
+
+| Fixed | Detail |
+|---|---|
+| No unit ever became obsolete | 33 units carry the shipped `MandatoryObsoleteTech`; researching it removes the unit from every production and purchase menu and from every queue |
+| No unit could ever be upgraded | 52 units carry their shipped `UnitUpgrades` successor, reachable through the new `upgrade_unit` action |
+
+The Gold price is the one number this wave could not read from the database:
+`UPGRADE_BASE_COST` (10) and `UPGRADE_MINIMUM_COST` (15) are shipped
+GlobalParameters, but the per-Production factor lives in the executable. The
+engine charges the community-documented `10 + 2 × Production difference`,
+which reproduces the in-game prices those two parameters bracket.
+
 ### Next inside phase 1
 
 Known simplifications not yet expressed in data: hills-only resource spawns

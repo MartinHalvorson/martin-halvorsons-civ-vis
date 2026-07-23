@@ -107,6 +107,14 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool, interactive: bool) -> Value 
                     .iter()
                     .map(|p| json!([p.0, p.1]))
                     .collect::<Vec<_>>());
+                if let Some((target, gold, _)) = g.unit_gold_upgrade_offer(pid, u.id) {
+                    v["upgrade"] = json!({ "to": target, "gold": gold });
+                }
+            }
+            // Whether the unit has been left behind by the ruleset is worth
+            // showing even when the upgrade itself is out of reach this turn.
+            if u.owner == pid || omniscient {
+                v["obsolete"] = json!(g.unit_is_obsolete(u.owner, &u.kind));
             }
             v
         })

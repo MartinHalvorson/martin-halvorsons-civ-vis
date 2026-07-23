@@ -8725,6 +8725,7 @@ impl Ai for AdvancedAi {
         if self.victory_planning {
             self.advanced_command_actions(g, pid, &plan);
         }
+        BasicAi::upgrade_units(g, pid);
         self.advanced_units(g, pid, &plan);
         self.resolve_city_dispositions(g, pid, plan.strategy);
         if g.winner.is_none() && g.current == pid {

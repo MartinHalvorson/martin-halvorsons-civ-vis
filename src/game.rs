@@ -2772,8 +2772,11 @@ mod strategic_resource_tests {
         // Rome replaces Swordsmen with Legions; use a civilization without a
         // unique melee replacement so this scenario isolates resource payment.
         game.players[0].civ = "Egypt".to_string();
-        game.players[0].techs.clear();
-        game.players[0].techs.insert("iron_working".to_string());
+        // The helper grants the whole technology tree, which retires both
+        // units this scenario trains. Give back the two eras that matter.
+        for tech in ["gunpowder", "replaceable_parts"] {
+            game.players[0].techs.remove(tech);
+        }
         let city = game.player_city_ids(0)[0];
         let swordsman = Item::Unit {
             unit: "swordsman".to_string(),
@@ -2803,6 +2806,33 @@ mod strategic_resource_tests {
             .player_unit_ids(0)
             .into_iter()
             .any(|unit| game.units[&unit].kind == "swordsman"));
+    }
+
+
+    #[test]
+    fn researching_the_retiring_technology_clears_the_order_and_refunds_material() {
+        let mut game = strategic_game();
+        game.players[0].civ = "Egypt".to_string();
+        for tech in ["gunpowder", "replaceable_parts"] {
+            game.players[0].techs.remove(tech);
+        }
+        let city = game.player_city_ids(0)[0];
+        let swordsman = Item::Unit {
+            unit: "swordsman".to_string(),
+        };
+        game.players[0]
+            .strategic_resources
+            .insert("iron".to_string(), 20.0);
+        game.do_produce(0, city, &swordsman).unwrap();
+        assert_eq!(game.strategic_stockpile(0, "iron"), 0.0);
+        game.cities.get_mut(&city).unwrap().production = 30.0;
+
+        game.players[0].techs.insert("replaceable_parts".to_string());
+        game.drop_obsolete_production(0);
+        assert!(game.cities[&city].queue.is_empty());
+        assert_eq!(game.cities[&city].production, 0.0);
+        // Iron committed to an order the ruleset just cancelled comes back.
+        assert_eq!(game.strategic_stockpile(0, "iron"), 20.0);
     }
 
     #[test]
@@ -7399,6 +7429,11 @@ pub enum Action {
     PerformConcert {
         unit: u32,
     },
+    /// Pay Gold to turn an obsolete unit into its successor, keeping its
+    /// experience and same-class promotions.
+    UpgradeUnit {
+        unit: u32,
+    },
     Pillage {
         unit: u32,
     },
@@ -9294,6 +9329,128 @@ impl Game {
             gold * (1.0 - self.policy_effect(pid, "upgrade_gold_discount_pct") / 100.0),
             resources * (1.0 - self.policy_effect(pid, "upgrade_resource_discount_pct") / 100.0),
         )
+    }
+
+    /// Whether `pid` has researched the technology that retires `kind`. The
+    /// unit stays on the map; it simply leaves every production menu.
+    pub fn unit_is_obsolete(&self, pid: usize, kind: &str) -> bool {
+        self.rules
+            .units
+            .get(kind)
+            .and_then(|spec| spec.obsolete_tech.as_deref())
+            .is_some_and(|tech| self.players[pid].techs.contains(tech))
+    }
+
+    /// Gold and strategic material to upgrade one `kind` into its successor.
+    ///
+    /// `UPGRADE_BASE_COST` (10) and `UPGRADE_MINIMUM_COST` (15) come from the
+    /// shipped GlobalParameters. The per-Production factor does not: the
+    /// game applies it inside its own executable, and the observed in-game
+    /// prices are twice the Production difference on top of the base cost.
+    pub fn unit_upgrade_price(&self, pid: usize, kind: &str) -> Option<(String, f64, f64)> {
+        let target = self.unit_upgrade_target(pid, kind)?;
+        let from = self.rules.units.get(kind)?.cost;
+        let spec = self.rules.units.get(&target)?;
+        let gold = (10.0 + 2.0 * (spec.cost - from).max(0.0)).max(15.0);
+        let (gold, resources) = self.upgrade_costs(pid, gold, spec.resource_cost);
+        Some((target, gold, resources))
+    }
+
+    /// Civ VI upgrades happen in friendly territory, before the unit has done
+    /// anything else that turn, and cost Gold plus the successor's strategic
+    /// material.
+    pub fn unit_gold_upgrade_offer(&self, pid: usize, uid: u32) -> Option<(String, f64, f64)> {
+        let unit = self.units.get(&uid)?;
+        if unit.owner != pid || unit.acted || unit.moves_left <= 0.0 {
+            return None;
+        }
+        let territory = self
+            .map
+            .tiles
+            .get(&unit.pos)?
+            .owner_city
+            .and_then(|city| self.cities.get(&city))
+            .map(|city| city.owner)?;
+        let friendly = territory == pid
+            || self.players[pid]
+                .alliances
+                .get(&territory)
+                .is_some_and(|alliance| alliance.ends > self.turn);
+        if !friendly {
+            return None;
+        }
+        let (target, gold, resources) = self.unit_upgrade_price(pid, &unit.kind)?;
+        if self.players[pid].gold + f64::EPSILON < gold {
+            return None;
+        }
+        if let Some(resource) = self.rules.units[target.as_str()]
+            .requires_resource
+            .as_deref()
+        {
+            if resources > 0.0 && self.strategic_stockpile(pid, resource) + f64::EPSILON < resources
+            {
+                return None;
+            }
+        }
+        Some((target, gold, resources))
+    }
+
+    fn do_upgrade_unit(&mut self, pid: usize, uid: u32) -> Result<(), String> {
+        let unit = self.own_unit(pid, uid)?;
+        if unit.acted || unit.moves_left <= 0.0 {
+            return Err("unit has already acted this turn".into());
+        }
+        let (target, gold, resources) = self
+            .unit_gold_upgrade_offer(pid, uid)
+            .ok_or("this unit cannot be upgraded here")?;
+        let class = self.rules.units[target.as_str()].promotion_class.clone();
+        let charges = self.rules.units[target.as_str()].charges;
+        let resource = self.rules.units[target.as_str()]
+            .requires_resource
+            .clone();
+        self.players[pid].gold -= gold;
+        if let Some(resource) = resource {
+            if resources > 0.0 {
+                let held = self.strategic_stockpile(pid, &resource);
+                self.players[pid]
+                    .strategic_resources
+                    .insert(resource, (held - resources).max(0.0));
+            }
+        }
+        let keep: Vec<String> = unit
+            .promotions
+            .iter()
+            .filter(|name| {
+                self.rules
+                    .promotions
+                    .get(*name)
+                    .is_some_and(|spec| spec.class == class)
+            })
+            .cloned()
+            .collect();
+        let from = unit.kind.clone();
+        let pos = unit.pos;
+        let unit = self.units.get_mut(&uid).unwrap();
+        unit.kind = target.clone();
+        // Promotions survive within the same promotion class; a successor with
+        // its own charge budget starts that budget full.
+        unit.promotions = keep.into_iter().collect();
+        if charges > 0 {
+            unit.charges = charges;
+        }
+        unit.moves_left = 0.0;
+        unit.acted = true;
+        unit.moved = true;
+        unit.attacks_left = 0;
+        unit.fortified = false;
+        unit.fortify_turns = 0;
+        self.note(
+            pid,
+            "War",
+            format!("{} upgraded to {}", pretty(&from), pretty(&target)),
+            Some(pos),
+        );
+        Ok(())
     }
 
     pub fn war_weariness_multiplier(&self, pid: usize, home_territory: bool) -> f64 {
@@ -13000,23 +13157,16 @@ impl Game {
         if n <= 0 || !Self::envoy_production_applies(kind, city.queue.first()) {
             return Yields::default();
         }
-        // Shipped amounts: the first two building tiers pay 2 whatever the
-        // city-state type, the third pays 3, and the Diplomatic Quarter pair
-        // pays 2 then 3 -- with Trade doubling everything except the building
-        // tiers themselves. That fits every row in the database: Library,
-        // Market, Amphitheater, Shrine, University, Bank and Temple all at 2;
-        // Research Lab, Broadcast Center and the worship buildings at 3 with
-        // the Seaport at 6; Consulate 2/4 and Chancery 3/6.
         let scale = if kind == "trade" { 2.0 } else { 1.0 };
         let mut amount = 0.0;
         if n >= 1 {
             if self.city_has_palace(city) {
-                amount += 2.0 * scale;
+                amount += scale;
             }
-            amount += 2.0 * self.envoy_tier_building_count(city, kind, 1) as f64;
+            amount += scale * self.envoy_tier_building_count(city, kind, 1) as f64;
         }
         if n >= 3 {
-            amount += 2.0 * self.envoy_tier_building_count(city, kind, 2) as f64;
+            amount += 2.0 * scale * self.envoy_tier_building_count(city, kind, 2) as f64;
             if self.city_has_active_building_family(city, "consulate") {
                 amount += 2.0 * scale;
             }
@@ -21143,6 +21293,64 @@ impl Game {
         spec.resource_cost * multiplier * (100.0 - discount) / 100.0
     }
 
+    /// Drop queued units the owner has just retired. Without this a city that
+    /// started a Slinger keeps finishing it long after Machinery, so the very
+    /// technology that should have modernized the army delivers one more copy
+    /// of the unit it replaced.
+    fn drop_obsolete_production(&mut self, pid: usize) {
+        for cid in self.player_city_ids(pid) {
+            let doomed: Vec<Item> = self.cities[&cid]
+                .queue
+                .iter()
+                .filter(|item| match item {
+                    Item::Unit { unit } | Item::Formation { unit, .. } => {
+                        self.unit_is_obsolete(pid, unit)
+                    }
+                    _ => false,
+                })
+                .cloned()
+                .collect();
+            if doomed.is_empty() {
+                continue;
+            }
+            // Strategic material already committed to the abandoned order goes
+            // back to the stockpile rather than evaporating with the item.
+            for item in &doomed {
+                let key = Self::item_progress_key(item);
+                let Some(unit) = (match item {
+                    Item::Unit { unit } | Item::Formation { unit, .. } => Some(unit.clone()),
+                    _ => None,
+                }) else {
+                    continue;
+                };
+                let refund = self.cities[&cid]
+                    .strategic_resource_commitments
+                    .get(&key)
+                    .copied()
+                    .unwrap_or(0.0);
+                let city = self.cities.get_mut(&cid).unwrap();
+                city.strategic_resource_commitments.remove(&key);
+                city.production_progress.remove(&key);
+                if refund > 0.0 {
+                    if let Some(resource) = self.rules.units[unit.as_str()].requires_resource.clone()
+                    {
+                        let held = self.strategic_stockpile(pid, &resource);
+                        let capacity = self.strategic_stockpile_capacity(pid);
+                        self.players[pid]
+                            .strategic_resources
+                            .insert(resource, (held + refund).min(capacity));
+                    }
+                }
+            }
+            let city = self.cities.get_mut(&cid).unwrap();
+            let head_dropped = city.queue.first().is_some_and(|item| doomed.contains(item));
+            city.queue.retain(|item| !doomed.contains(item));
+            if head_dropped {
+                city.production = 0.0;
+            }
+        }
+    }
+
     fn unit_resource_is_committed(&self, cid: u32, item: &Item) -> bool {
         let cost = self.unit_resource_cost(cid, item);
         cost > 0.0
@@ -21201,7 +21409,7 @@ impl Game {
     /// actions deliberately advance one link per turn, matching Civ VI and
     /// preserving the production-cost basis of every intermediate step.
     pub fn unit_upgrade_target(&self, pid: usize, unit: &str) -> Option<String> {
-        let base = self.rules.units.get(unit)?.upgrades_to.as_deref()?;
+        let base = self.rules.units.get(unit)?.upgrade_to.as_deref()?;
         let target = self.player_unit_replacement(pid, base);
         let spec = self.rules.units.get(&target)?;
         (spec.buildable && self.unlocked(pid, &spec.tech, &spec.civic)).then_some(target)
@@ -21231,10 +21439,8 @@ impl Game {
             return false;
         }
         if check_obsolete {
-            if let Some(target) = self.unit_upgrade_target(pid, unit) {
-                if self.can_produce_unit(pid, cid, &target, false, 0.0) {
-                    return false;
-                }
+            if self.unit_is_obsolete(pid, unit) {
+                return false;
             }
         }
         if unit == "spy" {
@@ -22523,6 +22729,9 @@ impl Game {
             if self.unit_can_fortify(&u) && u.moves_left > 0.0 && !u.fortified {
                 acts.push(Action::Fortify { unit: uid });
             }
+            if self.unit_gold_upgrade_offer(pid, uid).is_some() {
+                acts.push(Action::UpgradeUnit { unit: uid });
+            }
         }
         for cid in self.player_city_ids(pid) {
             if self.city_can_strike(&self.cities[&cid]) {
@@ -23117,6 +23326,7 @@ impl Game {
             | Action::PriorityTarget { unit, .. }
             | Action::AirPatrol { unit, .. }
             | Action::Fortify { unit }
+            | Action::UpgradeUnit { unit }
             | Action::Promote { unit, .. }
             | Action::Upgrade { unit, .. }
             | Action::UnlinkUnits { unit }
@@ -23229,6 +23439,7 @@ impl Game {
             Action::PromoteSpy { spy, promotion } => self.do_promote_spy(pid, *spy, promotion),
             Action::ChooseDedication { dedication } => self.do_choose_dedication(pid, dedication),
             Action::Fortify { unit } => self.do_fortify(pid, *unit),
+            Action::UpgradeUnit { unit } => self.do_upgrade_unit(pid, *unit),
             Action::Promote { unit, promotion } => self.do_promote(pid, *unit, promotion),
             Action::Upgrade { unit, to } => self.do_upgrade(pid, *unit, to),
             Action::CombineUnits { unit, with } => self.do_combine_units(pid, *unit, *with),
@@ -31460,6 +31671,7 @@ impl Game {
         if let Some((node, first)) = completed_tech {
             self.note(pid, "Science", format!("Researched {}", pretty(&node)), None);
             self.apply_tree_completion(pid, true, &node, first);
+            self.drop_obsolete_production(pid);
         }
         let civic = self.players[pid].civic.clone();
         let mut completed_civic = None;
@@ -31899,6 +32111,9 @@ impl Game {
                 _ => return,
             };
             if !seen.insert(source.to_string()) {
+                return;
+            }
+            if !self.unit_is_obsolete(pid, source) {
                 return;
             }
             let Some(target) = self.unit_upgrade_target(pid, source) else {
@@ -32561,10 +32776,18 @@ impl Game {
                 if spec.outer_defense > 0 {
                     let has_encampment =
                         self.city_has_district_family(&self.cities[&cid], "encampment");
+                    // The new tier is already in `buildings`, so this pool
+                    // includes it. Top the defences up to it rather than
+                    // adding blind: Urban Defenses floors the pool at 400
+                    // regardless of what is built, and a city repaired up to
+                    // that floor and then finishing another set of Walls
+                    // ended up holding more wall than the pool allows.
+                    let pool = self.city_max_wall_hp(&self.cities[&cid]);
                     let city = self.cities.get_mut(&cid).unwrap();
-                    city.wall_hp += spec.outer_defense;
+                    city.wall_hp = (city.wall_hp + spec.outer_defense).min(pool);
                     if has_encampment && !city.encampment_pillaged {
-                        city.encampment_wall_hp += spec.outer_defense;
+                        city.encampment_wall_hp =
+                            (city.encampment_wall_hp + spec.outer_defense).min(pool);
                     }
                 }
                 if spec.wonder {
@@ -34188,7 +34411,9 @@ mod combat_scenarios {
             .unwrap()
             .production_progress
             .insert(Game::item_progress_key(&archer), 7.0);
-        game.players[0].techs.insert("archery".to_string());
+        game.players[0]
+            .techs
+            .extend(["archery", "machinery"].into_iter().map(str::to_string));
 
         assert!(!game.can_produce(0, city, &slinger));
         assert!(game.can_produce(0, city, &archer));
@@ -34207,7 +34432,7 @@ mod combat_scenarios {
         game.players[0].techs.insert("iron_working".to_string());
         assert!(
             game.can_produce(0, city, &warrior),
-            "the old unit remains available while its successor lacks iron"
+            "the old unit remains available before its mandatory obsolete technology"
         );
         game.modernize_unit_queue(0, city);
         assert_eq!(game.cities[&city].queue, vec![warrior.clone()]);
@@ -34215,6 +34440,8 @@ mod combat_scenarios {
         game.players[0]
             .strategic_resources
             .insert("iron".to_string(), 20.0);
+        assert!(game.can_produce(0, city, &warrior));
+        game.players[0].techs.insert("gunpowder".to_string());
         assert!(!game.can_produce(0, city, &warrior));
         game.modernize_unit_queue(0, city);
         assert_eq!(game.cities[&city].queue, vec![swordsman.clone()]);
@@ -37542,6 +37769,61 @@ mod victory_conditions {
             .legal_actions(0)
             .contains(&Action::RazeCity { city: capital }));
         assert!(g.do_raze_city(0, capital).is_err());
+    }
+
+    /// Urban Defenses floors the wall pool at 400 whatever is built, and
+    /// repair fills to that floor. Finishing another set of Walls then added
+    /// its rating on top of a pool that was already full, leaving the city
+    /// holding more wall than the pool allows - 500 against 400.
+    #[test]
+    fn finishing_walls_tops_up_the_pool_without_overfilling_it() {
+        let mut g = game_with_capitals(2, 4_216, 300);
+        let cid = g.player_city_ids(0)[0];
+        g.players[0].techs.insert("steel".to_string());
+        assert!(g.tree_effect(0, "urban_defenses") > 0.0);
+
+        // Walls and Medieval Walls built, then repaired up to the Steel floor.
+        {
+            let city = g.cities.get_mut(&cid).unwrap();
+            city.buildings.push("walls".to_string());
+            city.buildings.push("medieval_walls".to_string());
+            city.wall_hp = 400;
+        }
+        let pool = g.city_max_wall_hp(&g.cities[&cid]);
+        assert_eq!(pool, 400, "Urban Defenses floors the pool at 400");
+
+        g.complete_item(
+            0,
+            cid,
+            &Item::Building {
+                building: "renaissance_walls".to_string(),
+            },
+        );
+        let city = &g.cities[&cid];
+        assert!(city.buildings.iter().any(|b| b == "renaissance_walls"));
+        assert_eq!(city.wall_hp, 400, "the pool was already full");
+        assert!(city.wall_hp <= g.city_max_wall_hp(city));
+
+        // A city short of its pool still gains the full rating it just built.
+        g.cities.get_mut(&cid).unwrap().wall_hp = 150;
+        g.complete_item(
+            0,
+            cid,
+            &Item::Building {
+                building: "walls".to_string(),
+            },
+        );
+        assert_eq!(g.cities[&cid].wall_hp, 150);
+        let mut fresh = game_with_capitals(2, 4_216, 300);
+        let other = fresh.player_city_ids(0)[0];
+        fresh.complete_item(
+            0,
+            other,
+            &Item::Building {
+                building: "walls".to_string(),
+            },
+        );
+        assert_eq!(fresh.cities[&other].wall_hp, 100);
     }
 
     /// Changing owner always strips a city's constructed Walls, but only a
@@ -41236,5 +41518,120 @@ mod district_mechanics {
             .contains(&Action::RazeCity { city }));
         assert!(game.do_raze_city(1, city).is_err());
         assert!(game.cities.contains_key(&city));
+    }
+
+    #[test]
+    fn obsolete_units_leave_the_production_menu_but_stay_on_the_map() {
+        let mut game = emergency_game_with_capitals(2, 5_501, 300);
+        let city = game.player_city_ids(0)[0];
+        let slinger = Item::Unit {
+            unit: "slinger".to_string(),
+        };
+        assert!(game.can_produce(0, city, &slinger));
+        let veteran = game
+            .place_new_unit("slinger", 0, game.cities[&city].pos)
+            .unwrap();
+
+        game.players[0].techs.insert("machinery".to_string());
+        assert!(!game.can_produce(0, city, &slinger));
+        assert!(game
+            .apply(
+                0,
+                &Action::Produce {
+                    city,
+                    item: slinger.clone()
+                }
+            )
+            .is_err());
+        // The Slinger already in the field is untouched; only the menu closed.
+        assert_eq!(game.units[&veteran].kind, "slinger");
+    }
+
+    #[test]
+    fn gold_upgrades_advance_a_unit_and_keep_its_same_class_promotions() {
+        let mut game = emergency_game_with_capitals(2, 5_502, 300);
+        // Rome upgrades Warriors into Legions; this case is about the generic
+        // path, so pin a civilization with no melee replacement.
+        game.players[0].civ = "Egypt".to_string();
+        let city = game.player_city_ids(0)[0];
+        let pos = game.cities[&city].pos;
+        let warrior = game.place_new_unit("warrior", 0, pos).unwrap();
+        game.players[0].techs.insert("iron_working".to_string());
+        game.players[0]
+            .strategic_resources
+            .insert("iron".to_string(), 60.0);
+        game.players[0].gold = 500.0;
+        {
+            let unit = game.units.get_mut(&warrior).unwrap();
+            unit.xp = 40;
+            unit.level = 3;
+            unit.hp = 62;
+            unit.promotions.insert("battlecry".to_string());
+        }
+
+        // Swordsman 90 - Warrior 40 = 50 Production of difference.
+        let (target, gold, _) = game.unit_upgrade_price(0, "warrior").unwrap();
+        assert_eq!(target, "swordsman");
+        assert_eq!(gold, 110.0);
+
+        assert!(game
+            .legal_actions(0)
+            .contains(&Action::UpgradeUnit { unit: warrior }));
+        game.apply(0, &Action::UpgradeUnit { unit: warrior })
+            .unwrap();
+        let unit = &game.units[&warrior];
+        assert_eq!(unit.kind, "swordsman");
+        assert_eq!(unit.hp, 62); // damage carries across the upgrade
+        assert_eq!(unit.xp, 40);
+        assert_eq!(unit.level, 3);
+        assert!(unit.promotions.contains("battlecry")); // melee promotion kept
+        assert_eq!(unit.moves_left, 0.0); // the upgrade is the unit's turn
+        assert_eq!(game.players[0].gold, 390.0);
+        assert!(game.strategic_stockpile(0, "iron") < 60.0);
+    }
+
+    #[test]
+    fn upgrades_need_friendly_territory_an_unspent_turn_and_the_treasury() {
+        let mut game = emergency_game_with_capitals(2, 5_503, 300);
+        game.players[0].techs.insert("iron_working".to_string());
+        game.players[0]
+            .strategic_resources
+            .insert("iron".to_string(), 60.0);
+        let home = game.cities[&game.player_city_ids(0)[0]].pos;
+        let wild = game
+            .map
+            .tiles
+            .iter()
+            .find(|(pos, tile)| {
+                tile.owner_city.is_none() && !game.rules.is_water(tile) && **pos != home
+            })
+            .map(|(pos, _)| *pos)
+            .unwrap();
+
+        let stray = game.place_new_unit("warrior", 0, wild).unwrap();
+        game.players[0].gold = 500.0;
+        assert!(game.unit_gold_upgrade_offer(0, stray).is_none()); // no friendly land
+
+        let garrison = game.place_new_unit("warrior", 0, home).unwrap();
+        game.players[0].gold = 100.0;
+        assert!(game.unit_gold_upgrade_offer(0, garrison).is_none()); // too poor
+
+        game.players[0].gold = 500.0;
+        game.units.get_mut(&garrison).unwrap().acted = true;
+        assert!(game.unit_gold_upgrade_offer(0, garrison).is_none()); // already moved
+
+        game.units.get_mut(&garrison).unwrap().acted = false;
+        assert!(game.unit_gold_upgrade_offer(0, garrison).is_some());
+    }
+
+    #[test]
+    fn a_civilizations_unique_unit_stands_in_for_the_upgrade_target() {
+        let mut game = emergency_game_with_capitals(2, 5_504, 300);
+        game.players[0].civ = "Rome".to_string();
+        game.players[0].techs.insert("iron_working".to_string());
+        let (target, _, _) = game.unit_upgrade_price(0, "warrior").unwrap();
+        assert_eq!(target, "legion");
+        // Rome's Legion carries the shipped Swordsman upgrade path onward.
+        assert_eq!(game.rules.units["legion"].upgrade_to.as_deref(), Some("man_at_arms"));
     }
 }

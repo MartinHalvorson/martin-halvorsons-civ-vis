@@ -1126,6 +1126,7 @@ impl Ai for BasicAi {
             self.spies(g, pid);
             self.cities(g, pid);
         }
+        Self::upgrade_units(g, pid);
         self.units(g, pid);
         self.resolve_city_dispositions(g, pid, false, false);
         if g.winner.is_none() && g.current == pid {
@@ -2237,6 +2238,65 @@ impl BasicAi {
                         break;
                     }
                 }
+            }
+        }
+    }
+
+    /// Modernize the standing army before it moves. An empire that never
+    /// spends Gold here fights the Information era with Slingers: production
+    /// only ever replaces losses, so the units already on the map are exactly
+    /// the ones that fall behind. Upgrades are taken strongest-gain-first and
+    /// stop at a treasury floor so the ordinary purchase passes still have
+    /// something to spend.
+    pub(crate) fn upgrade_units(g: &mut Game, pid: usize) {
+        if g.players[pid].is_barbarian {
+            return;
+        }
+        let at_war = g
+            .players
+            .iter()
+            .any(|p| p.id != pid && p.alive && !p.is_barbarian && g.is_at_war(pid, p.id));
+        let floor = if at_war { 30.0 } else { 120.0 };
+        loop {
+            let mut best: Option<(f64, f64, u32)> = None;
+            for uid in g.player_unit_ids(pid) {
+                let Some((target, gold, _)) = g.unit_gold_upgrade_offer(pid, uid) else {
+                    continue;
+                };
+                if g.players[pid].gold - gold < floor {
+                    continue;
+                }
+                let from = &g.rules.units[g.units[&uid].kind.as_str()];
+                let to = &g.rules.units[target.as_str()];
+                let gain = to.strength.max(to.ranged_attack_strength())
+                    - from.strength.max(from.ranged_attack_strength());
+                // Support and civilian successors carry no combat strength;
+                // rank those by the Production they save instead.
+                let gain = if gain > 0.0 {
+                    gain
+                } else {
+                    (to.cost - from.cost).max(0.0) / 20.0
+                };
+                if gain <= 0.0 {
+                    continue;
+                }
+                let value = gain / gold.max(1.0);
+                let better = match &best {
+                    None => true,
+                    Some((top, top_gold, top_uid)) => {
+                        value > *top + 1e-9
+                            || ((value - *top).abs() <= 1e-9
+                                && (gold < *top_gold - 1e-9
+                                    || ((gold - *top_gold).abs() <= 1e-9 && uid < *top_uid)))
+                    }
+                };
+                if better {
+                    best = Some((value, gold, uid));
+                }
+            }
+            let Some((_, _, uid)) = best else { return };
+            if g.apply(pid, &Action::UpgradeUnit { unit: uid }).is_err() {
+                return;
             }
         }
     }
@@ -4740,6 +4800,51 @@ mod tests {
             Some("lumber_mill")
         );
         assert_eq!(BasicAi::best_improvement(&g, pos, &[]), None);
+    }
+
+    /// Production only ever replaces losses, so without this pass the units
+    /// standing in a city on turn 30 are still standing there in the
+    /// Information era. The AI has to spend Gold to modernize them.
+    #[test]
+    fn the_ai_spends_gold_to_modernize_the_garrison_it_already_has() {
+        let (mut g, source, _) = island_colony_game(1);
+        g.players[0].civ = "Egypt".to_string();
+        grant_tech_with_prerequisites(&mut g, 0, "iron_working");
+        g.players[0]
+            .strategic_resources
+            .insert("iron".to_string(), 400.0);
+        g.players[0].gold = 900.0;
+        let veterans: Vec<u32> = (0..3)
+            .map(|_| g.spawn_test_unit("warrior", 0, source))
+            .collect();
+        let obsolete = g
+            .units
+            .values()
+            .filter(|unit| unit.owner == 0 && unit.kind == "warrior")
+            .count();
+
+        BasicAi::upgrade_units(&mut g, 0);
+
+        assert!(
+            veterans.iter().all(|uid| g.units[uid].kind == "swordsman"),
+            "kinds={:?}",
+            veterans
+                .iter()
+                .map(|uid| g.units[uid].kind.clone())
+                .collect::<Vec<_>>()
+        );
+        // Every Warrior in the empire modernized, at 110 Gold each.
+        assert_eq!(g.players[0].gold, 900.0 - 110.0 * obsolete as f64);
+        assert!(!g
+            .units
+            .values()
+            .any(|unit| unit.owner == 0 && unit.kind == "warrior"));
+
+        // A treasury that cannot clear the floor buys nothing at all.
+        g.players[0].gold = 150.0;
+        let straggler = g.spawn_test_unit("warrior", 0, source);
+        BasicAi::upgrade_units(&mut g, 0);
+        assert_eq!(g.units[&straggler].kind, "warrior");
     }
 
     #[test]
