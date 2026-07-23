@@ -659,6 +659,34 @@ class RecoveryTests(unittest.TestCase):
             "science,culture,domination",
         )
 
+    def test_server_starts_beside_the_promoted_binary_not_the_shared_web_tree(self):
+        settings = {
+            "players": 4,
+            "width": 60,
+            "height": 38,
+            "city_states": 6,
+            "turns": 500,
+            "map": "pangaea",
+            "speed": "standard",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory) / "promoted" / "civvis"
+            process = SimpleNamespace(pid=123)
+            with (
+                patch.object(supervisor, "RUNTIME_BINARY", runtime),
+                patch.object(
+                    supervisor, "server_command", return_value=[str(runtime), "play"]
+                ),
+                patch.object(
+                    supervisor.subprocess, "Popen", return_value=process
+                ) as popen,
+            ):
+                self.assertIs(supervisor.start_server(8766, settings, False), process)
+
+        popen.assert_called_once_with(
+            [str(runtime), "play"], cwd=runtime.parent, text=True
+        )
+
     def test_checkpoint_write_is_atomic_and_finished_saves_are_not_resumed(self):
         class Response:
             def __init__(self, payload):
