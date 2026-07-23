@@ -3925,6 +3925,12 @@ function draw() {
       y += (st2.ty - st2.sy) * out;
       if (e >= 1) anim.strike = null;
     }
+    // A garrison stood dead centre on its own city and buried the town under
+    // its plate. On a large capital that town is most of what the tile has to
+    // say — seventeen citizens' worth of houses reduced to a couple of roofs
+    // poking past a shield. Standing the garrison at the front edge of the tile
+    // lets both read: the city behind it, the troops holding it in front.
+    if (cityTiles.has(key(u.pos))) y += 12;
     const rr = 10.5;
     if (beau) {
       drawUnitBase(u, x, y);
