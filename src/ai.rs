@@ -4805,13 +4805,13 @@ mod tests {
             .find(|position| game.units_at(*position).is_empty())
             .unwrap();
         game.players[0].techs.insert("archery".to_string());
-        game.players[0].gold = 60.0;
+        game.players[0].gold = 180.0;
         let slinger = game.spawn_test_unit("slinger", 0, home);
 
         BasicAi::upgrade_units(&mut game, 0);
 
         assert_eq!(game.units[&slinger].kind, "archer");
-        assert!(game.players[0].gold.abs() < 1e-9);
+        assert_eq!(game.players[0].gold, 120.0);
     }
 
     #[test]
