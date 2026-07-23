@@ -156,8 +156,13 @@ fn stalled_settler_context(g: &Game, id: u32) -> String {
         .tiles
         .iter()
         .filter(|(position, tile)| {
+            // Every clause `Game::can_found_city` applies, natural wonders
+            // included: counting a tile the engine refuses inflates
+            // `legal_sites` and, when it is the tile underfoot, is what made
+            // `exhaustive_step` disagree with `reachable`.
             !g.rules.is_water(tile)
                 && g.rules.is_passable(tile)
+                && !g.tile_is_natural_wonder(tile)
                 && !g
                     .cities
                     .values()
@@ -172,12 +177,23 @@ fn stalled_settler_context(g: &Game, id: u32) -> String {
         .iter()
         .filter(|position| **position == unit.pos || g.route_step(id, **position, 0).is_some())
         .count();
-    let goals: HashSet<_> = legal_sites.iter().copied().collect();
+    // A Settler cannot route to the tile it is already standing on, and
+    // leaving that tile in the goal set makes `route_step_to_any` short-circuit
+    // on `is_goal(start)` and answer None. A Settler parked on a perfectly good
+    // site then reads as one that cannot reach any site at all — the opposite
+    // of the truth, and the opposite of what the next reader needs to know.
+    let goals: HashSet<_> = legal_sites
+        .iter()
+        .copied()
+        .filter(|position| *position != unit.pos)
+        .collect();
     let exhaustive_step = g.route_step_to_any(id, &goals);
     format!(
-        "; at {:?}, cities={}, legal_sites={}, reachable={}, exhaustive_step={:?}, shipbuilding={}, linked={:?}",
+        "; at {:?}, cities={}, can_found_here={}, legal_sites={}, reachable={}, \
+         exhaustive_step={:?}, shipbuilding={}, linked={:?}",
         unit.pos,
         g.player_city_ids(pid).len(),
+        g.can_found_city(id),
         legal_sites.len(),
         reachable,
         exhaustive_step,
