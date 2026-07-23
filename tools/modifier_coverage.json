@@ -74,11 +74,16 @@
     },
     "ADJUST_CITY_TOURISM": {
       "status": "implemented",
-      "note": "City Tourism from governors, policies and buildings."
+      "verified": true,
+      "note": "Verified row by row, all matching. Heritage Tourism doubles Artifact, Landscape, Portrait, Religious and Sculpture works and not Writing or Music, which is exactly CIVVIS' art-and-artifact grouping. Curator doubles all six object types. Cristo Redentor doubles Seaside Resort Tourism. Curator's placement looked wrong -- its id is GOVERNOR_PROMOTION_MERCHANT_CURATOR and Rise and Fall gives it to Reyna -- but Gathering Storm's override of Expansion1_Governors.xml, shipped inside the Expansion2 folder, moves it to Pingala while keeping the old id. CIVVIS has it on Pingala and is right.",
+      "leads": [
+        "Reyna's Land Acquisition and Pingala's Librarian are promotions in the shipped tree but are folded into CIVVIS' base governor effects (border_growth_pct 20 and science/culture_pct 15), so both arrive free on appointment instead of costing a title."
+      ]
     },
     "ADJUST_DISTRICT_TOURISM_CHANGE": {
       "status": "implemented",
-      "note": "Per-district Tourism from buildings and civics."
+      "verified": true,
+      "note": "Verified row by row, all matching. Ferris Wheel 2, Shopping Mall 4, Thermal Bath 3 gated on a Geothermal Fissure in the city, Stadium 2 at 10 Population and 5 at 20, Aquatics Center 2 for a coastal Wonder, and Conservation's wall Tourism at 1/2/3 for Ancient, Medieval and Renaissance Walls with the Tsikhe at 3."
     },
     "ADJUST_CITY_IDENTITY_PER_TURN": {
       "status": "implemented",
