@@ -1200,8 +1200,68 @@ function shade(hex, f) {
 // Paint an AI-authored, photographic material sample onto the world plane.
 // Each tile takes a deterministic crop from its biome swatch, so neighboring
 // tiles share a visual language without producing an obvious repeated stamp.
+// Open water should read as one moving surface, not a field of hexagons. Each
+// water sprite is built once with a soft radial edge, so the stamps overlap
+// and cross-fade into their neighbors instead of butting at a hard seam. A
+// few variants keep the swell from looking obviously repeated.
+const WATER_STAMPS = {};
+function waterStamp(terrain, variant) {
+  const id = terrain + variant;
+  if (WATER_STAMPS[id]) return WATER_STAMPS[id];
+  if (!ATLAS_READY) return null;
+  const [col, row] = ATLAS_CELL[terrain];
+  const cw = TERRAIN_ATLAS.naturalWidth / 4;
+  const ch = TERRAIN_ATLAS.naturalHeight / 2;
+  const crop = Math.min(cw, ch) * 0.72;
+  const sx = col * cw + 1 + ((variant * 0.37) % 1) * Math.max(2, cw - crop - 2);
+  const sy = row * ch + 1 + ((variant * 0.61) % 1) * Math.max(2, ch - crop - 2);
+  const D = 112;
+  const c = document.createElement("canvas");
+  c.width = c.height = D;
+  const g = c.getContext("2d");
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high";
+  if (variant & 1) { g.translate(D, 0); g.scale(-1, 1); }
+  g.drawImage(TERRAIN_ATLAS, sx, sy, crop, crop, 0, 0, D, D);
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalCompositeOperation = "destination-in";
+  const rg = g.createRadialGradient(D / 2, D / 2, D * 0.16, D / 2, D / 2, D * 0.5);
+  rg.addColorStop(0, "rgba(0,0,0,1)");
+  rg.addColorStop(0.62, "rgba(0,0,0,.94)");
+  rg.addColorStop(1, "rgba(0,0,0,0)");
+  g.fillStyle = rg; g.fillRect(0, 0, D, D);
+  WATER_STAMPS[id] = c;
+  return c;
+}
+
+// Sea interior gets a generous overlap so the feathered edges fully cover each
+// other and no seam survives; a tile touching land stays inside its own hex so
+// the coastline and its beach seam keep their definition.
+function drawWaterTexture(t, x, y) {
+  const st = waterStamp(t.terrain,
+    Math.floor(hash2(t.pos[0] * 7 + 1, t.pos[1] * 13 + 5) * 4));
+  if (!st) return;
+  let open = true;
+  for (let i = 0; i < 6 && open; i++) {
+    const n = nbrTile(t.pos, DIRS[i]);
+    if (!n || (n.terrain !== "coast" && n.terrain !== "ocean")) open = false;
+  }
+  // 1.5·S is the smallest overlap that still carries full alpha past every hex
+  // corner, so neighbors cover each other with no seam and no wasted fill. The
+  // sprite's own alpha already reaches zero inside its corners, so open water
+  // needs no clip at all — only a tile touching land has to be fenced in.
+  const R = open ? S * 1.5 : S + 2.4;
+  cx.save();
+  if (!open) { hexPath(x, y, R); cx.clip(); }
+  cx.globalAlpha = 0.95;
+  cx.translate(x, y);
+  cx.transform(COSR, SINR * YS, -SINR, COSR * YS, 0, 0);
+  cx.drawImage(st, -R, -R, R * 2, R * 2);
+  cx.restore();
+}
+
 function drawTerrainTexture(t, x, y) {
   if (!ATLAS_READY || !ATLAS_CELL[t.terrain]) return;
+  if (t.terrain === "coast" || t.terrain === "ocean") return drawWaterTexture(t, x, y);
   const [col, row] = ATLAS_CELL[t.terrain];
   const cw = TERRAIN_ATLAS.naturalWidth / 4;
   const ch = TERRAIN_ATLAS.naturalHeight / 2;
@@ -1554,7 +1614,13 @@ function drawUnitBase(u, x, y) {
   cx.globalAlpha = spent ? 0.5 : 0.9;
   cx.fill();
   cx.globalAlpha = 1;
-  cx.strokeStyle = "#0d1117"; cx.lineWidth = 1.4; cx.stroke();
+  // Barbarian black-on-shadow disappears against dark terrain, and a raider is
+  // exactly the thing the eye needs to catch first — so their plate is rimmed
+  // in hazard red rather than the usual near-black outline.
+  const barb = (state.players[u.owner] || {}).is_barbarian;
+  cx.strokeStyle = barb ? "#cc4a3e" : "#0d1117";
+  cx.lineWidth = barb ? 1.9 : 1.4;
+  cx.stroke();
   if (!spent) {   // ready units get a lit rim so they read before spent ones
     cx.strokeStyle = "#ffffff6b"; cx.lineWidth = 1;
     cx.beginPath(); cx.ellipse(x, cy, 7.9, 3.0, 0, 0, 7); cx.stroke();
@@ -1637,16 +1703,13 @@ function draw() {
     if (beau) {
       drawTerrainTexture(t, x, y);
       hexPath(x, y, S + 0.15);
-      cx.strokeStyle = water ? "#a8e4ef18" : "#fff8dc12";
+      // Water keeps only a whisper of grid — enough to aim a ship at a hex,
+      // not enough to chop the open sea back into tiles.
+      cx.strokeStyle = water ? "#a8e4ef0e" : "#fff8dc12";
       cx.lineWidth = 0.85; cx.stroke();
     }
-    if (beau && water) { // waves + specular glints (deep OLED water)
+    if (beau && water) { // specular glints over the photographic swell
       const ph = hash2(t.pos[0], t.pos[1]);
-      cx.strokeStyle = "#9fd8ef22"; cx.lineWidth = 1.4;
-      cx.beginPath();
-      cx.arc(x - 6 + ph * 8, y - 3, 6, Math.PI * 0.15, Math.PI * 0.85);
-      cx.arc(x + 4 - ph * 6, y + 7, 5, Math.PI * 0.15, Math.PI * 0.85);
-      cx.stroke();
       if (ph > 0.6) {
         cx.fillStyle = "#bfe8ff2e";
         cx.beginPath();
@@ -1854,10 +1917,17 @@ function draw() {
       cx.fillStyle = "#5a4632"; cx.fillRect(x - 4, y + 5, 8, 5);
     }
     if (t.resource) {
-      // Civ 6-style white-ringed resource badge
-      cx.fillStyle = "#1d2418d2";
-      cx.beginPath(); cx.arc(x + 10, y + 9, 9.5, 0, 7); cx.fill();
-      cx.strokeStyle = "#f6f2e4e8"; cx.lineWidth = 2; cx.stroke();
+      // Resource badges are terrain information, not actors, so they sit a
+      // step quieter than the unit plates instead of ringing the map in bright
+      // white discs of the same weight. The rim carries the resource class, so
+      // strategics and luxuries separate from ordinary bonuses at a glance.
+      const rc = RULES && RULES.resources && RULES.resources[t.resource]
+        ? RULES.resources[t.resource].class : "bonus";
+      cx.fillStyle = "#161c14cc";
+      cx.beginPath(); cx.arc(x + 10, y + 9, 8.2, 0, 7); cx.fill();
+      cx.strokeStyle = rc === "strategic" ? "#ff9d5cdd"
+        : rc === "luxury" ? "#d9a0f0dd" : "#e6ddbdbb";
+      cx.lineWidth = 1.5; cx.stroke();
       cx.font = "12px sans-serif";
       cx.fillText(RES_ICON[t.resource] || "●", x + 10, y + 9.5);
     }
@@ -2043,9 +2113,16 @@ function draw() {
       drawUnitBase(u, x, y);
       drawUnitChar(u, x, y, now, moving);
       if (u.fortified) {
-        cx.strokeStyle = "#f4f8ffbb"; cx.lineWidth = 2;
-        cx.beginPath(); cx.arc(x, y - 1, rr + 2, Math.PI * 0.75, Math.PI * 0.25);
-        cx.stroke();
+        // A compact shield at the shoulder. The old ring was wider than the
+        // unit itself and read as a selection highlight rather than a state.
+        const sx = x + 8.6, sy = y - 6.5;
+        cx.beginPath();
+        cx.moveTo(sx - 3.5, sy - 4.2); cx.lineTo(sx + 3.5, sy - 4.2);
+        cx.lineTo(sx + 3.5, sy + 0.5);
+        cx.quadraticCurveTo(sx, sy + 5.2, sx - 3.5, sy + 0.5);
+        cx.closePath();
+        cx.fillStyle = "#dee7f4ee"; cx.fill();
+        cx.strokeStyle = "#10151d"; cx.lineWidth = 1.2; cx.stroke();
       }
     } else {
       const civ = (u.type === "settler" || u.type === "builder");
