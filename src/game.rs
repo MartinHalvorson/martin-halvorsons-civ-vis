@@ -15935,16 +15935,19 @@ impl Game {
     fn city_building_effect(&self, city: &City, effect: &str) -> f64 {
         city.buildings
             .iter()
-            .filter(|building| {
-                !city.pillaged_buildings.contains(*building)
-                    && self.building_district_is_active(city, building)
-            })
-            .map(|building| {
-                self.rules.buildings[building.as_str()]
+            .filter_map(|building| {
+                // Ask what a building grants before asking whether it is
+                // working. Most buildings grant nothing towards a given
+                // effect, and deciding whether one's district is standing
+                // means walking the city's districts — far dearer than the
+                // table lookup that rules it out.
+                let value = self.rules.buildings[building.as_str()]
                     .effects
                     .get(effect)
-                    .copied()
-                    .unwrap_or(0.0)
+                    .copied()?;
+                (!city.pillaged_buildings.contains(building)
+                    && self.building_district_is_active(city, building))
+                .then_some(value)
             })
             .sum()
     }
@@ -30205,11 +30208,14 @@ impl Game {
         let Some(family) = self.rules.buildings[building].district.as_deref() else {
             return true;
         };
-        family == "city_center"
-            || city.districts.iter().any(|(district, position)| {
-                self.district_is_family(district, family)
-                    && self.district_is_active(city, district, *position)
-            })
+        if family == "city_center" {
+            return true;
+        }
+        let wanted = self.district_family(family);
+        city.districts.iter().any(|(district, position)| {
+            self.district_family(district) == wanted
+                && self.district_is_active(city, district, *position)
+        })
     }
 
     /// Pillaged districts and buildings are disabled and stop charging upkeep.
