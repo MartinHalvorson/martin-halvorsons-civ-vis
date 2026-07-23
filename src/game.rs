@@ -3997,6 +3997,58 @@ mod espionage_runtime_tests {
     }
 
     #[test]
+    fn a_civilization_cannot_imprison_its_own_spy() {
+        let (mut game, _home, target, _) = game_with_spy_cities(774_266);
+        // The operative's own civilization takes the target city while its
+        // operations are still running inside it.
+        game.cities.get_mut(&target).unwrap().owner = 0;
+
+        // Detection, escape and capture are all dice rolls, so one resolution
+        // proves nothing; walk the generator far enough to cover every branch
+        // the old code could take.
+        for _ in 0..64 {
+            let spy_id = game.next_id;
+            game.next_id += 1;
+            game.spies.insert(
+                spy_id,
+                Spy {
+                    id: spy_id,
+                    owner: 0,
+                    level: 1,
+                    promotions: Default::default(),
+                    city: Some(target),
+                    ready_turn: 0,
+                    mission: Some(SpyMission {
+                        kind: "fabricate_scandal".to_string(),
+                        city: target,
+                        target: game.cities[&target].pos,
+                        started: game.turn,
+                        ends: game.turn,
+                    }),
+                    sources_city: None,
+                    sources_until: 0,
+                    captured_by: None,
+                },
+            );
+            game.resolve_spy_mission(spy_id);
+
+            let spy = game
+                .spies
+                .get(&spy_id)
+                .expect("an operative is not lost to its own police");
+            assert_eq!(
+                spy.captured_by, None,
+                "there is no counterparty to ransom a spy back from yourself"
+            );
+            assert!(spy.mission.is_none(), "the operation has nothing left to rob");
+            assert!(
+                spy.ready_turn < u32::MAX,
+                "the operative comes home usable rather than pinning its slot shut"
+            );
+        }
+    }
+
+    #[test]
     fn captured_spies_remain_imprisoned_until_a_release_trade() {
         let (mut game, home, target, _) = game_with_spy_cities(774_265);
         let spy_id = game.next_id;
@@ -11577,6 +11629,18 @@ impl Game {
         if mission.kind == "gain_sources" {
             self.apply_spy_mission_effect(spy_id, &mission, true);
             self.spies.get_mut(&spy_id).unwrap().mission = None;
+            return;
+        }
+        // An operation outlives the border it was launched across: the target
+        // city can change hands while the operative is still inside it. When
+        // it is the spy's own civilization that took the city there is nobody
+        // left to steal from, and being "captured" by your own side would pin
+        // that capacity slot shut for the rest of the game — the exchange that
+        // frees a captive needs a counterparty, and no civilization is its
+        // own. Counterspy and listening posts have already returned above;
+        // they belong in friendly cities.
+        if defender == spy.owner || self.same_team(defender, spy.owner) {
+            self.spy_return_home(spy_id, 1);
             return;
         }
         let success = self.rng.chance(self.spy_success_chance(spy_id, &mission));
