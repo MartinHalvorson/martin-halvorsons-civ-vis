@@ -156,6 +156,32 @@ fn stalled_settler_context(g: &Game, id: u32) -> String {
     )
 }
 
+fn stalled_trader_context(g: &Game, id: u32) -> String {
+    let unit = &g.units[&id];
+    let pid = unit.owner;
+    let traders = g
+        .units
+        .values()
+        .filter(|candidate| candidate.owner == pid && candidate.kind == "trader")
+        .count();
+    let legal_routes = g
+        .legal_actions(pid)
+        .into_iter()
+        .filter(|action| matches!(action, Action::TradeRoute { unit, .. } if *unit == id))
+        .count();
+    let city = g.city_at(unit.pos).map(|city| g.cities[&city].name.clone());
+    format!(
+        "; at {:?}, city={city:?}, capacity={}, active_routes={}, available_traders={traders}, legal_routes={legal_routes}",
+        unit.pos,
+        g.trade_capacity(pid),
+        g.active_routes(pid),
+    )
+}
+
+fn trader_is_waiting_for_capacity(kind: &str, active_routes: i64, capacity: i64) -> bool {
+    kind == "trader" && active_routes >= capacity
+}
+
 fn idle_city_context(g: &Game, id: u32) -> String {
     let city = &g.cities[&id];
     let player = &g.players[city.owner];
@@ -222,13 +248,22 @@ fn audit_turn(g: &Game, history: &mut History, found: &mut Findings) {
             *entry = (g.turn, unit.pos);
         } else if g.turn - entry.0 >= IDLE_TURNS
             && !unit.fortified
+            // Losing Merchant Republic or a temporary policy slot can leave
+            // a Trader waiting behind routes that were already active. It
+            // will take the next slot when one completes; report Traders only
+            // when spare capacity exists and they still cannot find a job.
+            && !trader_is_waiting_for_capacity(
+                &unit.kind,
+                g.active_routes(unit.owner),
+                g.trade_capacity(unit.owner),
+            )
             && !history.reported_unit.get(id).copied().unwrap_or(false)
         {
             history.reported_unit.insert(*id, true);
-            let context = if unit.kind == "settler" {
-                stalled_settler_context(g, *id)
-            } else {
-                String::new()
+            let context = match unit.kind.as_str() {
+                "settler" => stalled_settler_context(g, *id),
+                "trader" => stalled_trader_context(g, *id),
+                _ => String::new(),
             };
             found.symptom(
                 format!("{} sits still {IDLE_TURNS}+ turns", unit.kind),
@@ -524,7 +559,7 @@ mod tests {
 
     use super::{
         bounded_minor_idle, negotiated_war_ended_early, rapid_recapture_window,
-        redeclared_inside_peace_treaty,
+        redeclared_inside_peace_treaty, trader_is_waiting_for_capacity,
     };
 
     fn concluded_war(kind: &str) -> WarRecord {
@@ -619,5 +654,13 @@ mod tests {
             project: "campus_research_grants".to_string(),
         });
         assert!(!bounded_minor_idle(true, 3, &investment));
+    }
+
+    #[test]
+    fn a_trader_waiting_behind_full_capacity_is_not_idle() {
+        assert!(trader_is_waiting_for_capacity("trader", 1, 1));
+        assert!(trader_is_waiting_for_capacity("trader", 2, 1));
+        assert!(!trader_is_waiting_for_capacity("trader", 0, 1));
+        assert!(!trader_is_waiting_for_capacity("builder", 1, 1));
     }
 }

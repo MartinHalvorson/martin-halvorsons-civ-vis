@@ -2889,7 +2889,7 @@ impl BasicAi {
         }
 
         if !self.minor
-            && g.active_routes(pid) + (traders as i64) < g.trade_capacity(pid)
+            && Self::should_add_trader(g, pid, traders)
             && self.buy_gold_unit(g, pid, city_ids, "trader", reserve)
         {
             return true;
@@ -2916,6 +2916,26 @@ impl BasicAi {
             && self.buy_gold_military(g, pid, city_ids, reserve, want_ranged)
     }
 
+    /// Destinations not already served by this empire that at least one of
+    /// its cities can legally reach. Routes are unique by owner/destination,
+    /// so each entry is one concrete job for one available or queued Trader.
+    fn open_trade_destinations(g: &Game, pid: usize) -> usize {
+        let origins = g.player_city_ids(pid);
+        g.cities
+            .keys()
+            .filter(|destination| {
+                origins.iter().any(|origin| {
+                    g.can_establish_trade_route(pid, *origin, **destination)
+                })
+            })
+            .count()
+    }
+
+    fn should_add_trader(g: &Game, pid: usize, traders: usize) -> bool {
+        g.active_routes(pid) + (traders as i64) < g.trade_capacity(pid)
+            && traders < Self::open_trade_destinations(g, pid)
+    }
+
     fn economic_recovery_item(
         &self,
         g: &Game,
@@ -2923,7 +2943,7 @@ impl BasicAi {
         cid: u32,
         traders: usize,
     ) -> Option<Item> {
-        if g.active_routes(pid) + (traders as i64) < g.trade_capacity(pid) {
+        if Self::should_add_trader(g, pid, traders) {
             let trader = Item::Unit {
                 unit: "trader".to_string(),
             };
@@ -3226,7 +3246,7 @@ impl BasicAi {
             });
         }
         if !self.minor
-            && g.active_routes(pid) + (traders as i64) < g.trade_capacity(pid)
+            && Self::should_add_trader(g, pid, traders)
             && g.can_produce(
                 pid,
                 cid,
@@ -7238,6 +7258,27 @@ mod tests {
             .unwrap()
             .buildings
             .push("market".to_string());
+        let second_center = g
+            .map
+            .tiles
+            .iter()
+            .find(|(position, tile)| {
+                let distance = g.wdist(**position, center);
+                (4..=15).contains(&distance)
+                    && g.rules.is_passable(tile)
+                    && !g.rules.is_water(tile)
+                    && g.units_at(**position).is_empty()
+            })
+            .map(|(position, _)| *position)
+            .expect("the recovery Trader needs a reachable destination");
+        let second_settler = g.spawn_test_unit("settler", 0, second_center);
+        g.apply(
+            0,
+            &Action::FoundCity {
+                unit: second_settler,
+            },
+        )
+        .unwrap();
         g.players[0].civics.insert("foreign_trade".to_string());
         assert_eq!(
             ai.pick_item(&g, 0, cid, 1, 0, 0, 0, 0, 4, 2, 2),
@@ -7245,6 +7286,37 @@ mod tests {
                 unit: "trader".to_string()
             })
         );
+    }
+
+    #[test]
+    fn trade_capacity_without_an_open_destination_does_not_create_a_trader() {
+        let mut g = Game::new_full(1, 20, 14, 323_001, 60, 0, false);
+        let settler = g
+            .player_unit_ids(0)
+            .into_iter()
+            .find(|id| g.units[id].kind == "settler")
+            .unwrap();
+        g.apply(0, &Action::FoundCity { unit: settler }).unwrap();
+        g.players[0].civics.insert("foreign_trade".to_string());
+        let city = g.player_city_ids(0)[0];
+        let trader = Item::Unit {
+            unit: "trader".to_string(),
+        };
+        assert!(g.trade_capacity(0) > 0);
+        assert!(g.can_produce(0, city, &trader));
+        assert_eq!(BasicAi::open_trade_destinations(&g, 0), 0);
+        assert!(!BasicAi::should_add_trader(&g, 0, 0));
+
+        let ai = BasicAi::new();
+        let choice = ai.pick_item(&g, 0, city, 1, 1, 1, 0, 0, 3, 2, 1);
+        assert_ne!(choice, Some(trader));
+
+        g.players[0].gold = g.rules.units["trader"].cost * 4.0 + 125.0;
+        let _ = ai.spend_gold(&mut g, 0, &[city], 1, 1, 0, 3, 2, 1);
+        assert!(g
+            .player_unit_ids(0)
+            .into_iter()
+            .all(|unit| g.units[&unit].kind != "trader"));
     }
 
     #[test]
