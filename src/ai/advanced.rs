@@ -12209,8 +12209,8 @@ mod tests {
         let city_centers: BTreeSet<Pos> =
             game.cities.values().map(|city| city.pos).collect();
         for (position, tile) in &mut game.map.tiles {
-            if ![home, origin, target].contains(position)
-                && !city_centers.contains(position)
+            if ![home, origin, target].contains(&position)
+                && !city_centers.contains(&position)
             {
                 tile.terrain = "ocean".to_string();
                 tile.feature = None;

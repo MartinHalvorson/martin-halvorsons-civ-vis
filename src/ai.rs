@@ -5456,7 +5456,7 @@ mod tests {
             tile.feature = None;
             tile.resource = None;
             tile.owner_city = None;
-            if *position != source && *position != target {
+            if position != source && position != target {
                 tile.terrain = "mountain".to_string();
                 tile.improvement = Some("mountain_tunnel".to_string());
             }
@@ -6289,7 +6289,7 @@ mod tests {
         let center = game.cities[&city].pos;
         game.cities.get_mut(&city).unwrap().pop = 4;
         for (position, tile) in &mut game.map.tiles {
-            if *position != center {
+            if position != center {
                 tile.terrain = "ocean".to_string();
                 tile.feature = None;
             }

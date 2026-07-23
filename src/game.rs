@@ -13478,11 +13478,16 @@ impl Game {
         self.retire_merchant_for_corporation(pid)?;
         if let Some(previous) = self.corporation_owner(&resource) {
             if previous != pid {
-                if let Some((position, _)) = self.map.tiles.iter().find(|(_, tile)| {
-                    tile.improvement.as_deref() == Some("corporation")
-                        && tile.resource.as_deref() == Some(resource.as_str())
-                }) {
-                    let position = *position;
+                let existing = self
+                    .map
+                    .tiles
+                    .iter()
+                    .find(|(_, tile)| {
+                        tile.improvement.as_deref() == Some("corporation")
+                            && tile.resource.as_deref() == Some(resource.as_str())
+                    })
+                    .map(|(position, _)| *position);
+                if let Some(position) = existing {
                     self.map.tiles.get_mut(&position).unwrap().improvement =
                         Some("industry".to_string());
                 }

@@ -146,12 +146,177 @@ impl Tile {
     }
 }
 
+/// Dense storage for the world's hexes.
+///
+/// Every position on the cylinder maps to exactly one offset column/row, so
+/// the map is a rectangle with no holes and a tile lookup can be a pair of
+/// array reads instead of a balanced-tree descent. Tile access sits under
+/// essentially every rule in the engine, which made the old `BTreeMap<Pos,
+/// Tile>` one of the hottest structures in a simulated turn.
+///
+/// `tiles` is kept sorted by `Pos` so iteration matches the ordering the map
+/// has always had — saves, observations, and per-seed determinism all depend
+/// on it — while `slot` indexes that vector by offset coordinates.
+#[derive(Clone, Default)]
+pub struct TileGrid {
+    width: i32,
+    height: i32,
+    tiles: Vec<Tile>,
+    /// `row * width + col` -> index into `tiles`, or `u32::MAX` when a save
+    /// omitted that hex.
+    slot: Vec<u32>,
+}
+
+const EMPTY_SLOT: u32 = u32::MAX;
+
+impl TileGrid {
+    pub fn new(width: i32, height: i32) -> TileGrid {
+        let mut grid = TileGrid {
+            width,
+            height,
+            tiles: Vec::new(),
+            slot: Vec::new(),
+        };
+        let mut tiles = Vec::with_capacity((width.max(0) * height.max(0)) as usize);
+        for row in 0..height {
+            for col in 0..width {
+                tiles.push(Tile::new(hex::offset_to_axial(col, row)));
+            }
+        }
+        grid.rebuild(tiles);
+        grid
+    }
+
+    fn from_tiles(width: i32, height: i32, tiles: Vec<Tile>) -> TileGrid {
+        let mut grid = TileGrid {
+            width,
+            height,
+            tiles: Vec::new(),
+            slot: Vec::new(),
+        };
+        grid.rebuild(tiles);
+        grid
+    }
+
+    fn rebuild(&mut self, mut tiles: Vec<Tile>) {
+        tiles.sort_unstable_by_key(|tile| tile.pos);
+        tiles.dedup_by_key(|tile| tile.pos);
+        let cells = (self.width.max(0) as usize) * (self.height.max(0) as usize);
+        self.slot = vec![EMPTY_SLOT; cells];
+        for (index, tile) in tiles.iter().enumerate() {
+            if let Some(cell) = self.cell(tile.pos) {
+                self.slot[cell] = index as u32;
+            }
+        }
+        self.tiles = tiles;
+    }
+
+    #[inline]
+    fn cell(&self, pos: Pos) -> Option<usize> {
+        let (col, row) = hex::axial_to_offset(pos.0, pos.1);
+        if col < 0 || col >= self.width || row < 0 || row >= self.height {
+            return None;
+        }
+        Some((row * self.width + col) as usize)
+    }
+
+    #[inline]
+    fn index_of(&self, pos: Pos) -> Option<usize> {
+        let slot = *self.slot.get(self.cell(pos)?)?;
+        if slot == EMPTY_SLOT {
+            None
+        } else {
+            Some(slot as usize)
+        }
+    }
+
+    #[inline]
+    pub fn get(&self, pos: &Pos) -> Option<&Tile> {
+        self.index_of(*pos).map(|index| &self.tiles[index])
+    }
+
+    #[inline]
+    pub fn get_mut(&mut self, pos: &Pos) -> Option<&mut Tile> {
+        self.index_of(*pos).map(|index| &mut self.tiles[index])
+    }
+
+    #[inline]
+    pub fn contains_key(&self, pos: &Pos) -> bool {
+        self.index_of(*pos).is_some()
+    }
+
+    pub fn len(&self) -> usize {
+        self.tiles.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tiles.is_empty()
+    }
+
+    pub fn keys(&self) -> impl DoubleEndedIterator<Item = &Pos> + ExactSizeIterator + '_ {
+        self.tiles.iter().map(|tile| &tile.pos)
+    }
+
+    pub fn values(&self) -> std::slice::Iter<'_, Tile> {
+        self.tiles.iter()
+    }
+
+    pub fn values_mut(&mut self) -> std::slice::IterMut<'_, Tile> {
+        self.tiles.iter_mut()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&Pos, &Tile)> + '_ {
+        self.tiles.iter().map(|tile| (&tile.pos, tile))
+    }
+
+    pub fn into_values(self) -> std::vec::IntoIter<Tile> {
+        self.tiles.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a TileGrid {
+    type Item = (&'a Pos, &'a Tile);
+    type IntoIter = std::iter::Map<std::slice::Iter<'a, Tile>, fn(&'a Tile) -> (&'a Pos, &'a Tile)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.tiles.iter().map(|tile| (&tile.pos, tile))
+    }
+}
+
+/// Mutable iteration hands back an owned `Pos`: the position lives inside the
+/// tile, so it cannot be lent out immutably while the tile itself is lent out
+/// mutably.
+impl<'a> IntoIterator for &'a mut TileGrid {
+    type Item = (Pos, &'a mut Tile);
+    type IntoIter =
+        std::iter::Map<std::slice::IterMut<'a, Tile>, fn(&'a mut Tile) -> (Pos, &'a mut Tile)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.tiles.iter_mut().map(|tile| (tile.pos, tile))
+    }
+}
+
+impl std::ops::Index<&Pos> for TileGrid {
+    type Output = Tile;
+
+    #[inline]
+    fn index(&self, pos: &Pos) -> &Tile {
+        self.get(pos).expect("tile position outside the world map")
+    }
+}
+
+impl PartialEq for TileGrid {
+    fn eq(&self, other: &Self) -> bool {
+        self.width == other.width && self.height == other.height && self.tiles == other.tiles
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(from = "WorldMapSer", into = "WorldMapSer")]
 pub struct WorldMap {
     pub width: i32,
     pub height: i32,
-    pub tiles: BTreeMap<Pos, Tile>,
+    pub tiles: TileGrid,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -163,11 +328,10 @@ struct WorldMapSer {
 
 impl From<WorldMapSer> for WorldMap {
     fn from(s: WorldMapSer) -> WorldMap {
-        let tiles = s.tiles.into_iter().map(|t| (t.pos, t)).collect();
         WorldMap {
             width: s.width,
             height: s.height,
-            tiles,
+            tiles: TileGrid::from_tiles(s.width, s.height, s.tiles),
         }
     }
 }
@@ -184,20 +348,14 @@ impl From<WorldMap> for WorldMapSer {
 
 impl WorldMap {
     pub fn new(width: i32, height: i32) -> WorldMap {
-        let mut tiles = BTreeMap::new();
-        for row in 0..height {
-            for col in 0..width {
-                let pos = hex::offset_to_axial(col, row);
-                tiles.insert(pos, Tile::new(pos));
-            }
-        }
         WorldMap {
             width,
             height,
-            tiles,
+            tiles: TileGrid::new(width, height),
         }
     }
 
+    #[inline]
     pub fn get(&self, pos: Pos) -> Option<&Tile> {
         self.tiles.get(&pos)
     }
