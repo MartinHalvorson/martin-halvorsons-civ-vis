@@ -673,9 +673,9 @@ fn victory_progress_json(g: &Game, pid: usize, leading_score: i64) -> Value {
     };
 
     // Domination counts every original capital in the world, a civilization's
-    // own included — `check_domination` treats the candidate's own seat as
-    // satisfied, so in a six-player game everybody starts the race at one of
-    // six rather than at nothing.
+    // own included — it starts the race holding exactly that one, and losing
+    // it costs a step here just as it costs the victory in
+    // `check_domination`.
     let capital_target = all_majors.len();
     let controlled_capitals = if player.team.is_some() {
         all_majors
@@ -696,14 +696,13 @@ fn victory_progress_json(g: &Game, pid: usize, leading_score: i64) -> Value {
         all_majors
             .iter()
             .filter(|original_owner| {
-                **original_owner == pid
-                    || g
-                        .cities
-                        .values()
-                        .find(|city| city.is_capital && city.original_owner == **original_owner)
-                        .map_or(!g.players[**original_owner].alive, |capital| {
-                            capital.owner == pid
-                        })
+                g.cities
+                    .values()
+                    .find(|city| city.is_capital && city.original_owner == **original_owner)
+                    .map_or(
+                        **original_owner == pid || !g.players[**original_owner].alive,
+                        |capital| capital.owner == pid,
+                    )
             })
             .count()
     };

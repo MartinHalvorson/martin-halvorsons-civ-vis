@@ -38574,22 +38574,26 @@ impl Game {
                 }
                 continue;
             }
-            let controls_every_foreign_capital = majors.iter().copied().all(|original_owner| {
-                if original_owner == candidate {
-                    return true;
-                }
+            // "To win a Domination victory, you must capture all original
+            // civilization Capitals" — all of them, the candidate's own
+            // included. A civilization that has lost its own Capital cannot
+            // win this way until it takes it back, which is exactly the rule
+            // the team branch above spells out for a whole side.
+            let controls_every_original_capital = majors.iter().copied().all(|original_owner| {
                 match self
                     .cities
                     .values()
                     .find(|c| c.is_capital && c.original_owner == original_owner)
                 {
                     Some(capital) => capital.owner == candidate,
-                    // The engine begins with settlers. Defeating a civ before
-                    // it founds its original capital satisfies that opponent.
-                    None => !self.players[original_owner].alive,
+                    // The engine begins with settlers, so a Capital can be
+                    // missing rather than lost. Defeating a civ before it
+                    // founds one satisfies that seat, and a candidate that
+                    // has never founded its own has none to have lost.
+                    None => original_owner == candidate || !self.players[original_owner].alive,
                 }
             });
-            if controls_every_foreign_capital {
+            if controls_every_original_capital {
                 self.set_winner(candidate, "domination");
                 return;
             }
@@ -42701,8 +42705,7 @@ mod victory_conditions {
     }
 
     #[test]
-    fn domination_requires_every_foreign_original_capital() {
-        let mut g = game_with_capitals(3, 402, 300);
+    fn domination_requires_every_original_capital_including_your_own() {
         let capital = |g: &Game, original_owner: usize| {
             g.cities
                 .values()
@@ -42710,6 +42713,8 @@ mod victory_conditions {
                 .unwrap()
                 .id
         };
+
+        let mut g = game_with_capitals(3, 402, 300);
         let second = capital(&g, 1);
         let third = capital(&g, 2);
         g.capture_city(second, 0);
@@ -42717,6 +42722,30 @@ mod victory_conditions {
         assert_eq!(g.winner, None);
         g.capture_city(third, 0);
         g.do_keep_city(0, third).unwrap();
+        assert_eq!(g.winner, Some(0));
+        assert_eq!(g.victory_type.as_deref(), Some("domination"));
+
+        // "You must capture all original civilization Capitals" — a conqueror
+        // holding both rivals' Capitals but not its own has not, and cannot
+        // win until it takes its own back.
+        let mut g = game_with_capitals(3, 402, 300);
+        let own = capital(&g, 0);
+        let second = capital(&g, 1);
+        let third = capital(&g, 2);
+        g.capture_city(second, 0);
+        g.do_keep_city(0, second).unwrap();
+        g.capture_city(third, 0);
+        g.do_keep_city(0, third).unwrap();
+        g.winner = None;
+        g.victory_type = None;
+        g.capture_city(own, 1);
+        g.do_keep_city(1, own).unwrap();
+        assert_eq!(g.cities[&own].owner, 1);
+        g.check_domination();
+        assert_eq!(g.winner, None, "its own Capital is in rival hands");
+
+        g.capture_city(own, 0);
+        g.do_keep_city(0, own).unwrap();
         assert_eq!(g.winner, Some(0));
         assert_eq!(g.victory_type.as_deref(), Some("domination"));
     }
