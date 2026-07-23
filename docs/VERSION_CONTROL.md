@@ -227,8 +227,9 @@ ruleset:
 Both `cargo-test` and `collaboration-policy` are required checks. The latter
 rejects ambiguous branch names, missing or mismatched machine/agent identity,
 changes outside claimed paths, undeclared file overlap with another open PR,
-autosync commits, and ready PRs with incomplete validation checkboxes. Run the
-same fleet audit locally at any time:
+autosync commits, ready PRs with incomplete validation checkboxes, and ready PR
+heads that do not contain the current `main` tip. Run the same fleet audit
+locally at any time:
 
 ```bash
 python3 tools/civvis_collab.py audit

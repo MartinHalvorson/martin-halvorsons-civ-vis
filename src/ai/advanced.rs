@@ -4,7 +4,7 @@
 //! agent adds a shared strategic model so research, production, diplomacy,
 //! civilian work, and military movement pursue the same medium-term goal.
 use super::{Ai, BasicAi, ForceReport, PlanReport, UnitDoctrine, Weights};
-use crate::game::{Action, CongressResolution, DiplomaticDeal, Game, Item};
+use crate::game::{Action, ActionFamilies, CongressResolution, DiplomaticDeal, Game, Item};
 use crate::rules::Yields;
 use crate::Pos;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -1480,7 +1480,7 @@ impl AdvancedAi {
     /// free relocation from oscillating between equivalent slots.
     fn advanced_products(&self, g: &mut Game, pid: usize, strategy: GrandStrategy) {
         let candidates: BTreeSet<(u32, u32, String)> = g
-            .legal_actions(pid)
+            .legal_actions_within(pid, ActionFamilies::CHEAP)
             .into_iter()
             .filter_map(|action| match action {
                 Action::MoveProduct { from, to, product } => Some((from, to, product)),
@@ -3237,7 +3237,7 @@ impl AdvancedAi {
     /// on the brink of victory, where five setup turns can lose the game.
     /// City-states cannot be denounced and therefore remain direct targets.
     fn preferred_war_opening(&self, g: &Game, pid: usize, target: usize) -> Option<Action> {
-        let legal = g.legal_actions(pid);
+        let legal = g.legal_actions_within(pid, ActionFamilies::CHEAP);
         let casus_belli = legal
             .iter()
             .filter_map(|action| match action {
@@ -3859,7 +3859,10 @@ impl AdvancedAi {
             // game immutably, so those answers cannot go stale before it is
             // dropped below.
             let memo = g.yield_memo();
-            for action in g.legal_actions(pid) {
+            for action in g.legal_actions_within(
+                pid,
+                ActionFamilies::PURCHASES | ActionFamilies::EMPIRE,
+            ) {
                 let (city, item, currency) = match &action {
                     Action::Buy {
                         city,
@@ -4421,7 +4424,7 @@ impl AdvancedAi {
             _ => 80.0,
         };
         let best = g
-            .legal_actions(pid)
+            .legal_actions_within(pid, ActionFamilies::PURCHASES | ActionFamilies::EMPIRE)
             .into_iter()
             .filter_map(|action| match &action {
                 Action::BuyBuilding {
@@ -4815,7 +4818,9 @@ impl AdvancedAi {
         let counts = self.counts(g, pid);
         let mut candidates = Vec::new();
         let memo = g.yield_memo();
-        for action in g.legal_actions(pid) {
+        for action in
+            g.legal_actions_within(pid, ActionFamilies::PURCHASES | ActionFamilies::EMPIRE)
+        {
             let Action::Buy {
                 city,
                 unit,
@@ -7106,7 +7111,7 @@ impl AdvancedAi {
             .religion
             .clone()
             .or_else(|| g.players[pid].religion.clone());
-        let legal = g.legal_actions(pid);
+        let legal = g.legal_actions_within(pid, ActionFamilies::UNITS);
 
         // A lost core city is more urgent than another enhancer or worship
         // belief. Preserve this Apostle until it reaches the Holy City, then
@@ -9175,7 +9180,7 @@ impl AdvancedAi {
             return;
         }
         let mut best: BTreeMap<u32, (f64, Pos)> = BTreeMap::new();
-        for action in g.legal_actions(pid) {
+        for action in g.legal_actions_within(pid, ActionFamilies::CHEAP) {
             let Action::EncampmentStrike { city, target } = action else {
                 continue;
             };
@@ -9201,7 +9206,7 @@ impl AdvancedAi {
     fn advanced_city_strikes(&self, g: &mut Game, pid: usize) {
         loop {
             let candidates: Vec<Action> = g
-                .legal_actions(pid)
+                .legal_actions_within(pid, ActionFamilies::CHEAP)
                 .into_iter()
                 .filter(|action| matches!(action, Action::CityStrike { .. }))
                 .collect();
@@ -9234,7 +9239,7 @@ impl AdvancedAi {
             return;
         }
         let candidates: Vec<(Action, Pos, bool)> = g
-            .legal_actions(pid)
+            .legal_actions_within(pid, ActionFamilies::EMPIRE)
             .into_iter()
             .filter_map(|action| match action {
                 Action::WmdStrike {

@@ -197,6 +197,11 @@ def validate_pr(
     return errors
 
 
+def compare_status_is_current(status: str) -> bool:
+    """Return whether a PR head contains the current base branch tip."""
+    return status in {"ahead", "identical"}
+
+
 def github_json(path: str, token: str) -> Any:
     url = f"https://api.github.com{path}"
     request = urllib.request.Request(
@@ -250,6 +255,15 @@ def check_pr_action(event_path: Path, token: str, repository: str) -> int:
         commit_subjects=subjects,
         other_files=other_files,
     )
+    if not current["isDraft"]:
+        base_sha = str(current.get("base", {}).get("sha") or "")
+        head_sha = str(current.get("head", {}).get("sha") or "")
+        if base_sha and head_sha:
+            comparison = github_json(
+                f"/repos/{repository}/compare/{base_sha}...{head_sha}", token
+            )
+            if not compare_status_is_current(str(comparison.get("status") or "")):
+                errors.append("ready PR branch must include the current main tip")
     if errors:
         for error in errors:
             print(f"::error::{error}")
@@ -568,6 +582,8 @@ def audit_repo(root: Path) -> Dict[str, List[str]]:
 
     if shutil.which("gh"):
         repo = gh_json(("api", f"repos/{REPOSITORY}"), cwd=root)
+        heads = remote_heads(root)
+        main_sha = heads.get(DEFAULT_BRANCH, "")
         if repo.get("allow_merge_commit") or repo.get("allow_rebase_merge"):
             errors.append("repository permits non-squash merge methods")
         else:
@@ -635,7 +651,7 @@ def audit_repo(root: Path) -> Dict[str, List[str]]:
                     "--repo",
                     REPOSITORY,
                     "--json",
-                    "files,commits,isDraft,body,headRefName,number",
+                    "files,commits,isDraft,body,headRefName,headRefOid,number",
                 ),
                 cwd=root,
             )
@@ -653,10 +669,26 @@ def audit_repo(root: Path) -> Dict[str, List[str]]:
             )
             for violation in violations:
                 errors.append(f"PR #{number}: {violation}")
+            if not view.get("isDraft") and main_sha:
+                head_sha = str(view.get("headRefOid") or "")
+                if head_sha:
+                    comparison = gh_json(
+                        (
+                            "api",
+                            f"repos/{REPOSITORY}/compare/{main_sha}...{head_sha}",
+                        ),
+                        cwd=root,
+                    )
+                    if not compare_status_is_current(
+                        str(comparison.get("status") or "")
+                    ):
+                        errors.append(
+                            f"PR #{number}: ready branch does not include current main"
+                        )
         if prs and not any(item.startswith("PR #") for item in errors):
             ok.append(f"all {len(prs)} open PR claim(s) satisfy policy")
 
-        for branch in sorted(remote_heads(root)):
+        for branch in sorted(heads):
             if branch == DEFAULT_BRANCH:
                 continue
             if not BRANCH_RE.fullmatch(branch):

@@ -1,6 +1,6 @@
 //! Scripted AIs (mirrors civvis/ai/). BasicAi reads full state (no fog) —
 //! sparring partner, not a fair-play agent.
-use crate::game::{effective_strength, Action, Game, Item};
+use crate::game::{effective_strength, Action, ActionFamilies, Game, Item};
 use crate::rng::Rng;
 use crate::Pos;
 use std::cell::RefCell;
@@ -1372,7 +1372,7 @@ impl BasicAi {
 
     pub(crate) fn corporations(&self, g: &mut Game, pid: usize) {
         if let Some(action) = g
-            .legal_actions(pid)
+            .legal_actions_within(pid, ActionFamilies::CHEAP)
             .into_iter()
             .find(|action| matches!(action, Action::FoundCorporation { .. }))
         {
@@ -2210,7 +2210,7 @@ impl BasicAi {
         });
         if has_ready_encampment {
             let strikes: Vec<Action> = g
-                .legal_actions(pid)
+                .legal_actions_within(pid, ActionFamilies::CHEAP)
                 .into_iter()
                 .filter(|action| matches!(action, Action::EncampmentStrike { .. }))
                 .collect();
@@ -3557,7 +3557,7 @@ impl BasicAi {
                     break;
                 }
                 let action = g
-                    .legal_actions(pid)
+                    .legal_actions_within(pid, ActionFamilies::CHEAP)
                     .into_iter()
                     .find(|action| matches!(action, Action::CombineUnits { .. }));
                 let Some(action) = action else { break };
@@ -3593,7 +3593,7 @@ impl BasicAi {
         };
         while has_link_candidate(g) {
             let action = g
-                .legal_actions(pid)
+                .legal_actions_within(pid, ActionFamilies::CHEAP)
                 .into_iter()
                 .find(|action| match action {
                     Action::LinkUnits { unit, with } => {

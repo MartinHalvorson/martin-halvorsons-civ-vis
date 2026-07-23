@@ -145,6 +145,12 @@ class PolicyTests(unittest.TestCase):
         self.assertIsNone(collab.commit_is_pr_backed(rows, "def"))
         self.assertIsNone(collab.commit_is_pr_backed(rows, "missing"))
 
+    def test_only_ahead_or_identical_heads_include_current_main(self):
+        self.assertTrue(collab.compare_status_is_current("ahead"))
+        self.assertTrue(collab.compare_status_is_current("identical"))
+        self.assertFalse(collab.compare_status_is_current("behind"))
+        self.assertFalse(collab.compare_status_is_current("diverged"))
+
 
 if __name__ == "__main__":
     unittest.main()
