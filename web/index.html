@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Martin Halvorson's Civilization VIS</title>
+<title>CIVVIS: Martin Halvorson's Civilization VIS (6.5)</title>
 <style>
   :root {
     --ink: #07110f;
@@ -65,17 +65,17 @@
   }
   .brand { display: flex; align-items: center; gap: 10px; }
   .brand-mark {
-    width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%;
-    color: #172018; font: 700 18px/1 Georgia, serif;
+    flex: 0 0 auto; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%;
+    color: #172018; font: 700 14px/1 Georgia, serif; letter-spacing: .01em;
     background: radial-gradient(circle at 35% 30%, #f8dfa1, #c49c4b 62%, #74541e);
     border: 1px solid #f1d48e; box-shadow: 0 0 0 3px #1a2924, 0 7px 18px #0008;
   }
   .brand-copy { min-width: 0; }
   h1 {
-    color: var(--gold-bright); font: 600 16px/1.05 Georgia, "Times New Roman", serif;
-    letter-spacing: .12em; text-transform: uppercase;
+    color: var(--gold-bright); font: 600 12.5px/1.25 Georgia, "Times New Roman", serif;
+    letter-spacing: .05em; text-transform: uppercase; text-wrap: balance;
   }
-  .tagline { color: var(--muted); font-size: 9px; letter-spacing: .16em; text-transform: uppercase; margin-top: 4px; }
+  .tagline { color: var(--muted); font-size: 9px; letter-spacing: .09em; text-transform: uppercase; margin-top: 4px; }
   #gameidentity { min-height: 34px; margin-top: 11px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
   .identity-copy { min-width: 0; }
   #gameidentity .civ-name { font: 600 15px/1.2 Georgia, serif; color: var(--text); }
@@ -689,10 +689,10 @@
 <div id="side">
   <div class="side-head">
     <div class="brand">
-      <div class="brand-mark">VI</div>
+      <div class="brand-mark">VIS</div>
       <div class="brand-copy">
-        <h1>Civilization VIS</h1>
-        <div class="tagline">Strategy simulator</div>
+        <h1>CIVVIS: Martin Halvorson's Civilization VIS (6.5)</h1>
+        <div class="tagline">A Civ 6 Simulator for AI Strategy Development</div>
       </div>
     </div>
     <div id="gameidentity"></div>
