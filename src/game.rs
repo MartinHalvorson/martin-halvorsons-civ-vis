@@ -938,6 +938,59 @@ mod belief_runtime_tests {
     }
 
     #[test]
+    fn art_museum_theming_needs_one_era_and_three_artists() {
+        let (mut game, cities) = game_with_capitals(91_804);
+        let city = cities[0];
+        let square = game.cities[&city].owned_tiles[1];
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .districts
+            .insert("theater_square".to_string(), square);
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .buildings
+            .extend(["amphitheater".to_string(), "art_museum".to_string()]);
+        for (creator, era) in [("Donatello", 3), ("Rembrandt", 3), ("Monet", 3)] {
+            game.grant_great_work(0, "art", era, creator);
+        }
+        let culture_themed = game.city_yields(city).culture;
+        let tourism_themed = game.tourism_per_turn(0);
+        assert!(
+            game.boost_met(
+                0,
+                &crate::rules::BoostSpec {
+                    trigger: "themed_buildings".to_string(),
+                    count: 1,
+                    percent: None,
+                }
+            ),
+            "same era, three artists: themed"
+        );
+
+        // Swap one artist for a second work by an existing one: the trio
+        // keeps its era but loses its third artist, and the bonus with it.
+        game.players[0].great_work_pieces[2].creator = "Donatello".to_string();
+        let culture_plain = game.city_yields(city).culture;
+        let tourism_plain = game.tourism_per_turn(0);
+        let band = Game::amenity_yield_mult_for(game.city_amenity_surplus(&game.cities[&city]));
+        assert!((culture_themed - culture_plain - 9.0 * band).abs() < 1e-9);
+        // The trio adds its own 6 Tourism plus the 15%-of-culture stream on
+        // the theming Culture.
+        let expected = 6.0 + 0.15 * (culture_themed - culture_plain);
+        assert!((tourism_themed - tourism_plain - expected).abs() < 1e-9);
+        assert!(!game.boost_met(
+            0,
+            &crate::rules::BoostSpec {
+                trigger: "themed_buildings".to_string(),
+                count: 1,
+                percent: None,
+            }
+        ));
+    }
+
+    #[test]
     fn great_work_pieces_track_counters_through_grants_moves_and_deals() {
         let (mut game, _cities) = game_with_capitals(91_803);
         let tally = |game: &Game, pid: usize, kind: &str| {
@@ -20128,6 +20181,13 @@ impl Game {
                     _ => {}
                 }
             }
+            let pieces = self.housed_great_work_pieces(city.owner);
+            let (_, theming_culture, _) = self.city_theming(
+                city.owner,
+                cid,
+                pieces.get(&cid).map(Vec::as_slice).unwrap_or(&[]),
+            );
+            ys.culture += theming_culture;
         }
         ys.science += 0.5 * city.pop as f64;
         ys.culture += 0.3 * city.pop as f64;
@@ -31770,10 +31830,20 @@ impl Game {
         let mut tourism = 0.0;
         let mut film_studio_bonus = 0.0;
         let housed_works = self.housed_great_works(pid);
+        let housed_pieces = self.housed_great_work_pieces(pid);
         for city in self.cities.values().filter(|city| city.owner == pid) {
             let city_tourism_start = tourism;
             tourism += 2.0 * city.wonders.len() as f64;
             tourism += city.products.len().min(self.product_capacity(city)) as f64;
+            let (_, _, theming_tourism) = self.city_theming(
+                pid,
+                city.id,
+                housed_pieces
+                    .get(&city.id)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
+            );
+            tourism += theming_tourism;
             for (kind, count) in housed_works.get(&city.id).into_iter().flatten() {
                 let mut value = self.great_work_tourism(pid, kind) * *count as f64;
                 if matches!(
@@ -32479,6 +32549,79 @@ impl Game {
         }
     }
 
+    /// The pieces each city houses: the counted distribution decides how
+    /// many works of each kind a city holds, and the player's pieces fill
+    /// those holdings in creation order.
+    fn housed_great_work_pieces(&self, pid: usize) -> BTreeMap<u32, Vec<GreatWorkPiece>> {
+        let housed = self.housed_great_works(pid);
+        let mut by_kind: BTreeMap<&str, Vec<&GreatWorkPiece>> = BTreeMap::new();
+        for piece in &self.players[pid].great_work_pieces {
+            by_kind.entry(piece.kind.as_str()).or_default().push(piece);
+        }
+        let mut cursors: BTreeMap<String, usize> = BTreeMap::new();
+        let mut out: BTreeMap<u32, Vec<GreatWorkPiece>> = BTreeMap::new();
+        for (city, kinds) in &housed {
+            let entry = out.entry(*city).or_default();
+            for (kind, count) in kinds {
+                let cursor = cursors.entry(kind.clone()).or_insert(0);
+                let pool = by_kind.get(kind.as_str());
+                for offset in 0..*count {
+                    if let Some(piece) = pool.and_then(|pool| pool.get(*cursor + offset)) {
+                        entry.push((*piece).clone());
+                    }
+                }
+                *cursor += count;
+            }
+        }
+        out
+    }
+
+    /// Themed buildings in one city under the shipped predicates - an Art
+    /// Museum wants three works of art from the same era by three different
+    /// artists, an Archaeological Museum three artifacts from one era - and
+    /// the bonus Culture and Tourism the themed trio earns (+100%).
+    fn city_theming(&self, pid: usize, cid: u32, pieces: &[GreatWorkPiece]) -> (usize, f64, f64) {
+        let city = &self.cities[&cid];
+        let mut themed = 0;
+        let mut culture = 0.0;
+        let mut tourism = 0.0;
+        if city.buildings.iter().any(|b| b == "art_museum") {
+            let art: Vec<&GreatWorkPiece> = pieces
+                .iter()
+                .filter(|piece| matches!(piece.kind.as_str(), "art" | "religious_art"))
+                .collect();
+            let eras: BTreeSet<usize> = art.iter().map(|piece| piece.era).collect();
+            for era in eras {
+                let of_era: Vec<&&GreatWorkPiece> =
+                    art.iter().filter(|piece| piece.era == era).collect();
+                let creators: BTreeSet<&str> =
+                    of_era.iter().map(|piece| piece.creator.as_str()).collect();
+                if of_era.len() >= 3 && creators.len() >= 3 {
+                    themed += 1;
+                    culture += 9.0; // three works of art at 3 Culture each
+                    tourism += 3.0 * self.great_work_tourism(pid, "art");
+                    break;
+                }
+            }
+        }
+        if city.buildings.iter().any(|b| b == "archaeological_museum") {
+            let artifacts: Vec<&GreatWorkPiece> = pieces
+                .iter()
+                .filter(|piece| piece.kind == "artifact")
+                .collect();
+            let eras: BTreeSet<usize> = artifacts.iter().map(|piece| piece.era).collect();
+            for era in eras {
+                if artifacts.iter().filter(|piece| piece.era == era).count() >= 3 {
+                    themed += 1;
+                    culture += 9.0;
+                    tourism += 3.0 * self.great_work_tourism(pid, "artifact");
+                    break;
+                }
+            }
+        }
+        (themed, culture, tourism)
+    }
+
     /// Record a combat kill with the detail the Eureka triggers ask about:
     /// what did the killing, what died, and whether it was a Barbarian.
     fn record_kill(&mut self, pid: usize, weapon: Option<&str>, victim: &Unit) {
@@ -32724,23 +32867,18 @@ impl Game {
                 {
                     counter(trig) >= n
                 } else if trig == "themed_buildings" {
-                    // CIVVIS great works have no per-work era/creator, so a
-                    // museum counts as themed when its three slots are full.
-                    let housed = self.housed_great_works_with_extra(pid, None);
+                    let housed = self.housed_great_work_pieces(pid);
                     cities
                         .iter()
-                        .filter(|c| {
-                            let works = housed.get(&c.id);
-                            (c.buildings.iter().any(|b| b == "art_museum")
-                                && works.is_some_and(|w| {
-                                    w.get("art").copied().unwrap_or(0) >= 3
-                                }))
-                                || (c.buildings.iter().any(|b| b == "archaeological_museum")
-                                    && works.is_some_and(|w| {
-                                        w.get("artifact").copied().unwrap_or(0) >= 3
-                                    }))
+                        .map(|c| {
+                            self.city_theming(
+                                pid,
+                                c.id,
+                                housed.get(&c.id).map(Vec::as_slice).unwrap_or(&[]),
+                            )
+                            .0 as i64
                         })
-                        .count() as i64
+                        .sum::<i64>()
                         >= n
                 } else if let Some(d) = trig.strip_prefix("district_appeal:") {
                     cities.iter().any(|c| {
@@ -40113,7 +40251,11 @@ mod great_work_tests {
             .counters
             .insert("great_work:artifact".to_string(), 0);
         let culture_without_artifacts = game.city_yields(city).culture;
-        assert!((culture_with_artifacts - culture_without_artifacts - 9.0 * 1.1).abs() < 1e-9);
+        // Three Ancient-era digs give three same-era artifacts, which also
+        // themes the museum: works and theming bonus, both banded.
+        assert!(
+            (culture_with_artifacts - culture_without_artifacts - (9.0 + 9.0) * 1.1).abs() < 1e-9
+        );
         game.players[0]
             .counters
             .insert("great_work:artifact".to_string(), 3);

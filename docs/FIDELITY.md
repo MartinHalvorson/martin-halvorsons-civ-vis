@@ -187,8 +187,10 @@ and the alliance-leveling timeline verified exact.
 Known simplifications not yet expressed in data: civic-gated valid terrain
 (farms on Hills at Civil Engineering, already era-exact through
 `tree_effects`' hill_farms), wonders' widening `Building_ValidFeatures`
-rows (CIVVIS is the permissive side there), true per-work theming (the
-proxy counts full museums), barbarian camp spawn cadence (the odds/boldness
+rows (CIVVIS is the permissive side there), theming detail (works are
+real era-and-creator pieces now and museums theme on the shipped
+same-era/three-artists rule with the +100% bonus; artifact origin
+civilizations are the remaining simplification), barbarian camp spawn cadence (the odds/boldness
 model is DLL-side; placement floors and distances are exact), WMD delivery detail
 (the `WmdStrike` action launches on the shipped ranges, radii and fallout;
 the per-ring unit damage is the one number the database does not carry), the meteor-strike goody site,
