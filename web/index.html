@@ -508,6 +508,11 @@
   .war-moment { display: grid; grid-template-columns: 30px 1fr; gap: 6px; color: #cad5cf; font-size: 9px; }
   .war-moment em { color: var(--faint); font-style: normal; font-weight: 800; letter-spacing: .06em; }
   .war-moment.capture { color: #f2c0b8; }
+  .war-moment.conquest { color: #ffb4a6; font-weight: 750; }
+  .war-moment.peace { color: #9fd9bd; }
+  .war-moment.earlier { color: var(--faint); font-style: italic; }
+  .war-card.ended.conquest { border-left-color: #8a4740; background: #150d0c; }
+  .war-card.ended.conquest .war-clash { color: #e08b7d; }
   .spec-controls { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; }
   .spec-controls button { margin: 0; }
   #specdirector.active { color: var(--gold-bright); border-color: #b88f45; box-shadow: 0 0 16px #d7b66a24; }
@@ -5079,13 +5084,19 @@ function warMomentText(moment) {
   switch (moment.kind) {
     case "declared": return `${actor} declared war on ${subject}.`;
     case "city_captured": return `${actor} took ${moment.city} from ${subject}.`;
+    case "capital_captured": return `${actor} took the ${subject} capital, ${moment.city}.`;
+    case "city_razed": return `${actor} razed ${moment.city}.`;
+    case "nuclear_strike": return moment.city
+      ? `${actor} detonated a device on ${moment.city}.`
+      : `${actor} detonated a device in ${subject} territory.`;
     case "peace": return `${actor} and ${subject} made peace.`;
+    case "conquest": return `${subject} was wiped from the map by ${actor}.`;
     default: return `${actor} against ${subject}.`;
   }
 }
 
-// The engine deliberately accounts for every pair of belligerents as its own
-// front. For presentation, fold the fronts created by a Suzerain and its
+// The engine keeps one record per declared war, but a Suzerain's city-states
+// can still be listed as belligerents of it. For presentation, fold the fronts created by a Suzerain and its
 // city-states into a single conflict while retaining every participant's
 // losses and captured-city moments.
 function warsForLog(wars) {
@@ -5152,11 +5163,29 @@ function warsForLog(wars) {
       defenders: orderParties(defenders),
       started: Math.min(...records.map(war => war.started)),
       ended,
+      // How the war ended, and how much of it the observation left out, are
+      // the engine's to say — carry them through the fold rather than
+      // re-deriving them here.
+      outcome: anchor.outcome,
+      victor: anchor.victor,
+      truce_until: anchor.truce_until,
+      hidden_highlights: records.reduce(
+        (total, war) => total + (war.hidden_highlights || 0), 0),
       sides: losses,
       highlights,
     };
   });
 }
+// The moments that read as blows rather than notices, tinted so a war's shape
+// is legible without reading every line.
+const WAR_MOMENT_TONE = {
+  city_captured: "capture",
+  capital_captured: "capture",
+  city_razed: "capture",
+  nuclear_strike: "capture",
+  conquest: "conquest",
+  peace: "peace",
+};
 function drawWarLog() {
   const el = document.getElementById("wars");
   const scope = document.getElementById("warscope");
@@ -5176,19 +5205,30 @@ function drawWarLog() {
   }
   el.innerHTML = wars.map(war => {
     const over = war.ended !== null && war.ended !== undefined;
+    const conquest = war.outcome === "conquest";
     const [attacker, defender] = war.sides;
     const length = Math.max(0, (over ? war.ended : state.turn) - war.started);
+    const result = conquest
+      ? `${warPartyName(war.victor)} conquest`
+      : "peace";
+    const truce = over && war.truce_until ? ` · truce to T${war.truce_until}` : "";
     const since = over
-      ? `Turn ${war.started}–${war.ended} · ${length} turn${length === 1 ? "" : "s"} · peace`
+      ? `Turn ${war.started}–${war.ended} · ${length} turn${length === 1 ? "" : "s"} · ${result}${truce}`
       : `Since turn ${war.started} · ${length} turn${length === 1 ? "" : "s"}`;
     // Newest moment first, and never so many that a long war pushes the
-    // other fronts off the panel.
-    const moments = [...war.highlights].reverse().slice(0, 4).map(moment =>
-      `<div class="war-moment ${moment.kind === "city_captured" ? "capture" : ""}">` +
-      `<em>T${moment.turn}</em><span>${warMomentText(moment)}</span></div>`).join("");
-    return `<div class="war-card${over ? " ended" : ""}">` +
+    // other fronts off the panel — but say how much of the war is not shown,
+    // so a long campaign never reads as a short one.
+    const SHOWN = 6;
+    const shown = [...war.highlights].reverse().slice(0, SHOWN);
+    const untold = (war.hidden_highlights || 0) + Math.max(0, war.highlights.length - shown.length);
+    const moments = shown.map(moment =>
+      `<div class="war-moment ${WAR_MOMENT_TONE[moment.kind] || ""}">` +
+      `<em>T${moment.turn}</em><span>${warMomentText(moment)}</span></div>`).join("") +
+      (untold ? `<div class="war-moment earlier"><em></em><span>+${untold} earlier moment${
+        untold === 1 ? "" : "s"}</span></div>` : "");
+    return `<div class="war-card${over ? " ended" : ""}${conquest ? " conquest" : ""}">` +
       `<div class="war-belligerents">${warPartyMarkup(war.aggressors, "aggressor")}` +
-      `<div class="war-clash">${over ? "☮" : "⚔"}</div>` +
+      `<div class="war-clash">${over ? (conquest ? "☠" : "☮") : "⚔"}</div>` +
       `${warPartyMarkup(war.defenders, "defender")}</div>` +
       `<div class="war-since">${since}</div>` +
       `<div class="war-tally">${warTollMarkup(attacker, "aggressor")}` +

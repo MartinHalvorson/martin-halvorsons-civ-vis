@@ -251,6 +251,40 @@ fn audit_result(g: &Game, found: &mut Findings) {
         found.violation("winner with no victory type", String::new());
     }
 
+    // The war log is only readable if a war is one entry. Two shipped rules
+    // hold that: a war runs ten turns before it can be settled, and the peace
+    // binds for ten more. A record that breaks either means the log is filling
+    // with fragments of the same war again.
+    let mut previous: BTreeMap<(usize, usize), u32> = BTreeMap::new();
+    for war in &g.concluded_wars {
+        let key = (war.aggressor.min(war.defender), war.aggressor.max(war.defender));
+        let Some(ended) = war.ended else { continue };
+        let sides = (
+            g.players[war.aggressor].civ.clone(),
+            g.players[war.defender].civ.clone(),
+        );
+        if ended.saturating_sub(war.started) < 10 {
+            found.violation(
+                "a war ended before the shipped minimum",
+                format!(
+                    "{} against {} ran turns {}-{ended}",
+                    sides.0, sides.1, war.started
+                ),
+            );
+        }
+        if let Some(last) = previous.insert(key, ended) {
+            if war.started.saturating_sub(last) < 10 {
+                found.violation(
+                    "the same pair re-declared inside the peace treaty",
+                    format!(
+                        "{} against {} again on turn {} after peace on turn {last}",
+                        sides.0, sides.1, war.started
+                    ),
+                );
+            }
+        }
+    }
+
     for player in &g.players {
         if player.is_barbarian || !player.alive {
             continue;

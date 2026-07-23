@@ -415,13 +415,14 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool, interactive: bool) -> Value 
     })
 }
 
-/// Every war in progress, longest-running first, followed by the most recent
-/// peaces. Highlights are trimmed to the last few per war: a client wants the
-/// shape of the war, and the full account of a fifty-turn conquest would cost
-/// more bandwidth every frame than the rest of the observation together.
+/// Every war in progress, longest-running first, followed by the wars that
+/// have concluded, newest first. Highlights are trimmed to the last dozen per
+/// war — with `hidden_highlights` counting what was left out — because the
+/// full account of a fifty-turn conquest would cost more bandwidth every
+/// frame than the rest of the observation together.
 fn wars_json(g: &Game) -> Vec<Value> {
-    const RECENT_PEACES: usize = 4;
-    const HIGHLIGHTS: usize = 8;
+    const RECENT_PEACES: usize = 12;
+    const HIGHLIGHTS: usize = 12;
     let war_json = |war: &crate::game::WarRecord| {
         let side = |player: usize| {
             let losses = war.losses_for(player);
@@ -431,12 +432,24 @@ fn wars_json(g: &Game) -> Vec<Value> {
                 "cities_lost": losses.cities,
             })
         };
+        // How it ended, and who came out of it standing — the closing moment
+        // carries both, so a client never has to infer a result from the
+        // player list.
+        let closing = war.ended.and(war.highlights.last());
         json!({
             "aggressor": war.aggressor,
             "defender": war.defender,
             "started": war.started,
             "ended": war.ended,
             "turns": war.ended.unwrap_or(g.turn).saturating_sub(war.started),
+            "outcome": closing.map(|moment| moment.kind.clone()),
+            "truce_until": war
+                .ended
+                .and_then(|_| g.peace_treaty_until(war.aggressor, war.defender)),
+            "victor": closing
+                .filter(|moment| moment.kind == "conquest")
+                .map(|moment| moment.actor),
+            "hidden_highlights": war.highlights.len().saturating_sub(HIGHLIGHTS),
             "sides": [side(war.aggressor), side(war.defender)],
             "highlights": war.highlights[war.highlights.len().saturating_sub(HIGHLIGHTS)..]
                 .iter()
