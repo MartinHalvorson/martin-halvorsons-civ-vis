@@ -15,32 +15,77 @@ SPEC.loader.exec_module(supervisor)
 
 
 class CanonicalSyncTests(unittest.TestCase):
-    def test_deployment_sync_uses_main_even_when_another_branch_is_checked_out(self):
+    def test_deployment_sync_resets_a_private_worktree_without_touching_checkout(self):
         calls = []
 
-        def fake_command(*args, **_kwargs):
-            calls.append(args)
-            if args == ("git", "rev-parse", "HEAD"):
-                return SimpleNamespace(returncode=0, stdout="old\n")
-            if args == ("git", "rev-parse", "origin/main"):
+        def fake_command(*args, **kwargs):
+            calls.append((args, kwargs))
+            if args == ("git", "rev-parse", "--verify", "origin/main"):
                 return SimpleNamespace(returncode=0, stdout="new\n")
+            if args == ("git", "rev-parse", "--show-toplevel"):
+                return SimpleNamespace(returncode=0, stdout=f"{source}\n")
             if args == ("git", "rev-parse", "--short", "HEAD"):
                 return SimpleNamespace(returncode=0, stdout="new\n")
             return SimpleNamespace(returncode=0, stdout="")
 
-        with (
-            patch.object(supervisor, "SYNC_REMOTE", "origin"),
-            patch.object(supervisor, "SYNC_BRANCH", "main"),
-            patch.object(supervisor, "command", side_effect=fake_command),
-        ):
-            supervisor.sync_current_branch()
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "canonical"
+            source.mkdir()
+            (source / ".git").touch()
+            with (
+                patch.object(supervisor, "SOURCE_ROOT", source),
+                patch.object(supervisor, "SYNC_REMOTE", "origin"),
+                patch.object(supervisor, "SYNC_BRANCH", "main"),
+                patch.object(supervisor, "command", side_effect=fake_command),
+            ):
+                self.assertTrue(supervisor.sync_canonical_source())
 
-        self.assertIn(("git", "fetch", "--prune", "origin", "main"), calls)
-        self.assertIn(("git", "merge", "--ff-only", "origin/main"), calls)
-        self.assertNotIn(
-            ("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"),
+        called_args = [args for args, _ in calls]
+        self.assertIn(("git", "fetch", "--prune", "origin", "main"), called_args)
+        self.assertIn(("git", "reset", "--hard", "origin/main"), called_args)
+        self.assertIn(
+            ("git", "clean", "-fdx", "--", *supervisor.RUNTIME_INPUTS),
+            called_args,
+        )
+        self.assertFalse(any(args[:2] == ("git", "merge") for args in called_args))
+        for args, kwargs in calls:
+            if args[:2] in (("git", "reset"), ("git", "clean")):
+                self.assertEqual(kwargs.get("cwd"), source)
+
+    def test_deployment_creates_the_private_worktree_at_origin_main(self):
+        calls = []
+
+        def fake_command(*args, **kwargs):
+            calls.append((args, kwargs))
+            if args == ("git", "rev-parse", "--show-toplevel"):
+                return SimpleNamespace(returncode=0, stdout=f"{source}\n")
+            if args == ("git", "rev-parse", "--short", "HEAD"):
+                return SimpleNamespace(returncode=0, stdout="new\n")
+            return SimpleNamespace(returncode=0, stdout="new\n")
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "canonical"
+            with (
+                patch.object(supervisor, "SOURCE_ROOT", source),
+                patch.object(supervisor, "command", side_effect=fake_command),
+            ):
+                self.assertTrue(supervisor.sync_canonical_source())
+
+        self.assertIn(
+            (
+                ("git", "worktree", "add", "--detach", str(source), "origin/main"),
+                {},
+            ),
             calls,
         )
+
+    def test_deployment_refuses_to_build_the_shared_checkout(self):
+        successful = SimpleNamespace(returncode=0, stdout="main\n")
+        with (
+            patch.object(supervisor, "SOURCE_ROOT", supervisor.ROOT),
+            patch.object(supervisor, "command", return_value=successful),
+        ):
+            self.assertFalse(supervisor.sync_canonical_source())
 
 
 class SessionSettingsTests(unittest.TestCase):
@@ -165,7 +210,7 @@ class SourceSnapshotTests(unittest.TestCase):
             source.write_text("pub fn value() -> u8 { 1 }\n", encoding="utf-8")
             readme = root / "README.md"
             readme.write_text("first\n", encoding="utf-8")
-            with patch.object(supervisor, "ROOT", root):
+            with patch.object(supervisor, "SOURCE_ROOT", root):
                 original = supervisor.source_snapshot()
                 readme.write_text("second\n", encoding="utf-8")
                 self.assertEqual(supervisor.source_snapshot(), original)
@@ -177,7 +222,12 @@ class SourceSnapshotTests(unittest.TestCase):
         with patch.object(supervisor, "command", return_value=clean) as command:
             self.assertFalse(supervisor.runtime_inputs_dirty())
         command.assert_called_once_with(
-            "git", "status", "--porcelain", "--", *supervisor.RUNTIME_INPUTS
+            "git",
+            "status",
+            "--porcelain",
+            "--",
+            *supervisor.RUNTIME_INPUTS,
+            cwd=supervisor.SOURCE_ROOT,
         )
 
         changed = SimpleNamespace(returncode=0, stdout=" M src/game.rs\n")
@@ -289,7 +339,7 @@ class SourceSnapshotTests(unittest.TestCase):
 
     def test_single_update_attempt_returns_control_after_a_failed_build(self):
         with (
-            patch.object(supervisor, "sync_current_branch") as sync,
+            patch.object(supervisor, "sync_canonical_source", return_value=True) as sync,
             patch.object(supervisor, "build_latest", return_value=False) as build,
         ):
             self.assertFalse(supervisor.prepare_latest_once())

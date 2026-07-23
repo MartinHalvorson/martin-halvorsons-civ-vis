@@ -32,8 +32,14 @@ from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARY = ROOT / "target" / "release" / ("civvis.exe" if os.name == "nt" else "civvis")
-RUNTIME_BINARY = ROOT / "target" / "spectator" / BINARY.name
+SOURCE_ROOT = Path(
+    os.environ.get(
+        "CIVVIS_SUPERVISOR_SOURCE",
+        str(ROOT.parent / f"{ROOT.name.lower()}-spectator-src"),
+    )
+).expanduser().resolve()
+BINARY_NAME = "civvis.exe" if os.name == "nt" else "civvis"
+RUNTIME_BINARY = ROOT / "target" / "spectator" / BINARY_NAME
 RUNTIME_METADATA = RUNTIME_BINARY.parent / "build.json"
 CHECKPOINT_DIR = RUNTIME_BINARY.parent / "checkpoints"
 RESULTS_DIR = RUNTIME_BINARY.parent / "results"
@@ -46,10 +52,14 @@ def log(message: str) -> None:
     print(f"[spectator] {message}", flush=True)
 
 
-def command(*args: str, check: bool = False) -> subprocess.CompletedProcess[str]:
+def command(
+    *args: str,
+    check: bool = False,
+    cwd: Path = ROOT,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         args,
-        cwd=ROOT,
+        cwd=cwd,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -57,42 +67,70 @@ def command(*args: str, check: bool = False) -> subprocess.CompletedProcess[str]
     )
 
 
-def sync_current_branch() -> None:
-    """Safely fast-forward the deployment checkout to the canonical branch."""
+def sync_canonical_source() -> bool:
+    """Reset the private build worktree to the canonical remote branch.
+
+    The shared checkout is deliberately never merged, reset, cleaned, or built.
+    Development sessions routinely leave it on feature branches with live edits;
+    compiling those bytes is what made the macOS and Windows exhibitions differ.
+    """
     target = f"{SYNC_REMOTE}/{SYNC_BRANCH}"
     fetched = command("git", "fetch", "--prune", SYNC_REMOTE, SYNC_BRANCH)
     if fetched.returncode != 0:
-        log("update check could not reach the remote; continuing with local code")
-        return
+        log("update check could not reach the remote; trying the last fetched main")
 
-    head = command("git", "rev-parse", "HEAD", check=True).stdout.strip()
-    remote_head = command("git", "rev-parse", target, check=True).stdout.strip()
-    if head == remote_head:
-        log(f"{target} is already current ({head[:8]})")
-        return
+    resolved = command("git", "rev-parse", "--verify", target)
+    if resolved.returncode != 0:
+        log(f"no cached {target} is available; keeping the verified runtime")
+        return False
 
-    behind = command("git", "merge-base", "--is-ancestor", "HEAD", target)
-    if behind.returncode == 0:
-        merged = command("git", "merge", "--ff-only", target)
-        if merged.returncode == 0:
-            new_head = command("git", "rev-parse", "--short", "HEAD", check=True).stdout.strip()
-            log(f"fast-forwarded to {target} at {new_head}")
-        else:
-            log("remote is newer but local edits overlap it; preserving local work and continuing")
-        return
+    if SOURCE_ROOT == ROOT:
+        log("private source path resolves to the shared checkout; refusing to build it")
+        return False
 
-    ahead = command("git", "merge-base", "--is-ancestor", target, "HEAD")
-    if ahead.returncode == 0:
-        log(f"local branch is ahead of {target}; building the newer local worktree")
-    else:
-        log(f"local branch and {target} diverged; preserving local work for manual reconciliation")
+    if not (SOURCE_ROOT / ".git").exists():
+        if SOURCE_ROOT.exists() and any(SOURCE_ROOT.iterdir()):
+            log(f"private source path is occupied: {SOURCE_ROOT}")
+            return False
+        SOURCE_ROOT.parent.mkdir(parents=True, exist_ok=True)
+        created = command(
+            "git", "worktree", "add", "--detach", str(SOURCE_ROOT), target
+        )
+        if created.returncode != 0:
+            log(f"could not create private source worktree at {SOURCE_ROOT}")
+            return False
+
+    source_top = command(
+        "git", "rev-parse", "--show-toplevel", cwd=SOURCE_ROOT
+    )
+    if (
+        source_top.returncode != 0
+        or Path(source_top.stdout.strip()).resolve() != SOURCE_ROOT.resolve()
+    ):
+        log(f"private source path is not the expected Git worktree: {SOURCE_ROOT}")
+        return False
+
+    reset = command("git", "reset", "--hard", target, cwd=SOURCE_ROOT)
+    cleaned = command(
+        "git", "clean", "-fdx", "--", *RUNTIME_INPUTS, cwd=SOURCE_ROOT
+    )
+    if reset.returncode != 0 or cleaned.returncode != 0:
+        log("could not reset the private source worktree; keeping the verified runtime")
+        return False
+
+    revision = command(
+        "git", "rev-parse", "--short", "HEAD", check=True, cwd=SOURCE_ROOT
+    ).stdout.strip()
+    log(f"canonical source ready at {target} ({revision})")
+    return True
 
 
 def promote_binary() -> None:
     """Atomically preserve a known-good build outside Cargo's output path."""
     RUNTIME_BINARY.parent.mkdir(parents=True, exist_ok=True)
     staged = RUNTIME_BINARY.with_suffix(RUNTIME_BINARY.suffix + ".new")
-    shutil.copy2(BINARY, staged)
+    build_binary = SOURCE_ROOT / "target" / "release" / BINARY_NAME
+    shutil.copy2(build_binary, staged)
     os.replace(staged, RUNTIME_BINARY)
 
 
@@ -100,15 +138,17 @@ def source_snapshot() -> str:
     """Hash every input embedded in or compiled into the game binary."""
     files: list[Path] = []
     for relative in RUNTIME_INPUTS:
-        path = ROOT / relative
+        path = SOURCE_ROOT / relative
         if path.is_file():
             files.append(path)
         elif path.is_dir():
             files.extend(candidate for candidate in path.rglob("*") if candidate.is_file())
 
     digest = hashlib.sha256()
-    for path in sorted(files, key=lambda candidate: candidate.relative_to(ROOT).as_posix()):
-        relative = path.relative_to(ROOT).as_posix().encode()
+    for path in sorted(
+        files, key=lambda candidate: candidate.relative_to(SOURCE_ROOT).as_posix()
+    ):
+        relative = path.relative_to(SOURCE_ROOT).as_posix().encode()
         digest.update(len(relative).to_bytes(4, "big"))
         digest.update(relative)
         digest.update(path.read_bytes())
@@ -117,13 +157,15 @@ def source_snapshot() -> str:
 
 def runtime_inputs_dirty() -> bool:
     """Whether files that can change the promoted binary differ from Git."""
-    status = command("git", "status", "--porcelain", "--", *RUNTIME_INPUTS)
+    status = command(
+        "git", "status", "--porcelain", "--", *RUNTIME_INPUTS, cwd=SOURCE_ROOT
+    )
     return bool(status.stdout.strip())
 
 
 def write_runtime_metadata(snapshot: str) -> None:
     revision = command(
-        "git", "rev-parse", "--short", "HEAD", check=True
+        "git", "rev-parse", "--short", "HEAD", check=True, cwd=SOURCE_ROOT
     ).stdout.strip()
     dirty = runtime_inputs_dirty()
     metadata = {
@@ -156,7 +198,9 @@ def refresh_runtime_metadata(snapshot: str) -> None:
         metadata = json.loads(RUNTIME_METADATA.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return
-    revision = command("git", "rev-parse", "--short", "HEAD", check=True).stdout.strip()
+    revision = command(
+        "git", "rev-parse", "--short", "HEAD", check=True, cwd=SOURCE_ROOT
+    ).stdout.strip()
     dirty = runtime_inputs_dirty()
     current_identity = {
         "revision": revision,
@@ -218,7 +262,9 @@ def build_latest(max_attempts: int = 3) -> bool:
         log(f"building the latest worktree (attempt {attempt}/{max_attempts})")
         # The visible game does not need to wait for unrelated evaluation
         # binaries to link before its known-good runtime can be promoted.
-        result = command("cargo", "build", "--release", "--bin", "civvis")
+        result = command(
+            "cargo", "build", "--release", "--bin", "civvis", cwd=SOURCE_ROOT
+        )
         if result.returncode != 0:
             log("latest worktree does not build; no new game will use stale code")
             print(result.stdout, file=sys.stderr, flush=True)
@@ -236,7 +282,8 @@ def build_latest(max_attempts: int = 3) -> bool:
 
 def prepare_latest_once() -> bool:
     """Try one stable-source build without abandoning live monitoring forever."""
-    sync_current_branch()
+    if not sync_canonical_source():
+        return False
     return build_latest(max_attempts=1)
 
 
@@ -593,7 +640,11 @@ def server_command(
     resume: Path | None = None,
 ) -> list[str]:
     args = [
-        str(RUNTIME_BINARY if RUNTIME_BINARY.exists() else BINARY),
+        str(
+            RUNTIME_BINARY
+            if RUNTIME_BINARY.exists()
+            else SOURCE_ROOT / "target" / "release" / BINARY_NAME
+        ),
         "play",
         "--players",
         str(settings["players"]),
