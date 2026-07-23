@@ -36,7 +36,7 @@ baseline with optional game modes excluded.
 
 `tools/modifier_coverage.json` holds those judgements with a reason each.
 They are seeded by reading the engine for each effect family and are mostly
-**not** yet verified row by row (15 rows are, so far) — an `implemented` entry is a claim to be checked, and
+**not** yet verified row by row (92 rows are, so far) — an `implemented` entry is a claim to be checked, and
 checking them is the next step. Anything absent from the file counts as
 unmodelled, so newly shipped content raises the backlog rather than hiding.
 
@@ -73,7 +73,13 @@ expressed without building the interpreter.
    the entry `verified`, and demote whatever does not hold. The report prints
    verified rows against covered rows, so the ratchet is visible.
 
-   `ADJUST_CITY_FREE_POWER` is done and shows the shape of the check: fifteen
+   Four are done so far (92 of 1,165 covered rows), and three of them found
+   real divergences: a city's Commercial Hub or Harbor was granting no Trade
+   Route at all and Merchant Republic none of its two, Theocracy could
+   Faith-buy a Giant Death Robot, and the Statue of Liberty granted no
+   Settlers. The pass is worth running to the end.
+
+   `ADJUST_CITY_FREE_POWER` is the clean case and shows the shape: fifteen
    rows, of which twelve execute with the shipped amounts (Geothermal Plant 4,
    Hydroelectric Dam 6, three renewables at 2, Reyna's Renewable Subsidizer
    adding 2 to each, Aerospace Contractors' Spaceport 3) and three belong to
