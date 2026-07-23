@@ -208,34 +208,34 @@
   /* Floating map HUD */
   #topbar {
     position: absolute; z-index: 5; top: 10px; left: 64px; right: 438px;
-    display: grid; grid-template-columns: 82px repeat(6, minmax(70px, 1fr)); align-items: stretch; gap: 3px;
-    min-width: 0; padding: 4px; border: 1px solid #4961598c; border-radius: 12px;
-    background: #0a1512d9; box-shadow: 0 12px 34px #0008; backdrop-filter: blur(16px) saturate(130%);
+    display: grid; grid-template-columns: 94px repeat(6, minmax(80px, 1fr)); align-items: stretch; gap: 4px;
+    min-width: 0; padding: 5px; border: 1px solid #4961598c; border-radius: 13px;
+    background: #0a1512e0; box-shadow: 0 12px 34px #0008; backdrop-filter: blur(16px) saturate(130%);
     pointer-events: none;
   }
-  .victory-turn, .victory-track { min-width: 0; min-height: 61px; border-radius: 8px; }
+  .victory-turn, .victory-track { min-width: 0; min-height: 80px; border-radius: 9px; }
   .victory-turn {
-    display: flex; flex-direction: column; justify-content: center; padding: 6px 7px;
+    display: flex; flex-direction: column; justify-content: center; padding: 7px 9px;
     color: var(--gold-bright); background: #d7b66a12; border: 1px solid #d7b66a26;
   }
   .victory-turn span, .victory-heading {
-    color: #aebdb7; font-size: 8px; font-weight: 900; letter-spacing: .1em; line-height: 1; text-transform: uppercase;
+    color: #b9c8c2; font-size: 9px; font-weight: 900; letter-spacing: .1em; line-height: 1; text-transform: uppercase;
   }
-  .victory-turn strong { margin-top: 4px; font-size: 14px; line-height: 1; font-variant-numeric: tabular-nums; }
-  .victory-turn i { margin-top: 4px; overflow: hidden; color: var(--muted); font-size: 8px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+  .victory-turn strong { margin-top: 5px; font-size: 19px; line-height: 1; font-variant-numeric: tabular-nums; }
+  .victory-turn i { margin-top: 5px; overflow: hidden; color: #9aaba5; font-size: 9px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
   .victory-meter { overflow: hidden; background: #020706b3; box-shadow: inset 0 1px 2px #000b; }
   .victory-meter b { display: block; height: 100%; border-radius: inherit; background: currentColor; }
-  .victory-track { padding: 5px 5px 4px; color: var(--track); border-left: 1px solid #ffffff0b; }
-  .victory-heading { display: flex; align-items: center; gap: 4px; margin-bottom: 3px; color: var(--track); }
-  .victory-heading b { overflow: hidden; color: #cad4d0; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
-  .victory-list { display: flex; flex-direction: column; gap: 2px; }
+  .victory-track { padding: 6px 6px 5px; color: var(--track); border-left: 1px solid #ffffff0b; }
+  .victory-heading { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; color: var(--track); }
+  .victory-heading b { overflow: hidden; color: #dde5e1; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+  .victory-list { display: flex; flex-direction: column; gap: 3px; }
   .victory-entry { min-width: 0; }
-  .victory-line { display: grid; grid-template-columns: 8px 5px minmax(0, 1fr) auto; align-items: center; gap: 2px; min-width: 0; height: 10px; }
-  .victory-rank { color: #72857e; font-size: 7px; font-weight: 850; line-height: 1; }
-  .victory-civ-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--civ); box-shadow: 0 0 5px color-mix(in srgb, var(--civ) 70%, transparent); }
-  .victory-civ { overflow: hidden; color: #dbe3df; font-size: 8px; font-weight: 750; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
-  .victory-value { color: #a9bab3; font-size: 8px; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .victory-meter { height: 2px; margin: 0 0 0 17px; border-radius: 3px; }
+  .victory-line { display: grid; grid-template-columns: 11px 6px minmax(0, 1fr) auto; align-items: center; gap: 3px; min-width: 0; height: 13px; }
+  .victory-rank { color: #8b9d96; font-size: 9px; font-weight: 850; line-height: 1; }
+  .victory-civ-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--civ); box-shadow: 0 0 5px color-mix(in srgb, var(--civ) 70%, transparent); }
+  .victory-civ { overflow: hidden; color: #e6ede9; font-size: 10px; font-weight: 750; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
+  .victory-value { color: #c2d0ca; font-size: 10px; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .victory-meter { height: 3px; margin: 0 0 0 23px; border-radius: 3px; }
   #playerhud {
     position: absolute; z-index: 7; top: 10px; right: 12px; width: min(414px, calc(100% - 82px));
     max-height: calc(100% - 238px); overflow-y: auto; pointer-events: auto;
@@ -3231,13 +3231,27 @@ function draw() {
       // strategics and luxuries separate from ordinary bonuses at a glance.
       const rc = RULES && RULES.resources && RULES.resources[t.resource]
         ? RULES.resources[t.resource].class : "bonus";
-      cx.fillStyle = "#161c14cc";
-      cx.beginPath(); cx.arc(x + 10, y + 9, 8.2, 0, 7); cx.fill();
-      cx.strokeStyle = rc === "strategic" ? "#ff9d5cdd"
-        : rc === "luxury" ? "#d9a0f0dd" : "#e6ddbdbb";
-      cx.lineWidth = 1.5; cx.stroke();
-      cx.font = "12px sans-serif";
-      cx.fillText(RES_ICON[t.resource] || "●", x + 10, y + 9.5);
+      const rim = rc === "strategic" ? "#ff9d5c"
+        : rc === "luxury" ? "#d9a0f0" : "#e6ddbd";
+      if (FINE()) {
+        cx.fillStyle = "#161c14cc";
+        cx.beginPath(); cx.arc(x + 10, y + 9, 8.2, 0, 7); cx.fill();
+        cx.strokeStyle = rim + "dd"; cx.lineWidth = 1.5; cx.stroke();
+        // name the symbol fonts the way the unit badge does; bare "sans-serif"
+        // leaves the glyph to whatever the platform happens to fall back to,
+        // and an empty disc is a worse badge than no badge
+        cx.font = "12px 'Segoe UI Symbol', 'Segoe UI Emoji', sans-serif";
+        cx.fillText(RES_ICON[t.resource] || "●", x + 10, y + 9.5);
+      } else {
+        // Zoomed out to survey the map, the icon inside the badge is under a
+        // pixel and unreadable, and a few hundred dark discs read as the map
+        // being spotted with holes. What is still worth knowing at that range
+        // is that a deposit is there and what class it is — so it becomes a
+        // legible dot in the class color instead of an illegible badge.
+        cx.fillStyle = rim;
+        cx.beginPath(); cx.arc(x + 10, y + 9, 3.6, 0, 7); cx.fill();
+        cx.strokeStyle = "#161c14bb"; cx.lineWidth = 1.2; cx.stroke();
+      }
     }
     if (t.district) drawDistrict(t, x, y);
     if (t.wonder) drawWonder(x, y);
