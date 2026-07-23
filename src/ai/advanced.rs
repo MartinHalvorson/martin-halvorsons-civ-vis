@@ -1606,6 +1606,8 @@ impl AdvancedAi {
                 "digital_democracy",
                 "democracy",
                 "merchant_republic",
+                "monarchy",
+                "theocracy",
                 "classical_republic",
                 "chiefdom",
             ],
@@ -1614,6 +1616,8 @@ impl AdvancedAi {
                 "communism",
                 "democracy",
                 "merchant_republic",
+                "monarchy",
+                "theocracy",
                 "classical_republic",
                 "chiefdom",
             ],
@@ -1622,6 +1626,8 @@ impl AdvancedAi {
                 "corporate_libertarianism",
                 "fascism",
                 "communism",
+                "monarchy",
+                "merchant_republic",
                 "oligarchy",
                 "chiefdom",
             ],
@@ -1629,14 +1635,25 @@ impl AdvancedAi {
                 "corporate_libertarianism",
                 "fascism",
                 "communism",
+                "monarchy",
+                "merchant_republic",
+                "theocracy",
                 "oligarchy",
                 "chiefdom",
             ],
-            GrandStrategy::Religion => &["theocracy", "classical_republic", "chiefdom"],
+            GrandStrategy::Religion => &[
+                "theocracy",
+                "monarchy",
+                "merchant_republic",
+                "classical_republic",
+                "chiefdom",
+            ],
             GrandStrategy::Expansion => &[
                 "corporate_libertarianism",
                 "communism",
                 "merchant_republic",
+                "monarchy",
+                "theocracy",
                 "classical_republic",
                 "chiefdom",
             ],
@@ -1645,6 +1662,8 @@ impl AdvancedAi {
                 "digital_democracy",
                 "democracy",
                 "communism",
+                "merchant_republic",
+                "monarchy",
                 "classical_republic",
                 "chiefdom",
             ],
@@ -1652,6 +1671,9 @@ impl AdvancedAi {
                 "digital_democracy",
                 "democracy",
                 "communism",
+                "merchant_republic",
+                "monarchy",
+                "theocracy",
                 "classical_republic",
                 "chiefdom",
             ],
@@ -13043,6 +13065,40 @@ mod tests {
         assert_eq!(
             science.players[0].government.as_deref(),
             Some("synthetic_technocracy")
+        );
+
+        // An adaptive plan must not fall from its one ideal Tier-2 civic all
+        // the way back to Tier 1. The live archive had a Science Rome with
+        // Divine Right stuck in Classical Republic and a Religion Egypt with
+        // Exploration doing the same, despite their unlocked six-slot choices.
+        let mut science_fallback = Game::new_full(1, 18, 10, 79_013, 200, 0, false);
+        science_fallback.players[0].government = Some("classical_republic".to_string());
+        science_fallback.players[0]
+            .civics
+            .insert("divine_right".to_string());
+        AdvancedAi::new().strategic_government(
+            &mut science_fallback,
+            0,
+            GrandStrategy::Science,
+        );
+        assert_eq!(
+            science_fallback.players[0].government.as_deref(),
+            Some("monarchy")
+        );
+
+        let mut religion_fallback = Game::new_full(1, 18, 10, 79_014, 200, 0, false);
+        religion_fallback.players[0].government = Some("classical_republic".to_string());
+        religion_fallback.players[0]
+            .civics
+            .insert("exploration".to_string());
+        AdvancedAi::new().strategic_government(
+            &mut religion_fallback,
+            0,
+            GrandStrategy::Religion,
+        );
+        assert_eq!(
+            religion_fallback.players[0].government.as_deref(),
+            Some("merchant_republic")
         );
     }
 
