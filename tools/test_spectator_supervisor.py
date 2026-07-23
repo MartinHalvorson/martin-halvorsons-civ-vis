@@ -190,12 +190,38 @@ class SessionSettingsTests(unittest.TestCase):
             "map": "pangaea",
             "speed": "standard",
         }
+        # Board shape, pacing and victory selection follow the live game; the
+        # seat counts stay with the operator's flags. `/state` is fog-of-war
+        # trimmed, so the majors it lists are only the ones the viewing player
+        # can see -- deriving `--players` from them ratchets the exhibition
+        # down game after game and never recovers.
         self.assertEqual(
             supervisor.session_settings(state, defaults),
-            {"players": 2, "width": 44, "height": 26, "city_states": 1,
+            {"players": 4, "width": 44, "height": 26, "city_states": 6,
              "turns": 250, "map": "continents", "speed": "online",
              "victories": ["science", "culture", "domination", "score"]},
         )
+
+    def test_fogged_state_does_not_shrink_the_next_game(self):
+        """A trimmed observation must not become the next game's seat count."""
+        fogged = {
+            "players": [{"is_minor": False}, {"is_minor": True}],
+            "map": {"width": 74, "height": 46, "script": "pangaea"},
+            "game_speed": "online",
+            "max_turns": 250,
+        }
+        defaults = {
+            "players": 6,
+            "width": 74,
+            "height": 46,
+            "city_states": 9,
+            "turns": 250,
+            "map": "pangaea",
+            "speed": "online",
+        }
+        carried = supervisor.session_settings(fogged, defaults)
+        self.assertEqual(carried["players"], 6)
+        self.assertEqual(carried["city_states"], 9)
 
     def test_empty_state_uses_defaults(self):
         defaults = {

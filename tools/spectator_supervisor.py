@@ -667,24 +667,25 @@ def quarantine_checkpoint(path: Path) -> None:
 
 
 def session_settings(state: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
-    """Carry the just-finished game's setup forward to the next binary."""
+    """Carry the just-finished game's setup forward to the next binary.
+
+    The seat counts come from the operator's flags, never from the observation.
+    `/state` is fog-of-war trimmed -- with a civilization selected in "View as"
+    it carries only the players that civilization can see -- so counting the
+    majors in it and feeding that back as the next `--players` ratchets the
+    exhibition down and never recovers: a six-player match was observed
+    restarting as four, then two, with each smaller game re-confirming the
+    smaller count. Board *shape* may follow the finished game; how many seats
+    it has may not.
+    """
     players = state.get("players") or []
-    majors = sum(
-        1
-        for player in players
-        if not player.get("is_minor", False) and not player.get("is_barbarian", False)
-    )
-    city_states = sum(
-        1
-        for player in players
-        if player.get("is_minor", False) and not player.get("is_barbarian", False)
-    )
     game_map = state.get("map") or {}
     settings = {
-        "players": majors or defaults["players"],
+        # Seat counts stay with the operator's flags; see the note above.
+        "players": defaults["players"],
         "width": int(game_map.get("width") or defaults["width"]),
         "height": int(game_map.get("height") or defaults["height"]),
-        "city_states": city_states if players else defaults["city_states"],
+        "city_states": defaults["city_states"],
         "turns": int(state.get("max_turns") or defaults["turns"]),
         "map": game_map.get("script") or defaults["map"],
         "speed": state.get("game_speed") or defaults["speed"],
