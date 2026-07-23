@@ -591,6 +591,8 @@ pub fn generate_with_script(
         }
     }
 
+    place_strategic_quotas(rules, &mut wm, &land, num_major_spawns, rng);
+
     assign_continents(&mut wm, &land, width, num_continents, rng);
 
     // Gathering Storm marks only a subset of flat coastal land as vulnerable
@@ -1571,6 +1573,82 @@ fn generate_rivers(wm: &mut WorldMap, land: &[Pos], rng: &mut Rng) {
     }
 }
 
+/// Top every strategic resource up to a supply the map can actually sustain.
+///
+/// Civ VI does not leave strategic supply to the same per-tile lottery it uses
+/// for luxuries: its resource script places each strategic resource against a
+/// quota derived from the land area and the number of civilizations, because
+/// an empire that never finds Iron cannot train or upgrade into a single unit
+/// on the Swordsman line. Rolling them against the whole 52-entry catalog put
+/// **one** Iron and **one** Horses deposit on a 957-tile six-player map, which
+/// left the Swordsman, Knight, Man-at-Arms and Musketman branches unbuildable
+/// for everyone and armies of Warriors and Archers still in the field in the
+/// Industrial era.
+///
+/// The eligibility test is the shipped one used by the lottery above, so this
+/// changes how many deposits appear, never where they are allowed to appear.
+fn place_strategic_quotas(
+    rules: &Rules,
+    wm: &mut WorldMap,
+    land: &BTreeSet<Pos>,
+    num_major_spawns: usize,
+    rng: &mut Rng,
+) {
+    // Enough for every civilization to hold a source with some left to fight
+    // over, and enough on a large map that the deposits are not all in one
+    // empire's borders.
+    let quota = (num_major_spawns + 1).max(land.len() / 90);
+    let strategics: Vec<String> = rules
+        .resources
+        .iter()
+        .filter(|(_, spec)| spec.class == "strategic")
+        .map(|(name, _)| name.clone())
+        .collect();
+    let land_list: Vec<Pos> = land.iter().cloned().collect();
+    for resource in strategics {
+        let spec = &rules.resources[resource.as_str()];
+        let placed = wm
+            .tiles
+            .values()
+            .filter(|tile| tile.resource.as_deref() == Some(resource.as_str()))
+            .count();
+        let mut wanted = quota.saturating_sub(placed);
+        if wanted == 0 {
+            continue;
+        }
+        let mut candidates: Vec<Pos> = land_list
+            .iter()
+            .copied()
+            .filter(|pos| {
+                let tile = &wm.tiles[pos];
+                if tile.resource.is_some() || !rules.is_passable(tile) {
+                    return false;
+                }
+                let natural_wonder = tile
+                    .feature
+                    .as_deref()
+                    .and_then(|feature| rules.features.get(feature))
+                    .is_some_and(|feature| feature.natural_wonder);
+                if natural_wonder {
+                    return false;
+                }
+                let by_feature = tile
+                    .feature
+                    .as_ref()
+                    .is_some_and(|feature| spec.feature.contains(feature));
+                let by_terrain = tile.feature.is_none() && spec.terrain.contains(&tile.terrain);
+                (by_feature || by_terrain) && spec.hills.is_none_or(|want| want == tile.hills)
+            })
+            .collect();
+        while wanted > 0 && !candidates.is_empty() {
+            let pick = rng.below(candidates.len());
+            let pos = candidates.swap_remove(pick);
+            wm.tiles.get_mut(&pos).unwrap().resource = Some(resource.clone());
+            wanted -= 1;
+        }
+    }
+}
+
 /// Divide land into the stock number of named geographic regions. Civ VI's
 /// continent count is not a promise of disconnected landmasses; a large
 /// landmass can span several continents, so farthest-point Voronoi regions
@@ -1741,6 +1819,49 @@ mod river_tests {
                         assert!(!rules.is_water(&world.tiles[&hex::offset_to_axial(col, row)]));
                     }
                 }
+            }
+        }
+    }
+
+    /// Rolling strategic resources against the whole 52-entry catalog, one
+    /// 13% chance per tile, put a single Iron and a single Horses deposit on a
+    /// six-player Pangaea. With no Iron nobody can train or upgrade into a
+    /// Swordsman, Legion, Man-at-Arms or Knight, so every civilization fought
+    /// the whole game on the branches that cost no material - Warriors,
+    /// Archers, Crossbowmen - and the Gold upgrade pass had nothing to buy.
+    #[test]
+    fn every_strategic_resource_reaches_a_playable_supply() {
+        let rules = Rules::embedded();
+        let strategics: Vec<&str> = rules
+            .resources
+            .iter()
+            .filter(|(_, spec)| spec.class == "strategic")
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert!(strategics.contains(&"iron") && strategics.contains(&"horses"));
+        for (index, script) in [
+            MapScript::Pangaea,
+            MapScript::Continents,
+            MapScript::SmallContinents,
+            MapScript::InlandSea,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut rng = Rng::new(81_000 + index as u64);
+            let (world, _) = generate_with_script(&rules, 60, 38, 6, 6, 0, 3, script, &mut rng);
+            for resource in &strategics {
+                let count = world
+                    .tiles
+                    .values()
+                    .filter(|tile| tile.resource.as_deref() == Some(*resource))
+                    .count();
+                // Six majors and six city-states: every civilization needs to
+                // be able to reach a source without conquering for it.
+                assert!(
+                    count >= 7,
+                    "{script:?} placed only {count} {resource} for six civilizations"
+                );
             }
         }
     }

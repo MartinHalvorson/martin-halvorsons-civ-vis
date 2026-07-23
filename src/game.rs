@@ -11151,22 +11151,38 @@ impl Game {
     /// anything else that turn, and cost Gold plus the successor's strategic
     /// material.
     pub fn unit_gold_upgrade_offer(&self, pid: usize, uid: u32) -> Option<(String, f64, f64)> {
-        let unit = self.units.get(&uid)?;
-        if unit.owner != pid
-            || unit.acted
-            || unit.moves_left <= 0.0
-            || self.is_embarked(unit)
-            || self.noncombat_action_blocked_by_zoc(uid)
-        {
-            return None;
+        self.unit_gold_upgrade_detail(pid, uid).ok()
+    }
+
+    /// The same offer, with the first failing precondition named. Diagnostics
+    /// and the AI both need to tell "no successor exists" apart from "not
+    /// here, not yet, or not affordable".
+    pub fn unit_gold_upgrade_detail(
+        &self,
+        pid: usize,
+        uid: u32,
+    ) -> Result<(String, f64, f64), &'static str> {
+        let unit = self.units.get(&uid).ok_or("no such unit")?;
+        if unit.owner != pid {
+            return Err("not owned");
+        }
+        if unit.acted || unit.moves_left <= 0.0 {
+            return Err("already acted");
+        }
+        if self.is_embarked(unit) {
+            return Err("embarked");
+        }
+        if self.noncombat_action_blocked_by_zoc(uid) {
+            return Err("zone of control");
         }
         let territory = self
             .map
             .tiles
-            .get(&unit.pos)?
-            .owner_city
+            .get(&unit.pos)
+            .and_then(|tile| tile.owner_city)
             .and_then(|city| self.cities.get(&city))
-            .map(|city| city.owner)?;
+            .map(|city| city.owner)
+            .ok_or("neutral territory")?;
         let friendly = territory == pid
             || self.suzerain_of(territory) == Some(pid)
             || self.players[pid]
@@ -11174,9 +11190,11 @@ impl Game {
                 .get(&territory)
                 .is_some_and(|alliance| alliance.ends > self.turn);
         if !friendly {
-            return None;
+            return Err("foreign territory");
         }
-        let (target, base_gold, base_resources) = self.unit_upgrade_price(pid, &unit.kind)?;
+        let (target, base_gold, base_resources) = self
+            .unit_upgrade_price(pid, &unit.kind)
+            .ok_or("no unlocked successor")?;
         let gold = base_gold
             * match unit.formation {
                 0 => 1.0,
@@ -11190,7 +11208,7 @@ impl Game {
                 _ => 3.0,
             };
         if self.players[pid].gold + f64::EPSILON < gold {
-            return None;
+            return Err("not enough gold");
         }
         if let Some(resource) = self.rules.units[target.as_str()]
             .requires_resource
@@ -11198,10 +11216,10 @@ impl Game {
         {
             if resources > 0.0 && self.strategic_stockpile(pid, resource) + f64::EPSILON < resources
             {
-                return None;
+                return Err("not enough strategic material");
             }
         }
-        Some((target, gold, resources))
+        Ok((target, gold, resources))
     }
 
     fn do_upgrade_unit(&mut self, pid: usize, uid: u32) -> Result<(), String> {
@@ -11210,8 +11228,8 @@ impl Game {
             return Err("unit has already acted this turn".into());
         }
         let (target, gold, resources) = self
-            .unit_gold_upgrade_offer(pid, uid)
-            .ok_or("this unit cannot be upgraded here")?;
+            .unit_gold_upgrade_detail(pid, uid)
+            .map_err(|why| format!("this unit cannot be upgraded here: {why}"))?;
         let class = self.rules.units[target.as_str()].promotion_class.clone();
         let charges = self.rules.units[target.as_str()].charges;
         let resource = self.rules.units[target.as_str()]

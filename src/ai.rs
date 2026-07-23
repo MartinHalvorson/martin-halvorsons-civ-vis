@@ -1997,9 +1997,17 @@ impl BasicAi {
         let mut builders = 0;
         let mut traders = 0;
         let mut siege_support = 0;
-        let mut military = 0;
         let mut melee = 0;
         let mut ranged = 0;
+        let city_ids = g.player_city_ids(pid);
+        let n_cities = city_ids.len();
+        // The standing-army target measures fighting power, not unit records.
+        // Counting heads let a Warrior that survived to the Industrial era
+        // occupy a whole city's military allowance, so the empire stopped
+        // training anything and its army aged in place. Each unit instead
+        // counts as the fraction of a current front-line unit it can field.
+        let front_line = Self::front_line_strength(g, pid, &city_ids);
+        let mut force = 0.0;
         for uid in g.player_unit_ids(pid) {
             let kind = g.units[&uid].kind.clone();
             match kind.as_str() {
@@ -2010,7 +2018,7 @@ impl BasicAi {
                 _ => {
                     let spec = &g.rules.units[kind.as_str()];
                     if spec.class == "military" {
-                        military += 1;
+                        force += Self::force_weight(g, &kind, front_line);
                         if spec.is_melee_capable() {
                             melee += 1;
                         }
@@ -2022,8 +2030,6 @@ impl BasicAi {
             }
         }
         let active_settlers = settlers;
-        let city_ids = g.player_city_ids(pid);
-        let n_cities = city_ids.len();
         // Treat queued units as part of the force plan. Without this, every
         // occupied city forgets what it is already building and the next
         // empty city can queue a duplicate settler, builder, or trader.
@@ -2037,7 +2043,7 @@ impl BasicAi {
                     _ => {
                         let spec = &g.rules.units[unit.as_str()];
                         if spec.class == "military" {
-                            military += 1;
+                            force += Self::force_weight(g, unit, front_line);
                             if spec.is_melee_capable() {
                                 melee += 1;
                             }
@@ -2049,6 +2055,7 @@ impl BasicAi {
                 }
             }
         }
+        let mut military = force.round() as usize;
         // Settlement races can invalidate the final site after a Settler was
         // queued but before it finishes. Revalidate the queue every turn and
         // bank its progress behind a useful replacement instead of completing
@@ -2460,6 +2467,60 @@ impl BasicAi {
             })
             .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then_with(|| b.1.cmp(&a.1)))
             .map(|(_, name)| name)
+    }
+
+    /// Strength of the strongest land and naval unit this empire can train
+    /// right now. Zero for a domain with nothing available, in which case
+    /// every unit of that domain counts in full.
+    pub(crate) fn front_line_strength(g: &Game, pid: usize, city_ids: &[u32]) -> (f64, f64) {
+        let mut land = 0.0_f64;
+        let mut sea = 0.0_f64;
+        for cid in city_ids {
+            for (name, spec) in &g.rules.units {
+                if spec.class != "military" {
+                    continue;
+                }
+                let naval = spec.domain.as_deref() == Some("sea");
+                let power = spec.strength.max(spec.ranged_attack_strength());
+                // Checking the strength first keeps the expensive production
+                // test off every unit that could not raise the maximum anyway.
+                if power <= if naval { sea } else { land } {
+                    continue;
+                }
+                if !g.can_produce(
+                    pid,
+                    *cid,
+                    &Item::Unit {
+                        unit: name.clone(),
+                    },
+                ) {
+                    continue;
+                }
+                if naval {
+                    sea = power;
+                } else {
+                    land = power;
+                }
+            }
+        }
+        (land, sea)
+    }
+
+    /// How much of a modern unit this one still represents. A unit always
+    /// counts for something — even a Warrior can hold a tile — but a garrison
+    /// three eras behind no longer satisfies the empire's force target, which
+    /// is what keeps late-game production and Gold flowing into better units.
+    pub(crate) fn force_weight(g: &Game, kind: &str, front_line: (f64, f64)) -> f64 {
+        let spec = &g.rules.units[kind];
+        let best = if spec.domain.as_deref() == Some("sea") {
+            front_line.1
+        } else {
+            front_line.0
+        };
+        if best <= 0.0 {
+            return 1.0;
+        }
+        (spec.strength.max(spec.ranged_attack_strength()) / best).clamp(0.2, 1.0)
     }
 
     fn combined_arms_unit(
@@ -4078,24 +4139,47 @@ impl BasicAi {
                 )
                 .is_ok();
         }
-        let mut best: Option<(i32, Pos)> = None;
+        // Nearest-first is the right default for ordinary tiles, but an
+        // unopened strategic deposit is not an ordinary tile: until one is
+        // mined the empire accumulates none of the material that every modern
+        // unit costs to train and to upgrade into, so those tiles are taken
+        // before anything else regardless of distance.
+        let mut best: Option<(bool, i32, Pos)> = None;
         for cid in g.player_city_ids(pid) {
             for pos in g.cities[&cid].owned_tiles.clone() {
                 if g.valid_improvements(pid, pos)
                     .iter()
                     .any(|improvement| g.rules.improvements[improvement].builder_buildable)
                 {
+                    let urgent = Self::unopened_strategic_source(g, pos);
                     let d = g.wdist(upos, pos);
-                    if best.map(|b| (d, pos) < b).unwrap_or(true) {
-                        best = Some((d, pos));
+                    let candidate = (!urgent, d, pos);
+                    if best.map(|b| candidate < b).unwrap_or(true) {
+                        best = Some(candidate);
                     }
                 }
             }
         }
         match best {
-            Some((_, pos)) => self.step_toward(g, pid, uid, pos),
+            Some((_, _, pos)) => self.step_toward(g, pid, uid, pos),
             None => false,
         }
+    }
+
+    /// Whether this tile holds a strategic deposit that is not yet connected
+    /// by the improvement which harvests it.
+    pub(crate) fn unopened_strategic_source(g: &Game, pos: Pos) -> bool {
+        let Some(tile) = g.map.get(pos) else {
+            return false;
+        };
+        let Some(resource) = tile.resource.as_deref() else {
+            return false;
+        };
+        let Some(spec) = g.rules.resources.get(resource) else {
+            return false;
+        };
+        spec.class == "strategic"
+            && tile.improvement.as_deref() != Some(spec.improvement.as_str())
     }
 
     pub(crate) fn military_engineer_step(&mut self, g: &mut Game, pid: usize, uid: u32) -> bool {
@@ -4783,10 +4867,52 @@ impl BasicAi {
         if self.should_explore(g, pid, uid, false) && self.explore_step(g, pid, uid) {
             return true;
         }
+        if self.modernization_step(g, pid, uid) {
+            return true;
+        }
         if self.patrol_step(g, pid, uid) {
             return true;
         }
         self.fortify_or_stop(g, pid, uid)
+    }
+
+    /// Walk a unit that has outlived its era back inside the borders, where
+    /// it can be upgraded. Gold upgrades are only offered in friendly
+    /// territory, so a unit that spends its whole life on frontier patrol or
+    /// in no-man's-land can never modernize however rich its owner is; the
+    /// modernization pass simply never sees it. Only units whose successor is
+    /// already unlocked and paid for make the trip.
+    fn modernization_step(&mut self, g: &mut Game, pid: usize, uid: u32) -> bool {
+        let target = {
+            let unit = &g.units[&uid];
+            let upos = unit.pos;
+            if g.is_embarked(unit) || g.unit_upgrade_target(pid, &unit.kind).is_none() {
+                return false;
+            }
+            let at_home = g
+                .map
+                .get(upos)
+                .and_then(|tile| tile.owner_city)
+                .and_then(|cid| g.cities.get(&cid))
+                .is_some_and(|city| city.owner == pid);
+            if at_home {
+                return false; // already somewhere the upgrade can be taken
+            }
+            let Some((_, gold, _)) = g.unit_upgrade_price(pid, &unit.kind) else {
+                return false;
+            };
+            if g.players[pid].gold < gold {
+                return false; // no point marching home to an empty treasury
+            }
+            g.player_city_ids(pid)
+                .into_iter()
+                .map(|cid| g.cities[&cid].pos)
+                .min_by_key(|pos| (g.wdist(upos, *pos), *pos))
+        };
+        match target {
+            Some(pos) => self.step_toward(g, pid, uid, pos),
+            None => false,
+        }
     }
 
     fn fortify_or_stop(&self, g: &mut Game, pid: usize, uid: u32) -> bool {
@@ -5060,6 +5186,63 @@ mod tests {
         let straggler = g.spawn_test_unit("warrior", 0, source);
         BasicAi::upgrade_units(&mut g, 0);
         assert_eq!(g.units[&straggler].kind, "warrior");
+    }
+
+    /// A Gold upgrade is only offered inside the borders, so an army that
+    /// spends its life on frontier patrol or in no-man's-land can never take
+    /// one however rich its owner is - the modernization pass simply never
+    /// sees those units. Measured over a full 6-player game, a third of all
+    /// military unit-turns were spent on unowned tiles.
+    #[test]
+    fn a_unit_stranded_outside_the_borders_walks_home_to_modernize() {
+        let (mut g, source, target) = island_colony_game(1);
+        grant_tech_with_prerequisites(&mut g, 0, "iron_working");
+        g.players[0]
+            .strategic_resources
+            .insert("iron".to_string(), 400.0);
+        g.players[0].gold = 900.0;
+        for tile in g.map.tiles.values_mut() {
+            tile.terrain = "plains".to_string();
+        }
+        let stranded = g.spawn_test_unit("warrior", 0, target);
+        assert!(g.map.tiles[&target].owner_city.is_none());
+        let before = g.wdist(target, source);
+
+        let mut ai = BasicAi::new();
+        ai.peacetime_step(&mut g, 0, stranded);
+
+        let after = g.wdist(g.units[&stranded].pos, source);
+        assert!(after < before, "before={before} after={after}");
+
+        // A unit already standing at home has nothing to walk toward, and one
+        // whose successor is out of reach is left to patrol as before.
+        let garrison = g.spawn_test_unit("warrior", 0, source);
+        assert!(!ai.modernization_step(&mut g, 0, garrison));
+        g.players[0].gold = 0.0;
+        let broke = g.spawn_test_unit("warrior", 0, target);
+        assert!(!ai.modernization_step(&mut g, 0, broke));
+    }
+
+    /// The standing-army target used to count heads, so a single Warrior that
+    /// outlived its era filled a city's whole military allowance and the
+    /// empire stopped building anything better. Weighting each unit by the
+    /// fraction of a front-line unit it can still field is what keeps late
+    /// production and Gold flowing into modern units.
+    #[test]
+    fn an_obsolete_garrison_no_longer_fills_the_standing_army_target() {
+        let (g, _, _) = island_colony_game(1);
+        // Nothing unlocked yet: every unit is as modern as the empire gets.
+        assert_eq!(BasicAi::force_weight(&g, "warrior", (0.0, 0.0)), 1.0);
+
+        let front_line = (55.0, 0.0); // Musketman
+        let warrior = BasicAi::force_weight(&g, "warrior", front_line);
+        let musketman = BasicAi::force_weight(&g, "musketman", front_line);
+        assert_eq!(musketman, 1.0);
+        assert!(warrior < 0.4, "warrior={warrior}");
+        // Even a relic holds a tile, so it never counts for nothing at all.
+        assert!(BasicAi::force_weight(&g, "warrior", (140.0, 0.0)) >= 0.2);
+        // Naval units are measured against the fleet, not against the army.
+        assert_eq!(BasicAi::force_weight(&g, "quadrireme", (55.0, 0.0)), 1.0);
     }
 
     #[test]

@@ -6359,9 +6359,20 @@ impl AdvancedAi {
             value += tourism * 35.0;
         }
         if let Some(resource) = &tile.resource {
+            // Only the improvement that actually works the resource connects
+            // it. A Farm on an Iron hill was scoring the same premium as the
+            // Mine, so the deposit read as already handled and no builder ever
+            // came back for it.
+            let worked = spec.resources.iter().any(|entry| entry == resource);
             value += match g.rules.resources[resource].class.as_str() {
-                "luxury" => 14.0,
-                "strategic" => 11.0,
+                "luxury" => 14.0 * worked as i32 as f64,
+                // A strategic deposit is not a yield: it is the empire's only
+                // supply of the material every modern unit costs to build and
+                // to upgrade into, and the stockpile it feeds is capped at 50,
+                // so a second source still earns its Builder charge. Opening
+                // one outranks any ordinary tile improvement in the game.
+                "strategic" if worked => 30.0,
+                "strategic" => 0.0,
                 _ => 4.0,
             };
         }
@@ -11879,12 +11890,26 @@ mod tests {
         for position in [start, direct, detour, onward] {
             assert!(game.map.tiles.contains_key(&position));
         }
-        game.map.tiles.get_mut(&direct).unwrap().terrain = "mountain".to_string();
-        for position in [start, detour, onward] {
+        // Flatten the approach so the detour is the only obstacle. Reading the
+        // generated terrain instead left the case at the mercy of whatever the
+        // seed happened to put beside the target - a river edge or a cliff in
+        // the corridor blocks the first step for reasons the case is not about.
+        for position in game.wdisk(target, 4) {
+            if position == target {
+                continue;
+            }
             let tile = game.map.tiles.get_mut(&position).unwrap();
             tile.terrain = "grassland".to_string();
             tile.feature = None;
+            tile.hills = false;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.district = None;
+            tile.wonder = None;
+            tile.cliff_edges = [false; 6];
+            tile.river_edges = [false; 6];
         }
+        game.map.tiles.get_mut(&direct).unwrap().terrain = "mountain".to_string();
 
         let missionary = game.spawn_test_unit("missionary", 0, start);
         game.units.get_mut(&missionary).unwrap().religion = Some("Our Faith".to_string());

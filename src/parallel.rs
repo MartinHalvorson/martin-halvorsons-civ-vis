@@ -12,6 +12,24 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
+/// Stack a worker gets. Turn resolution nests deeply enough that a whole game
+/// does not fit in a thread's stock 2 MiB, which is a quarter of the 8 MiB the
+/// main thread hands the serial path: a batch that completed serially aborted
+/// with a stack overflow as soon as it was spread across workers, and the
+/// larger the armies grew the sooner it happened.
+const WORKER_STACK: usize = 32 * 1024 * 1024;
+
+/// Spawn one worker with a stack a whole game fits in.
+fn spawn_worker<'scope, 'env, F>(scope: &'scope std::thread::Scope<'scope, 'env>, worker: F)
+where
+    F: FnOnce() + Send + 'scope,
+{
+    std::thread::Builder::new()
+        .stack_size(WORKER_STACK)
+        .spawn_scoped(scope, worker)
+        .expect("the operating system refused a worker thread");
+}
+
 /// How many jobs to run at once by default: one per core.
 pub fn default_jobs() -> usize {
     std::thread::available_parallelism()
@@ -41,7 +59,7 @@ where
     let next = &next;
     std::thread::scope(|scope| {
         for _ in 0..threads {
-            scope.spawn(move || loop {
+            spawn_worker(scope, move || loop {
                 let index = next.fetch_add(1, Ordering::Relaxed);
                 if index >= count {
                     break;
@@ -88,7 +106,7 @@ where
     let (done, reported, report, next, job) = (&done, &reported, &report, &next, &job);
     std::thread::scope(|scope| {
         for _ in 0..threads {
-            scope.spawn(move || loop {
+            spawn_worker(scope, move || loop {
                 let index = next.fetch_add(1, Ordering::Relaxed);
                 if index >= count {
                     break;
