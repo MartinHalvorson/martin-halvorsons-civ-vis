@@ -30870,9 +30870,14 @@ impl Game {
                 city.pop = ((city.pop * 3 + 3) / 4).max(1);
                 city.hp = 100;
                 city.loyalty = city.loyalty.min(50.0);
-                city.wall_hp = if steel_retains_defenses { 100 } else { 0 };
-                city.encampment_wall_hp = if steel_retains_defenses { 100 } else { 0 };
             }
+            // Every change of owner strips the constructed Walls below, so the
+            // pool they filled goes with them however the city changed hands.
+            // Leaving it behind on a city that defected or was ceded gave it a
+            // hundred hit points of walls that were not there, and with them a
+            // ranged strike it had no Encampment or Walls to fire from.
+            city.wall_hp = if steel_retains_defenses { 100 } else { 0 };
+            city.encampment_wall_hp = if steel_retains_defenses { 100 } else { 0 };
 
             city.buildings = converted_buildings.keys().cloned().collect();
             city.building_eras = converted_buildings
@@ -34110,6 +34115,38 @@ mod victory_conditions {
         assert!(g.do_raze_city(0, capital).is_err());
     }
 
+    /// Changing owner always strips a city's constructed Walls, but only a
+    /// conquest used to empty the pool those Walls filled. A city that
+    /// defected on Loyalty, or was handed over in a deal, kept a hundred hit
+    /// points of walls it no longer had - and with them a city ranged strike
+    /// it had nothing left to fire from.
+    #[test]
+    fn a_city_that_defects_loses_the_walls_it_no_longer_has() {
+        let mut g = game_with_capitals(2, 4_216, 300);
+        let cid = g.player_city_ids(1)[0];
+        {
+            let city = g.cities.get_mut(&cid).unwrap();
+            city.buildings.push("walls".to_string());
+            city.wall_hp = 100;
+            city.encampment_wall_hp = 100;
+            city.loyalty = 0.0;
+        }
+        assert_eq!(g.city_max_wall_hp(&g.cities[&cid]), 100);
+        assert!(g.city_can_strike(&g.cities[&cid]));
+
+        // Defect it the way Loyalty does: an ordinary transfer, no conquest.
+        g.transfer_city(cid, 0, false);
+
+        let city = &g.cities[&cid];
+        assert_eq!(city.owner, 0);
+        assert_eq!(city.captured_from, None, "this was not a conquest");
+        assert!(!city.buildings.iter().any(|building| building == "walls"));
+        assert_eq!(city.wall_hp, 0);
+        assert_eq!(city.encampment_wall_hp, 0);
+        assert!(city.wall_hp <= g.city_max_wall_hp(city));
+        assert!(!g.city_can_strike(city));
+    }
+
     #[test]
     fn conquest_applies_population_damage_repairs_conversion_and_occupation() {
         let mut g = game_with_capitals(2, 4_216, 300);
@@ -34182,6 +34219,7 @@ mod victory_conditions {
         assert_eq!(captured.occupied_from, Some(1));
         assert_eq!(captured.loyalty, 50.0);
         assert_eq!(captured.wall_hp, 0);
+        assert_eq!(captured.encampment_wall_hp, 0);
         assert!(!captured.buildings.contains(&"walls".to_string()));
         assert!(captured.pillaged_buildings.contains("monument"));
         assert!(captured.pillaged_buildings.contains("granary"));
