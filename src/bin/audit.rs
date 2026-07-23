@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 
 use civvis::ai::{AdvancedAi, Ai};
-use civvis::game::{Action, Game};
+use civvis::game::{Action, Game, WarRecord};
 use civvis::setup::MapSize;
 
 fn number(args: &[String], flag: &str, default: i64) -> i64 {
@@ -24,6 +24,20 @@ fn number(args: &[String], flag: &str, default: i64) -> i64 {
 
 /// How long a unit or city may sit doing nothing before it is worth reporting.
 const IDLE_TURNS: u32 = 25;
+const WAR_MIN_TURNS: u32 = 10;
+
+/// The minimum applies to a negotiated settlement, not to eliminating the
+/// opposing civilization. A quick conquest is a decisive war, not diplomacy
+/// undoing a declaration before its commitment has run.
+fn negotiated_war_ended_early(war: &WarRecord) -> bool {
+    let Some(ended) = war.ended else {
+        return false;
+    };
+    war.highlights
+        .last()
+        .is_some_and(|highlight| highlight.kind == "peace")
+        && ended.saturating_sub(war.started) < WAR_MIN_TURNS
+}
 
 #[derive(Default)]
 struct Findings {
@@ -263,7 +277,7 @@ fn audit_result(g: &Game, found: &mut Findings) {
             g.players[war.aggressor].civ.clone(),
             g.players[war.defender].civ.clone(),
         );
-        if ended.saturating_sub(war.started) < 10 {
+        if negotiated_war_ended_early(war) {
             found.violation(
                 "a war ended before the shipped minimum",
                 format!(
@@ -397,5 +411,46 @@ fn main() {
     }
     if !totals.violations.is_empty() {
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use civvis::game::{WarHighlight, WarRecord};
+
+    use super::negotiated_war_ended_early;
+
+    fn concluded_war(kind: &str) -> WarRecord {
+        WarRecord {
+            aggressor: 0,
+            defender: 1,
+            started: 20,
+            ended: Some(24),
+            losses: BTreeMap::new(),
+            highlights: vec![
+                WarHighlight {
+                    turn: 20,
+                    kind: "declared".to_string(),
+                    actor: 0,
+                    subject: 1,
+                    city: None,
+                },
+                WarHighlight {
+                    turn: 24,
+                    kind: kind.to_string(),
+                    actor: 0,
+                    subject: 1,
+                    city: None,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn the_war_minimum_applies_to_peace_but_not_conquest() {
+        assert!(negotiated_war_ended_early(&concluded_war("peace")));
+        assert!(!negotiated_war_ended_early(&concluded_war("conquest")));
     }
 }
