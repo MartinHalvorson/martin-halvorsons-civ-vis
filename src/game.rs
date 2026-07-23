@@ -9943,7 +9943,7 @@ impl Game {
                                 .and_then(|tech| self.rules.techs.get(tech))
                                 .map(|tech| tech.era)
                                 .unwrap_or(0);
-                            (era, spec.cost as i64, name.clone())
+                            (era, spec.cost as i64, (*name).clone())
                         })
                         .map(|(name, _)| name.clone());
                     let home = self
