@@ -206,7 +206,7 @@
   .victory-value { color: #a9bab3; font-size: 8px; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .victory-meter { height: 2px; margin: 0 0 0 17px; border-radius: 3px; }
   #playerhud {
-    position: absolute; z-index: 7; top: 52px; right: 12px; width: min(414px, calc(100% - 82px));
+    position: absolute; z-index: 7; top: 10px; right: 12px; width: min(414px, calc(100% - 82px));
     max-height: calc(100% - 238px); overflow-y: auto; pointer-events: auto;
     scrollbar-width: none; filter: drop-shadow(0 12px 28px #0009);
   }
@@ -254,13 +254,13 @@
   .ribbon-stat.wonders b { color: #e9d88e; }
   .ribbon-stat.score b { color: var(--gold-bright); }
   #zoomctl {
-    position: absolute; z-index: 6; top: 86px; left: 16px; display: flex; flex-direction: column;
+    position: absolute; z-index: 14; bottom: 16px; left: 16px; display: flex; flex-direction: row;
     gap: 5px; padding: 5px; border-radius: 13px; background: #0a1512cb; border: 1px solid #3c554c;
     box-shadow: 0 12px 26px #0006; backdrop-filter: blur(12px);
   }
   #zoomctl button { width: 34px; height: 34px; margin: 0; padding: 0; border: 0; background: transparent; font-size: 16px; }
-  #zoomctl button + button { border-top: 1px solid #ffffff0c; border-radius: 0; }
-  #paneltoggle { position: absolute; z-index: 14; top: 17px; left: 16px; background: #0a1512df; backdrop-filter: blur(12px); }
+  #zoomctl button + button { border-left: 1px solid #ffffff0c; border-radius: 0; }
+  #paneltoggle { background: transparent; }
   #ubar {
     position: absolute; z-index: 7; left: 50%; bottom: 22px; transform: translateX(-50%);
     display: none; min-width: 360px; max-width: min(680px, calc(100% - 450px)); padding: 13px 16px;
@@ -411,6 +411,9 @@
   .capture-actions button { margin: 0; min-height: 43px; }
 
   @media (max-width: 1360px) {
+    #topbar { right: 438px; grid-template-columns: 68px repeat(6, minmax(50px, 1fr)); }
+  }
+  @media (max-width: 1100px) {
     #topbar { right: 70px; }
     #playerhud { top: 82px; }
   }
@@ -421,7 +424,6 @@
   @media (max-width: 940px) {
     #topbar { grid-template-columns: 68px repeat(3, minmax(70px, 1fr)); }
     #playerhud { top: 148px; }
-    #zoomctl { top: 152px; }
   }
   @media (max-width: 720px) {
     body { display: block; }
@@ -430,9 +432,8 @@
     body.sidebar-hidden #side { width: min(390px, calc(100% - 16px)); transform: translateX(calc(-100% - 16px)); opacity: 0; }
     #topbar { grid-template-columns: 82px repeat(6, minmax(70px, 1fr)); }
     #playerhud { top: 82px; right: 12px; max-height: calc(100% - 100px); }
-    #zoomctl { top: 86px; }
     .minimap-frame { display: none; }
-    #paneltoggle { left: 12px; }
+    #zoomctl { left: 12px; bottom: 12px; }
     #ubar { min-width: 0; width: calc(100% - 28px); bottom: 18px; }
     #trade { inset: 2% 8px; }
     .trade-balance { display: none; }
@@ -441,7 +442,6 @@
   @media (max-width: 620px) {
     #topbar { grid-template-columns: 68px repeat(3, minmax(70px, 1fr)); }
     #playerhud { top: 148px; }
-    #zoomctl { top: 152px; }
   }
   @media (max-width: 430px) {
     #playerhud { left: 74px; right: 8px; width: auto; }
@@ -461,8 +461,8 @@
   <canvas id="map"></canvas>
   <div id="topbar"></div>
   <aside id="playerhud" aria-label="Civilization yield ribbon"></aside>
-  <button id="paneltoggle" class="icon" title="Toggle command deck" aria-label="Toggle command deck">☰</button>
   <div id="zoomctl">
+    <button id="paneltoggle" class="icon" title="Toggle command deck" aria-label="Toggle command deck">☰</button>
     <button id="zin" title="Zoom in" aria-label="Zoom in">＋</button>
     <button id="zout" title="Zoom out" aria-label="Zoom out">−</button>
     <button id="zhome" title="Center on your empire" aria-label="Center map">⌂</button>
@@ -946,6 +946,43 @@ async function fetchJSON(url, opts = {}, timeoutMs = 15000) {
 let firstLoad = true;
 let serverInstance = null;
 let bootBusy = false, bootTimer = null;
+let supervisorReconnectTimer = null;
+let supervisorReconnectBusy = false;
+
+function reloadForServerInstance(instance) {
+  clearTimeout(supervisorReconnectTimer);
+  supervisorReconnectTimer = null;
+  // Give each promoted process a distinct URL. This both replaces the stale
+  // instance marker and guarantees that the successor's embedded UI assets
+  // are loaded rather than restored from the previous process's page cache.
+  const next = new URL(window.location.href);
+  next.searchParams.set("instance", String(instance));
+  window.location.replace(next.toString());
+}
+
+function waitForSupervisedSuccessor(finishedInstance) {
+  if (supervisorReconnectBusy || supervisorReconnectTimer) return;
+  const poll = async () => {
+    supervisorReconnectTimer = null;
+    supervisorReconnectBusy = true;
+    try {
+      const successor = await fetchJSON("/state", {}, 3000);
+      if (successor.server_instance !== undefined &&
+          successor.server_instance !== finishedInstance) {
+        reloadForServerInstance(successor.server_instance);
+        return;
+      }
+    } catch (e) {
+      // A short connection failure is expected while the listening socket is
+      // handed from the completed process to its successor.
+    } finally {
+      supervisorReconnectBusy = false;
+    }
+    supervisorReconnectTimer = setTimeout(poll, 400);
+  };
+  supervisorReconnectTimer = setTimeout(poll, 200);
+}
+
 function syncViewPlayer() {
   const select = document.getElementById("viewplayer");
   if (!select || !state) return;
@@ -1059,7 +1096,8 @@ function startRestartCountdown() {
   if (restartTimer) return;
   if (state && state.supervised) {
     const el = document.getElementById("respawn");
-    if (el) el.textContent = "supervisor preparing next game";
+    if (el) el.textContent = "supervisor preparing next game · reconnecting automatically";
+    waitForSupervisedSuccessor(state.server_instance);
     return;
   }
   // Capture the exact completed server. The supervisor may replace it while
@@ -1300,7 +1338,7 @@ function render(st, recordChronicle = true) {
   // binary. Reload once so this tab also picks up the new HTML/JavaScript.
   if (serverInstance !== null && st.server_instance !== undefined &&
       st.server_instance !== serverInstance) {
-    window.location.reload();
+    reloadForServerInstance(st.server_instance);
     return;
   }
   if (st.server_instance !== undefined) serverInstance = st.server_instance;
