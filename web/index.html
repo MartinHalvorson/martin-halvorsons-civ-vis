@@ -1180,12 +1180,15 @@
   }
   #playerhud .diplomacy-elo { display: none; }
   #playerhud .diplomacy-stats {
-    align-self: stretch; display: grid; grid-template-columns: repeat(10, minmax(16px, 1fr));
-    grid-template-rows: minmax(0, 1fr); gap: 0;
+    align-self: stretch; display: grid; grid-template-columns: repeat(5, minmax(31px, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 0;
   }
-  #playerhud .ribbon-stat { min-height: 0; padding: 0; }
-  #playerhud .ribbon-stat b { font-size: 7.5px; line-height: 1; }
-  #playerhud .ribbon-stat em { margin-top: 1px; font-size: 4.5px; line-height: 1; }
+  #playerhud .ribbon-stat {
+    min-height: 0; display: flex; align-items: baseline; justify-content: center;
+    gap: 2px; padding: 0;
+  }
+  #playerhud .ribbon-stat b { font-size: 11px; font-weight: 850; line-height: 1; }
+  #playerhud .ribbon-stat em { margin-top: 0; font-size: 5.5px; line-height: 1; }
   #playerhud .civ-dossier {
     position: absolute; z-index: 2; top: calc(100% + 6px); right: 0;
     width: min(760px, calc(100vw - 28px)); max-height: calc(66.667vh - 24px);
@@ -8405,31 +8408,24 @@ function compactStat(value) {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
 
-// The world-leaders ribbon gives every stat the same narrow column, so a value
-// that renders wider than four glyphs used to clip to an ellipsis ("15…") —
-// the number went missing exactly once an empire got big enough for it to be
-// interesting. Spend the four glyphs from the top down: magnitude suffix first,
-// then whole digits, then a decimal only if there is still room for one.
+// Player standings are a glanceable scorecard, not an accounting ledger. Keep
+// every value to a whole number and abbreviate only once five digits would no
+// longer fit comfortably in its cell.
 function ribbonStat(value) {
-  const n = Number(value) || 0;
+  const n = Math.round(Number(value) || 0);
   const abs = Math.abs(n);
-  const [suffix, divisor] =
-    abs >= 1e9 ? ["b", 1e9] : abs >= 1e6 ? ["m", 1e6] : abs >= 1e3 ? ["k", 1e3] : ["", 1];
-  const scaled = n / divisor;
-  const room = 4 - suffix.length - (n < 0 ? 1 : 0) - String(Math.floor(Math.abs(scaled))).length;
-  const rounded = scaled.toFixed(room >= 2 && !Number.isInteger(scaled) ? 1 : 0);
-  // Rounding up can add a digit (9.96 → "10.0"), which spends a glyph on a
-  // decimal that is no longer telling anyone anything.
-  const digits = suffix ? rounded : rounded.replace(/\.0$/, "");
-  const text = `${digits}${suffix}`;
-  return text.length > 4 ? `${Math.round(scaled)}${suffix}` : text;
+  const [suffix, divisor] = abs >= 999500000 ? ["b", 1e9]
+    : abs >= 999500 ? ["m", 1e6]
+    : abs >= 10000 ? ["k", 1e3]
+    : ["", 1];
+  return `${Math.round(n / divisor)}${suffix}`;
 }
 
-// Tooltips have all the room in the world, so they carry the exact figure the
-// column had to abbreviate.
+// Tooltips retain thousands separators while following the HUD's whole-number
+// presentation.
 function exactStat(value) {
   const n = Number(value) || 0;
-  return (Math.round(n * 10) / 10).toLocaleString(undefined, {maximumFractionDigits: 1});
+  return Math.round(n).toLocaleString();
 }
 
 // Rebuilding the ribbon's markup on a frame where nothing in it changed
@@ -8457,7 +8453,7 @@ function drawPlayerHud() {
     .filter(p => !p.is_minor && !p.is_barbarian)
     .sort((a, b) => b.score - a.score || a.id - b.id);
   const rows = Math.max(1, majors.length);
-  const requestedHeight = 20 + rows * 36;
+  const requestedHeight = 20 + rows * 40;
   const mapArea = document.getElementById("maparea");
   if (!HUD_LAYOUT.players) {
     mapArea.style.setProperty("--player-hud-width", "330px");
