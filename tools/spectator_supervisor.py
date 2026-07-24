@@ -540,7 +540,13 @@ def read_json(
         return None
 
 
-def read_state(port: int, timeout: float = 1.0) -> dict[str, Any] | None:
+def read_state(port: int, timeout: float = 5.0) -> dict[str, Any] | None:
+    """Read the full observation, which can take seconds in a late large game.
+
+    The generic JSON probe stays fast, but the supervisor must not classify a
+    valid 8-player observation as unavailable merely because serialization is
+    slower than a lightweight health response.
+    """
     return read_json(port, "/state", timeout)
 
 
