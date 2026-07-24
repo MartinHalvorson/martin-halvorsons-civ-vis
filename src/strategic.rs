@@ -12,13 +12,25 @@
 //! estimate is deliberately regularized toward score share because the
 //! counterfactual rollout endpoints remain out of distribution for ordinary
 //! self-play trajectories.
-use crate::ai::{AdvancedAi, Ai, PlanReport, VictoryTarget, Weights};
+use crate::ai::{run_game, AdvancedAi, Ai, PlanReport, VictoryTarget, Weights};
 use crate::evolve::features;
 use crate::game::{Action, Game, Item};
 use crate::valuenet::ValueNet;
 
 const TARGET_COMMITMENT_MARGIN: f64 = 0.01;
 const VALUE_NET_WEIGHT: f64 = 0.25;
+pub const FIRST_REVIEW_TURN: u32 = 30;
+
+/// One position on the exact distribution consumed by the Strategic value
+/// evaluator, paired with the eventual result of continuing that rollout.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CounterfactualValueSample {
+    pub features: Vec<f32>,
+    pub won: bool,
+    pub turn_fraction: f32,
+    /// `None` is the adaptive parent; `Some` is a committed victory lane.
+    pub target: Option<VictoryTarget>,
+}
 
 pub struct StrategicAi {
     inner: AdvancedAi,
@@ -61,7 +73,7 @@ impl StrategicAi {
             horizon: 40,
             // The opening book plays itself; the first lane choice lands
             // once the empire exists enough for lanes to differ.
-            next_review: 30,
+            next_review: FIRST_REVIEW_TURN,
         }
     }
 
@@ -357,9 +369,15 @@ impl StrategicAi {
         })
     }
 
-    /// Projected value of staying adaptive (`None`) or committing to `target`
-    /// for `horizon` rounds.
-    fn rollout(&self, g: &Game, pid: usize, target: Option<VictoryTarget>) -> f64 {
+    /// Advance the exact branch policy used by the macro planner and retain
+    /// its stateful agents so an offline labeler can continue from the same
+    /// endpoint rather than restarting their plans.
+    fn rollout_state(
+        &self,
+        g: &Game,
+        pid: usize,
+        target: Option<VictoryTarget>,
+    ) -> (Game, Vec<Box<dyn Ai>>) {
         let mut sim = g.clone();
         let mut ais: Vec<Box<dyn Ai>> = sim
             .players
@@ -391,11 +409,69 @@ impl StrategicAi {
                 let _ = sim.apply(p, &Action::EndTurn);
             }
         }
+        (sim, ais)
+    }
+
+    /// Projected value of staying adaptive (`None`) or committing to `target`
+    /// for `horizon` rounds.
+    fn rollout(&self, g: &Game, pid: usize, target: Option<VictoryTarget>) -> f64 {
+        let (sim, _) = self.rollout_state(g, pid, target);
         match sim.winner {
             Some(w) if w == pid => 1.0,
             Some(_) => 0.0,
             None => self.position_value(&sim, pid),
         }
+    }
+
+    /// Export unresolved rollout endpoints with true terminal outcomes.
+    ///
+    /// The ordinary on-policy snapshots used by early value models are not
+    /// the positions this agent ranks: it ranks the endpoints of adaptive and
+    /// lane-committed counterfactuals. This method reuses the planner's exact
+    /// branch policy, excludes branches where the evaluator already has an
+    /// exact result (a winner or a dead candidate), and continues each retained
+    /// branch with the same stateful agents until the game ends. Cheap tactical
+    /// and irreversible priors return before rollouts in `review`, so those
+    /// roots deliberately produce no samples here either.
+    pub fn counterfactual_value_samples(
+        &self,
+        g: &Game,
+        pid: usize,
+    ) -> Vec<CounterfactualValueSample> {
+        if Self::duel_religious_race(g, pid)
+            || self.urgent_counter_target(g, pid).is_some()
+            || Self::viable_religious_commitment(g, pid)
+        {
+            return Vec::new();
+        }
+
+        let mut targets = vec![None];
+        targets.extend(
+            VictoryTarget::ALL
+                .into_iter()
+                .filter(|target| Self::target_enabled(g, *target))
+                .map(Some),
+        );
+        let mut samples = Vec::with_capacity(targets.len());
+        for target in targets {
+            let (mut endpoint, mut ais) = self.rollout_state(g, pid, target);
+            if endpoint.winner.is_some() || !endpoint.players[pid].alive {
+                continue;
+            }
+            let endpoint_features = features(&endpoint, pid);
+            let turn_fraction = endpoint.turn as f32 / endpoint.max_turns.max(1) as f32;
+            run_game(&mut endpoint, &mut ais);
+            let Some(winner) = endpoint.winner else {
+                continue;
+            };
+            samples.push(CounterfactualValueSample {
+                features: endpoint_features,
+                won: winner == pid,
+                turn_fraction,
+                target,
+            });
+        }
+        samples
     }
 
     fn choose_rollout_target(
@@ -507,6 +583,38 @@ mod tests {
         assert!(StrategicAi::score_only_with_weights(Default::default())
             .net
             .is_none());
+    }
+
+    #[test]
+    fn counterfactual_samples_cover_the_evaluated_endpoint_distribution() {
+        // Three players avoid the duel-religion prior, which intentionally
+        // bypasses value rollouts. A one-round horizon keeps the seven exact
+        // branch continuations cheap while still exercising terminal labels.
+        let game = Game::new(3, 20, 14, 200, 12, 0);
+        let mut strategic = StrategicAi::score_only_with_weights(Default::default());
+        strategic.horizon = 1;
+
+        let samples = strategic.counterfactual_value_samples(&game, 0);
+        assert_eq!(samples.len(), 1 + VictoryTarget::ALL.len());
+        assert_eq!(
+            samples,
+            strategic.counterfactual_value_samples(&game, 0),
+            "branch endpoints and their terminal labels must be deterministic"
+        );
+        assert_eq!(samples[0].target, None);
+        assert_eq!(
+            samples
+                .iter()
+                .skip(1)
+                .filter_map(|sample| sample.target)
+                .collect::<Vec<_>>(),
+            VictoryTarget::ALL
+        );
+        assert!(samples.iter().all(|sample| {
+            sample.features.len() == 25
+                && sample.features.iter().all(|value| value.is_finite())
+                && sample.turn_fraction > 0.0
+        }));
     }
 
     #[test]

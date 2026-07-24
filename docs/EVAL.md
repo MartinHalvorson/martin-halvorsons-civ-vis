@@ -565,3 +565,56 @@ the model seats also led in population, tech, culture, military, routes, and
 religious units. That is useful sensitivity validation, not evidence to revive
 the rejected model: four maps are far below the 20-map monitoring floor and
 neither win nor score evidence crossed.
+
+## 2026-07-24 — counterfactual value-label export
+
+Ordinary self-play snapshots train a predictor for the states an agent visits,
+but Strategic ranks a different distribution: the state *after* projecting
+its adaptive parent and every enabled victory lane for 40 rounds. The offline
+exporter can now label that exact distribution:
+
+```bash
+civvis selfplay --counterfactual --scalar-only --ai strategic_score \
+  --games 100 --players 4 --turns 500 --every 40 --seed 40000 \
+  --out counterfactual-selfplay
+python tools/train_valuenet.py counterfactual-selfplay/dataset.csv model.json
+```
+
+Counterfactual mode begins at Strategic's first review turn (30), then samples
+at the requested cadence. It selects one living major per checkpoint with a
+deterministic rotation to bound the multiplicative cost, and exports the
+adaptive plus each enabled lane endpoint. A branch that already has a winner,
+or whose candidate is dead, is omitted because `position_value` does not ask a
+net to evaluate it. Roots handled by the duel-religion, urgent-counter, or
+irreversible-religion priors are omitted for the same reason: `review` returns
+before running economic rollouts in those cases.
+
+Each retained endpoint is frozen as 25 scalar features, then continued to the
+winner with the *same stateful branch agents* that produced it. This prevents
+both terminal-feature leakage and policy resets at the labeling boundary.
+`meta.json` records root and per-lane counts. All sibling lanes keep the source
+self-play game's ID in `dataset.csv` and `labels.f32`; the grouped trainer must
+therefore place the entire source game—not individual branches—into exactly one
+of train, validation, or final test.
+
+The mode fails closed unless both `--scalar-only` and the explicit no-model
+`strategic_score` control are selected. A learned net can neither influence its
+own root trajectory nor its rollout labels. Passing the offline BCE/Brier/ECE
+gate remains only a prerequisite: a new artifact still stays out of production
+unless it also beats `strategic_score` on predeclared development and holdout
+maps in the direct paired evaluator.
+
+An operational two-game smoke (`--turns 90 --seed 39100`) scheduled four
+roots, retained the two whose reviews actually reached the value evaluator,
+and wrote 14 rows: two each for adaptive, Science, Culture, Religion,
+Diplomacy, Domination, and Score. Labels included both classes (5 wins, 9
+losses), every CSV row had the required 27 fields, and spatial payloads were
+empty. Repeating the same seeds with `--jobs 1` and `--jobs 2` produced
+byte-identical `dataset.csv`, `labels.f32`, and `meta.json`.
+
+Factoring the live rollout through the reusable endpoint runner did not change
+Strategic behavior. A fresh no-model invariant replay (`strategic
+strategic_score --pairs 2 --players 4 --turns 90 --seed 39200`) split every
+map, every win, and terminal score exactly 50/50. All aggregate economy,
+military, victory, plan-exposure, switch-count, and final-target diagnostics
+were digit-for-digit identical between treatment and control.
