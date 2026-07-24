@@ -1,4 +1,5 @@
 from pathlib import Path
+import concurrent.futures
 import os
 import subprocess
 import sys
@@ -99,6 +100,23 @@ class BranchTests(unittest.TestCase):
             with self.assertRaises(collab.CommandError):
                 collab.install_push_guard(root)
             self.assertEqual(target.read_text(encoding="utf-8"), "#!/bin/sh\nexit 0\n")
+
+    def test_simultaneous_installers_leave_one_complete_guard(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subprocess.run(("git", "init", str(root)), check=True, capture_output=True)
+            tools = root / "tools"
+            tools.mkdir()
+            source = tools / "civvis_push_guard.py"
+            source.write_text(
+                f"#!/usr/bin/env python3\n# {collab.PUSH_GUARD_MARKER}\n",
+                encoding="utf-8",
+            )
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+                targets = list(pool.map(lambda _: collab.install_push_guard(root), range(24)))
+            self.assertEqual(len(set(targets)), 1)
+            self.assertEqual(targets[0].read_bytes(), source.read_bytes())
+            self.assertEqual(list(targets[0].parent.glob(".pre-push.civvis-*")), [])
 
 
 class ClaimTests(unittest.TestCase):

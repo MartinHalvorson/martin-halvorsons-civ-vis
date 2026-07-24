@@ -485,17 +485,27 @@ def install_push_guard(repo: Path) -> Path:
         if existing != source_bytes and PUSH_GUARD_MARKER.encode() not in existing:
             raise CommandError(
                 f"refusing to overwrite unmanaged pre-push hook: {target}; "
-                "chain it to tools/civvis_push_guard.py, then rerun"
+                "preserve and resolve that hook explicitly before retrying"
             )
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(source_bytes)
-    if os.name != "nt":
-        target.chmod(
-            target.stat().st_mode
-            | stat.S_IXUSR
-            | stat.S_IXGRP
-            | stat.S_IXOTH
-        )
+    temporary = target.with_name(
+        f".{target.name}.civvis-{os.getpid()}-{secrets.token_hex(4)}"
+    )
+    try:
+        with temporary.open("xb") as handle:
+            handle.write(source_bytes)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if os.name != "nt":
+            temporary.chmod(
+                temporary.stat().st_mode
+                | stat.S_IXUSR
+                | stat.S_IXGRP
+                | stat.S_IXOTH
+            )
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
     return target
 
 
