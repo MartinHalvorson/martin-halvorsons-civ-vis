@@ -2,9 +2,10 @@
 
 `tools/spectator_supervisor.py` is the production visual test: it plays the
 latest `origin/main` build on screen, one full game after another, and rebuilds
-the newest code *while the current game is still running* so the next game is
-always on the freshest binary that compiled. It is one cross-platform program;
-only the way you keep it alive differs per OS.
+the newest code *while the current game is still running*. As soon as that
+binary is verified, it checkpoints the active game and resumes it on the new
+image; deployment does not wait for a potentially hour-long victory boundary.
+It is one cross-platform program; only the way you keep it alive differs per OS.
 
 ## What the loop does
 
@@ -14,14 +15,17 @@ only the way you keep it alive differs per OS.
 2. Serves that binary in `--spectate --supervised` mode; the game auto-steps to
    a decision.
 3. **During** the game it fetches `origin/main` and, if it moved, compiles it in
-   the background — so the boundary between games never waits on `cargo`. This
-   is the "always one game up of the last build" property.
-4. When a winner appears it archives the result, keeps it on screen for
+   the background. It identifies deployments by the promoted binary hash, not
+   only by the runtime-input hash, so every newly stamped commit reaches the
+   live `/status` endpoint even when its functional inputs are unchanged.
+4. A verified update captures a safe checkpoint, replaces the server, and
+   resumes the same active match on the fresh binary. If the build or checkpoint
+   is not ready, the last verified server stays live and the supervisor retries;
+   the loop never stalls on slow or broken source.
+5. When a winner appears it archives the result, keeps it on screen for
    `--cooldown` seconds (default 5), then deals the next game on the freshest
-   build it has. If that build isn't ready, it starts immediately on the last
-   verified one and swaps in the fresh code at the *next* boundary — the loop
-   never stalls on a slow or broken build.
-5. Crash/stall recovery: active games are checkpointed every few seconds and
+   verified build.
+6. Crash/stall recovery: active games are checkpointed every few seconds and
    resumed; a wedged game is nudged, then quarantined rather than looped on.
 
 The supervisor also updates **itself**: when `tools/spectator_supervisor.py`
