@@ -1639,7 +1639,7 @@ mod belief_runtime_tests {
         game.players[0].religion_beliefs = vec!["choral_music".to_string()];
         assert!(
             (game.city_yields(cities[0]).culture - worked_culture(&game)
-                - (baseline_yields.culture - baseline_worked_culture + 6.0 * 1.1))
+                - (baseline_yields.culture - baseline_worked_culture + 6.0))
                 .abs()
                 < 1e-9
         );
@@ -1649,7 +1649,7 @@ mod belief_runtime_tests {
         assert!(holy_site_adjacency >= 1.0);
         assert!(
             (game.city_yields(cities[0]).production
-                - (baseline_yields.production + holy_site_adjacency * 1.1))
+                - (baseline_yields.production + holy_site_adjacency))
                 .abs()
                 < 1e-9
         );
@@ -1671,7 +1671,7 @@ mod belief_runtime_tests {
         game.players[0].religion_beliefs.clear();
         let baseline_route_gold = game.city_yields(cities[0]).gold;
         game.players[0].religion_beliefs = vec!["religious_community".to_string()];
-        assert!((game.city_yields(cities[0]).gold - baseline_route_gold - 6.0 * 1.1).abs() < 1e-9);
+        assert!((game.city_yields(cities[0]).gold - baseline_route_gold - 6.0).abs() < 1e-9);
     }
 
     /// Civ VI grants a majority religion only above half of a city's Citizens,
@@ -2247,7 +2247,7 @@ mod governor_runtime_tests {
         assert!(
             (game.city_yields(city).production
                 - without_industrialist.city_yields(city).production
-                - 2.0 * 1.1)
+                - 2.0)
                 .abs()
                 < 1e-9
         );
@@ -2305,7 +2305,7 @@ mod governor_runtime_tests {
         assert!(
             (game.city_yields(city).production
                 - without_integration.city_yields(city).production
-                - 6.0 * 1.1)
+                - 6.0)
                 .abs()
                 < 1e-9
         );
@@ -2389,7 +2389,7 @@ mod governor_runtime_tests {
         let mut without_moksha = game.clone();
         without_moksha.players[0].governor_roster.clear();
         assert!(
-            (game.city_yields(city).faith - without_moksha.city_yields(city).faith - 2.0 * 1.1)
+            (game.city_yields(city).faith - without_moksha.city_yields(city).faith - 2.0)
                 .abs()
                 < 1e-9
         );
@@ -4935,7 +4935,7 @@ mod specialist_tests {
             .push("library".to_string());
         assert_eq!(game.city_citizen_plan(city).specialists, vec!["campus"]);
         let after_library = game.city_yields(city);
-        assert!((after_library.science - before.science - 4.0 * 1.1).abs() < 1e-9);
+        assert!((after_library.science - before.science - 4.0).abs() < 1e-9);
 
         game.cities
             .get_mut(&city)
@@ -5359,18 +5359,19 @@ mod power_tests {
     #[test]
     fn excess_lifetime_pollution_reduces_favor_and_is_capped_at_twenty() {
         let (mut game, _) = power_game();
-        game.players.push(Player::new(1, "Rival", false));
+        let rival = game.players.len();
+        game.players.push(Player::new(rival, "Rival", false));
         game.players[0].co2_emissions = 60_000.0;
-        game.players[1].co2_emissions = 0.0;
+        game.players[rival].co2_emissions = 0.0;
         assert_eq!(game.carbon_favor_penalty(0), 10.0);
-        assert_eq!(game.carbon_favor_penalty(1), 0.0);
+        assert_eq!(game.carbon_favor_penalty(rival), 0.0);
 
         game.players[0].co2_emissions = -50_000.0;
-        game.players[1].co2_emissions = 10_000.0;
-        assert_eq!(game.carbon_favor_penalty(1), 10.0);
+        game.players[rival].co2_emissions = 10_000.0;
+        assert_eq!(game.carbon_favor_penalty(rival), 10.0);
 
         game.players[0].co2_emissions = 200_000.0;
-        game.players[1].co2_emissions = 0.0;
+        game.players[rival].co2_emissions = 0.0;
         assert_eq!(game.carbon_favor_penalty(0), 20.0);
     }
 
@@ -5685,27 +5686,27 @@ mod maintenance_tests {
                 .find(|pos| **pos != game.cities[&city].pos)
                 .unwrap(),
         );
-        assert!((game.city_yields(city).gold - 5.0 * 1.1).abs() < 1e-9);
+        assert!((game.city_yields(city).gold - 5.0).abs() < 1e-9);
         assert_eq!(game.unit_gold_maintenance(0), 30.0);
 
         game.players[0].gold = 0.0;
         game.begin_turn(0);
         assert_eq!(game.players[0].gold, 0.0);
-        assert_eq!(game.players[0].gold_per_turn, -24.5);
+        assert_eq!(game.players[0].gold_per_turn, -25.0);
         assert_eq!(game.players[0].bankruptcy_amenity_penalty, 2);
         // one maintained unit disbands per -10 quantum: both robots go
         assert!(!game.units.contains_key(&robot));
         assert!(!game.units.contains_key(&escort));
 
         let observed = crate::obs::observation(&game, 0);
-        assert_eq!(observed["me"]["gold_per_turn"], serde_json::json!(-24.5));
+        assert_eq!(observed["me"]["gold_per_turn"], serde_json::json!(-25.0));
         assert_eq!(
             observed["me"]["bankruptcy_amenity_penalty"],
             serde_json::json!(2)
         );
         assert_eq!(
             observed["players"][0]["gold_per_turn"],
-            serde_json::json!(-24.5)
+            serde_json::json!(-25.0)
         );
     }
 
@@ -5747,15 +5748,15 @@ mod maintenance_tests {
         };
         let baseline = loyalty(&mut game);
 
-        // The Colosseum keeps every city within six tiles loyal, including
-        // the one that built it.
+        // The Colosseum supplies +2 Loyalty directly and, in this fixture,
+        // its +2 Amenities lifts the capital from Content to Happy for +3.
         let center = game.cities[&city].pos;
         game.cities
             .get_mut(&city)
             .unwrap()
             .wonders
             .insert("colosseum".to_string(), center);
-        assert_eq!(loyalty(&mut game), baseline + 2.0);
+        assert_eq!(loyalty(&mut game), baseline + 5.0);
 
         // Martial Law pays 2 for a garrison, not 4.
         game.cities.get_mut(&city).unwrap().wonders.clear();
@@ -5868,14 +5869,14 @@ mod government_runtime_tests {
     }
 
     fn assert_yield_delta(actual: Yields, baseline: Yields, expected: f64) {
-        // These capitals sit in the Happy amenity band, which scales every
-        // non-food yield by 10% on top of the tested effect.
+        // These capitals sit in the Content amenity band, so only the tested
+        // effect changes their yields.
         assert!((actual.food - baseline.food - expected).abs() < 1e-9);
-        assert!((actual.production - baseline.production - expected * 1.1).abs() < 1e-9);
-        assert!((actual.gold - baseline.gold - expected * 1.1).abs() < 1e-9);
-        assert!((actual.science - baseline.science - expected * 1.1).abs() < 1e-9);
-        assert!((actual.culture - baseline.culture - expected * 1.1).abs() < 1e-9);
-        assert!((actual.faith - baseline.faith - expected * 1.1).abs() < 1e-9);
+        assert!((actual.production - baseline.production - expected).abs() < 1e-9);
+        assert!((actual.gold - baseline.gold - expected).abs() < 1e-9);
+        assert!((actual.science - baseline.science - expected).abs() < 1e-9);
+        assert!((actual.culture - baseline.culture - expected).abs() < 1e-9);
+        assert!((actual.faith - baseline.faith - expected).abs() < 1e-9);
     }
 
     #[test]
@@ -6030,7 +6031,7 @@ mod government_runtime_tests {
         game.do_appoint_governor(0, "pingala", city).unwrap();
         let baseline = without_government(&game);
         assert!(
-            (game.city_yields(city).faith - baseline.city_yields(city).faith - 1.0 * 1.1).abs()
+            (game.city_yields(city).faith - baseline.city_yields(city).faith - 1.0).abs()
                 < 1e-9
         );
     }
@@ -6057,7 +6058,7 @@ mod government_runtime_tests {
         let baseline = without_government(&game);
         assert!(
             (game.city_yields(city).production - baseline.city_yields(city).production
-                - 1.2 * 1.1)
+                - 1.2)
                 .abs()
                 < 1e-9
         );
@@ -6087,10 +6088,10 @@ mod government_runtime_tests {
         let destination_yields = game.city_yields(destination);
         let destination_baseline = baseline.city_yields(destination);
         assert_eq!(origin_yields.food, origin_baseline.food + 4.0);
-        assert!((origin_yields.production - origin_baseline.production - 4.0 * 1.1).abs() < 1e-9);
+        assert!((origin_yields.production - origin_baseline.production - 4.0).abs() < 1e-9);
         assert_eq!(destination_yields.food, destination_baseline.food + 4.0);
         assert!(
-            (destination_yields.production - destination_baseline.production - 4.0 * 1.1).abs()
+            (destination_yields.production - destination_baseline.production - 4.0).abs()
                 < 1e-9
         );
 
@@ -6101,14 +6102,14 @@ mod government_runtime_tests {
         let baseline = without_government(&game);
         assert!(
             (game.city_yields(origin).production - baseline.city_yields(origin).production
-                - 4.0 * 1.1)
+                - 4.0)
                 .abs()
                 < 1e-9
         );
         assert!(
             (game.city_yields(destination).production
                 - baseline.city_yields(destination).production
-                - 4.0 * 1.1)
+                - 4.0)
                 .abs()
                 < 1e-9
         );
@@ -6987,10 +6988,10 @@ mod district_building_wonder_runtime_tests {
 
         assert!(game.complete_item(0, city, &dar_e_mehr));
         assert_eq!(game.cities[&city].building_eras["dar_e_mehr"], 2);
-        assert!((game.city_yields(city).faith - baseline - 3.0 * 1.1).abs() < 1e-9);
+        assert!((game.city_yields(city).faith - baseline - 3.0).abs() < 1e-9);
 
         game.world_era = 5;
-        assert!((game.city_yields(city).faith - baseline - 6.0 * 1.1).abs() < 1e-9);
+        assert!((game.city_yields(city).faith - baseline - 6.0).abs() < 1e-9);
         game.cities
             .get_mut(&city)
             .unwrap()
@@ -7007,12 +7008,12 @@ mod district_building_wonder_runtime_tests {
             },
         ));
         assert_eq!(game.cities[&city].building_eras["dar_e_mehr"], 5);
-        assert!((game.city_yields(city).faith - baseline - 3.0 * 1.1).abs() < 1e-9);
+        assert!((game.city_yields(city).faith - baseline - 3.0).abs() < 1e-9);
 
         game.world_era = 7;
         let restored: Game = serde_json::from_str(&serde_json::to_string(&game).unwrap()).unwrap();
         assert_eq!(restored.cities[&city].building_eras["dar_e_mehr"], 5);
-        assert!((restored.city_yields(city).faith - baseline - 5.0 * 1.1).abs() < 1e-9);
+        assert!((restored.city_yields(city).faith - baseline - 5.0).abs() < 1e-9);
     }
 
     #[test]
@@ -7053,8 +7054,10 @@ mod district_building_wonder_runtime_tests {
         assert_eq!(game.units[&band].xp, 0);
         game.units.get_mut(&band).unwrap().moves_left = 4.0;
 
-        game.players.push(Player::new(1, "Concert Rival", false));
-        game.cities.get_mut(&city).unwrap().owner = 1;
+        let rival = game.players.len();
+        game.players
+            .push(Player::new(rival, "Concert Rival", false));
+        game.cities.get_mut(&city).unwrap().owner = rival;
         install_district(&mut game, city, position, "theater_square");
         game.cities.get_mut(&city).unwrap().buildings.extend(
             ["amphitheater", "art_museum", "broadcast_center"]
@@ -7090,7 +7093,10 @@ mod district_building_wonder_runtime_tests {
             _ => unreachable!(),
         };
         assert_eq!(game.players[0].tourism_lifetime, 750.0 * multiplier);
-        assert_eq!(game.players[0].targeted_tourism[&1], 750.0 * multiplier);
+        assert_eq!(
+            game.players[0].targeted_tourism[&rival],
+            750.0 * multiplier
+        );
         assert_eq!(game.units.contains_key(&band), survives);
         if survives {
             assert_eq!(game.units[&band].album_sales, albums);
@@ -7197,9 +7203,11 @@ mod district_building_wonder_runtime_tests {
             game.city_local_amenities(&game.cities[&city]),
             amenities_before + 1
         );
-        game.players.push(Player::new(1, "Pillager", false));
-        game.at_war.insert(pair(0, 1));
-        assert!(!game.pillageable_at(1, ski));
+        let pillager = game.players.len();
+        game.players
+            .push(Player::new(pillager, "Pillager", false));
+        game.at_war.insert(pair(0, pillager));
+        assert!(!game.pillageable_at(pillager, ski));
     }
 
     #[test]
@@ -7368,8 +7376,10 @@ mod district_building_wonder_runtime_tests {
     #[test]
     fn rock_band_promotions_unlock_venues_and_raise_matching_venue_levels() {
         let (mut game, city, theater) = one_city(774_4063);
-        game.players.push(Player::new(1, "Venue Rival", false));
-        game.cities.get_mut(&city).unwrap().owner = 1;
+        let rival = game.players.len();
+        game.players
+            .push(Player::new(rival, "Venue Rival", false));
+        game.cities.get_mut(&city).unwrap().owner = rival;
         install_district(&mut game, city, theater, "theater_square");
         game.cities
             .get_mut(&city)
@@ -7427,9 +7437,13 @@ mod district_building_wonder_runtime_tests {
     #[test]
     fn concert_promotions_apply_gold_loyalty_religion_and_nearby_tourism() {
         let (mut game, host_city, venue) = one_city(774_4064);
-        game.players.push(Player::new(1, "Host Rival", false));
-        game.players.push(Player::new(2, "Nearby Rival", false));
-        game.cities.get_mut(&host_city).unwrap().owner = 1;
+        let host_rival = game.players.len();
+        game.players
+            .push(Player::new(host_rival, "Host Rival", false));
+        let nearby_rival = game.players.len();
+        game.players
+            .push(Player::new(nearby_rival, "Nearby Rival", false));
+        game.cities.get_mut(&host_city).unwrap().owner = host_rival;
         install_district(&mut game, host_city, venue, "theater_square");
         game.cities
             .get_mut(&host_city)
@@ -7446,7 +7460,11 @@ mod district_building_wonder_runtime_tests {
             .filter(|position| game.rules.is_passable(&game.map.tiles[position]))
             .find(|position| game.wdist(venue, *position) <= 10)
             .unwrap();
-        game.found_city_for(2, nearby_position, Some("Nearby City".to_string()));
+        game.found_city_for(
+            nearby_rival,
+            nearby_position,
+            Some("Nearby City".to_string()),
+        );
 
         let religion = "touring_faith".to_string();
         game.players[0].religion = Some(religion.clone());
@@ -7470,9 +7488,12 @@ mod district_building_wonder_runtime_tests {
 
         game.apply(0, &Action::PerformConcert { unit: band })
             .unwrap();
-        let host_tourism = game.players[0].targeted_tourism[&1];
+        let host_tourism = game.players[0].targeted_tourism[&host_rival];
         assert!(host_tourism > 0.0);
-        assert_eq!(game.players[0].targeted_tourism[&2], host_tourism * 0.5);
+        assert_eq!(
+            game.players[0].targeted_tourism[&nearby_rival],
+            host_tourism * 0.5
+        );
         assert_eq!(game.players[0].gold, host_tourism * 0.25);
         assert_eq!(game.cities[&host_city].loyalty, 60.0);
         assert_eq!(
@@ -8276,6 +8297,16 @@ struct LuxuryHoldings<'a> {
     amani: Option<BTreeMap<&'a str, i32>>,
 }
 
+/// Everything one Loyalty tick needs to apply atomically. Free Cities keep
+/// the per-civilization pressure as a ledger until their second revolt, when
+/// the civilization that exerted the most total pressure receives the city.
+#[derive(Default)]
+struct LoyaltyChange {
+    delta: f64,
+    foreign_pressure: BTreeMap<usize, f64>,
+    locked: bool,
+}
+
 /// The seats in a game, each shared until it is written to.
 ///
 /// A game is cloned to look ahead, and a seat carries everything that player
@@ -8786,6 +8817,10 @@ pub struct City {
     pub atheist_pressure: f64,
     #[serde(default = "full_loyalty")]
     pub loyalty: f64,
+    /// Loyalty pressure accumulated while this settlement is a Free City.
+    /// The ledger is cleared whenever it joins a major civilization.
+    #[serde(default)]
+    pub free_city_pressure: BTreeMap<usize, f64>,
     /// The owner that lost this city in the unresolved conquest which just
     /// occurred. While set, the conqueror must keep, raze, or (when legal)
     /// liberate the city before taking another action.
@@ -9165,6 +9200,10 @@ pub struct Player {
     pub is_minor: bool,
     #[serde(default)]
     pub is_barbarian: bool,
+    /// The one non-playable Free Cities seat. It is minor/barbarian for
+    /// victory and diplomacy filtering, but follows its own Loyalty rules.
+    #[serde(default)]
+    pub is_free_city: bool,
     #[serde(default)]
     pub government: Option<String>,
     /// Every form of government this civilization has already run. Trying one
@@ -9317,6 +9356,7 @@ impl Player {
             alive: true,
             is_minor,
             is_barbarian: false,
+            is_free_city: false,
             government: None,
             past_governments: BTreeSet::new(),
             pending_government: None,
@@ -10262,6 +10302,9 @@ impl From<GameSer> for Game {
             city_by_pos: BTreeMap::new(),
             log: crate::actionlog::ActionLog::new(),
         };
+        // Saves from before the two-stage Loyalty model have no Free Cities
+        // seat. Appending it preserves every existing player id.
+        g.ensure_free_city_player();
         for u in g.units.values() {
             g.occ.entry(u.pos).or_default().push(u.id);
         }
@@ -10620,6 +10663,10 @@ impl Game {
                 state.wall_hp = 100;
             }
         }
+        // Rise & Fall always reserves a non-playable Free Cities seat. It is
+        // dormant until the first Loyalty revolt, so it neither receives a
+        // start nor consumes a turn in games where every city stays loyal.
+        g.ensure_free_city_player();
         if barbarians {
             let pid = g.players.len();
             let mut barb = Player::new(pid, "Barbarians", true);
@@ -10633,6 +10680,19 @@ impl Game {
         g.refresh_great_person_offers();
         g.refresh_all_visibility();
         g
+    }
+
+    fn ensure_free_city_player(&mut self) -> usize {
+        if let Some(player) = self.players.iter().find(|player| player.is_free_city) {
+            return player.id;
+        }
+        let pid = self.players.len();
+        let mut player = Player::new(pid, "Free Cities", true);
+        player.alive = false;
+        player.is_barbarian = true;
+        player.is_free_city = true;
+        self.players.push(player);
+        pid
     }
 
     /// Where a city-state assigned to `preferred` should actually settle.
@@ -11640,6 +11700,17 @@ impl Game {
     pub fn is_at_war(&self, a: usize, b: usize) -> bool {
         if a == b || self.same_team(a, b) {
             return false;
+        }
+        if self
+            .players
+            .get(a)
+            .is_some_and(|player| player.is_free_city)
+            || self
+                .players
+                .get(b)
+                .is_some_and(|player| player.is_free_city)
+        {
+            return true;
         }
         if let Some(bp) = self.barb_pid {
             if bp == a || bp == b {
@@ -18572,12 +18643,13 @@ impl Game {
     }
 
     /// Gathering Storm removed the free population Amenity: cities require
-    /// ceil(population / 2), while the Palace supplies the capital with one.
-    fn city_amenities_required(city: &City) -> i64 {
+    /// ceil(population / 2), while the final Palace supplies the capital with
+    /// two Amenities.
+    pub fn city_amenities_required(city: &City) -> i64 {
         (city.pop.max(1) as i64 + 1) / 2
     }
 
-    fn city_local_amenities(&self, city: &City) -> i64 {
+    pub fn city_local_amenities(&self, city: &City) -> i64 {
         let mut supply = self.policy_effect(city.owner, "city_amenities");
         supply += if self.city_has_palace(city) {
             self.rules.buildings["palace"].amenity
@@ -18852,13 +18924,19 @@ impl Game {
         allocations
     }
 
-    pub fn city_amenity_surplus(&self, city: &City) -> i64 {
+    /// Amenities supplied to this city before subtracting its population need
+    /// or an empire-wide bankruptcy penalty.
+    pub fn city_amenities(&self, city: &City) -> i64 {
         let luxury = self
             .luxury_amenity_allocations(city.owner)
             .get(&city.id)
             .copied()
             .unwrap_or(0);
         self.city_local_amenities(city) + luxury
+    }
+
+    pub fn city_amenity_surplus(&self, city: &City) -> i64 {
+        self.city_amenities(city)
             - Self::city_amenities_required(city)
             - self.players[city.owner].bankruptcy_amenity_penalty
     }
@@ -18867,12 +18945,13 @@ impl Game {
         Self::amenity_yield_mult_for(self.city_amenity_surplus(city))
     }
 
-    /// The shipped Happinesses non-food yield bands as the expansions leave
-    /// them: Ecstatic +20% down to Revolt -40%.
+    /// Final Gathering Storm satisfaction bands after the December 2020
+    /// restoration: Ecstatic begins at +5 and Happy at +3; the negative
+    /// bands remain Displeased -1/-2 through Revolt at -7 or worse.
     fn amenity_yield_mult_for(surplus: i64) -> f64 {
-        if surplus >= 3 {
+        if surplus >= 5 {
             1.20
-        } else if surplus >= 1 {
+        } else if surplus >= 3 {
             1.10
         } else if surplus >= 0 {
             1.0
@@ -18887,12 +18966,12 @@ impl Game {
         }
     }
 
-    /// The shipped Happinesses growth bands: Ecstatic +20%, Happy +10%,
+    /// Final Gathering Storm growth bands: Ecstatic +20%, Happy +10%,
     /// Displeased -15%, Unhappy -30%, no growth from Unrest down.
     fn amenity_growth_mult(surplus: i64) -> f64 {
-        if surplus >= 3 {
+        if surplus >= 5 {
             1.20
-        } else if surplus >= 1 {
+        } else if surplus >= 3 {
             1.10
         } else if surplus >= 0 {
             1.0
@@ -18902,6 +18981,35 @@ impl Game {
             0.70
         } else {
             0.0
+        }
+    }
+
+    pub fn city_happiness(&self, city: &City) -> &'static str {
+        match self.city_amenity_surplus(city) {
+            5.. => "ecstatic",
+            3..=4 => "happy",
+            0..=2 => "content",
+            -2..=-1 => "displeased",
+            -4..=-3 => "unhappy",
+            -6..=-5 => "unrest",
+            _ => "revolt",
+        }
+    }
+
+    /// Happiness is a direct Loyalty source in Rise & Fall / Gathering
+    /// Storm: Happy/Ecstatic add +3/+6; Displeased and every worse state
+    /// subtract -3/-6 respectively.
+    fn happiness_loyalty_delta(surplus: i64) -> f64 {
+        if surplus >= 5 {
+            6.0
+        } else if surplus >= 3 {
+            3.0
+        } else if surplus >= 0 {
+            0.0
+        } else if surplus >= -2 {
+            -3.0
+        } else {
+            -6.0
         }
     }
 
@@ -18929,6 +19037,18 @@ impl Game {
             0.25
         } else {
             0.0
+        }
+    }
+
+    pub fn loyalty_state(loyalty: f64) -> &'static str {
+        if loyalty > 75.0 {
+            "loyal"
+        } else if loyalty > 50.0 {
+            "wavering"
+        } else if loyalty > 25.0 {
+            "disloyal"
+        } else {
+            "unrest"
         }
     }
 
@@ -29233,6 +29353,7 @@ impl Game {
             last_attacked: 0,
             pressure: BTreeMap::new(),
             loyalty: 100.0,
+            free_city_pressure: BTreeMap::new(),
             captured_from: None,
             occupied_from: None,
             reactor_age: 0,
@@ -34357,191 +34478,306 @@ impl Game {
         self.do_appoint_governor(pid, &governor, cid)
     }
 
-    /// Population-based loyalty pressure (R&F simplified): nearby own pops
-    /// pull up, foreign pops pull down; a governor anchors +8; the capital
-    /// never flips. At 0 loyalty the city defects to the strongest neighbor.
-    fn process_loyalty(&mut self, pid: usize) {
-        if self.players[pid].is_minor {
-            return;
+    /// Calculate one city's complete per-turn Loyalty change. Keeping this
+    /// read-only makes the exact value available to clients and AI without
+    /// duplicating (and eventually drifting from) the turn processor.
+    fn loyalty_change_for_city(&self, pid: usize, cid: u32) -> LoyaltyChange {
+        let city = &self.cities[&cid];
+        let cpos = city.pos;
+        let protected = self
+            .cities
+            .values()
+            .filter(|source| source.owner == pid)
+            .flat_map(|source| source.wonders.iter())
+            .any(|(wonder, position)| {
+                self.rules.wonders[wonder.as_str()]
+                    .effects
+                    .get("regional_full_loyalty_range")
+                    .is_some_and(|range| self.wdist(*position, cpos) <= *range as i32)
+            });
+        if protected {
+            return LoyaltyChange {
+                delta: 100.0 - city.loyalty,
+                locked: true,
+                ..LoyaltyChange::default()
+            };
         }
-        let mut flips: Vec<(u32, usize)> = Vec::new();
-        for cid in self.player_city_ids(pid) {
-            let cpos = self.cities[&cid].pos;
-            let protected = self
-                .cities
-                .values()
-                .filter(|source| source.owner == pid)
-                .flat_map(|source| source.wonders.iter())
-                .any(|(wonder, position)| {
-                    self.rules.wonders[wonder.as_str()]
-                        .effects
-                        .get("regional_full_loyalty_range")
-                        .is_some_and(|range| self.wdist(*position, cpos) <= *range as i32)
-                });
-            if protected {
-                self.cities.get_mut(&cid).unwrap().loyalty = 100.0;
+
+        let age_factor = |owner: usize| match self.players[owner].age.as_str() {
+            "golden" | "heroic" => 1.5,
+            "dark" => 0.5,
+            _ => 1.0,
+        };
+        let mut domestic_pressure = 0.0;
+        let mut foreign_pressure = 0.0;
+        let mut pressure_by_civ: BTreeMap<usize, f64> = BTreeMap::new();
+        for source in self.cities.values() {
+            // City-states and ordinary Free Cities do not exert population
+            // Loyalty pressure in the standard Gathering Storm ruleset.
+            if self.players[source.owner].is_minor || self.players[source.owner].is_barbarian {
                 continue;
             }
-            let age_factor = |owner: usize| match self.players[owner].age.as_str() {
-                "golden" | "heroic" => 1.5,
-                "dark" => 0.5,
-                _ => 1.0,
-            };
-            let mut domestic_pressure = 0.0;
-            let mut foreign_pressure = 0.0;
-            let mut best_foreign: Option<(f64, usize)> = None;
-            let mut foreign_pop: BTreeMap<usize, f64> = BTreeMap::new();
-            for o in self.cities.values() {
-                if self.players[o.owner].is_minor || self.players[o.owner].is_barbarian {
-                    continue;
-                }
-                let d = self.wdist(o.pos, cpos);
-                if d > 9 {
-                    continue;
-                }
-                let pressure_per_citizen = age_factor(o.owner)
-                    + self.city_active_project_effect(o, "citizen_loyalty_pressure");
-                let mut w = o.pop as f64 * (10.0 - d as f64) * pressure_per_citizen;
-                if o.is_capital && o.original_owner == o.owner {
-                    w += o.pop as f64;
-                }
-                if o.owner == pid {
-                    domestic_pressure += w;
-                } else if self.same_team(pid, o.owner) {
-                    // Team cities neither support nor attack one another's
-                    // Loyalty. They are a permanent alliance, not one
-                    // population-pressure empire.
-                    continue;
-                } else if !self.players[o.owner].is_barbarian
-                    && !self.players[o.owner].is_minor
-                    && !self
-                        .alliance_with(pid, o.owner)
-                        .is_some_and(|alliance| alliance.kind == "cultural")
-                {
-                    foreign_pressure += w;
-                    *foreign_pop.entry(o.owner).or_insert(0.0) += w;
-                }
+            let distance = self.wdist(source.pos, cpos);
+            if distance > 9 {
+                continue;
             }
-            for (o, w) in foreign_pop {
-                if best_foreign.map(|(bw, _)| w > bw).unwrap_or(true) {
-                    best_foreign = Some((w, o));
-                }
+            let pressure_per_citizen = age_factor(source.owner)
+                + self.city_active_project_effect(source, "citizen_loyalty_pressure");
+            let mut pressure =
+                source.pop as f64 * (10.0 - distance as f64) * pressure_per_citizen;
+            if source.is_capital && source.original_owner == source.owner {
+                pressure += source.pop as f64;
             }
-            let mut delta = (10.0 * (domestic_pressure - foreign_pressure)
-                / (domestic_pressure.min(foreign_pressure) + 0.5))
-                .clamp(-20.0, 20.0);
-            if self.city_governor_active(pid, cid) {
-                delta += 8.0 + self.policy_effect(pid, "governor_loyalty");
-            } else {
-                delta += self
-                    .cities
-                    .values()
-                    .filter(|source| source.owner == pid)
-                    .map(|source| self.city_building_effect(source, "no_governor_loyalty"))
-                    .sum::<f64>();
+            if source.owner == pid {
+                domestic_pressure += pressure;
+            } else if self.same_team(pid, source.owner) {
+                // Team cities are neutral rather than one population-pressure
+                // empire, matching their permanent-alliance semantics.
+                continue;
+            } else if !self
+                .alliance_with(pid, source.owner)
+                .is_some_and(|alliance| alliance.kind == "cultural")
+            {
+                foreign_pressure += pressure;
+                *pressure_by_civ.entry(source.owner).or_insert(0.0) += pressure;
             }
-            if let Some(victor_city) = self.established_governor_city(pid, "victor") {
-                if self.wdist(self.cities[&victor_city].pos, cpos) <= 9 {
-                    // Gathering Storm applies the aura to Victor's own city
-                    // too, despite the Civilopedia saying "other cities."
-                    delta += self.governor_effect(pid, victor_city, "nearby_city_loyalty");
-                }
-            }
-            let garrisoned = self.units_at(cpos).into_iter().any(|uid| {
-                self.units[&uid].owner == pid
-                    && self.rules.units[self.units[&uid].kind.as_str()].class == "military"
-            });
-            if garrisoned {
-                delta += self.policy_effect(pid, "garrison_loyalty");
-            }
-            let occupied = self.cities[&cid]
-                .occupied_from
-                .is_some_and(|former| self.players.get(former).is_some_and(|p| p.alive));
-            if occupied && !garrisoned {
-                delta -= 5.0;
-            }
-            if let Some(founded_religion) = self.players[pid].religion.as_deref() {
-                if let Some(city_religion) = self.city_religion(&self.cities[&cid]) {
-                    delta += if city_religion == founded_religion {
-                        3.0
-                    } else {
-                        -3.0
-                    };
-                }
-            }
-            // Amani's Emissary pressure applies to every city in range that
-            // is not owned by her civilization, including from a city-state
-            // assignment.
-            delta += (0..self.players.len())
-                .filter(|diplomat| *diplomat != pid)
-                .filter_map(|diplomat| {
-                    let source = self.established_governor_city(diplomat, "amani")?;
-                    (self.wdist(self.cities.get(&source)?.pos, cpos) <= 9)
-                        .then(|| self.governor_effect(diplomat, source, "foreign_city_loyalty"))
-                })
-                .sum::<f64>();
-            delta += self.cities[&cid]
-                .districts
-                .iter()
-                .filter(|(district, position)| {
-                    self.district_is_active(&self.cities[&cid], district, **position)
-                })
-                .map(|(district, position)| {
-                    let spec = &self.rules.districts[district.as_str()];
-                    spec.loyalty
-                        + if self.on_foreign_continent(pid, *position) {
-                            spec.effects
-                                .get("foreign_continent_loyalty")
-                                .copied()
-                                .unwrap_or(0.0)
-                        } else {
-                            0.0
-                        }
-                })
-                .sum::<f64>();
-            delta += self.city_building_effect(&self.cities[&cid], "loyalty_per_turn");
-            if self.on_foreign_continent(pid, cpos) {
-                delta += self.policy_effect(pid, "foreign_continent_city_loyalty");
-            }
-            // The Colosseum keeps every city in range loyal, not just its own.
+        }
+
+        let mut delta = (10.0 * (domestic_pressure - foreign_pressure)
+            / (domestic_pressure.min(foreign_pressure) + 0.5))
+            .clamp(-20.0, 20.0);
+        if self.players[pid].is_free_city {
+            delta += 10.0;
+        }
+        delta += Self::happiness_loyalty_delta(self.city_amenity_surplus(city));
+        if self.city_yields(cid).food + f64::EPSILON < 2.0 * city.pop as f64 {
+            delta -= 4.0;
+        }
+        if self.city_governor_active(pid, cid) {
+            delta += 8.0 + self.policy_effect(pid, "governor_loyalty");
+        } else {
             delta += self
                 .cities
                 .values()
                 .filter(|source| source.owner == pid)
-                .flat_map(|source| source.wonders.iter().map(move |(wonder, _)| (source, wonder)))
-                .map(|(source, wonder)| {
-                    let spec = &self.rules.wonders[wonder.as_str()];
-                    if spec.regional_loyalty > 0.0
-                        && spec.regional_range > 0
-                        && self.wdist(source.pos, cpos) <= spec.regional_range
-                    {
-                        spec.regional_loyalty
+                .map(|source| self.city_building_effect(source, "no_governor_loyalty"))
+                .sum::<f64>();
+        }
+        if let Some(victor_city) = self.established_governor_city(pid, "victor") {
+            if self.wdist(self.cities[&victor_city].pos, cpos) <= 9 {
+                // Gathering Storm applies the aura to Victor's own city too,
+                // despite the Civilopedia saying "other cities."
+                delta += self.governor_effect(pid, victor_city, "nearby_city_loyalty");
+            }
+        }
+        let garrisoned = self.units_at(cpos).into_iter().any(|uid| {
+            self.units[&uid].owner == pid
+                && self.rules.units[self.units[&uid].kind.as_str()].class == "military"
+        });
+        if garrisoned {
+            delta += self.policy_effect(pid, "garrison_loyalty");
+        }
+        let occupied = city
+            .occupied_from
+            .is_some_and(|former| self.players.get(former).is_some_and(|player| player.alive));
+        if occupied && !garrisoned {
+            delta -= 5.0;
+        }
+        if let Some(founded_religion) = self.players[pid].religion.as_deref() {
+            if let Some(city_religion) = self.city_religion(city) {
+                delta += if city_religion == founded_religion {
+                    3.0
+                } else {
+                    -3.0
+                };
+            }
+        }
+        // Amani's Emissary pressure applies to every city in range that is
+        // not owned by her civilization, including from a city-state post.
+        delta += (0..self.players.len())
+            .filter(|diplomat| *diplomat != pid)
+            .filter_map(|diplomat| {
+                let source = self.established_governor_city(diplomat, "amani")?;
+                (self.wdist(self.cities.get(&source)?.pos, cpos) <= 9)
+                    .then(|| self.governor_effect(diplomat, source, "foreign_city_loyalty"))
+            })
+            .sum::<f64>();
+        delta += city
+            .districts
+            .iter()
+            .filter(|(district, position)| self.district_is_active(city, district, **position))
+            .map(|(district, position)| {
+                let spec = &self.rules.districts[district.as_str()];
+                spec.loyalty
+                    + if self.on_foreign_continent(pid, *position) {
+                        spec.effects
+                            .get("foreign_continent_loyalty")
+                            .copied()
+                            .unwrap_or(0.0)
                     } else {
                         0.0
                     }
-                })
-                .sum::<f64>();
-            if self.congress_effect_active("migration_treaty", "A", &pid.to_string()) {
-                delta -= 5.0;
-            } else if self.congress_effect_active("migration_treaty", "B", &pid.to_string()) {
-                delta += 5.0;
+            })
+            .sum::<f64>();
+        delta += self.city_building_effect(city, "loyalty_per_turn");
+        if self.on_foreign_continent(pid, cpos) {
+            delta += self.policy_effect(pid, "foreign_continent_city_loyalty");
+        }
+        delta += self
+            .cities
+            .values()
+            .filter(|source| source.owner == pid)
+            .flat_map(|source| source.wonders.iter().map(move |(wonder, _)| (source, wonder)))
+            .map(|(source, wonder)| {
+                let spec = &self.rules.wonders[wonder.as_str()];
+                if spec.regional_loyalty > 0.0
+                    && spec.regional_range > 0
+                    && self.wdist(source.pos, cpos) <= spec.regional_range
+                {
+                    spec.regional_loyalty
+                } else {
+                    0.0
+                }
+            })
+            .sum::<f64>();
+        if self.congress_effect_active("migration_treaty", "A", &pid.to_string()) {
+            delta -= 5.0;
+        } else if self.congress_effect_active("migration_treaty", "B", &pid.to_string()) {
+            delta += 5.0;
+        }
+        if self.active_emergencies.iter().any(|emergency| {
+            emergency.ends > self.turn && emergency.target == pid && emergency.city == cid
+        }) {
+            delta += 20.0;
+        }
+
+        LoyaltyChange {
+            delta,
+            foreign_pressure: pressure_by_civ,
+            locked: false,
+        }
+    }
+
+    pub fn city_loyalty_per_turn(&self, city: &City) -> f64 {
+        self.loyalty_change_for_city(city.owner, city.id).delta
+    }
+
+    /// Free Cities immediately field two current, generic melee defenders.
+    /// Their shared seat inherits technology before this is called, so later
+    /// revolts naturally upgrade from Warriors through the melee line.
+    fn free_city_defender(&self, free_cities: usize) -> Option<String> {
+        self.rules
+            .units
+            .iter()
+            .filter(|(unit, spec)| {
+                spec.class == "military"
+                    && spec.buildable
+                    && spec.unique_to.is_none()
+                    && spec.promotion_class == "melee"
+                    && self.unlocked(free_cities, &spec.tech, &spec.civic)
+                    && !self.unit_is_obsolete(free_cities, unit)
+            })
+            .max_by(|(left_name, left), (right_name, right)| {
+                left.strength
+                    .total_cmp(&right.strength)
+                    .then_with(|| left.cost.total_cmp(&right.cost))
+                    .then_with(|| right_name.cmp(left_name))
+            })
+            .map(|(unit, _)| unit.clone())
+    }
+
+    /// Apply population pressure and every local Loyalty source. A major city
+    /// first revolts into the hostile Free Cities seat at 100 Loyalty. A Free
+    /// City at zero then joins the living major that accumulated the greatest
+    /// population pressure during its independence.
+    fn process_loyalty(&mut self, pid: usize) {
+        if self.players[pid].is_minor && !self.players[pid].is_free_city {
+            return;
+        }
+
+        enum Flip {
+            Revolt(u32),
+            Join(u32, usize),
+        }
+
+        let mut flips = Vec::new();
+        for cid in self.player_city_ids(pid) {
+            let change = self.loyalty_change_for_city(pid, cid);
+            if change.locked {
+                self.cities.get_mut(&cid).unwrap().loyalty = 100.0;
+                continue;
             }
-            if self.active_emergencies.iter().any(|emergency| {
-                emergency.ends > self.turn && emergency.target == pid && emergency.city == cid
-            }) {
-                delta += 20.0;
-            }
-            let c = self.cities.get_mut(&cid).unwrap();
-            c.loyalty = (c.loyalty + delta).clamp(0.0, 100.0);
-            if c.loyalty <= 0.0 {
-                if let Some((_, new_owner)) = best_foreign {
-                    flips.push((cid, new_owner));
+            if self.players[pid].is_free_city {
+                let city = self.cities.get_mut(&cid).unwrap();
+                for (civilization, pressure) in change.foreign_pressure {
+                    *city.free_city_pressure.entry(civilization).or_insert(0.0) += pressure;
                 }
             }
+            let city = self.cities.get_mut(&cid).unwrap();
+            city.loyalty = (city.loyalty + change.delta).clamp(0.0, 100.0);
+            if city.loyalty > 0.0 {
+                continue;
+            }
+            if self.players[pid].is_free_city {
+                let new_owner = city
+                    .free_city_pressure
+                    .iter()
+                    .filter(|(owner, _)| {
+                        self.players.get(**owner).is_some_and(|player| {
+                            player.alive && !player.is_minor && !player.is_barbarian
+                        })
+                    })
+                    .max_by(|(left_owner, left), (right_owner, right)| {
+                        left.total_cmp(right)
+                            .then_with(|| right_owner.cmp(left_owner))
+                    })
+                    .map(|(owner, _)| *owner);
+                if let Some(new_owner) = new_owner {
+                    flips.push(Flip::Join(cid, new_owner));
+                }
+            } else {
+                flips.push(Flip::Revolt(cid));
+            }
         }
-        for (cid, new_owner) in flips {
-            self.transfer_city(cid, new_owner, false);
-            self.cities.get_mut(&cid).unwrap().loyalty = 100.0;
+
+        for flip in flips {
+            match flip {
+                Flip::Revolt(cid) => {
+                    let old_owner = self.cities[&cid].owner;
+                    let free_cities = self.ensure_free_city_player();
+                    // A Free City inherits enough civic/technical knowledge
+                    // to retain the infrastructure present when it revolts.
+                    let techs = self.players[old_owner].techs.clone();
+                    let civics = self.players[old_owner].civics.clone();
+                    self.players[free_cities].techs.extend(techs);
+                    self.players[free_cities].civics.extend(civics);
+                    let position = self.cities[&cid].pos;
+                    self.transfer_city(cid, free_cities, false);
+                    let city = self.cities.get_mut(&cid).unwrap();
+                    city.loyalty = 100.0;
+                    city.captured_from = None;
+                    city.occupied_from = None;
+                    city.free_city_pressure.clear();
+                    self.reveal(free_cities, position, 3);
+                    if let Some(defender) = self.free_city_defender(free_cities) {
+                        for _ in 0..2 {
+                            self.place_city_state_starting_unit(
+                                &defender,
+                                free_cities,
+                                position,
+                            );
+                        }
+                    }
+                }
+                Flip::Join(cid, new_owner) => {
+                    self.transfer_city(cid, new_owner, false);
+                    let city = self.cities.get_mut(&cid).unwrap();
+                    city.loyalty = 100.0;
+                    city.captured_from = None;
+                    city.occupied_from = None;
+                    city.free_city_pressure.clear();
+                }
+            }
         }
     }
 
@@ -39081,7 +39317,10 @@ impl Game {
     }
 
     fn check_elimination(&mut self, pid: usize) {
-        if !self.players[pid].alive || self.players[pid].is_barbarian {
+        // The camp-based Barbarian seat is permanently alive. The separate
+        // Free Cities seat becomes dormant again after its last city joins a
+        // civilization, so it must pass through ordinary elimination here.
+        if !self.players[pid].alive || self.barb_pid == Some(pid) {
             return;
         }
         if self.cities.values().any(|c| c.owner == pid) {
@@ -42968,7 +43207,11 @@ mod victory_conditions {
 
         // Barbarians ON for FFA and OFF for Teamers.
         assert!(game.barb_pid.is_none());
-        assert!(!game.players.iter().any(|player| player.is_barbarian));
+        assert!(game
+            .players
+            .iter()
+            .filter(|player| player.is_barbarian)
+            .all(|player| player.is_free_city));
 
         // All Game Modes: DISABLED.
         for mode in GAME_MODES {
@@ -43816,7 +44059,7 @@ mod victory_conditions {
     }
 
     #[test]
-    fn original_capitals_can_flip_from_loyalty_pressure() {
+    fn original_capitals_revolt_to_free_cities_before_joining_a_rival() {
         let mut g = game_with_capitals(2, 4_243, 300);
         let capital = g.player_city_ids(0)[0];
         let foreign = g.player_city_ids(1)[0];
@@ -43827,8 +44070,94 @@ mod victory_conditions {
 
         g.process_loyalty(0);
 
-        assert_eq!(g.cities[&capital].owner, 1);
+        let free_cities = g
+            .players
+            .iter()
+            .find(|player| player.is_free_city)
+            .unwrap()
+            .id;
+        assert_eq!(g.cities[&capital].owner, free_cities);
+        assert_eq!(g.cities[&capital].loyalty, 100.0);
         assert_eq!(g.cities[&capital].occupied_from, None);
+        assert!(g.players[free_cities].alive);
+        assert!(g.is_at_war(free_cities, 1));
+        assert_eq!(
+            g.player_unit_ids(free_cities)
+                .into_iter()
+                .filter(|unit| {
+                    g.rules.units[g.units[unit].kind.as_str()].promotion_class == "melee"
+                })
+                .count(),
+            2
+        );
+
+        for _ in 0..20 {
+            if g.cities[&capital].owner != free_cities {
+                break;
+            }
+            g.process_loyalty(free_cities);
+        }
+        assert_eq!(g.cities[&capital].owner, 1);
+        assert_eq!(g.cities[&capital].loyalty, 100.0);
+        assert!(g.cities[&capital].free_city_pressure.is_empty());
+        assert!(!g.players[free_cities].alive);
+    }
+
+    #[test]
+    fn free_cities_join_the_civilization_with_most_accumulated_pressure() {
+        let mut g = game_with_capitals(3, 4_244, 300);
+        let target = g.player_city_ids(0)[0];
+        let first_rival = g.player_city_ids(1)[0];
+        let second_rival = g.player_city_ids(2)[0];
+        let target_position = g.cities[&target].pos;
+        let nearby = g.nbrs(target_position)[0];
+        let distant = g
+            .map
+            .tiles
+            .keys()
+            .copied()
+            .find(|position| g.wdist(target_position, *position) > 9)
+            .unwrap();
+
+        // The first rival triggers the initial revolt. Pressure is only
+        // accumulated while the city is independent, so this does not give
+        // that rival a head start in the Free City ledger.
+        g.cities.get_mut(&first_rival).unwrap().pos = nearby;
+        g.cities.get_mut(&first_rival).unwrap().pop = 20;
+        g.cities.get_mut(&second_rival).unwrap().pos = distant;
+        g.cities.get_mut(&target).unwrap().loyalty = 1.0;
+        g.process_loyalty(0);
+        let free_cities = g
+            .players
+            .iter()
+            .find(|player| player.is_free_city)
+            .unwrap()
+            .id;
+        assert_eq!(g.cities[&target].owner, free_cities);
+
+        // Civilization 2 dominates for two turns, then civilization 1 is the
+        // only current pressure source on the turn Loyalty reaches zero.
+        // The prior accumulated pressure must still decide the destination.
+        g.cities.get_mut(&first_rival).unwrap().pos = distant;
+        g.cities.get_mut(&second_rival).unwrap().pos = nearby;
+        g.cities.get_mut(&second_rival).unwrap().pop = 20;
+        g.process_loyalty(free_cities);
+        g.process_loyalty(free_cities);
+        assert!(g.cities[&target].free_city_pressure[&2]
+            > g.cities[&target]
+                .free_city_pressure
+                .get(&1)
+                .copied()
+                .unwrap_or(0.0));
+
+        g.cities.get_mut(&second_rival).unwrap().pos = distant;
+        g.cities.get_mut(&first_rival).unwrap().pos = nearby;
+        g.cities.get_mut(&target).unwrap().loyalty = 1.0;
+        g.process_loyalty(free_cities);
+
+        assert_eq!(g.cities[&target].owner, 2);
+        assert_eq!(g.cities[&target].loyalty, 100.0);
+        assert!(g.cities[&target].free_city_pressure.is_empty());
     }
 
     #[test]
@@ -44768,20 +45097,68 @@ mod victory_conditions {
     #[test]
     fn gathering_storm_happiness_bands_apply_exact_growth_and_yield_modifiers() {
         let cases = [
+            (7, 1.20, 1.20),
             (5, 1.20, 1.20),
-            (3, 1.20, 1.20),
-            (1, 1.10, 1.10),
+            (4, 1.10, 1.10),
+            (3, 1.10, 1.10),
+            (2, 1.00, 1.00),
             (0, 1.00, 1.00),
             (-2, 0.90, 0.85),
             (-4, 0.80, 0.70),
             (-6, 0.70, 0.00),
-            (-7, 0.60, 0.00),
             (-7, 0.60, 0.00),
         ];
         for (surplus, yields, growth) in cases {
             assert_eq!(Game::amenity_yield_mult_for(surplus), yields);
             assert_eq!(Game::amenity_growth_mult(surplus), growth);
         }
+    }
+
+    #[test]
+    fn gathering_storm_happiness_bands_apply_loyalty_at_exact_boundaries() {
+        for (surplus, loyalty) in [
+            (5, 6.0),
+            (4, 3.0),
+            (3, 3.0),
+            (2, 0.0),
+            (0, 0.0),
+            (-1, -3.0),
+            (-2, -3.0),
+            (-3, -6.0),
+            (-7, -6.0),
+        ] {
+            assert_eq!(Game::happiness_loyalty_delta(surplus), loyalty);
+        }
+    }
+
+    #[test]
+    fn starvation_subtracts_exactly_four_loyalty_per_turn() {
+        let mut starved = game_with_capitals(1, 4_245, 300);
+        let city = starved.player_city_ids(0)[0];
+        starved.cities.get_mut(&city).unwrap().pop = 10;
+        for position in starved.cities[&city].owned_tiles.clone() {
+            let tile = starved.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "snow".to_string();
+            tile.feature = None;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.hills = false;
+        }
+        let mut fed = starved.clone();
+        for position in fed.cities[&city].owned_tiles.clone() {
+            let tile = fed.map.tiles.get_mut(&position).unwrap();
+            tile.terrain = "grassland".to_string();
+            tile.improvement = Some("farm".to_string());
+        }
+
+        let consumption = 2.0 * starved.cities[&city].pop as f64;
+        assert!(starved.city_yields(city).food < consumption);
+        assert!(fed.city_yields(city).food >= consumption);
+        assert_eq!(
+            fed.city_loyalty_per_turn(&fed.cities[&city])
+                - starved.city_loyalty_per_turn(&starved.cities[&city]),
+            4.0
+        );
     }
 
     #[test]
@@ -45182,7 +45559,7 @@ mod great_work_tests {
             0.0
         };
         assert!(
-            (culture_with_artifacts - culture_without_artifacts - (9.0 + theming) * 1.1).abs()
+            (culture_with_artifacts - culture_without_artifacts - (9.0 + theming)).abs()
                 < 1e-9
         );
         game.players[0]
@@ -46643,12 +47020,12 @@ mod district_mechanics {
         });
         let base_origin = routed.city_yields(first);
         let base_destination = routed.city_yields(second);
-        // The Happy amenity band scales these non-food route yields by 10%.
+        // The capitals are Content, so the alliance route yields are unscaled.
         for (kind, outbound, inbound) in [
-            ("research", 2.2, 1.1),
-            ("cultural", 2.2, 1.1),
-            ("economic", 4.4, 2.2),
-            ("religious", 2.2, 1.1),
+            ("research", 2.0, 1.0),
+            ("cultural", 2.0, 1.0),
+            ("economic", 4.0, 2.0),
+            ("religious", 2.0, 1.0),
         ] {
             let mut allied = routed.clone();
             install_alliance(&mut allied, 0, 1, kind, 1, 0.0);
@@ -47171,7 +47548,7 @@ mod district_mechanics {
         assert!(
             (game.city_yields(member_capital).gold
                 - without_reward.city_yields(member_capital).gold
-                - 3.0 * 1.1)
+                - 3.0)
                 .abs()
                 < 1e-9
         );
@@ -47653,22 +48030,26 @@ mod district_mechanics {
     #[test]
     fn a_city_state_dragged_in_by_its_suzerain_fights_its_suzerains_war() {
         let mut game = emergency_game_with_capitals(2, 5_506, 300);
-        game.players.push(Player::new(2, "Valletta", true));
-        game.players[2].is_minor = true;
+        let city_state = game.players.len();
+        game.players
+            .push(Player::new(city_state, "Valletta", true));
         game.turn = 15;
         for _ in 0..3 {
-            game.players[1].envoys.push((2, 999));
+            game.players[1].envoys.push((city_state, 999));
         }
-        assert_eq!(game.suzerain_of(2), Some(1));
+        assert_eq!(game.suzerain_of(city_state), Some(1));
 
         game.do_declare_war(0, 1).unwrap();
-        assert!(game.is_at_war(0, 2), "a Suzerain brings its city-state");
+        assert!(
+            game.is_at_war(0, city_state),
+            "a Suzerain brings its city-state"
+        );
         assert_eq!(
             game.wars.len(),
             1,
             "one declaration is one war, however many city-states it drags in"
         );
-        assert!(!game.wars.contains_key(&pair(0, 2)));
+        assert!(!game.wars.contains_key(&pair(0, city_state)));
 
         // The city-state cannot repeatedly sign a no-op bilateral peace. Its
         // war is derived from its Suzerain, and will end with that principal
@@ -47676,25 +48057,29 @@ mod district_mechanics {
         // while leaving the city-state at war.
         game.turn = 25;
         let notes_before = game.events.len();
-        assert!(game.do_make_peace(2, 0).is_err());
-        assert!(game.is_at_war(2, 0));
+        assert!(game.do_make_peace(city_state, 0).is_err());
+        assert!(game.is_at_war(city_state, 0));
         assert_eq!(game.events.len(), notes_before);
 
         // What the city-state loses is a cost of the war its patron declared,
         // and it is scored against the patron's side of that ledger.
         let position = game.cities[&game.player_city_ids(0)[0]].pos;
-        let levy = game.spawn_unit("warrior", 2, position);
+        let levy = game.spawn_unit("warrior", city_state, position);
         let levy_unit = game.units[&levy].clone();
         game.record_kill(0, Some("warrior"), &levy_unit);
         let war = &game.wars[&pair(0, 1)];
         assert_eq!(war.losses_for(1).units, 1);
-        assert_eq!(war.losses_for(2).units, 0, "the city-state is not a side");
+        assert_eq!(
+            war.losses_for(city_state).units,
+            0,
+            "the city-state is not a side"
+        );
 
         // Losing suzerainty takes the city-state back out of the war without
         // touching the war itself.
         game.players[1].envoys.clear();
         game.sync_war_log();
-        assert!(!game.is_at_war(0, 2));
+        assert!(!game.is_at_war(0, city_state));
         assert_eq!(game.wars.len(), 1);
         assert!(game.concluded_wars.is_empty());
     }
