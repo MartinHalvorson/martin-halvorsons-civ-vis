@@ -21,6 +21,28 @@ from sharing uncommitted state. Unique branches prevent computers from pushing
 over each other. Draft PRs reveal likely file overlap. Required CI and a single
 trunk serialize integration.
 
+## Bootstrap every clone
+
+Immediately after cloning CIVVIS on any current or future computer, install the
+repository-managed pre-push guard:
+
+```bash
+python3 tools/civvis_collab.py install-hooks
+```
+
+It is installed in Git's common hooks directory, so it covers every linked
+worktree in that clone. The task launcher refreshes it automatically before its
+first push, and `audit` reports a missing or stale copy as an error. Never use
+`git push --no-verify`.
+
+The guard rejects all pushes or deletions of `main`, new development branches
+that do not use the fleet naming convention, and non-fast-forward updates to a
+task branch. It permits tags and non-`main` branch deletion so completed and
+legacy branches can be cleaned up. This is a local safety boundary, not a
+replacement for GitHub branch protection: a user can bypass a hook, and a new
+clone has no hook until it is installed. The repository-owner ruleset remains
+the authoritative enforcement boundary.
+
 ## Identities and names
 
 Give each computer a stable, short machine ID such as `martin-mbp` or

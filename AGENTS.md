@@ -3,6 +3,14 @@
 These rules apply to every human and automated coding agent in this repository.
 Read [docs/VERSION_CONTROL.md](docs/VERSION_CONTROL.md) before changing files.
 
+After cloning on every computer, install the repository guard once:
+
+```bash
+python3 tools/civvis_collab.py install-hooks
+```
+
+The launcher refreshes it on every task. Never bypass it with `--no-verify`.
+
 Start every task with the repository launcher; it creates the isolated
 worktree, globally unique branch, checkpoint, and draft ownership PR:
 
