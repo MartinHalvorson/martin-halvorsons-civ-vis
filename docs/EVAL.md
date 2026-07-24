@@ -534,3 +534,34 @@ claim that the current learned evaluator is stronger: the gameplay evidence
 plainly says it is not ready. The next learned-value experiment needs labels
 from the actual counterfactual rollout endpoints (or an off-policy correction),
 not merely more snapshots from on-policy trajectories.
+
+## 2026-07-24 — direct Strategic evaluator A/B control
+
+`ai_eval` now accepts the evaluator-only `strategic_score` control. It uses the
+same evolved strategy weights, 40-round horizon, lane policies, map, and seat
+schedule as `strategic`, but forcibly disables `evolved/valuenet.json`. The
+control is deliberately absent from persistent tournament choices: those
+ratings are keyed by civilization and dominant plan, so treatment and control
+would otherwise collapse into the same row. Direct paired evaluation can now
+isolate terminal-value changes without comparing two separate binaries or
+routing both variants through an Advanced opponent.
+
+The evaluator also reports a bounded terminal-score diagnostic. Within each
+game it computes the challenger's share of Civilization score across all
+evaluated seats, then averages the two seat-swapped games into one independent
+map observation. It reports map direction, an exact sign test, and the same
+anytime-valid betting evidence used for bounded win scores. This is explicitly
+not a promotion input: terminal score supplies earlier development signal, but
+only wins can promote a controller.
+
+The no-model invariant (`strategic strategic_score --pairs 4 --players 4
+--seed 37000`) produced four neutral maps, 4/8 wins each, and digit-for-digit
+identical economy, military, victory, and plan diagnostics. With the rejected
+Advanced-trained model supplied at the regularized 25% weight (seed 38000),
+wins still split 4/8 each and all four win maps were neutral, while paired
+terminal-score share moved to 50.3% across two model-favored and two neutral
+maps (exact sign p=0.5). Aggregate model-seat score was 100.9 versus 92.5 and
+the model seats also led in population, tech, culture, military, routes, and
+religious units. That is useful sensitivity validation, not evidence to revive
+the rejected model: four maps are far below the 20-map monitoring floor and
+neither win nor score evidence crossed.

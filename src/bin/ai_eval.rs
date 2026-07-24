@@ -1,6 +1,6 @@
 //! Paired, seat-balanced head-to-head evaluator for built-in AIs.
 use civvis::ai::Ai;
-use civvis::elo::{builtin_ai, BUILTIN_AIS};
+use civvis::elo::{builtin_ai, BUILTIN_AIS, EVAL_ONLY_AIS};
 use civvis::game::{default_difficulty, Action, Game, GameOptions};
 use civvis::rules::Rules;
 use std::collections::{BTreeMap, BTreeSet};
@@ -70,6 +70,26 @@ fn game_score(winner: Option<usize>, seats: &[&str], challenger: &str) -> f64 {
     winner
         .and_then(|pid| seats.get(pid))
         .map_or(0.5, |name| if *name == challenger { 1.0 } else { 0.0 })
+}
+
+/// Challenger share of terminal Civilization score across the evaluated
+/// seats. This is a bounded secondary development diagnostic, not a win and
+/// never an input to the promotion verdict.
+fn terminal_score_share(g: &Game, seats: &[&str], challenger: &str) -> f64 {
+    let mut challenger_score = 0_i64;
+    let mut total_score = 0_i64;
+    for (pid, name) in seats.iter().enumerate() {
+        let score = g.score(pid).max(0);
+        total_score += score;
+        if *name == challenger {
+            challenger_score += score;
+        }
+    }
+    if total_score > 0 {
+        challenger_score as f64 / total_score as f64
+    } else {
+        0.5
+    }
 }
 
 fn log_mean_exp(values: &[f64]) -> f64 {
@@ -493,8 +513,8 @@ fn main() {
     assert_ne!(a, b, "choose two different AIs");
     for name in [a, b] {
         assert!(
-            BUILTIN_AIS.contains(&name),
-            "unknown AI {name:?}: {BUILTIN_AIS:?}"
+            BUILTIN_AIS.contains(&name) || EVAL_ONLY_AIS.contains(&name),
+            "unknown AI {name:?}: builtins {BUILTIN_AIS:?}; evaluator-only {EVAL_ONLY_AIS:?}"
         );
     }
     let pairs = number(&args, "--pairs", 50).max(1) as usize;
@@ -520,10 +540,12 @@ fn main() {
         .collect();
     let mut total_turns = 0_u64;
     let mut pair_scores = Vec::with_capacity(pairs);
+    let mut pair_terminal_scores = Vec::with_capacity(pairs);
 
     for pair in 0..pairs {
         let game_seed = seed + pair as u64;
         let mut pair_score = 0.0;
+        let mut pair_terminal_score = 0.0;
         for swap in 0..2 {
             let seats: Vec<&str> = (0..players)
                 .map(|pid| if (pid + swap) % 2 == 0 { a } else { b })
@@ -550,6 +572,7 @@ fn main() {
             let traces = run_traced_game(&mut g, &mut ais, players);
             total_turns += g.turn as u64;
             pair_score += game_score(g.winner, &seats, a);
+            pair_terminal_score += terminal_score_share(&g, &seats, a);
             // Legacy per-seat win metrics count a game nobody won as zero
             // wins. The paired promotion score above records it as a draw.
             for (pid, name) in seats.iter().enumerate() {
@@ -564,6 +587,7 @@ fn main() {
             }
         }
         pair_scores.push(pair_score / 2.0);
+        pair_terminal_scores.push(pair_terminal_score / 2.0);
     }
 
     println!(
@@ -647,6 +671,30 @@ fn main() {
             inference.maps,
         ),
     }
+    let terminal_mean = pair_terminal_scores.iter().sum::<f64>() / pairs as f64;
+    let terminal_directions = directional_outcomes(&pair_terminal_scores);
+    let terminal_sign_p = exact_sign_p(
+        terminal_directions.challenger_favored,
+        terminal_directions.incumbent_favored,
+    );
+    let terminal_anytime = anytime_evidence(&pair_terminal_scores);
+    println!(
+        "paired terminal-score diagnostic for {a}: {:.1}% (not a promotion input)",
+        100.0 * terminal_mean
+    );
+    println!(
+        "terminal-score direction: {a}-favored {}, neutral {}, {b}-favored {}; exact two-sided sign p={terminal_sign_p:.4}",
+        terminal_directions.challenger_favored,
+        terminal_directions.neutral,
+        terminal_directions.incumbent_favored,
+    );
+    println!(
+        "terminal-score anytime evidence (2.5% per direction after {PROMOTION_MIN_MAPS} maps): {a} peak e={:.3e}, p<={:.4}; {b} peak e={:.3e}, p<={:.4}",
+        terminal_anytime.challenger_peak_e,
+        terminal_anytime.challenger_p,
+        terminal_anytime.incumbent_peak_e,
+        terminal_anytime.incumbent_p,
+    );
     println!("AI          seat-win% score cities pop tech civic dist build military gold");
     for name in [a, b] {
         let m = &totals[name];
@@ -860,6 +908,21 @@ mod tests {
         assert_eq!(game_score(Some(1), &seats, "challenger"), 0.0);
         assert_eq!(game_score(None, &seats, "challenger"), 0.5);
         assert_eq!(game_score(Some(2), &seats, "challenger"), 0.5);
+    }
+
+    #[test]
+    fn terminal_score_share_is_bounded_symmetric_and_independent_of_winner() {
+        let mut game = Game::new(2, 20, 14, 71, 40, 0);
+        let seats = ["challenger", "incumbent"];
+        let baseline = terminal_score_share(&game, &seats, "challenger");
+        assert!((baseline - 0.5).abs() < 1e-12);
+
+        game.players[0].techs.insert("writing".to_string());
+        game.winner = Some(1);
+        let challenger = terminal_score_share(&game, &seats, "challenger");
+        let incumbent = terminal_score_share(&game, &seats, "incumbent");
+        assert!(challenger > baseline);
+        assert!((challenger + incumbent - 1.0).abs() < 1e-12);
     }
 
     #[test]

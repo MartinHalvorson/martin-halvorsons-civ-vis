@@ -31,6 +31,12 @@ pub const BUILTIN_AIS: [&str; 9] = [
     "policy",
 ];
 
+/// Controls intended for paired evaluator experiments, not persistent
+/// tournament ratings. Keeping them out of `BUILTIN_AIS` prevents a control
+/// factory from being pooled into the same civilization/plan rating key as
+/// its treatment.
+pub const EVAL_ONLY_AIS: [&str; 1] = ["strategic_score"];
+
 /// On-disk schema for the shared civilization/strategy rating ledger.
 pub const ELO_SCHEMA_VERSION: u32 = 1;
 pub const DEFAULT_RATINGS_PATH: &str = "data/elo_ratings.json";
@@ -361,6 +367,9 @@ pub fn builtin_ai(name: &str, seed: u64) -> Box<dyn Ai> {
             crate::evolve::load_champion("evolved").unwrap_or_default(),
         )),
         "strategic" => Box::new(crate::strategic::StrategicAi::with_weights(
+            crate::evolve::load_champion("evolved").unwrap_or_default(),
+        )),
+        "strategic_score" => Box::new(crate::strategic::StrategicAi::score_only_with_weights(
             crate::evolve::load_champion("evolved").unwrap_or_default(),
         )),
         _ => Box::new(BasicAi::new()),
