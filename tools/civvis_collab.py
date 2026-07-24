@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -35,6 +36,7 @@ BRANCH_RE = re.compile(
 )
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 TASK_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
+PUSH_GUARD_MARKER = "CIVVIS managed pre-push guard v1"
 FIELD_LABELS = {
     "machine": "Machine ID",
     "agent": "Agent/session ID",
@@ -460,6 +462,81 @@ def fetch_main(repo: Path) -> None:
     raise last_error
 
 
+def common_git_dir(repo: Path) -> Path:
+    raw = Path(git(repo, "rev-parse", "--git-common-dir"))
+    return raw.resolve() if raw.is_absolute() else (repo / raw).resolve()
+
+
+def push_guard_paths(repo: Path) -> Tuple[Path, Path]:
+    source = repo / "tools" / "civvis_push_guard.py"
+    target = common_git_dir(repo) / "hooks" / "pre-push"
+    return source, target
+
+
+def install_push_guard(repo: Path) -> Path:
+    source, target = push_guard_paths(repo)
+    if not source.is_file():
+        raise CommandError(f"versioned push guard is missing: {source}")
+    source_bytes = source.read_bytes()
+    if target.is_symlink():
+        raise CommandError(f"refusing to replace symlinked pre-push hook: {target}")
+    if target.exists():
+        existing = target.read_bytes()
+        if existing != source_bytes and PUSH_GUARD_MARKER.encode() not in existing:
+            raise CommandError(
+                f"refusing to overwrite unmanaged pre-push hook: {target}; "
+                "preserve and resolve that hook explicitly before retrying"
+            )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(
+        f".{target.name}.civvis-{os.getpid()}-{secrets.token_hex(4)}"
+    )
+    try:
+        with temporary.open("xb") as handle:
+            handle.write(source_bytes)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if os.name != "nt":
+            temporary.chmod(
+                temporary.stat().st_mode
+                | stat.S_IXUSR
+                | stat.S_IXGRP
+                | stat.S_IXOTH
+            )
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return target
+
+
+def push_guard_error(repo: Path) -> Optional[str]:
+    source, target = push_guard_paths(repo)
+    if not source.is_file():
+        return f"versioned push guard is missing: {source}"
+    if target.is_symlink():
+        return f"local pre-push guard must not be a symlink: {target}"
+    if not target.is_file():
+        return (
+            "local pre-push guard is not installed; run "
+            "python3 tools/civvis_collab.py install-hooks"
+        )
+    if target.read_bytes() != source.read_bytes():
+        return (
+            "local pre-push guard is outdated or unmanaged; run "
+            "python3 tools/civvis_collab.py install-hooks"
+        )
+    if os.name != "nt" and not os.access(target, os.X_OK):
+        return f"local pre-push guard is not executable: {target}"
+    return None
+
+
+def install_hooks_command(args: argparse.Namespace) -> int:
+    del args
+    target = install_push_guard(repo_root())
+    print(f"installed CIVVIS pre-push guard: {target}")
+    return 0
+
+
 def start_task(args: argparse.Namespace) -> int:
     root = repo_root()
     if not shutil.which("gh"):
@@ -520,6 +597,8 @@ def start_task(args: argparse.Namespace) -> int:
         ("rerere.autoupdate", "false"),
     ):
         git(root, "config", key, value)
+
+    install_push_guard(root)
 
     fetch_main(root)
     git(root, "worktree", "add", "-b", branch, str(worktree), "origin/main")
@@ -786,6 +865,12 @@ def audit_repo(root: Path) -> Dict[str, List[str]]:
             warnings.append(f"legacy/nonconforming {label} worktree branch {branch}: {path}")
     ok.append(f"inspected {len(worktrees)} local worktree registration(s)")
 
+    hook_error = push_guard_error(root)
+    if hook_error:
+        errors.append(hook_error)
+    else:
+        ok.append("shared local pre-push guard is installed and current")
+
     if sys.platform == "darwin":
         agents = Path.home() / "Library" / "LaunchAgents"
         active = sorted(agents.glob("*civvis*autosync*.plist")) if agents.exists() else []
@@ -941,6 +1026,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     enforce = sub.add_parser("enforce-github", help="apply repository and main protection settings")
     enforce.set_defaults(func=enforce_github_command)
+
+    install_hooks = sub.add_parser(
+        "install-hooks", help="install the shared local pre-push guard for this clone"
+    )
+    install_hooks.set_defaults(func=install_hooks_command)
 
     monitor = sub.add_parser("monitor", help="run recurring fleet audits")
     monitor.add_argument("--duration-minutes", type=int, default=180)

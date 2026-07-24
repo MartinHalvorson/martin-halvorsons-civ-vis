@@ -1,10 +1,15 @@
 from pathlib import Path
+import concurrent.futures
+import os
+import subprocess
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import civvis_collab as collab
+import civvis_push_guard as push_guard
 
 
 def pr(branch, body, *, number=9, draft=True):
@@ -39,6 +44,9 @@ def body(
 
 
 class BranchTests(unittest.TestCase):
+    def test_launcher_and_push_guard_branch_formats_stay_in_sync(self):
+        self.assertEqual(collab.BRANCH_RE.pattern, push_guard.BRANCH_RE.pattern)
+
     def test_fleet_branch_is_accepted(self):
         value = "agent/render-win-02/codex-47/government-cleanup-20260723T210500Z-a31f"
         self.assertIsNotNone(collab.BRANCH_RE.fullmatch(value))
@@ -59,6 +67,56 @@ class BranchTests(unittest.TestCase):
                 "agent/render-win-02/codex-47/task-20260723T210500Z-a31f": "def456",
             },
         )
+
+    def test_shared_push_guard_installs_and_audits_current(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subprocess.run(("git", "init", str(root)), check=True, capture_output=True)
+            tools = root / "tools"
+            tools.mkdir()
+            source = tools / "civvis_push_guard.py"
+            source.write_text(
+                f"#!/usr/bin/env python3\n# {collab.PUSH_GUARD_MARKER}\n",
+                encoding="utf-8",
+            )
+            target = collab.install_push_guard(root)
+            self.assertEqual(target.read_bytes(), source.read_bytes())
+            self.assertIsNone(collab.push_guard_error(root))
+            if os.name != "nt":
+                self.assertTrue(os.access(target, os.X_OK))
+
+    def test_installer_preserves_an_unmanaged_hook(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subprocess.run(("git", "init", str(root)), check=True, capture_output=True)
+            tools = root / "tools"
+            tools.mkdir()
+            (tools / "civvis_push_guard.py").write_text(
+                f"# {collab.PUSH_GUARD_MARKER}\n", encoding="utf-8"
+            )
+            target = collab.common_git_dir(root) / "hooks" / "pre-push"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            with self.assertRaises(collab.CommandError):
+                collab.install_push_guard(root)
+            self.assertEqual(target.read_text(encoding="utf-8"), "#!/bin/sh\nexit 0\n")
+
+    def test_simultaneous_installers_leave_one_complete_guard(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subprocess.run(("git", "init", str(root)), check=True, capture_output=True)
+            tools = root / "tools"
+            tools.mkdir()
+            source = tools / "civvis_push_guard.py"
+            source.write_text(
+                f"#!/usr/bin/env python3\n# {collab.PUSH_GUARD_MARKER}\n",
+                encoding="utf-8",
+            )
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+                targets = list(pool.map(lambda _: collab.install_push_guard(root), range(24)))
+            self.assertEqual(len(set(targets)), 1)
+            self.assertEqual(targets[0].read_bytes(), source.read_bytes())
+            self.assertEqual(list(targets[0].parent.glob(".pre-push.civvis-*")), [])
 
 
 class ClaimTests(unittest.TestCase):
