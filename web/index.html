@@ -9972,11 +9972,17 @@ document.getElementById("zout").onclick = () => { takeCameraControl(true); zoomA
 // ---------------------------------------------------------------- input
 let dragState = null, dragMoved = false, rdrag = null, rdragTo = null;
 let altTap = false; // tapping Alt (no drag) resets the map's viewing angles
-cv.addEventListener("mousedown", ev => {
+cv.addEventListener("pointerdown", ev => {
+  // Touch has its own one/two-finger path below. Mouse and pen share this
+  // captured pointer path so a drag does not depend on compatibility mouse
+  // events and keeps moving when the pointer leaves the canvas.
+  if (ev.pointerType === "touch") return;
   const r = cv.getBoundingClientRect();
   if (ev.button === 0) {
+    ev.preventDefault();
     cameraFlight = null; cameraZoom = null; clearCameraInertia();
-    dragState = { x: ev.clientX, y: ev.clientY, cx: cam.x, cy: cam.y,
+    dragState = { pointerId:ev.pointerId, x: ev.clientX, y: ev.clientY,
+                  cx: cam.x, cy: cam.y,
                   rotate: ev.altKey, rot0: cam.rot, tilt0: cinematicYS,
                   lastX:cam.x, lastY:cam.y, lastRot:cam.rot, lastTilt:cinematicYS,
                   lastT:performance.now(), vx:0, vy:0, vrot:0, vtilt:0,
@@ -9992,9 +9998,13 @@ cv.addEventListener("mousedown", ev => {
     }
     if (sel) { rdrag = true; rdragTo = pos; draw(); }
   }
+  if (ev.button === 0 || ev.button === 2) {
+    try { cv.setPointerCapture?.(ev.pointerId); } catch (_) {}
+  }
 });
-window.addEventListener("mousemove", ev => {
-  if (dragState) {
+window.addEventListener("pointermove", ev => {
+  if (ev.pointerType === "touch") return;
+  if (dragState && ev.pointerId === dragState.pointerId) {
     const dx = ev.clientX - dragState.x, dy = ev.clientY - dragState.y;
     if (Math.abs(dx) + Math.abs(dy) > 5) dragMoved = true;
     if (dragMoved && !dragState.controlled) {
@@ -10031,8 +10041,10 @@ window.addEventListener("mousemove", ev => {
     if (pos && (!rdragTo || key(pos) !== key(rdragTo))) { rdragTo = pos; draw(); }
   }
 });
-window.addEventListener("mouseup", ev => {
+function endMapPointer(ev) {
+  if (ev.pointerType === "touch") return;
   if (ev.button === 0) {
+    if (dragState && ev.pointerId !== dragState.pointerId) return;
     const released = dragState;
     dragState = null;
     if (released && dragMoved && performance.now() - released.lastT < 90 &&
@@ -10057,6 +10069,13 @@ window.addEventListener("mouseup", ev => {
     send({type: "move_to", unit: sel.id, to: [pos[0], pos[1]]});
     return;
   }
+  draw();
+}
+window.addEventListener("pointerup", endMapPointer);
+window.addEventListener("pointercancel", ev => {
+  if (ev.pointerType === "touch") return;
+  if (dragState?.pointerId === ev.pointerId) dragState = null;
+  rdrag = null; rdragTo = null;
   draw();
 });
 
