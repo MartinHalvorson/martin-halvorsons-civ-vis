@@ -1099,13 +1099,12 @@
     body.cinema-mode #cinema-story { left: 18px; width: calc(100% - 36px); }
   }
 
-  /* The standings return to their original upper-right home, but a large
-     table uses two short columns instead of one tall stack. The requested
-     height is calculated from the player count in drawPlayerHud(); the
-     viewport cap guarantees that even a 10-player table stays below one
-     third of the map. */
+  /* The standings return to their original upper-right home. Every
+     civilization keeps one full-width row in the same ranked column; the
+     requested height is calculated from the player count in drawPlayerHud(),
+     then capped so a large table does not consume the map. */
   #playerhud {
-    top: 10px; right: 12px; left: auto; width: min(var(--player-hud-width, 570px), 56%);
+    top: 10px; right: 12px; left: auto; width: min(var(--player-hud-width, 330px), 56%);
     height: min(var(--player-hud-height, 200px), calc(33.333vh - 12px));
     display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 5px;
     overflow: visible; transform: none;
@@ -1125,13 +1124,13 @@
   }
   #playerhud .diplomacy-ribbon {
     flex: 1; min-width: 0; min-height: 0; display: grid;
-    grid-template-columns: repeat(var(--hud-columns, 2), minmax(0, 1fr));
-    grid-template-rows: repeat(var(--hud-rows, 5), minmax(0, 1fr));
-    grid-auto-flow: column; align-items: stretch; gap: 2px 3px; padding: 0;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(var(--hud-rows, 1), minmax(0, 1fr));
+    grid-auto-flow: row; align-items: stretch; gap: 2px; padding: 0;
   }
   #playerhud .diplomacy-card {
     width: auto; height: auto; min-height: 0; display: grid;
-    grid-template-columns: 25px minmax(58px, .72fr) minmax(108px, 1.28fr);
+    grid-template-columns: 25px minmax(58px, .45fr) minmax(180px, 1.55fr);
     align-items: center; gap: 4px; margin: 0; padding: 2px 4px 2px 3px;
     overflow: hidden; border-radius: 7px;
   }
@@ -1150,8 +1149,8 @@
   }
   #playerhud .diplomacy-elo { display: none; }
   #playerhud .diplomacy-stats {
-    align-self: stretch; display: grid; grid-template-columns: repeat(5, minmax(16px, 1fr));
-    grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 0;
+    align-self: stretch; display: grid; grid-template-columns: repeat(10, minmax(16px, 1fr));
+    grid-template-rows: minmax(0, 1fr); gap: 0;
   }
   #playerhud .ribbon-stat { min-height: 0; padding: 0; }
   #playerhud .ribbon-stat b { font-size: 7.5px; line-height: 1; }
@@ -1168,7 +1167,7 @@
      Its right edge reserves exactly the space occupied by the standings. */
   #victoryhud {
     position: absolute; z-index: 7; top: 10px; left: 12px;
-    right: min(calc(var(--player-hud-width, 570px) + 20px), calc(56% + 20px));
+    right: min(calc(var(--player-hud-width, 330px) + 20px), calc(56% + 20px));
     height: 112px; display: grid; grid-template-columns: 88px minmax(0, 1fr);
     align-items: stretch; gap: 5px; min-width: 0; max-width: 1000px; padding: 5px;
     overflow: hidden; border: 1px solid #526a618f; border-radius: 12px;
@@ -8150,18 +8149,17 @@ function drawPlayerHud() {
   const majors = state.players
     .filter(p => !p.is_minor && !p.is_barbarian)
     .sort((a, b) => b.score - a.score || a.id - b.id);
-  const columns = majors.length > 5 ? 2 : 1;
-  const rows = Math.max(1, Math.ceil(majors.length / columns));
+  const rows = Math.max(1, majors.length);
   const requestedHeight = 20 + rows * 36;
   const mapArea = document.getElementById("maparea");
-  mapArea.style.setProperty("--player-hud-width", columns === 1 ? "330px" : "570px");
+  mapArea.style.setProperty("--player-hud-width", "330px");
   mapArea.style.setProperty("--player-hud-height", `${requestedHeight}px`);
   const rankById = new Map(majors.map((p, index) => [p.id, index + 1]));
   const html =
     `<div class="ribbon-heading"><span id="world-leaders-title">World leaders</span>` +
     `<span>${majors.length} civilizations · score order</span></div>` +
     `<div class="diplomacy-ribbon" role="list" aria-labelledby="world-leaders-title" ` +
-    `style="--hud-columns:${columns};--hud-rows:${rows}">` + majors.map(p => {
+    `style="--hud-rows:${rows}">` + majors.map(p => {
       const y = p.yields || {};
       const color = pcol(p.id);
       const leader = p.leader || "Unknown leader";
