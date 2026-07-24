@@ -2299,6 +2299,8 @@ mod tests {
             "function cinematicWarFront(st, war)",
             "function drawCinematicDisasterField(sceneTime)",
             "function recentCombatActions(st)",
+            "const lethalBattle = MODE.fx && lethalTrace",
+            "const deathAt = lethalBattle?.impactAt || now",
             "function directorCue(prev, next)",
             "function cinematicShotGoal(goal, variation = 0)",
             "function directorSurveyGoal()",

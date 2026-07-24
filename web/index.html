@@ -2201,20 +2201,22 @@ function stageAttack(victimPos, dmg, next, prevU, now, isCity) {
   const kind = best.type === "city_battery" ? "shell" : SHOT_KIND[best.type];
   const staged = cinemaActive() && !REDUCED_MOTION_QUERY.matches;
   const battleStart = now + (staged ? 520 : 0);
-  const battleEnd = battleStart + (staged ? 2350 : 950);
-  anim.battles.push({attackerId:best.id, target:[...victimPos], t0:battleStart,
-                       impactAt:battleStart + (bestD <= 1 && !kind ? 430 : 700),
-                       endsAt:battleEnd});
-  combatFocusUntil = Math.max(combatFocusUntil, battleEnd);
+  const battle = {attackerId:best.id, target:[...victimPos], t0:battleStart,
+                  impactAt:battleStart + (bestD <= 1 && !kind ? 430 : 700),
+                  endsAt:battleStart + (staged ? 2350 : 950)};
+  anim.battles.push(battle);
   if (bestD <= 1 && !kind) {
     const dur = staged ? 760 : 300;
     anim.lunges.set(best.id, { sx:ax, sy:ay, tx:vx, ty:vy,
                                t0:battleStart, dur, melee:true });
     if (Math.abs(vx - ax) > 1) facing.set(best.id, vx > ax ? 1 : -1);
     const impactAt = battleStart + dur * .58;
+    battle.impactAt = impactAt;
+    battle.endsAt = Math.max(battle.endsAt, impactAt + (staged ? 1500 : 520));
+    combatFocusUntil = Math.max(combatFocusUntil, battle.endsAt);
     stageMelee(ax, ay, vx, vy, dmg, impactAt);
     anim.floats.push({ x:vx, y:vy - 16, txt:"-" + dmg, col:"#ff6252", t0:impactAt });
-    return;
+    return battle;
   }
   const st = SHOT_STYLE[kind || "bolt"];
   const dist = Math.hypot(vx - ax, vy - ay);
@@ -2238,6 +2240,11 @@ function stageAttack(victimPos, dmg, next, prevU, now, isCity) {
                 kick:i === volley - 1 },
     });
   }
+  const volleyDelay = (volley - 1) * (kind === "tracer" ? 55 : 90);
+  battle.impactAt = fireAt + volleyDelay + dur;
+  battle.endsAt = Math.max(battle.endsAt, battle.impactAt + (staged ? 1500 : 520));
+  combatFocusUntil = Math.max(combatFocusUntil, battle.endsAt);
+  return battle;
 }
 function animateDiff(prev, next) {
   if (!prev || !prev.units) return;
@@ -2306,13 +2313,23 @@ function animateDiff(prev, next) {
   }
   for (const pu of prev.units) {
     if (nextU.has(pu.id)) continue;
-    // sudden disappearance at low HP reads as a battlefield death
-    if (pu.hp <= 55) {
+    // A lethal state diff has no surviving victim in `next.units`, so the
+    // ordinary HP-drop loop above cannot stage its attack. Use the action trace
+    // to play the missing final blow, then make the casualty fall at that
+    // weapon's actual impact instead of half a second before it is fired.
+    const lethalTrace = combatActionAt(next, pu.pos) ||
+      recentCombatActions(next).find(record => record.action.unit === pu.id);
+    const lethalBattle = MODE.fx && lethalTrace
+      ? stageAttack(pu.pos, Math.max(1, pu.hp), next, prevU, now, null) : null;
+    // Low-HP disappearance remains the fog-safe fallback when no action trace
+    // was exposed. A verified combat trace can identify a kill from any HP.
+    if (pu.hp <= 55 || lethalBattle) {
       const [x, y] = worldXY(pu.pos);
+      const deathAt = lethalBattle?.impactAt || now;
       anim.deaths.push({ x, y, owner: pu.owner, type: pu.type,
-                         embarked: pu.embarked, t0: now,
+                         embarked: pu.embarked, t0: deathAt,
                          dur:cinemaActive() && !REDUCED_MOTION_QUERY.matches ? 900 : 320 });
-      anim.floats.push({ x, y: y - 16, txt: "☠", col: "#ffd0c0", t0: now });
+      anim.floats.push({ x, y: y - 16, txt: "☠", col: "#ffd0c0", t0: deathAt });
       // A unit dying was the most consequential thing on the board and it was
       // the quietest: the figure tipped over inside a quarter of a second and
       // the tile went back to looking untouched. It leaves something behind
@@ -2322,10 +2339,10 @@ function animateDiff(prev, next) {
           const a = hash2(i * 23 + pu.id, i * 7 + 3) * 6.28;
           const sp = 0.4 + hash2(i * 11, i * 19 + pu.id) * 1.1;
           anim.motes.push({ x, y, vx:Math.cos(a) * sp * 15, vy:-14 - sp * 20,
-                            t0:now, dur:700 + hash2(i, pu.id) * 500,
+                            t0:deathAt, dur:700 + hash2(i, pu.id) * 500,
                             r:1.4 + sp * 1.6, col:"#6d6459", grav:26, rise:true });
         }
-        anim.scars.push({ x, y, t0:now, dur:2600, col:pcol(pu.owner) });
+        anim.scars.push({ x, y, t0:deathAt, dur:2600, col:pcol(pu.owner) });
       }
     }
   }
@@ -7087,6 +7104,7 @@ function draw() {
   for (let i = anim.scars.length - 1; i >= 0; i--) {
     const sc = anim.scars[i];
     const e = (now0 - sc.t0) / sc.dur;
+    if (e < 0) continue;
     if (e >= 1) { anim.scars.splice(i, 1); continue; }
     cx.save();
     cx.globalAlpha = 0.34 * (1 - e) * (1 - e);
@@ -7408,7 +7426,7 @@ function draw() {
   // --- combat effects: hit sparks, casualties, damage numbers (fast)
   for (let i = anim.deaths.length - 1; i >= 0; i--) {
     const d = anim.deaths[i];
-    const e = (now - d.t0) / d.dur;
+    const e = Math.max(0, (now - d.t0) / d.dur);
     if (e >= 1) { anim.deaths.splice(i, 1); continue; }
     cx.globalAlpha = 1 - e;
     cx.save();
@@ -7443,6 +7461,7 @@ function draw() {
   for (let i = anim.floats.length - 1; i >= 0; i--) {
     const f = anim.floats[i];
     const e = (now - f.t0) / 700;
+    if (e < 0) continue;
     if (e >= 1) { anim.floats.splice(i, 1); continue; }
     cx.globalAlpha = e < 0.75 ? 1 : (1 - e) * 4;
     const fy = f.y - e * 16;
