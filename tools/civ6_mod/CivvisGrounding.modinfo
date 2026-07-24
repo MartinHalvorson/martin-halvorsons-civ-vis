@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The id must be a syntactically valid GUID: the modding framework parses it
+     before it logs anything about the mod, so a non-hex character here makes
+     the mod vanish from discovery with no error naming it. -->
+<Mod id="7b1c9d54-3f2a-4a61-9c8e-1d0c9f4b7a25" version="1">
+	<Properties>
+		<Name>CIVVIS Grounding</Name>
+		<Teaser>Runs unattended AI-only games and logs exact per-turn state.</Teaser>
+		<Description>Instrumentation for grounding the CIVVIS simulator against Civilization VI. Drives the autoplay manager so a game plays itself for a fixed number of turns, and writes a structured per-turn record of every major player to Lua.log. Changes no rules.</Description>
+		<Authors>CIVVIS</Authors>
+		<!-- Loaded from the install's DLC tree, which the macOS build scans; a
+		     user Mods directory is not scanned on this build. Enabled by default
+		     so an unattended run needs no menu interaction. -->
+		<EnabledByDefault>1</EnabledByDefault>
+		<CompatibleVersions>2.0</CompatibleVersions>
+	</Properties>
+	<InGameActions>
+		<AddUserInterfaces id="CivvisGroundingUI">
+			<Properties>
+				<Context>InGame</Context>
+			</Properties>
+			<File>CivvisGrounding.xml</File>
+		</AddUserInterfaces>
+	</InGameActions>
+	<Files>
+		<File>CivvisGrounding.xml</File>
+		<File>CivvisGrounding.lua</File>
+		<File>CivvisGroundingConfig.lua</File>
+	</Files>
+</Mod>
