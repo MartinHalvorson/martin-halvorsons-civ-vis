@@ -944,6 +944,11 @@ class RecoveryTests(unittest.TestCase):
             supervisor.progress_marker(first), supervisor.progress_marker(stepped)
         )
 
+    def test_full_state_read_allows_late_game_serialization(self):
+        with patch.object(supervisor, "read_json", return_value={}) as read:
+            self.assertEqual(supervisor.read_state(8766), {})
+        read.assert_called_once_with(8766, "/state", 5.0)
+
     def test_resume_detection_allows_progress_after_checkpoint_readiness(self):
         marker = (9, 22, 3, None)
         self.assertTrue(

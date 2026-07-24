@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-"""Train the position value net from evolve's self-play dataset.
+"""Train the scalar position-value net on game-grouped self-play.
 
-Reads ``evolved/dataset.csv`` (25 features + win label per row, appended by
-``civvis evolve`` during SPRT confirmation games) and writes:
+Input ``dataset.csv`` rows are 25 features, a win label, and a source-game
+index. Whole games are split into train, early-stopping validation, and final
+test sets; correlated snapshots from one game can never cross a split.
 
-- ``evolved/valuenet.json`` — weights in the exact schema ``valuenet.rs``
-  loads (sizes / weights[layer][in][out] / biases[layer][out]);
-- ``evolved/valuenet_fixture.json`` — one held-out row with this trainer's
-  output, activating the Rust/Python parity test.
+Writes ``valuenet.json``, ``valuenet_fixture.json``, and
+``valuenet_metrics.json`` in ``--dir`` only when the untouched test games beat
+the constant train-win-rate baseline on binary cross entropy. PyTorch is used
+when available; otherwise the deterministic NumPy Adam implementation is used.
 
-Uses PyTorch with CUDA when available (the intended path on the training
-rig); falls back to a pure-NumPy Adam loop so any machine can retrain.
-
-    python tools/train_valuenet.py [--dir evolved] [--epochs 200] [--seed 7]
+    civvis selfplay --games 300 --scalar-only --out /tmp/value-selfplay
+    python tools/train_valuenet.py --dir /tmp/value-selfplay --epochs 200
 """
 import argparse
 import csv
@@ -22,187 +21,431 @@ import os
 import random
 
 SIZES = [25, 64, 32, 1]
+EPSILON = 1e-7
 
 
 def load_rows(path):
-    """Rows of (features, label, game). `civvis selfplay` appends a game
-    index; `civvis evolve`'s older CSV has no game column, in which case
-    every row is its own 'game' and the split degrades to per-sample."""
+    """Return grouped ``(features, label, game)`` rows, failing closed on
+    legacy ungrouped data rather than leaking snapshots across splits."""
     rows = []
-    with open(path, newline="") as f:
-        for row in csv.reader(f):
-            if len(row) == SIZES[0] + 2:
-                game = int(float(row[-1]))
-                feats, label = row[:-2], row[-2]
-            elif len(row) == SIZES[0] + 1:
-                game, feats, label = len(rows), row[:-1], row[-1]
-            else:
+    ungrouped = 0
+    malformed = 0
+    with open(path, newline="") as source:
+        for raw in csv.reader(source):
+            if len(raw) == SIZES[0] + 1:
+                ungrouped += 1
                 continue
-            rows.append(([float(x) for x in feats], float(label), game))
+            if len(raw) != SIZES[0] + 2:
+                malformed += 1
+                continue
+            try:
+                features = [float(value) for value in raw[:-2]]
+                label = float(raw[-2])
+                game_value = float(raw[-1])
+            except ValueError:
+                malformed += 1
+                continue
+            if (
+                not all(math.isfinite(value) for value in features)
+                or label not in (0.0, 1.0)
+                or not math.isfinite(game_value)
+                or not game_value.is_integer()
+                or game_value < 0
+            ):
+                malformed += 1
+                continue
+            game = int(game_value)
+            rows.append((features, label, game))
+    if ungrouped:
+        raise SystemExit(
+            f"{path}: {ungrouped} rows have no source-game index; regenerate with "
+            "`civvis selfplay --scalar-only` so validation cannot leak"
+        )
+    if malformed:
+        raise SystemExit(f"{path}: {malformed} malformed rows")
     if len(rows) < 200:
-        raise SystemExit(f"{path}: only {len(rows)} usable rows; run evolve longer")
+        raise SystemExit(f"{path}: only {len(rows)} usable rows; run more self-play")
     return rows
 
 
-def train_torch(train, val, epochs, seed):
+def split_by_game(rows, seed):
+    games = sorted({game for _, _, game in rows})
+    if len(games) < 10:
+        raise SystemExit("need at least 10 distinct games for train/validation/test splits")
+    rng = random.Random(seed)
+    rng.shuffle(games)
+    test_count = max(1, len(games) // 5)
+    validation_count = max(1, len(games) // 5)
+    test_games = set(games[:test_count])
+    validation_games = set(games[test_count : test_count + validation_count])
+    train_games = set(games[test_count + validation_count :])
+    split = lambda selected: [
+        (features, label) for features, label, game in rows if game in selected
+    ]
+    train = split(train_games)
+    validation = split(validation_games)
+    test = split(test_games)
+    if not train or not validation or not test:
+        raise SystemExit("every game split must contain samples")
+    return train, validation, test, train_games, validation_games, test_games
+
+
+def train_torch(train, validation, epochs, seed):
     import torch
     from torch import nn
 
     torch.manual_seed(seed)
-    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    generator = torch.Generator(device=device)
+    generator.manual_seed(seed)
     net = nn.Sequential(
-        nn.Linear(SIZES[0], SIZES[1]), nn.ReLU(),
-        nn.Linear(SIZES[1], SIZES[2]), nn.ReLU(),
+        nn.Linear(SIZES[0], SIZES[1]),
+        nn.ReLU(),
+        nn.Linear(SIZES[1], SIZES[2]),
+        nn.ReLU(),
         nn.Linear(SIZES[2], SIZES[3]),
-    ).to(dev)
-    xt = torch.tensor([x for x, _ in train], device=dev)
-    yt = torch.tensor([[y] for _, y in train], device=dev)
-    xv = torch.tensor([x for x, _ in val], device=dev)
-    yv = torch.tensor([[y] for _, y in val], device=dev)
-    opt = torch.optim.Adam(net.parameters(), lr=1e-3)
+    ).to(device)
+    features = torch.tensor([x for x, _ in train], device=device)
+    labels = torch.tensor([[y] for _, y in train], device=device)
+    validation_features = torch.tensor([x for x, _ in validation], device=device)
+    validation_labels = torch.tensor([[y] for _, y in validation], device=device)
+    optimizer = torch.optim.Adam(net.parameters(), lr=1e-3)
     loss_fn = nn.BCEWithLogitsLoss()
-    best, best_state, patience = float("inf"), None, 0
+    best = float("inf")
+    best_state = None
+    best_epoch = 0
+    patience = 0
     for epoch in range(epochs):
         net.train()
-        for i in range(0, len(xt), 512):
-            opt.zero_grad()
-            loss = loss_fn(net(xt[i : i + 512]), yt[i : i + 512])
+        order = torch.randperm(len(features), generator=generator, device=device)
+        for start in range(0, len(order), 512):
+            indices = order[start : start + 512]
+            optimizer.zero_grad()
+            loss = loss_fn(net(features[indices]), labels[indices])
             loss.backward()
-            opt.step()
+            optimizer.step()
         net.eval()
         with torch.no_grad():
-            vloss = loss_fn(net(xv), yv).item()
-        if vloss < best - 1e-5:
-            best, patience = vloss, 0
-            best_state = [p.detach().cpu().clone() for p in net.parameters()]
+            validation_loss = loss_fn(net(validation_features), validation_labels).item()
+        if validation_loss < best - 1e-5:
+            best = validation_loss
+            best_epoch = epoch + 1
+            patience = 0
+            best_state = [parameter.detach().cpu().clone() for parameter in net.parameters()]
         else:
             patience += 1
             if patience >= 20:
                 break
-    params = [p.tolist() for p in best_state]
-    # torch Linear stores weight as [out][in]; the Rust net wants [in][out].
-    weights = [list(map(list, zip(*params[i]))) for i in range(0, 6, 2)]
-    biases = [params[i] for i in range(1, 6, 2)]
-    return weights, biases, best, f"torch/{dev}"
+    params = [parameter.tolist() for parameter in best_state]
+    # torch Linear stores [out][in]; Rust expects [in][out].
+    weights = [list(map(list, zip(*params[index]))) for index in range(0, 6, 2)]
+    biases = [params[index] for index in range(1, 6, 2)]
+    return weights, biases, best, best_epoch, f"torch/{device}"
 
 
-def train_numpy(train, val, epochs, seed):
+def train_numpy(train, validation, epochs, seed):
     import numpy as np
 
     rng = np.random.default_rng(seed)
-    ws = [rng.normal(0, math.sqrt(2 / SIZES[i]), (SIZES[i], SIZES[i + 1]))
-          for i in range(3)]
-    bs = [np.zeros(SIZES[i + 1]) for i in range(3)]
-    mw = [np.zeros_like(w) for w in ws]; vw = [np.zeros_like(w) for w in ws]
-    mb = [np.zeros_like(b) for b in bs]; vb = [np.zeros_like(b) for b in bs]
-    xt = np.array([x for x, _ in train]); yt = np.array([y for _, y in train])
-    xv = np.array([x for x, _ in val]); yv = np.array([y for _, y in val])
+    weights = [
+        rng.normal(0, math.sqrt(2 / SIZES[index]), (SIZES[index], SIZES[index + 1]))
+        for index in range(3)
+    ]
+    biases = [np.zeros(SIZES[index + 1]) for index in range(3)]
+    mean_weights = [np.zeros_like(weight) for weight in weights]
+    variance_weights = [np.zeros_like(weight) for weight in weights]
+    mean_biases = [np.zeros_like(bias) for bias in biases]
+    variance_biases = [np.zeros_like(bias) for bias in biases]
+    features = np.array([x for x, _ in train])
+    labels = np.array([y for _, y in train])
+    validation_features = np.array([x for x, _ in validation])
+    validation_labels = np.array([y for _, y in validation])
 
-    def forward(x):
-        a1 = np.maximum(x @ ws[0] + bs[0], 0)
-        a2 = np.maximum(a1 @ ws[1] + bs[1], 0)
-        z = (a2 @ ws[2] + bs[2]).ravel()
-        return a1, a2, z
+    def forward(batch):
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            hidden_one = np.maximum(batch @ weights[0] + biases[0], 0)
+            hidden_two = np.maximum(hidden_one @ weights[1] + biases[1], 0)
+            logits = (hidden_two @ weights[2] + biases[2]).ravel()
+        if not (
+            np.isfinite(hidden_one).all()
+            and np.isfinite(hidden_two).all()
+            and np.isfinite(logits).all()
+        ):
+            raise FloatingPointError("non-finite value-model activation")
+        return hidden_one, hidden_two, logits
 
-    def val_loss():
-        z = forward(xv)[2]
-        p = 1 / (1 + np.exp(-z))
-        eps = 1e-7
-        return float(-np.mean(yv * np.log(p + eps) + (1 - yv) * np.log(1 - p + eps)))
+    def validation_loss():
+        logits = forward(validation_features)[2]
+        probabilities = 1 / (1 + np.exp(-np.clip(logits, -60, 60)))
+        return float(
+            -np.mean(
+                validation_labels * np.log(probabilities + EPSILON)
+                + (1 - validation_labels) * np.log(1 - probabilities + EPSILON)
+            )
+        )
 
-    best, best_snap, patience, step = float("inf"), None, 0, 0
+    best = float("inf")
+    best_snapshot = None
+    best_epoch = 0
+    patience = 0
+    step = 0
     for epoch in range(epochs):
-        order = rng.permutation(len(xt))
-        for i in range(0, len(order), 512):
-            idx = order[i : i + 512]
-            x, y = xt[idx], yt[idx]
-            a1, a2, z = forward(x)
-            p = 1 / (1 + np.exp(-z))
-            dz = (p - y)[:, None] / len(idx)
-            grads_w = [None] * 3; grads_b = [None] * 3
-            grads_w[2] = a2.T @ dz; grads_b[2] = dz.sum(0)
-            da2 = dz @ ws[2].T; da2[a2 <= 0] = 0
-            grads_w[1] = a1.T @ da2; grads_b[1] = da2.sum(0)
-            da1 = da2 @ ws[1].T; da1[a1 <= 0] = 0
-            grads_w[0] = x.T @ da1; grads_b[0] = da1.sum(0)
+        order = rng.permutation(len(features))
+        for start in range(0, len(order), 512):
+            indices = order[start : start + 512]
+            batch = features[indices]
+            batch_labels = labels[indices]
+            hidden_one, hidden_two, logits = forward(batch)
+            probabilities = 1 / (1 + np.exp(-np.clip(logits, -60, 60)))
+            logits_gradient = (probabilities - batch_labels)[:, None] / len(indices)
+            gradients_weights = [None] * 3
+            gradients_biases = [None] * 3
+            with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+                gradients_weights[2] = hidden_two.T @ logits_gradient
+                gradients_biases[2] = logits_gradient.sum(0)
+                hidden_two_gradient = logits_gradient @ weights[2].T
+                hidden_two_gradient[hidden_two <= 0] = 0
+                gradients_weights[1] = hidden_one.T @ hidden_two_gradient
+                gradients_biases[1] = hidden_two_gradient.sum(0)
+                hidden_one_gradient = hidden_two_gradient @ weights[1].T
+                hidden_one_gradient[hidden_one <= 0] = 0
+                gradients_weights[0] = batch.T @ hidden_one_gradient
+                gradients_biases[0] = hidden_one_gradient.sum(0)
+            if not all(
+                np.isfinite(gradient).all()
+                for gradient in gradients_weights + gradients_biases
+            ):
+                raise FloatingPointError("non-finite value-model gradient")
+            for gradient in gradients_weights + gradients_biases:
+                np.clip(gradient, -5.0, 5.0, out=gradient)
             step += 1
-            for j in range(3):
-                for grad, param, m, v in ((grads_w[j], ws[j], mw[j], vw[j]),
-                                          (grads_b[j], bs[j], mb[j], vb[j])):
-                    m *= 0.9; m += 0.1 * grad
-                    v *= 0.999; v += 0.001 * grad * grad
-                    mh = m / (1 - 0.9 ** step)
-                    vh = v / (1 - 0.999 ** step)
-                    param -= 1e-3 * mh / (np.sqrt(vh) + 1e-8)
-        loss = val_loss()
+            for index in range(3):
+                updates = (
+                    (
+                        gradients_weights[index],
+                        weights[index],
+                        mean_weights[index],
+                        variance_weights[index],
+                    ),
+                    (
+                        gradients_biases[index],
+                        biases[index],
+                        mean_biases[index],
+                        variance_biases[index],
+                    ),
+                )
+                for gradient, parameter, mean, variance in updates:
+                    mean *= 0.9
+                    mean += 0.1 * gradient
+                    variance *= 0.999
+                    variance += 0.001 * gradient * gradient
+                    corrected_mean = mean / (1 - 0.9**step)
+                    corrected_variance = variance / (1 - 0.999**step)
+                    parameter -= 1e-3 * corrected_mean / (np.sqrt(corrected_variance) + 1e-8)
+        loss = validation_loss()
         if loss < best - 1e-5:
-            best, patience = loss, 0
-            best_snap = ([w.copy() for w in ws], [b.copy() for b in bs])
+            best = loss
+            best_epoch = epoch + 1
+            patience = 0
+            best_snapshot = (
+                [weight.copy() for weight in weights],
+                [bias.copy() for bias in biases],
+            )
         else:
             patience += 1
             if patience >= 20:
                 break
-    ws, bs = best_snap
-    return [w.tolist() for w in ws], [b.tolist() for b in bs], best, "numpy"
+    weights, biases = best_snapshot
+    return (
+        [weight.tolist() for weight in weights],
+        [bias.tolist() for bias in biases],
+        best,
+        best_epoch,
+        "numpy",
+    )
 
 
-def net_eval(weights, biases, x):
-    a = list(x)
-    for layer, (w, b) in enumerate(zip(weights, biases)):
-        nxt = list(b)
-        for i, ai in enumerate(a):
-            for j in range(len(nxt)):
-                nxt[j] += ai * w[i][j]
+def stable_sigmoid(value):
+    if value >= 0:
+        return 1 / (1 + math.exp(-value))
+    exponential = math.exp(value)
+    return exponential / (1 + exponential)
+
+
+def net_eval(weights, biases, features):
+    activation = list(features)
+    for layer, (weight, bias) in enumerate(zip(weights, biases)):
+        next_activation = list(bias)
+        for input_index, input_value in enumerate(activation):
+            for output_index in range(len(next_activation)):
+                next_activation[output_index] += input_value * weight[input_index][output_index]
         last = layer == len(weights) - 1
-        a = [1 / (1 + math.exp(-v)) if last else max(v, 0.0) for v in nxt]
-    return a[0]
+        activation = [
+            stable_sigmoid(value) if last else max(value, 0.0) for value in next_activation
+        ]
+    return activation[0]
+
+
+def predict_rows(weights, biases, rows):
+    try:
+        import numpy as np
+    except ImportError:
+        return [net_eval(weights, biases, features) for features, _ in rows]
+    activation = np.array([features for features, _ in rows])
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        for layer, (weight, bias) in enumerate(zip(weights, biases)):
+            activation = activation @ np.asarray(weight) + np.asarray(bias)
+            if not np.isfinite(activation).all():
+                raise FloatingPointError("non-finite exported value-model prediction")
+            if layer < len(weights) - 1:
+                activation = np.maximum(activation, 0)
+    return (1 / (1 + np.exp(-np.clip(activation.ravel(), -60, 60)))).tolist()
+
+
+def probability_metrics(probabilities, labels):
+    clipped = [
+        min(max(probability, EPSILON), 1 - EPSILON)
+        for probability in probabilities
+    ]
+    bce = -sum(
+        label * math.log(probability) + (1 - label) * math.log(1 - probability)
+        for probability, label in zip(clipped, labels)
+    ) / len(labels)
+    brier = sum(
+        (probability - label) ** 2 for probability, label in zip(probabilities, labels)
+    ) / len(labels)
+    accuracy = sum(
+        (probability >= 0.5) == bool(label)
+        for probability, label in zip(probabilities, labels)
+    ) / len(labels)
+    calibration_error = 0.0
+    for bin_index in range(10):
+        low = bin_index / 10
+        high = (bin_index + 1) / 10
+        members = [
+            index
+            for index, probability in enumerate(probabilities)
+            if low <= probability < high or (bin_index == 9 and probability == 1.0)
+        ]
+        if not members:
+            continue
+        confidence = sum(probabilities[index] for index in members) / len(members)
+        observed = sum(labels[index] for index in members) / len(members)
+        calibration_error += len(members) / len(labels) * abs(confidence - observed)
+    return {
+        "bce": bce,
+        "brier": brier,
+        "accuracy": accuracy,
+        "ece_10": calibration_error,
+    }
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--dir", default="evolved")
-    ap.add_argument("--epochs", type=int, default=200)
-    ap.add_argument("--seed", type=int, default=7)
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dir", default="evolved")
+    parser.add_argument("--epochs", type=int, default=200)
+    parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument(
+        "--allow-nonimproving",
+        action="store_true",
+        help="write artifacts even when final-test BCE does not beat the constant baseline",
+    )
+    args = parser.parse_args()
+    if args.epochs < 1:
+        parser.error("--epochs must be at least 1")
 
     rows = load_rows(os.path.join(args.dir, "dataset.csv"))
-    # Hold out whole GAMES. Snapshots from one game share its outcome label,
-    # so a per-sample split leaks the answer into validation.
-    games = sorted({game for _, _, game in rows})
-    rng = random.Random(args.seed)
-    rng.shuffle(games)
-    held = set(games[: max(1, len(games) // 5)])
-    val = [(f, y) for f, y, g in rows if g in held]
-    train = [(f, y) for f, y, g in rows if g not in held]
-    if not val or not train:
-        raise SystemExit("need at least two distinct games to hold one out")
-    print(f"{len(games)} games -> {len(held)} held out "
-          f"({len(train)} train / {len(val)} val rows)")
+    train, validation, test, train_games, validation_games, test_games = split_by_game(
+        rows, args.seed
+    )
+    print(
+        f"{len(train_games)}/{len(validation_games)}/{len(test_games)} "
+        f"train/validation/test games -> {len(train)}/{len(validation)}/{len(test)} rows"
+    )
     try:
-        weights, biases, loss, backend = train_torch(train, val, args.epochs, args.seed)
+        weights, biases, validation_bce, best_epoch, backend = train_torch(
+            train, validation, args.epochs, args.seed
+        )
     except ImportError:
-        weights, biases, loss, backend = train_numpy(train, val, args.epochs, args.seed)
+        weights, biases, validation_bce, best_epoch, backend = train_numpy(
+            train, validation, args.epochs, args.seed
+        )
 
-    with open(os.path.join(args.dir, "valuenet.json"), "w") as f:
-        json.dump({"sizes": SIZES, "weights": weights, "biases": biases}, f)
-    fixture_x = val[0][0]
-    with open(os.path.join(args.dir, "valuenet_fixture.json"), "w") as f:
-        json.dump({"input": fixture_x, "output": net_eval(weights, biases, fixture_x)}, f)
-    wins = sum(y for _, y, _ in rows)
-    # Majority-class baseline, always reported: a net that cannot beat a
-    # constant predictor has learned nothing and needs more games.
-    base_rate = sum(y for _, y in train) / max(1, len(train))
-    vy = [y for _, y in val]
-    baseline_acc = max(sum(vy) / len(vy), 1 - sum(vy) / len(vy))
-    p_hat = min(max(base_rate, 1e-7), 1 - 1e-7)
-    baseline_bce = -sum(
-        y * math.log(p_hat) + (1 - y) * math.log(1 - p_hat) for y in vy
-    ) / len(vy)
-    verdict = "BEATS" if loss < baseline_bce - 1e-4 else "DOES NOT BEAT"
-    print(f"trained on {len(train)} rows ({wins:.0f}/{len(rows)} wins) "
-          f"via {backend}; val BCE {loss:.4f}; wrote {args.dir}/valuenet.json")
-    print(f"baseline (constant p={base_rate:.3f}): BCE {baseline_bce:.4f} "
-          f"acc {baseline_acc:.3f}  ->  model {verdict} baseline")
+    test_labels = [label for _, label in test]
+    test_predictions = predict_rows(weights, biases, test)
+    model_metrics = probability_metrics(test_predictions, test_labels)
+    train_rate = sum(label for _, label in train) / len(train)
+    baseline_metrics = probability_metrics([train_rate] * len(test), test_labels)
+    improves = model_metrics["bce"] < baseline_metrics["bce"] - 1e-4
+    verdict = "BEATS" if improves else "DOES NOT BEAT"
+    print(
+        f"best epoch {best_epoch} via {backend}; validation BCE {validation_bce:.4f}; "
+        f"test BCE {model_metrics['bce']:.4f}, Brier {model_metrics['brier']:.4f}, "
+        f"ECE {model_metrics['ece_10']:.4f}"
+    )
+    print(
+        f"constant p={train_rate:.4f}: test BCE {baseline_metrics['bce']:.4f}, "
+        f"Brier {baseline_metrics['brier']:.4f} -> model {verdict} baseline"
+    )
+    test_by_turn = {}
+    for name, low, high in (
+        ("opening", 0.0, 0.25),
+        ("early_midgame", 0.25, 0.5),
+        ("late_midgame", 0.5, 0.75),
+        ("endgame", 0.75, 1.01),
+    ):
+        indices = [
+            index
+            for index, (features, _) in enumerate(test)
+            if low <= features[-1] < high
+        ]
+        if not indices:
+            continue
+        labels = [test_labels[index] for index in indices]
+        predictions = [test_predictions[index] for index in indices]
+        bucket_model = probability_metrics(predictions, labels)
+        bucket_baseline = probability_metrics([train_rate] * len(indices), labels)
+        test_by_turn[name] = {
+            "rows": len(indices),
+            "model": bucket_model,
+            "constant_baseline": bucket_baseline,
+        }
+        print(
+            f"  {name:<13} rows={len(indices):4} model BCE {bucket_model['bce']:.4f} "
+            f"vs constant {bucket_baseline['bce']:.4f}"
+        )
+    if not improves and not args.allow_nonimproving:
+        raise SystemExit("refusing to write a value model that fails unseen-game BCE")
+
+    model = {"sizes": SIZES, "weights": weights, "biases": biases}
+    fixture_features = test[0][0]
+    metrics = {
+        "seed": args.seed,
+        "backend": backend,
+        "best_epoch": best_epoch,
+        "games": {
+            "train": len(train_games),
+            "validation": len(validation_games),
+            "test": len(test_games),
+        },
+        "rows": {"train": len(train), "validation": len(validation), "test": len(test)},
+        "train_win_rate": train_rate,
+        "validation_bce": validation_bce,
+        "test_model": model_metrics,
+        "test_constant_baseline": baseline_metrics,
+        "test_by_turn": test_by_turn,
+        "beats_baseline": improves,
+    }
+    with open(os.path.join(args.dir, "valuenet.json"), "w") as output:
+        json.dump(model, output)
+    with open(os.path.join(args.dir, "valuenet_fixture.json"), "w") as output:
+        json.dump(
+            {"input": fixture_features, "output": net_eval(weights, biases, fixture_features)},
+            output,
+        )
+    with open(os.path.join(args.dir, "valuenet_metrics.json"), "w") as output:
+        json.dump(metrics, output, indent=2)
+    print(f"wrote grouped-test artifacts to {args.dir}")
 
 
 if __name__ == "__main__":

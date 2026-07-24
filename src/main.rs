@@ -613,6 +613,7 @@ fn main() {
         "selfplay" => {
             let players = arg(&args, "--players", 4).max(2);
             let options = game_options(&args, players, arg(&args, "--seed", 0) as u64);
+            let counterfactual = args.iter().any(|arg| arg == "--counterfactual");
             let cfg = civvis::selfplay::SelfPlayCfg {
                 games: arg(&args, "--games", 20) as usize,
                 players: players as usize,
@@ -621,9 +622,20 @@ fn main() {
                 city_states: options.city_states,
                 max_turns: options.max_turns,
                 seed: arg(&args, "--seed", 0) as u64,
-                every: arg(&args, "--every", 10).max(1) as u32,
-                ai: arg_text(&args, "--ai", "advanced"),
+                every: arg(&args, "--every", if counterfactual { 40 } else { 10 }).max(1) as u32,
+                ai: arg_text(
+                    &args,
+                    "--ai",
+                    if counterfactual {
+                        "strategic_score"
+                    } else {
+                        "advanced"
+                    },
+                ),
                 out: arg_text(&args, "--out", "selfplay"),
+                scalar_only: args.iter().any(|arg| arg == "--scalar-only"),
+                counterfactual,
+                counterfactual_roots: arg(&args, "--counterfactual-roots", 0).max(0) as usize,
                 jobs: jobs_arg(&args),
             };
             match civvis::selfplay::export(&cfg) {

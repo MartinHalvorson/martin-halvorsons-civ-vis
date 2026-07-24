@@ -285,3 +285,362 @@ which a learned component beats the scripted agent head-to-head, and it
 states the design rule plainly: give the net the decisions whose
 consequences it can actually observe, and let search or scripting own the
 ones it cannot.
+
+## 2026-07-24 — threat-aware macro routing
+
+`StrategicAi` had silently regressed behind its scripted parent. On 25 mirrored
+duel maps (`ai_eval strategic advanced --pairs 25 --seed 10000 --turns 180`),
+the original search layer won only **14/50 (28%)**. It still produced more
+Science and Production, but `advanced` won 32 religious games while the search
+agent finished 22 seats committed to Science. The cause was structural:
+30-turn rollouts modeled every rival as `BasicAi`, fallback evaluation used
+score share, and the next macro review could be 40 turns away from a sudden
+victory threat.
+
+The corrected router now:
+
+- rolls candidate lanes against `AdvancedAi`, so counterfactual opponents
+  exert the same victory pressure as the real benchmark;
+- interrupts periodic search on public 0–100 victory-race progress, with the
+  adaptive planner's 78% / 15-point margin and earlier whole-civilization
+  religious warning;
+- preserves invested Astrology/Holy Site/Prophet paths while a slot remains;
+- treats an enabled duel religious race as mandatory victory geometry: only
+  one foreign conversion is needed, so it commits while a Prophet is available
+  and stays committed after founding;
+- reports final explicit-target counts in `ai_eval`, making routing failures
+  visible beside wins and economic diagnostics.
+
+Same-seed result: **32/50 (64%)**, up 36 percentage points, with 30 religious
+wins. A disjoint 25-map holdout (`--seed 12000`) reproduced it at **31/50
+(62%)**. The duel prior is disabled in multiplayer: on 12 mirrored four-player
+maps (`--seed 11000`), the generalized changes raised game wins from **8/24
+(33.3%)** on unchanged mainline to **10/24 (41.7%)**, while StrategicAi kept
+its Production and Science advantages. These are promotion signals, not a
+claim of universal strength; the four-player sample should grow with the
+league archive.
+
+## 2026-07-24 — paired confidence and Elo-equivalent promotion gates
+
+Raw wins from the two seat-swapped games on one generated map are correlated:
+they share terrain, resources, civilizations, and much of the resulting game
+geometry. `ai_eval` therefore treats each mirrored map as one independent
+cluster. The challenger receives 1 for a sweep, 0.5 for a split, 0 for a
+reverse sweep, and half credit for an individual game that ends without a
+winner. It reports a conservative 95% Wilson interval using the number of maps,
+not the larger and misleading number of games.
+
+The same score and interval are transformed through the standard logistic Elo
+expectation curve, so every comparison now has an Elo-equivalent point estimate
+and confidence range. Promotion requires at least 20 independent maps and a 95%
+lower score bound above 50%; an upper bound below 50% retains the incumbent.
+Everything else is explicitly `INSUFFICIENT` or `INCONCLUSIVE` rather than being
+promoted from a noisy headline win rate.
+
+Re-evaluating the threat-aware Strategic benchmark illustrates the difference.
+Its **32/50 (64%)** result came from 8 Strategic sweeps, 16 split maps, and one
+Advanced sweep. The paired estimate is **64%, 95% CI 44.5–79.8%**, equivalent
+to **+100 Elo, CI -38 to +238**. That is strong directional evidence and a large
+point improvement over the old router, but it correctly remains
+`INCONCLUSIVE` at 25 maps because the confidence interval overlaps parity.
+
+## 2026-07-24 — adaptive control inside Strategic rollouts
+
+The multiplayer router compared six forced victory targets but omitted its own
+`AdvancedAi` parent as a candidate. It therefore had to commit at every review,
+even when all explicit lanes were worse than remaining adaptive. On 20 mirrored
+four-player maps (`--seed 13000`), the old router finished 35 of 80 seats on
+Domination but produced one domination win; it scored **18/40 (45%)** overall.
+
+`StrategicAi` now rolls out the adaptive parent beside every enabled explicit
+lane. A target must beat adaptive by more than one score-share point before it
+can take control, and a later review can return to adaptive without discarding
+campaign or unit-role memory. Prophet commitments, duel religious geometry, and
+urgent counter-routing still override the economic comparison.
+
+On the same 20 maps the new router scored **21/40 (52.5%)**, converting three of
+four Advanced sweeps into splits. On a disjoint holdout (`--seed 15000`) it
+scored **17/40 (42.5%)** versus the old router's **16/40 (40%)**. Combined, the
+change raises multiplayer results from **34/80 (42.5%, -53 Elo)** to **38/80
+(47.5%, -17 Elo; paired-map 95% CI 32.9–62.5%)** and reduces forced targets from
+75/80 final seats to 53/80. This is a replicated five-point improvement, not a
+promotion over Advanced: the combined interval still overlaps parity.
+
+The duel specialization is unchanged on its exact 25-map regression set:
+**32/50 (64%, +100 Elo)** with 30 religious wins. Two broader value-shaping
+experiments were rejected before this design: a victory-progress blend fell to
+11/40, and generic commitment hysteresis fell to 15/40 on the first seed block.
+
+## 2026-07-24 — full-game plan tracing
+
+`ai_eval` now observes the reported victory target after every major-player AI
+turn. It reports target exposure, switches per seat-game, the dominant target
+over the whole game (final target breaks ties), and seat outcomes conditioned
+on that dominant target. Bots without a `PlanReport` are explicitly
+`unreported`; an Advanced/Strategic agent with no explicit target is
+`adaptive`. This fixes a measurement problem in the earlier experiments: a
+final target says nothing about how most of the game was played.
+
+Fresh four-player holdout (`strategic advanced --pairs 20 --players 4
+--turns 180 --width 24 --height 16 --seed 17000`):
+
+| Result | Strategic | Advanced |
+|---|---:|---:|
+| Game wins | 19/40 (47.5%) | 21/40 (52.5%) |
+| Paired-map Elo | -17 (95% CI -165..+131) | reference |
+| Seat win rate | 23.8% | 26.2% |
+| Target switches / seat-game | 2.27 | 0.00 |
+| Adaptive exposure | 43.9% | 100.0% |
+
+Strategic's final labels counted 31 domination seats, but only 10 seats were
+domination-dominant over the full game. Those seats won 1/10; the 18
+religion-dominant seats won 9/18. This is diagnostic association, not a causal
+estimate—the router selects targets from the position, so hard positions can
+select a particular lane. It is nevertheless a concrete ablation lead: test a
+stricter proactive domination commitment while retaining urgent victory
+denial, then accept it only on paired holdout maps.
+
+## 2026-07-24 — deeper Strategic counterfactuals
+
+The plan trace made poor domination-conditioned outcomes visible, but paired
+ablation showed that the label was not the cause. On the first 10-map block
+(`--seed 17000`), raising only domination's commitment margin changed no
+outcomes (9/20 wins), and removing proactive multiplayer domination made the
+result worse (8/20). Filtering an unwinnable non-founder religious lane and a
+founded-religion near-tie prior were also outcome-neutral at 9/20. These
+variants were rejected rather than accumulated.
+
+The useful intervention was to give every counterfactual enough time to reveal
+more of its real consequences. The default rollout horizon was tested at 30,
+40, and 45 rounds on three disjoint 10-map blocks, always with the same maps
+across arms:
+
+| Seed block | 30 rounds | 40 rounds | 45 rounds |
+|---|---:|---:|---:|
+| 17000 | 9/20 | **11/20** | 10/20 |
+| 18000 | 8/20 | **9/20** | 12/20 |
+| 19000 | 7/20 | **11/20** | 10/20 |
+| Combined | 24/60 (40.0%) | **31/60 (51.7%)** | 32/60 (53.3%) |
+
+Forty rounds improves every independent block, moving the paired-map estimate
+from 40.0% (-70 Elo, 95% CI 24.6%..57.7%) to 51.7% (+12 Elo, 95% CI
+34.6%..68.3%). Forty-five rounds gains only one additional game across all 60
+while requiring more search and finishing later in the simultaneous third
+block, so 40 is the efficient frontier. This is a replicated strength gain,
+not promotion over Advanced: the 30-map confidence interval still overlaps
+parity. The exact 25-map duel regression remains **32/50 (64%, +100 Elo)**
+with 30 religious wins, as expected because its mandatory religious route
+bypasses the economic rollout horizon.
+
+## 2026-07-24 — exact paired-map direction test
+
+The Wilson interval answers the practical effect-size question conservatively,
+but it deliberately assumes maximum variance and therefore cannot use the fact
+that many mirrored maps split. `ai_eval` now also reports an exact two-sided
+sign test over independent map directions: challenger-favored, neutral, and
+incumbent-favored. Neutral maps remain in the paired score and Elo interval,
+but contribute no direction evidence. The binomial tail is evaluated in log
+space, so large evaluation runs remain numerically stable.
+
+The two statistics answer different questions and neither replaces the other.
+On the established 25-map duel set, Strategic has 8 favored maps, 16 neutral
+maps, and 1 Advanced-favored map: exact **p=0.0391**, a significant directional
+edge, while the 64% effect estimate still has a 44.5%..79.8% Wilson interval.
+Conversely, the selected 40-round multiplayer search aggregates to 4 favored,
+23 neutral, and 3 Advanced-favored maps across its three blocks; its direction
+test is correctly inconclusive even though its point estimate is 51.7%.
+
+Promotion policy is unchanged: it still requires the minimum map count and an
+effect-size lower bound above parity. The exact sign test is an orthogonal
+diagnostic for distinguishing a repeated paired direction from a noisy point
+estimate, not a license to promote on a small or practically tiny edge.
+
+## 2026-07-24 — anytime-valid promotion evidence
+
+The Wilson/Elo interval is a fixed-sample effect estimate. It remains useful,
+but repeatedly increasing `--pairs`, inspecting the result, and stopping on a
+favorable look invalidates a fixed-sample significance rule. That is exactly
+how AI development works: promising candidates receive more maps, weak ones
+stop early. The promotion gate now adds an anytime-valid betting e-process,
+following the bounded-mean confidence-sequence construction of
+[Waudby-Smith and Ramdas](https://arxiv.org/abs/2010.09686) and the
+time-uniform framework of
+[Howard et al.](https://arxiv.org/abs/1810.08240).
+
+Each mirrored map remains one bounded observation in `[0, 1]`, including
+quarter scores from win/draw combinations. A pre-declared finite mixture of
+positive bets tests a challenger edge; the symmetric negative bets test an
+incumbent edge. The evaluator reports peak e-values and Ville bounds
+`p <= 1 / peak_e`. Monitoring starts only at the existing 20-map floor, and a
+5% two-sided budget is split into 2.5% per direction. Promotion or retention
+now requires both:
+
+1. the current conservative Wilson effect interval clears 50%; and
+2. the corresponding anytime p-bound is at most 0.025.
+
+This protects arbitrary repeated looks at longer prefixes of the same seeded
+candidate run. It does not excuse testing many candidate implementations and
+publishing only the winner; candidate search still needs pre-declared
+development/holdout seeds. If both directional e-processes cross, the run is
+reported inconclusive because that pattern signals nonstationarity or a
+pathological map order. Neutral maps multiply wealth by one, so they neither
+manufacture nor erase directional evidence.
+
+End-to-end replay (`advanced basic --pairs 20 --turns 90 --seed 24000`) gave
+Advanced 25/40 game wins across 6 favored, 13 neutral, and 1 Basic-favored
+map. The fixed-sample outputs were 62.5% (Wilson 40.9%..80.0%, +89 Elo) and
+exact sign p=0.1250. The new process reported peak e=3.651, anytime p<=0.2739,
+no crossing, and `INCONCLUSIVE`—all three views correctly reject promotion
+from a suggestive but small 20-map result.
+
+## 2026-07-24 — grouped scalar value training and controller rejection
+
+The scalar value trainer now fails closed on the legacy 26-column dataset.
+Every accepted row must contain 25 features, its outcome, and a nonnegative
+integer source-game ID. Games—not correlated turn snapshots—are shuffled once
+into frozen 60/20/20 train, early-stopping validation, and final-test splits.
+The final split is evaluated only after selecting the epoch on validation.
+The trainer records BCE, Brier score, accuracy, ten-bin ECE, and BCE by turn
+quartile; it refuses to write a model unless final-test BCE beats a constant
+predictor fitted only on the training rows. `--scalar-only` makes the matching
+self-play export practical by omitting spatial tensors while retaining the
+grouped scalar CSV and three-column labels.
+
+Two real corpora passed that offline gate:
+
+| Training policy | Games / rows | Untouched games | Model BCE | Constant BCE | Model / constant Brier |
+|---|---:|---:|---:|---:|---:|
+| Advanced | 300 / 14,070 | 60 | **0.3165** | 0.5964 | **0.1018 / 0.2032** |
+| score-share Strategic | 120 / 5,535 | 24 | **0.3767** | 0.6097 | **0.1203 / 0.2094** |
+
+Both models beat the constant in every opening-to-endgame turn quartile. That
+is necessary predictive evidence, but it is not controller evidence. Model
+activation therefore used separately predeclared map blocks against the exact
+40-round score-share binary:
+
+| Candidate evaluator | Development | Holdout | Decision |
+|---|---:|---:|---|
+| pure Advanced-trained net | 9/20 vs 8/20 baseline (seed 25000) | **7/20 vs 12/20** (seed 26000) | reject |
+| 25% Advanced net + 75% score share | 10/20 vs 8/20 (seed 27000) | 10/20 vs 10/20 (seed 28000) | reject: no replication |
+| 25% Strategic net + 75% score share | **9/20 vs 10/20** (seed 32000) | not run | reject before holdout |
+
+No trained artifact is shipped or auto-loaded. Without an explicit
+`evolved/valuenet.json`, Strategic remains bit-for-bit on the proven score-share
+evaluator. When an experimenter supplies a structurally valid 25→64→32→1
+model, Strategic now limits it to 25% of the terminal estimate and falls back
+to score share for a non-finite prediction. Loading also rejects wrong tensor
+shapes and non-finite parameters. This is a distribution-shift guard, not a
+claim that the current learned evaluator is stronger: the gameplay evidence
+plainly says it is not ready. The next learned-value experiment needs labels
+from the actual counterfactual rollout endpoints (or an off-policy correction),
+not merely more snapshots from on-policy trajectories.
+
+## 2026-07-24 — direct Strategic evaluator A/B control
+
+`ai_eval` now accepts the evaluator-only `strategic_score` control. It uses the
+same evolved strategy weights, 40-round horizon, lane policies, map, and seat
+schedule as `strategic`, but forcibly disables `evolved/valuenet.json`. The
+control is deliberately absent from persistent tournament choices: those
+ratings are keyed by civilization and dominant plan, so treatment and control
+would otherwise collapse into the same row. Direct paired evaluation can now
+isolate terminal-value changes without comparing two separate binaries or
+routing both variants through an Advanced opponent.
+
+The evaluator also reports a bounded terminal-score diagnostic. Within each
+game it computes the challenger's share of Civilization score across all
+evaluated seats, then averages the two seat-swapped games into one independent
+map observation. It reports map direction, an exact sign test, and the same
+anytime-valid betting evidence used for bounded win scores. This is explicitly
+not a promotion input: terminal score supplies earlier development signal, but
+only wins can promote a controller.
+
+The no-model invariant (`strategic strategic_score --pairs 4 --players 4
+--seed 37000`) produced four neutral maps, 4/8 wins each, and digit-for-digit
+identical economy, military, victory, and plan diagnostics. With the rejected
+Advanced-trained model supplied at the regularized 25% weight (seed 38000),
+wins still split 4/8 each and all four win maps were neutral, while paired
+terminal-score share moved to 50.3% across two model-favored and two neutral
+maps (exact sign p=0.5). Aggregate model-seat score was 100.9 versus 92.5 and
+the model seats also led in population, tech, culture, military, routes, and
+religious units. That is useful sensitivity validation, not evidence to revive
+the rejected model: four maps are far below the 20-map monitoring floor and
+neither win nor score evidence crossed.
+
+## 2026-07-24 — counterfactual value-label export
+
+Ordinary self-play snapshots train a predictor for the states an agent visits,
+but Strategic ranks a different distribution: the state *after* projecting
+its adaptive parent and every enabled victory lane for 40 rounds. The offline
+exporter can now label that exact distribution:
+
+```bash
+civvis selfplay --counterfactual --scalar-only --ai strategic_score \
+  --counterfactual-roots 2 \
+  --games 100 --players 4 --turns 500 --every 40 --seed 40000 \
+  --out counterfactual-selfplay
+python tools/train_valuenet.py --dir counterfactual-selfplay
+```
+
+Counterfactual mode begins at Strategic's first review turn (30), then samples
+at the requested cadence. It selects one living major per checkpoint with a
+deterministic rotation to bound the multiplicative cost, and exports the
+adaptive plus each enabled lane endpoint. A branch that already has a winner,
+or whose candidate is dead, is omitted because `position_value` does not ask a
+net to evaluate it. Roots handled by the duel-religion, urgent-counter, or
+irreversible-religion priors are omitted for the same reason: `review` returns
+before running economic rollouts in those cases.
+
+Each retained endpoint is frozen as 25 scalar features, then continued to the
+winner with the *same stateful branch agents* that produced it. This prevents
+both terminal-feature leakage and policy resets at the labeling boundary.
+`meta.json` records root and per-lane counts. All sibling lanes keep the source
+self-play game's ID in `dataset.csv` and `labels.f32`; the grouped trainer must
+therefore place the entire source game—not individual branches—into exactly one
+of train, validation, or final test.
+
+The mode fails closed unless both `--scalar-only` and the explicit no-model
+`strategic_score` control are selected. A learned net can neither influence its
+own root trajectory nor its rollout labels. Passing the offline BCE/Brier/ECE
+gate remains only a prerequisite: a new artifact still stays out of production
+unless it also beats `strategic_score` on predeclared development and holdout
+maps in the direct paired evaluator.
+
+An operational two-game smoke (`--turns 90 --seed 39100`) scheduled four
+roots, retained the two whose reviews actually reached the value evaluator,
+and wrote 14 rows: two each for adaptive, Science, Culture, Religion,
+Diplomacy, Domination, and Score. Labels included both classes (5 wins, 9
+losses), every CSV row had the required 27 fields, and spatial payloads were
+empty. Repeating the same seeds with `--jobs 1` and `--jobs 2` produced
+byte-identical `dataset.csv`, `labels.f32`, and `meta.json`.
+
+Factoring the live rollout through the reusable endpoint runner did not change
+Strategic behavior. A fresh no-model invariant replay (`strategic
+strategic_score --pairs 2 --players 4 --turns 90 --seed 39200`) split every
+map, every win, and terminal score exactly 50/50. All aggregate economy,
+military, victory, plan-exposure, switch-count, and final-target diagnostics
+were digit-for-digit identical between treatment and control.
+
+### Bounded source trajectories
+
+A high-fidelity pilot exposed a second multiplicative cost: an unlimited
+full-500-turn source game continues paying every Strategic review even after
+enough endpoint branches have already been labeled. Twelve standard-map games
+at `--jobs 12` were still using roughly eight worker-equivalents after 30
+minutes and had not reached deterministic writeout, so that naive run was
+stopped rather than scaled.
+
+`--counterfactual-roots N` now stops each *source trajectory* immediately after
+its Nth scheduled root. It never truncates a retained branch: each endpoint is
+still continued independently to a real winner under the full turn limit. A
+value of zero preserves unlimited sampling. Two roots capture the evaluator
+states at approximately turns 70 and 110 while avoiding all later source-game
+reviews; this is the recommended first-pass corpus design for maximizing
+independent games per unit of compute. Later-state corpora should use a
+separately predeclared larger root budget and remain a distinct calibration
+stratum rather than silently changing the sampling distribution.
+
+The bounded operational smoke (`--counterfactual-roots 1 --turns 90 --seed
+39300`) stopped the source exactly at turn 30 with no source-game winner, while
+still writing seven terminally labeled rows—adaptive plus all six lanes—and
+advertising one root and a 7×3 label shape in metadata. This distinguishes the
+intended early source stop from incomplete branch labels.

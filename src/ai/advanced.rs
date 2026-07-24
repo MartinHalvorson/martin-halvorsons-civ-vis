@@ -331,6 +331,14 @@ impl AdvancedAi {
         self.plan = None;
     }
 
+    /// Return a previously targeted agent to its adaptive victory planner
+    /// without discarding campaign and unit-role memory. StrategicAi uses this
+    /// when an explicit lane no longer beats the parent policy in rollout.
+    pub fn adapt(&mut self) {
+        self.victory_target = None;
+        self.plan = None;
+    }
+
     pub fn fleet(g: &Game) -> Vec<AdvancedAi> {
         g.players.iter().map(|_| AdvancedAi::new()).collect()
     }
