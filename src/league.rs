@@ -410,6 +410,86 @@ fn target_of(kind: &StrategyKind) -> Option<String> {
     }
 }
 
+/// Quality-diversity niche for an evolvable strategy. The six explicit
+/// victory targets occupy 0..6 and untargeted AdvancedAi genomes occupy the
+/// final generalist niche. Built-ins are rating anchors/benchmarks, not
+/// members of the evolutionary archive.
+const GENERALIST_NICHE: usize = VictoryTarget::ALL.len();
+const EVOLUTION_NICHES: usize = GENERALIST_NICHE + 1;
+
+fn evolution_niche(kind: &StrategyKind) -> Option<usize> {
+    let StrategyKind::Advanced { target, .. } = kind else {
+        return None;
+    };
+    let parsed = target
+        .as_deref()
+        .and_then(|lane| lane.parse::<VictoryTarget>().ok());
+    Some(
+        VictoryTarget::ALL
+            .iter()
+            .position(|lane| Some(*lane) == parsed)
+            .unwrap_or(GENERALIST_NICHE),
+    )
+}
+
+fn target_for_niche(niche: usize) -> Option<String> {
+    VictoryTarget::ALL
+        .get(niche)
+        .map(|target| target.as_str().to_string())
+}
+
+fn conservative_order(league: &League, indices: &mut [usize]) {
+    indices.sort_by(|a, b| {
+        lower_confidence(&league.strategies[*b])
+            .total_cmp(&lower_confidence(&league.strategies[*a]))
+            .then_with(|| {
+                league.strategies[*b]
+                    .rating
+                    .total_cmp(&league.strategies[*a].rating)
+            })
+            .then_with(|| league.strategies[*a].name.cmp(&league.strategies[*b].name))
+    });
+}
+
+/// Pick the currently least-represented evolutionary niche. Ties rotate by
+/// selection generation, so missing lanes are restored deterministically and
+/// repeated selection does not always favour the enum's first lane.
+fn next_niche(league: &League, cfg: &LeagueCfg, birth: usize) -> usize {
+    let mut counts = [0usize; EVOLUTION_NICHES];
+    for i in league.active() {
+        if let Some(niche) = evolution_niche(&league.strategies[i].kind) {
+            counts[niche] += 1;
+        }
+    }
+    let least = *counts.iter().min().unwrap();
+    let generation = league.round / cfg.evolve_every.max(1);
+    let start = (generation as usize + birth) % EVOLUTION_NICHES;
+    (0..EVOLUTION_NICHES)
+        .map(|offset| (start + offset) % EVOLUTION_NICHES)
+        .find(|niche| counts[*niche] == least)
+        .unwrap()
+}
+
+/// Protect one conservatively best active genome in every represented niche.
+/// This is the live quality-diversity archive: duplicates can still be culled,
+/// but selection cannot silently erase an entire victory strategy again.
+fn niche_elites(league: &League) -> std::collections::BTreeSet<usize> {
+    let mut candidates: [Vec<usize>; EVOLUTION_NICHES] =
+        std::array::from_fn(|_| Vec::new());
+    for i in league.active() {
+        if let Some(niche) = evolution_niche(&league.strategies[i].kind) {
+            candidates[niche].push(i);
+        }
+    }
+    candidates
+        .iter_mut()
+        .filter_map(|niche| {
+            conservative_order(league, niche);
+            niche.first().copied()
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Player handles.
 
@@ -870,31 +950,42 @@ pub fn record_game(
     Some(league)
 }
 
-/// Selection: breed offspring from the top of the table, then retire the
-/// confidently weakest until the active roster fits `max_pop` again. Anchors
-/// and under-measured strategies are never retired.
-fn evolve_league(league: &mut League, cfg: &LeagueCfg, rng: &mut Rng) -> (Vec<String>, Vec<String>) {
+/// Quality-diversity selection: restore or refine the least-represented
+/// victory niche using its conservative historical archive plus a strong
+/// active parent, then retire the confidently weakest non-elite strategies.
+/// Anchors, niche elites, and under-measured strategies are never retired.
+fn evolve_league(
+    league: &mut League,
+    cfg: &LeagueCfg,
+    rng: &mut Rng,
+) -> (Vec<String>, Vec<String>) {
     let bounds = Weights::bounds();
     let mut parents: Vec<usize> = league
         .active()
         .into_iter()
         .filter(|i| genome_of(&league.strategies[*i].kind).is_some())
         .collect();
-    parents.sort_by(|a, b| {
-        lower_confidence(&league.strategies[*b])
-            .total_cmp(&lower_confidence(&league.strategies[*a]))
-            .then_with(|| {
-                league.strategies[*b]
-                    .rating
-                    .total_cmp(&league.strategies[*a].rating)
-            })
-    });
+    conservative_order(league, &mut parents);
     let pool = (parents.len() / 2).max(1).min(parents.len());
     let mut born = Vec::new();
     if !parents.is_empty() {
         let births = (cfg.max_pop / 4).max(1);
-        for _ in 0..births {
-            let pa = parents[rng.below(pool)];
+        for birth in 0..births {
+            let niche = next_niche(league, cfg, birth);
+            let mut archive: Vec<usize> = league
+                .strategies
+                .iter()
+                .enumerate()
+                .filter(|(_, strategy)| evolution_niche(&strategy.kind) == Some(niche))
+                .map(|(i, _)| i)
+                .collect();
+            conservative_order(league, &mut archive);
+            let archive_pool = (archive.len() / 2).max(1).min(archive.len());
+            let pa = if archive.is_empty() {
+                parents[rng.below(pool)]
+            } else {
+                archive[rng.below(archive_pool)]
+            };
             let pb = parents[rng.below(pool)];
             let wa = genome_of(&league.strategies[pa].kind).unwrap();
             let wb = genome_of(&league.strategies[pb].kind).unwrap();
@@ -903,21 +994,10 @@ fn evolve_league(league: &mut League, cfg: &LeagueCfg, rng: &mut Rng) -> (Vec<St
                 rng,
                 &bounds,
             );
-            // Lane inheritance: mostly keep a parent's victory lane so lane
-            // identity persists under refinement; sometimes explore.
-            let target = if rng.chance(0.6) {
-                target_of(&league.strategies[pa].kind)
-            } else if rng.chance(0.5) {
-                target_of(&league.strategies[pb].kind)
-            } else if rng.chance(0.5) {
-                Some(
-                    VictoryTarget::ALL[rng.below(VictoryTarget::ALL.len())]
-                        .as_str()
-                        .to_string(),
-                )
-            } else {
-                None
-            };
+            // The niche assignment is deliberate rather than inherited by
+            // chance: otherwise generalist parents make specialist lanes
+            // exponentially unlikely and eventually erase them.
+            let target = target_for_niche(niche);
             let name = format!("g{}-{}", league.round, league.strategies.len());
             let kind = StrategyKind::Advanced {
                 weights: child,
@@ -946,11 +1026,15 @@ fn evolve_league(league: &mut League, cfg: &LeagueCfg, rng: &mut Rng) -> (Vec<St
         if active.len() <= cfg.max_pop {
             break;
         }
+        let protected = niche_elites(league);
         let candidate = active
             .into_iter()
             .filter(|i| {
                 let s = &league.strategies[*i];
-                !s.anchor && s.games >= MIN_GAMES_TO_RETIRE && s.rd <= MAX_RD_TO_RETIRE
+                !s.anchor
+                    && !protected.contains(i)
+                    && s.games >= MIN_GAMES_TO_RETIRE
+                    && s.rd <= MAX_RD_TO_RETIRE
             })
             .min_by(|a, b| {
                 upper_confidence(&league.strategies[*a])
@@ -1695,6 +1779,121 @@ mod tests {
             .parents
             .iter()
             .all(|p| p == "proven-first" || p == "proven-second"));
+    }
+
+    #[test]
+    fn selection_restores_missing_niches_from_the_historical_archive() {
+        let advanced = |target: Option<&str>| StrategyKind::Advanced {
+            weights: Weights::default(),
+            target: target.map(str::to_string),
+        };
+        let mut league = League {
+            round: 0,
+            strategies: vec![
+                Strategy::new("generalist-a", advanced(None), 0),
+                Strategy::new("generalist-b", advanced(None), 0),
+                Strategy::new("retired-science", advanced(Some("science")), 0),
+            ],
+            calibration: Calibration::default(),
+        };
+        league.strategies[0].rating = 1750.0;
+        league.strategies[0].rd = 30.0;
+        league.strategies[1].rating = 1650.0;
+        league.strategies[1].rd = 30.0;
+        league.strategies[2].rating = 1600.0;
+        league.strategies[2].rd = 40.0;
+        league.strategies[2].retired = true;
+        ensure_usernames(&mut league);
+
+        let cfg = LeagueCfg {
+            max_pop: 12,
+            ..LeagueCfg::default()
+        };
+        let mut rng = Rng::new(31);
+        let (born, _) = evolve_league(&mut league, &cfg, &mut rng);
+        let children: Vec<&Strategy> = league
+            .strategies
+            .iter()
+            .filter(|s| born.contains(&s.username))
+            .collect();
+        let targets: Vec<Option<String>> = children.iter().map(|s| target_of(&s.kind)).collect();
+
+        assert_eq!(
+            targets,
+            vec![
+                Some("science".into()),
+                Some("culture".into()),
+                Some("religious".into())
+            ]
+        );
+        let science_child = children
+            .iter()
+            .find(|s| target_of(&s.kind).as_deref() == Some("science"))
+            .unwrap();
+        assert!(science_child
+            .parents
+            .contains(&"retired-science".to_string()));
+
+        league.round = 4;
+        let _ = evolve_league(&mut league, &cfg, &mut rng);
+        let active_targets: std::collections::BTreeSet<String> = league
+            .active()
+            .into_iter()
+            .filter_map(|i| target_of(&league.strategies[i].kind))
+            .collect();
+        assert!(VictoryTarget::ALL
+            .iter()
+            .all(|target| active_targets.contains(target.as_str())));
+    }
+
+    #[test]
+    fn retirement_preserves_the_conservative_elite_in_each_niche() {
+        let advanced = |target: Option<&str>| StrategyKind::Advanced {
+            weights: Weights::default(),
+            target: target.map(str::to_string),
+        };
+        let mut league = League {
+            round: 0,
+            strategies: vec![
+                Strategy::new("science-elite", advanced(Some("science")), 0),
+                Strategy::new("science-duplicate", advanced(Some("science")), 0),
+                Strategy::new("generalist-elite", advanced(None), 0),
+                Strategy::new(
+                    "reference",
+                    StrategyKind::Builtin {
+                        ai: "random".into(),
+                    },
+                    0,
+                ),
+            ],
+            calibration: Calibration::default(),
+        };
+        for strategy in &mut league.strategies {
+            strategy.games = MIN_GAMES_TO_RETIRE;
+            strategy.rd = 30.0;
+        }
+        league.strategies[0].rating = 1650.0;
+        league.strategies[1].rating = 1100.0;
+        league.strategies[2].rating = 1550.0;
+        league.strategies[3].rating = 1200.0;
+        league.strategies[3].anchor = true;
+        ensure_usernames(&mut league);
+
+        let cfg = LeagueCfg {
+            max_pop: 4,
+            ..LeagueCfg::default()
+        };
+        let mut rng = Rng::new(32);
+        let (_, retired) = evolve_league(&mut league, &cfg, &mut rng);
+        let retired_names: Vec<&str> = league
+            .strategies
+            .iter()
+            .filter(|s| retired.contains(&s.username))
+            .map(|s| s.name.as_str())
+            .collect();
+
+        assert_eq!(retired_names, vec!["science-duplicate"]);
+        assert!(!league.strategies[0].retired);
     }
 
     #[test]

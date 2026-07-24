@@ -125,19 +125,34 @@ league instead.
 
 Every `--evolve-every` rounds (default 4):
 
-- **Breed** `max(1, --pop / 4)` offspring. Parents are drawn from the top
-  half of genome-carrying strategies by conservative 95% skill
-  (`rating - 1.96 × RD`), so a noisy newcomer does not displace a proven
-  parent on point estimate alone. A child is a uniform
-  crossover of its parents' weights plus bounded mutation (the same
-  operators `civvis evolve` uses), and mostly inherits a parent's victory
-  lane (with some exploration). Offspring enter at 1500 ± 350 and must
-  earn their place.
+- **Breed** `max(1, --pop / 4)` offspring with quality-diversity pressure
+  across seven niches: the six victory lanes plus an untargeted generalist.
+  Each birth goes to the currently least-represented niche, with ties rotating
+  deterministically between selection generations. One parent comes from the
+  top half of that niche's full historical archive when it exists (otherwise
+  the active pool), and the other from the top half of active genome carriers;
+  both pools rank by conservative 95% skill (`rating - 1.96 × RD`). Thus a
+  retired specialist can seed a better successor without re-entering the
+  schedule, while a strong generalist contributes broadly useful genes. A
+  child is a uniform crossover plus bounded mutation (the same operators
+  `civvis evolve` uses), is assigned the selected niche, and enters at
+  1500 ± 350 to earn its place.
 - **Retire** strategies with the lowest optimistic 95% bound
   (`rating + 1.96 × RD`) until the active roster is back
   under `--pop`, but only with evidence: never anchors, never anyone with
-  fewer than 20 games or RD above 110. Retired strategies keep their
-  history in the roster; only scheduling stops.
+  fewer than 20 games or RD above 110, and never the conservatively strongest
+  active genome in a represented niche. Weaker duplicates remain eligible, so
+  this preserves strategic coverage without freezing improvement. Retired
+  strategies keep their history and genomes in the archive; only scheduling
+  stops.
+
+This explicit niche archive matters in practice: an unconstrained league can
+rate generalists highly enough that they become nearly every parent, after
+which probabilistic lane inheritance makes specialists rarer still. The
+committed 60-round snapshot exhibited that feedback loop — all evolved active
+strategies were generalists and every victory-lane specialist had retired.
+Quality-diversity selection makes rating strength and strategic breadth joint
+objectives instead of asking a single scalar leaderboard to provide both.
 
 The two anchors (`advanced`, `basic`) are never retired, which pins the
 scale: a league leader's margin over `advanced` is comparable across
