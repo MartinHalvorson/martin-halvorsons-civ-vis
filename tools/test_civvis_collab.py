@@ -245,5 +245,120 @@ class PolicyTests(unittest.TestCase):
         )
 
 
+class ShipTests(unittest.TestCase):
+    def test_ship_requires_a_finished_summary_and_every_checkbox(self):
+        draft = {
+            "state": "OPEN",
+            "headRefName": "agent/m/a/task-20260723T210500Z-a31f",
+            "body": """## What changed
+
+Draft claim; implementation is in progress.
+
+## Validation
+
+- [ ] Tests
+""",
+        }
+        errors = collab.ship_pr_errors(draft, draft["headRefName"])
+        self.assertTrue(any("checkbox" in error for error in errors))
+        self.assertTrue(any("What changed" in error for error in errors))
+
+    def test_ship_accepts_a_documented_validated_feature(self):
+        finished = {
+            "state": "OPEN",
+            "headRefName": "agent/m/a/task-20260723T210500Z-a31f",
+            "body": """## What changed
+
+Added the fast shipping path.
+
+## Validation
+
+- [x] Tests
+""",
+        }
+        self.assertEqual(
+            collab.ship_pr_errors(finished, finished["headRefName"]), []
+        )
+
+    def test_required_checks_use_the_newest_run_for_each_name(self):
+        rows = [
+            {
+                "name": "cargo-test",
+                "startedAt": "2026-07-23T22:30:00Z",
+                "status": "COMPLETED",
+                "conclusion": "FAILURE",
+            },
+            {
+                "name": "cargo-test",
+                "startedAt": "2026-07-23T22:35:00Z",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            },
+            {
+                "name": "collaboration-policy",
+                "startedAt": "2026-07-23T22:35:01Z",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            },
+        ]
+        self.assertEqual(collab.required_check_state(rows), ("success", []))
+
+    def test_ready_transition_does_not_reuse_an_old_draft_policy_check(self):
+        rows = [
+            {
+                "name": "cargo-test",
+                "startedAt": "2026-07-23T22:35:00Z",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            },
+            {
+                "name": "collaboration-policy",
+                "startedAt": "2026-07-23T22:34:00Z",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            },
+        ]
+        self.assertEqual(
+            collab.required_check_state(
+                rows,
+                minimum_started={"collaboration-policy": "2026-07-23T22:35:00Z"},
+            ),
+            ("pending", ["collaboration-policy"]),
+        )
+
+    def test_pending_and_failed_checks_are_distinct(self):
+        pending = [
+            {
+                "name": "cargo-test",
+                "startedAt": "2026-07-23T22:35:00Z",
+                "status": "IN_PROGRESS",
+                "conclusion": "",
+            }
+        ]
+        self.assertEqual(
+            collab.required_check_state(pending),
+            ("pending", ["cargo-test", "collaboration-policy"]),
+        )
+        failed = pending + [
+            {
+                "name": "collaboration-policy",
+                "startedAt": "2026-07-23T22:35:01Z",
+                "status": "COMPLETED",
+                "conclusion": "FAILURE",
+            }
+        ]
+        self.assertEqual(
+            collab.required_check_state(failed),
+            ("failed", ["collaboration-policy"]),
+        )
+
+    def test_exact_live_revision_is_accepted_without_git_lookup(self):
+        self.assertTrue(
+            collab.deployed_commit_covers(
+                Path.cwd(), "abc1234", "abc1234567890"
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
