@@ -319,3 +319,27 @@ maps (`--seed 11000`), the generalized changes raised game wins from **8/24
 its Production and Science advantages. These are promotion signals, not a
 claim of universal strength; the four-player sample should grow with the
 league archive.
+
+## 2026-07-24 — paired confidence and Elo-equivalent promotion gates
+
+Raw wins from the two seat-swapped games on one generated map are correlated:
+they share terrain, resources, civilizations, and much of the resulting game
+geometry. `ai_eval` therefore treats each mirrored map as one independent
+cluster. The challenger receives 1 for a sweep, 0.5 for a split, 0 for a
+reverse sweep, and half credit for an individual game that ends without a
+winner. It reports a conservative 95% Wilson interval using the number of maps,
+not the larger and misleading number of games.
+
+The same score and interval are transformed through the standard logistic Elo
+expectation curve, so every comparison now has an Elo-equivalent point estimate
+and confidence range. Promotion requires at least 20 independent maps and a 95%
+lower score bound above 50%; an upper bound below 50% retains the incumbent.
+Everything else is explicitly `INSUFFICIENT` or `INCONCLUSIVE` rather than being
+promoted from a noisy headline win rate.
+
+Re-evaluating the threat-aware Strategic benchmark illustrates the difference.
+Its **32/50 (64%)** result came from 8 Strategic sweeps, 16 split maps, and one
+Advanced sweep. The paired estimate is **64%, 95% CI 44.5–79.8%**, equivalent
+to **+100 Elo, CI -38 to +238**. That is strong directional evidence and a large
+point improvement over the old router, but it correctly remains
+`INCONCLUSIVE` at 25 maps because the confidence interval overlaps parity.
