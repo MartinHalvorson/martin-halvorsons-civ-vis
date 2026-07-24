@@ -492,3 +492,45 @@ map. The fixed-sample outputs were 62.5% (Wilson 40.9%..80.0%, +89 Elo) and
 exact sign p=0.1250. The new process reported peak e=3.651, anytime p<=0.2739,
 no crossing, and `INCONCLUSIVE`—all three views correctly reject promotion
 from a suggestive but small 20-map result.
+
+## 2026-07-24 — grouped scalar value training and controller rejection
+
+The scalar value trainer now fails closed on the legacy 26-column dataset.
+Every accepted row must contain 25 features, its outcome, and a nonnegative
+integer source-game ID. Games—not correlated turn snapshots—are shuffled once
+into frozen 60/20/20 train, early-stopping validation, and final-test splits.
+The final split is evaluated only after selecting the epoch on validation.
+The trainer records BCE, Brier score, accuracy, ten-bin ECE, and BCE by turn
+quartile; it refuses to write a model unless final-test BCE beats a constant
+predictor fitted only on the training rows. `--scalar-only` makes the matching
+self-play export practical by omitting spatial tensors while retaining the
+grouped scalar CSV and three-column labels.
+
+Two real corpora passed that offline gate:
+
+| Training policy | Games / rows | Untouched games | Model BCE | Constant BCE | Model / constant Brier |
+|---|---:|---:|---:|---:|---:|
+| Advanced | 300 / 14,070 | 60 | **0.3165** | 0.5964 | **0.1018 / 0.2032** |
+| score-share Strategic | 120 / 5,535 | 24 | **0.3767** | 0.6097 | **0.1203 / 0.2094** |
+
+Both models beat the constant in every opening-to-endgame turn quartile. That
+is necessary predictive evidence, but it is not controller evidence. Model
+activation therefore used separately predeclared map blocks against the exact
+40-round score-share binary:
+
+| Candidate evaluator | Development | Holdout | Decision |
+|---|---:|---:|---|
+| pure Advanced-trained net | 9/20 vs 8/20 baseline (seed 25000) | **7/20 vs 12/20** (seed 26000) | reject |
+| 25% Advanced net + 75% score share | 10/20 vs 8/20 (seed 27000) | 10/20 vs 10/20 (seed 28000) | reject: no replication |
+| 25% Strategic net + 75% score share | **9/20 vs 10/20** (seed 32000) | not run | reject before holdout |
+
+No trained artifact is shipped or auto-loaded. Without an explicit
+`evolved/valuenet.json`, Strategic remains bit-for-bit on the proven score-share
+evaluator. When an experimenter supplies a structurally valid 25→64→32→1
+model, Strategic now limits it to 25% of the terminal estimate and falls back
+to score share for a non-finite prediction. Loading also rejects wrong tensor
+shapes and non-finite parameters. This is a distribution-shift guard, not a
+claim that the current learned evaluator is stronger: the gameplay evidence
+plainly says it is not ready. The next learned-value experiment needs labels
+from the actual counterfactual rollout endpoints (or an off-policy correction),
+not merely more snapshots from on-policy trajectories.

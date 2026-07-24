@@ -624,6 +624,7 @@ fn main() {
                 every: arg(&args, "--every", 10).max(1) as u32,
                 ai: arg_text(&args, "--ai", "advanced"),
                 out: arg_text(&args, "--out", "selfplay"),
+                scalar_only: args.iter().any(|arg| arg == "--scalar-only"),
                 jobs: jobs_arg(&args),
             };
             match civvis::selfplay::export(&cfg) {

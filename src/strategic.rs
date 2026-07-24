@@ -8,13 +8,17 @@
 //! value net when `evolved/valuenet.json` exists, otherwise by score share. Public
 //! victory threats interrupt the periodic search before they can end the game,
 //! while irreversible Prophet investment and duel victory geometry supply
-//! priors that a short economic rollout cannot discover in time.
+//! priors that a short economic rollout cannot discover in time. The learned
+//! estimate is deliberately regularized toward score share because the
+//! counterfactual rollout endpoints remain out of distribution for ordinary
+//! self-play trajectories.
 use crate::ai::{AdvancedAi, Ai, PlanReport, VictoryTarget, Weights};
 use crate::evolve::features;
 use crate::game::{Action, Game, Item};
 use crate::valuenet::ValueNet;
 
 const TARGET_COMMITMENT_MARGIN: f64 = 0.01;
+const VALUE_NET_WEIGHT: f64 = 0.25;
 
 pub struct StrategicAi {
     inner: AdvancedAi,
@@ -57,9 +61,6 @@ impl StrategicAi {
         if !g.players[pid].alive {
             return 0.0;
         }
-        if let Some(net) = &self.net {
-            return net.eval(&features(g, pid));
-        }
         // Score share among living majors; 1/majors is parity.
         let mut own = 0.0;
         let mut total = 0.0;
@@ -73,10 +74,20 @@ impl StrategicAi {
                 own = s;
             }
         }
-        if total <= 0.0 {
+        let score_share = if total <= 0.0 {
             0.5
         } else {
             own / total
+        };
+        if let Some(net) = &self.net {
+            let learned = net.eval(&features(g, pid));
+            if learned.is_finite() {
+                score_share + VALUE_NET_WEIGHT * (learned - score_share)
+            } else {
+                score_share
+            }
+        } else {
+            score_share
         }
     }
 
@@ -458,6 +469,7 @@ mod tests {
     use super::StrategicAi;
     use crate::ai::{run_game, Ai, BasicAi, VictoryTarget};
     use crate::game::{Action, Game};
+    use crate::valuenet::ValueNet;
 
     fn found_capitals(game: &mut Game, players: usize) {
         for pid in 0..players {
@@ -476,6 +488,37 @@ mod tests {
     #[test]
     fn default_macro_search_looks_forty_rounds_ahead() {
         assert_eq!(StrategicAi::new().horizon, 40);
+    }
+
+    #[test]
+    fn learned_values_are_regularized_toward_score_share() {
+        let game = Game::new(4, 24, 16, 20, 180, 0);
+        let total: i64 = game
+            .players
+            .iter()
+            .filter(|player| !player.is_minor && !player.is_barbarian)
+            .map(|player| game.score(player.id).max(0))
+            .sum();
+        let score_share = if total > 0 {
+            game.score(0).max(0) as f64 / total as f64
+        } else {
+            0.5
+        };
+        let mut strategic = StrategicAi::new();
+        strategic.net = None;
+        assert!((strategic.position_value(&game, 0) - score_share).abs() < 1e-12);
+        strategic.net = Some(ValueNet {
+            sizes: vec![25, 64, 32, 1],
+            weights: vec![
+                vec![vec![0.0; 64]; 25],
+                vec![vec![0.0; 32]; 64],
+                vec![vec![0.0; 1]; 32],
+            ],
+            biases: vec![vec![0.0; 64], vec![0.0; 32], vec![0.0; 1]],
+        });
+
+        let expected = score_share + 0.25 * (0.5 - score_share);
+        assert!((strategic.position_value(&game, 0) - expected).abs() < 1e-12);
     }
 
     /// The review must pick a lane deterministically and commit it to the

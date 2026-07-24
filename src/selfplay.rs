@@ -16,6 +16,8 @@
 //! - `labels.f32` — `samples × 3`: win label (1/0), turn fraction, and
 //!   the source game index (split train/val BY GAME, never by sample:
 //!   snapshots from one game are highly correlated)
+//! `--scalar-only` leaves the large plane/global files empty and exports only
+//! grouped scalar rows plus labels, making large value-model runs inexpensive.
 //!
 //! Read in Python with
 //! `np.fromfile(...).reshape(meta["planes_shape"])`.
@@ -41,6 +43,8 @@ pub struct SelfPlayCfg {
     pub every: u32,
     pub ai: String,
     pub out: String,
+    /// Skip expensive spatial observations when only `dataset.csv` is needed.
+    pub scalar_only: bool,
     /// How many games to play at once. Samples are still written in game
     /// order; a chunk of this many games is held in memory while it plays.
     pub jobs: usize,
@@ -87,12 +91,17 @@ fn play_one(cfg: &SelfPlayCfg, game_index: usize) -> PlayedGame {
                 {
                     continue;
                 }
-                let t = obs_tensor(&g, player);
-                if global_names.is_empty() {
-                    global_names = t.global_names.clone();
-                    globals_len = t.global.len();
-                }
-                pending.push((t.data, t.global, scalar_features(&g, player), player, fraction));
+                let (planes, globals) = if cfg.scalar_only {
+                    (Vec::new(), Vec::new())
+                } else {
+                    let tensor = obs_tensor(&g, player);
+                    if global_names.is_empty() {
+                        global_names = tensor.global_names.clone();
+                        globals_len = tensor.global.len();
+                    }
+                    (tensor.data, tensor.global)
+                };
+                pending.push((planes, globals, scalar_features(&g, player), player, fraction));
             }
         }
         ais[pid].take_turn(&mut g, pid);
@@ -170,15 +179,20 @@ pub fn export(cfg: &SelfPlayCfg) -> std::io::Result<SelfPlayStats> {
     labels_out.flush()?;
     csv_out.flush()?;
 
+    let plane_names: Vec<&str> = if cfg.scalar_only {
+        Vec::new()
+    } else {
+        PLANES.to_vec()
+    };
     let meta = serde_json::json!({
         "samples": samples,
         "games": cfg.games,
         "decisive_games": decisive,
-        "planes_shape": [samples, PLANES.len(), cfg.height, cfg.width],
+        "planes_shape": [samples, plane_names.len(), cfg.height, cfg.width],
         "globals_shape": [samples, globals_len],
         "labels_shape": [samples, 3],
         "labels": ["won", "turn_fraction", "game"],
-        "plane_names": PLANES,
+        "plane_names": plane_names,
         "global_names": global_names,
         "dtype": "<f4",
         "config": {
@@ -190,6 +204,7 @@ pub fn export(cfg: &SelfPlayCfg) -> std::io::Result<SelfPlayStats> {
             "seed": cfg.seed,
             "every": cfg.every,
             "ai": cfg.ai,
+            "scalar_only": cfg.scalar_only,
         },
         "victory_targets": VictoryTarget::ALL.map(|t| t.as_str()),
     });
@@ -223,6 +238,7 @@ mod tests {
             every: 2,
             ai: "basic".to_string(),
             out: dir.to_string_lossy().to_string(),
+            scalar_only: false,
             jobs: 2,
         };
         let stats = export(&cfg).expect("export");
@@ -239,6 +255,49 @@ mod tests {
         assert_eq!(globals_bytes, samples * globals * 4);
         let labels_bytes = std::fs::metadata(dir.join("labels.f32")).unwrap().len() as usize;
         assert_eq!(labels_bytes, samples * 3 * 4);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scalar_only_export_keeps_game_groups_without_spatial_payloads() {
+        let dir = std::env::temp_dir().join("civvis_scalar_selfplay_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let cfg = SelfPlayCfg {
+            games: 2,
+            players: 2,
+            width: 20,
+            height: 14,
+            city_states: 0,
+            max_turns: 24,
+            seed: 177,
+            every: 2,
+            ai: "basic".to_string(),
+            out: dir.to_string_lossy().to_string(),
+            scalar_only: true,
+            jobs: 2,
+        };
+
+        let stats = export(&cfg).expect("scalar export");
+        assert!(stats.samples > 0);
+        assert_eq!(std::fs::metadata(dir.join("planes.f32")).unwrap().len(), 0);
+        assert_eq!(std::fs::metadata(dir.join("globals.f32")).unwrap().len(), 0);
+        assert_eq!(
+            std::fs::metadata(dir.join("labels.f32")).unwrap().len(),
+            stats.samples as u64 * 3 * 4
+        );
+        let rows = std::fs::read_to_string(dir.join("dataset.csv")).unwrap();
+        assert_eq!(rows.lines().count(), stats.samples);
+        assert!(rows.lines().all(|row| row.split(',').count() == 27));
+        let groups: std::collections::BTreeSet<&str> = rows
+            .lines()
+            .filter_map(|row| row.rsplit(',').next())
+            .collect();
+        assert_eq!(groups, ["0", "1"].into_iter().collect());
+        let meta: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("meta.json")).unwrap()).unwrap();
+        assert_eq!(meta["planes_shape"][1], 0);
+        assert_eq!(meta["globals_shape"][1], 0);
+        assert_eq!(meta["config"]["scalar_only"], true);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
