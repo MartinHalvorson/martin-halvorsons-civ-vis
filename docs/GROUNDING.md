@@ -222,34 +222,47 @@ One game each, on different maps, is an anecdote — Civilization's variance
 across starts is larger than these gaps. What makes it worth acting on is that
 the league's own data says the same thing independently.
 
-### What that points at: ratings the results do not support
+### What that points at — and a correction
 
-| player | elo | rd | games | wins | winrate |
-|---|---:|---:|---:|---:|---:|
-| WildCard10 | 1823 | 50 | 21 | 4 | **19.0%** |
-| Maverick2 | 1791 | 31 | 216 | 82 | 38.0% |
-| Opportunist3 | 1766 | 30 | 170 | 61 | 35.9% |
-| OldGuard | 1755 | 30 | 331 | 111 | 33.5% |
-| … | | | | | |
-| Maverick6 | 1707 | 46 | 23 | 3 | **13.0%** |
+My first reading of this was that the ratings were unsupported by the records
+behind them: WildCard10 tops the league on a 19% winrate over 21 games, where
+random in a six-player game is 16.7%, and Maverick6 sits at 1707 on 13%.
 
-Six players to a game, so random is 16.7%. **WildCard10 tops the table on a
-19% winrate, and Maverick6 sits at 1707 on 13% — below random.** Among the 23
-strategies with 60+ games, Spearman correlation between rating and winrate is
-only **0.53**.
+**That reading was wrong, and the yardstick was the mistake.** This league does
+not rate wins. `src/league.rs` decomposes every finished game into *pairwise
+results by placement*, so a strategy that reliably finishes second of six earns
+a high rating with a low winrate, entirely legitimately. Measured against what
+the system actually rates, it behaves better than against wins — on the games
+that could be matched to the roster, Spearman correlation with mean placement
+is **+0.68** against **+0.56** for winrate. Correlating a placement rating with
+winrate and calling the gap a defect was a category error.
 
-The common factor is games played: every strategy rated above its results has
-fewer than 40 of them. Bred offspring enter with a rating their record has not
-earned, and the retirement gate (≥20 games and RD ≤ 110) is loose enough to let
-them reach the top of the standings before the rating converges.
+Two things do survive, both smaller:
 
-This matters beyond the leaderboard. `civvis play --league` seats each civ with
-its *best-rated* strategy, and the exhibition HUD reports those ratings as win
-chances — so an inflated newcomer is not a display quirk, it changes which
-strategies get played and what the spectator is told.
+**The standings rank on point estimates and ignore their own uncertainty.**
+WildCard10 is 1823 ± 50 on 21 games; Maverick2 is 1791 ± 31 on 216. Those
+intervals overlap heavily, so "WildCard10 is the top strategy" is not something
+its own rating deviation supports. This is not cosmetic: `civvis play --league`
+seats each civ with its *best-rated* strategy and the exhibition HUD converts
+those ratings into win chances, so a newcomer whose rating has not converged
+changes which strategies play and what a spectator is told. Ranking on a
+conservative bound (rating − k·RD) rather than the point estimate would fix it,
+and is the standard treatment.
 
-Worth stressing what is and is not established: the winrate/rating gap is a
-fact about the committed league snapshot. The real-game runs are consistent
-with it and are what prompted the check, but two games do not by themselves
-establish that WildCard10 is weak. The next step is a fixed map seed and
-several games per genome, which the harness now supports.
+**The committed snapshot and the run log do not reconcile.** Of the 54
+strategies in `data/league/league.json`, 33 — including the entire top nine —
+appear in *no* game in the `matches.csv` produced by the league worktree, even
+though the snapshot credits them with 21 to 216 games each. The likeliest
+explanation is simply that the two files come from different runs (the memory
+of that run records a different leader and rating than the snapshot carries).
+But until that is established, the provenance of the committed snapshot is
+unverified, and it is the file every league-seated game reads. That is worth
+settling before any of these ratings are trusted.
+
+### What the Civ 6 runs actually established
+
+Not that WildCard10 is weak — two games on different maps cannot show that. What
+they established is that the harness works: a league genome drives production in
+a real game, verifiably, and produces a measurable outcome against a field. The
++46 / −22 split is the first datapoint, not a result. A fixed map seed and
+several games per genome is what turns it into one.
