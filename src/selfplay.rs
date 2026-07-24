@@ -55,6 +55,9 @@ pub struct SelfPlayCfg {
     /// Export Strategic rollout endpoints rather than ordinary trajectory
     /// snapshots. Every endpoint retains its source-game group.
     pub counterfactual: bool,
+    /// Stop a counterfactual source trajectory after this many scheduled
+    /// roots. Zero keeps sampling until the source game ends.
+    pub counterfactual_roots: usize,
     /// How many games to play at once. Samples are still written in game
     /// order; a chunk of this many games is held in memory while it plays.
     pub jobs: usize,
@@ -80,6 +83,10 @@ struct PendingSample {
 }
 
 type PlayedGame = (Game, Vec<PendingSample>, Vec<String>, usize, usize);
+
+fn counterfactual_budget_reached(cfg: &SelfPlayCfg, roots: usize) -> bool {
+    cfg.counterfactual && cfg.counterfactual_roots > 0 && roots >= cfg.counterfactual_roots
+}
 
 fn play_one(cfg: &SelfPlayCfg, game_index: usize) -> PlayedGame {
     let seed = cfg.seed.wrapping_add(game_index as u64);
@@ -175,6 +182,13 @@ fn play_one(cfg: &SelfPlayCfg, game_index: usize) -> PlayedGame {
                     });
                 }
             }
+        }
+        // Counterfactual samples already carry the terminal result of their
+        // own continued branch. Once the requested roots are labeled, playing
+        // the source trajectory further creates no information and repeatedly
+        // pays Strategic's expensive lane-review cost.
+        if counterfactual_budget_reached(cfg, counterfactual_roots) {
+            break;
         }
         ais[pid].take_turn(&mut g, pid);
         if g.winner.is_none() && g.current == pid {
@@ -300,6 +314,7 @@ pub fn export(cfg: &SelfPlayCfg) -> std::io::Result<SelfPlayStats> {
             "ai": cfg.ai,
             "scalar_only": cfg.scalar_only,
             "counterfactual": cfg.counterfactual,
+            "counterfactual_roots": cfg.counterfactual_roots,
         },
         "counterfactual_roots": counterfactual_roots,
         "counterfactual_samples_by_lane": counterfactual_lanes,
@@ -315,7 +330,7 @@ pub fn export(cfg: &SelfPlayCfg) -> std::io::Result<SelfPlayStats> {
 
 #[cfg(test)]
 mod tests {
-    use super::{export, SelfPlayCfg};
+    use super::{counterfactual_budget_reached, export, SelfPlayCfg};
     use crate::obs_tensor::PLANES;
 
     #[test]
@@ -336,6 +351,7 @@ mod tests {
                 .to_string(),
             scalar_only: true,
             counterfactual: true,
+            counterfactual_roots: 1,
             jobs: 1,
         };
         let error = match export(&cfg) {
@@ -344,6 +360,30 @@ mod tests {
         };
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
         assert!(error.to_string().contains("strategic_score"));
+    }
+
+    #[test]
+    fn counterfactual_root_budget_is_opt_in_and_exact() {
+        let mut cfg = SelfPlayCfg {
+            games: 0,
+            players: 4,
+            width: 20,
+            height: 14,
+            city_states: 0,
+            max_turns: 80,
+            seed: 0,
+            every: 40,
+            ai: "strategic_score".to_string(),
+            out: String::new(),
+            scalar_only: true,
+            counterfactual: true,
+            counterfactual_roots: 0,
+            jobs: 1,
+        };
+        assert!(!counterfactual_budget_reached(&cfg, usize::MAX));
+        cfg.counterfactual_roots = 2;
+        assert!(!counterfactual_budget_reached(&cfg, 1));
+        assert!(counterfactual_budget_reached(&cfg, 2));
     }
 
     #[test]
@@ -365,6 +405,7 @@ mod tests {
             out: dir.to_string_lossy().to_string(),
             scalar_only: false,
             counterfactual: false,
+            counterfactual_roots: 0,
             jobs: 2,
         };
         let stats = export(&cfg).expect("export");
@@ -401,6 +442,7 @@ mod tests {
             out: dir.to_string_lossy().to_string(),
             scalar_only: true,
             counterfactual: false,
+            counterfactual_roots: 0,
             jobs: 2,
         };
 
