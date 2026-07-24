@@ -2295,7 +2295,12 @@ mod tests {
             "function playCinemaCue(cue = {})",
             "function showDirectorStory(cue)",
             "function cinematicDisasterStory(disaster, next)",
+            "function cinematicWarContext(st)",
+            "function cinematicWarFront(st, war)",
             "function drawCinematicDisasterField(sceneTime)",
+            "function recentCombatActions(st)",
+            "const lethalBattle = MODE.fx && lethalTrace",
+            "const deathAt = lethalBattle?.impactAt || now",
             "function directorCue(prev, next)",
             "function cinematicShotGoal(goal, variation = 0)",
             "function directorSurveyGoal()",
@@ -2310,6 +2315,7 @@ mod tests {
             "function unitMoveDuration(unitId, steps)",
             "function drawCinematicSubjectMarker(u, x, y, now)",
             "function drawCinematicSubjectBrackets(u, x, y, now)",
+            "function drawUnitCompany(u, x, y, now, moving)",
             "function beginTouchTransform()",
             "function cinematicSurveyUnits(units)",
             "function drawWalls(t, x, ytop, baseColor, tileElevation)",
@@ -2327,6 +2333,8 @@ mod tests {
             "History has a victor",
             "City captured",
             "War declared",
+            "Battlefield losses",
+            "The war continues",
             "Wonder completed",
         ] {
             assert!(
@@ -2337,7 +2345,13 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("civvis-cinema-audio-v1"));
         assert!(EMBEDDED_INDEX.contains("REDUCED_MOTION_QUERY.matches"));
         assert!(EMBEDDED_INDEX.contains("touch-action: none"));
-        assert!(EMBEDDED_INDEX.contains("kind:tracksUnit ? \"character\" : \"event\""));
+        assert!(EMBEDDED_INDEX
+            .contains("kind:battle ? \"battle\" : (tracksUnit ? \"character\" : \"event\")"));
+        assert!(EMBEDDED_INDEX.contains("side.units_lost"));
+        assert!(EMBEDDED_INDEX.contains("action.type === \"theological_attack\""));
+        assert!(EMBEDDED_INDEX.contains("front:\"war front\""));
+        assert!(EMBEDDED_INDEX.contains("kind:cue.kind || \"portrait\""));
+        assert!(!EMBEDDED_INDEX.contains("kicker:\"Casualty of war\""));
         assert!(EMBEDDED_INDEX.contains("class=\"winner-content\""));
         assert!(EMBEDDED_INDEX.contains("cinema-finale"));
         assert!(EMBEDDED_INDEX.contains("DEFAULT_CINEMA_YS = 0.64"));
