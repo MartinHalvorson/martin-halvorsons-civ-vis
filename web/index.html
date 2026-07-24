@@ -1136,7 +1136,7 @@
      requested height is calculated from the player count in drawPlayerHud(),
      then capped so a large table does not consume the map. */
   #playerhud {
-    top: 10px; right: 12px; left: auto; width: min(var(--player-hud-width, 330px), 56%);
+    top: 10px; right: 12px; left: auto; width: min(var(--player-hud-width, 450px), 56%);
     height: min(var(--player-hud-height, 200px), calc(33.333vh - 12px));
     display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 5px;
     overflow: visible; transform: none;
@@ -1162,7 +1162,7 @@
   }
   #playerhud .diplomacy-card {
     width: auto; height: auto; min-height: 0; display: grid;
-    grid-template-columns: 25px minmax(58px, .45fr) minmax(180px, 1.55fr);
+    grid-template-columns: 25px minmax(72px, 96px) minmax(0, 1fr);
     align-items: center; gap: 4px; margin: 0; padding: 2px 4px 2px 3px;
     overflow: hidden; border-radius: 7px;
   }
@@ -1181,12 +1181,14 @@
   }
   #playerhud .diplomacy-elo { display: none; }
   #playerhud .diplomacy-stats {
-    align-self: stretch; display: grid; grid-template-columns: repeat(10, minmax(16px, 1fr));
+    align-self: stretch; display: grid; grid-template-columns: repeat(10, minmax(0, 1fr));
     grid-template-rows: minmax(0, 1fr); gap: 0;
   }
-  #playerhud .ribbon-stat { min-height: 0; padding: 0; }
-  #playerhud .ribbon-stat b { font-size: 7.5px; line-height: 1; }
-  #playerhud .ribbon-stat em { margin-top: 1px; font-size: 4.5px; line-height: 1; }
+  #playerhud .ribbon-stat {
+    min-height: 0; display: grid; place-content: center; padding: 0;
+  }
+  #playerhud .ribbon-stat b { font-size: 11px; font-weight: 850; line-height: 1; }
+  #playerhud .ribbon-stat em { margin-top: 1px; font-size: 5.5px; line-height: 1; }
   #playerhud .civ-dossier {
     position: absolute; z-index: 2; top: calc(100% + 6px); right: 0;
     width: min(760px, calc(100vw - 28px)); max-height: calc(66.667vh - 24px);
@@ -1199,7 +1201,7 @@
      Its right edge reserves exactly the space occupied by the standings. */
   #victoryhud {
     position: absolute; z-index: 7; top: 10px; left: 12px;
-    right: min(calc(var(--player-hud-width, 330px) + 20px), calc(56% + 20px));
+    right: min(calc(var(--player-hud-width, 450px) + 20px), calc(56% + 20px));
     height: 112px; display: grid; grid-template-columns: 88px minmax(0, 1fr);
     align-items: stretch; gap: 5px; min-width: 0; max-width: 1000px; padding: 5px;
     overflow: hidden; border: 1px solid #526a618f; border-radius: 12px;
@@ -1349,7 +1351,6 @@
     <button id="paneltoggle" class="icon" title="Toggle command deck" aria-label="Toggle command deck">☰</button>
     <button id="zin" title="Zoom in" aria-label="Zoom in">＋</button>
     <button id="zout" title="Zoom out" aria-label="Zoom out">−</button>
-    <button id="zhome" title="Center on your empire" aria-label="Center map">⌂</button>
   </div>
   <div id="ubar"></div>
   <div id="modeline"></div>
@@ -2730,7 +2731,9 @@ const mini = document.getElementById("mini"), mx2 = mini.getContext("2d");
 const area = document.getElementById("maparea");
 const HUD_LAYOUT_STORAGE_KEY = "civvis-hud-layout-v1";
 const HUD_WIDGETS = {
-  players: {element:document.getElementById("playerhud"), minWidth:180, minHeight:96},
+  // Ten fixed metric columns share every player row, so the standings keep
+  // enough width for their values and short labels whenever the map allows.
+  players: {element:document.getElementById("playerhud"), minWidth:420, minHeight:96},
   victory: {element:document.getElementById("victoryhud"), minWidth:150, minHeight:88},
   minimap: {element:document.querySelector(".minimap-frame"), minWidth:130, minHeight:96},
 };
@@ -3928,7 +3931,7 @@ async function specPoll() {
     const fresh = st.seed !== undefined && lastSeed2 !== null && st.seed !== lastSeed2;
     lastSeed2 = st.seed;
     render(st);
-    if (fresh) { sel = null; selCity = null; centerMainLandmass(); } // new game
+    if (fresh) { sel = null; selCity = null; } // new game
   } catch (e) { /* server hiccup: next poll retries */ }
   finally { specBusy = false; }
 }
@@ -4311,10 +4314,12 @@ function render(st, recordChronicle = true) {
   applyCinemaMode();
   if (newWorld) showCinemaPrologue(st);
   queueDirectorCue(cinematicCue);
-  // Establish the view once per world, before its first paint. Subsequent
-  // simulation states never alter the camera; only explicit user input does.
-  if (newWorld || (viewChanged && st.view_player === null)) setMainLandmassView();
-  else if (viewChanged) setHomeView();
+  // Establish the view once per world, before its first paint. Fit the
+  // civilization(s) the observer actually asked to see into the unobstructed
+  // part of the map instead of pointing a fixed zoom at a landmass centroid.
+  // Subsequent simulation states never alter the camera; only explicit user
+  // input does.
+  if (newWorld || viewChanged) setObservedPlayersView();
   const errEl = document.getElementById("err");
   if (st.error) { errEl.textContent = st.error; errEl.style.display = "block";
     setTimeout(() => errEl.style.display = "none", 2500); }
@@ -8455,31 +8460,24 @@ function compactStat(value) {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
 
-// The world-leaders ribbon gives every stat the same narrow column, so a value
-// that renders wider than four glyphs used to clip to an ellipsis ("15…") —
-// the number went missing exactly once an empire got big enough for it to be
-// interesting. Spend the four glyphs from the top down: magnitude suffix first,
-// then whole digits, then a decimal only if there is still room for one.
+// Player standings are a glanceable scorecard, not an accounting ledger. Keep
+// every value to a whole number and abbreviate only once five digits would no
+// longer fit comfortably in its cell.
 function ribbonStat(value) {
-  const n = Number(value) || 0;
+  const n = Math.round(Number(value) || 0);
   const abs = Math.abs(n);
-  const [suffix, divisor] =
-    abs >= 1e9 ? ["b", 1e9] : abs >= 1e6 ? ["m", 1e6] : abs >= 1e3 ? ["k", 1e3] : ["", 1];
-  const scaled = n / divisor;
-  const room = 4 - suffix.length - (n < 0 ? 1 : 0) - String(Math.floor(Math.abs(scaled))).length;
-  const rounded = scaled.toFixed(room >= 2 && !Number.isInteger(scaled) ? 1 : 0);
-  // Rounding up can add a digit (9.96 → "10.0"), which spends a glyph on a
-  // decimal that is no longer telling anyone anything.
-  const digits = suffix ? rounded : rounded.replace(/\.0$/, "");
-  const text = `${digits}${suffix}`;
-  return text.length > 4 ? `${Math.round(scaled)}${suffix}` : text;
+  const [suffix, divisor] = abs >= 999500000 ? ["b", 1e9]
+    : abs >= 999500 ? ["m", 1e6]
+    : abs >= 10000 ? ["k", 1e3]
+    : ["", 1];
+  return `${Math.round(n / divisor)}${suffix}`;
 }
 
-// Tooltips have all the room in the world, so they carry the exact figure the
-// column had to abbreviate.
+// Tooltips retain thousands separators while following the HUD's whole-number
+// presentation.
 function exactStat(value) {
   const n = Number(value) || 0;
-  return (Math.round(n * 10) / 10).toLocaleString(undefined, {maximumFractionDigits: 1});
+  return Math.round(n).toLocaleString();
 }
 
 // Rebuilding the ribbon's markup on a frame where nothing in it changed
@@ -8511,7 +8509,7 @@ function drawPlayerHud() {
   const requestedHeight = 20 + rows * 36;
   const mapArea = document.getElementById("maparea");
   if (!HUD_LAYOUT.players) {
-    mapArea.style.setProperty("--player-hud-width", "330px");
+    mapArea.style.setProperty("--player-hud-width", "450px");
     mapArea.style.setProperty("--player-hud-height", `${requestedHeight}px`);
   }
   const rankById = new Map(majors.map((p, index) => [p.id, index + 1]));
@@ -9769,22 +9767,112 @@ function centerWorld(pos, immediate = false) {
   cam.x = x; cam.y = clampCameraY(y);
   cameraFlight = null; draw(); drawMini();
 }
-function homeAnchor() {
-  if (!state) return null;
-  const pid = state.player;
+function playerAnchor(pid) {
+  if (!state || !Number.isInteger(pid)) return null;
   return state.cities.find(c => c.owner === pid && c.is_capital) ||
          state.cities.find(c => c.owner === pid) ||
          state.units.find(u => u.owner === pid) || null;
 }
-function setHomeView() {
-  const own = homeAnchor();
-  if (!own) return;
-  cam.x = S * SQ3 * (own.pos[0] + own.pos[1] / 2);
-  cam.y = S * 1.5 * own.pos[1];
+function observedPlayerIds() {
+  if (!state) return [];
+  if (Number.isInteger(state.view_player)) return [state.view_player];
+  return state.players
+    .filter(player => !player.is_minor && !player.is_barbarian && player.alive)
+    .map(player => player.id);
 }
-function centerHome() {
-  const own = homeAnchor();
-  if (own) flyCameraTo(own.pos, Math.max(.9, Math.min(1.35, cam.scale)));
+function observedPlayerAnchors() {
+  return observedPlayerIds().map(playerAnchor).filter(Boolean);
+}
+
+// Put the initial subjects in a central stage that clears the fixed HUD. On a
+// desktop the minimap owns the lower-right corner, so the stage leans left; on
+// a phone it sits between the stacked top ribbons and the minimap below.
+function observedFrameRect() {
+  const width = Math.max(1, area.clientWidth), height = Math.max(1, area.clientHeight);
+  const narrow = width <= 720;
+  let left = narrow ? 28 : 40;
+  let right = width - (narrow || cinemaActive() || OVERLAY_VISIBILITY.minimap === false ? 28 : 242);
+  let top = cinemaActive()
+    ? Math.min(height * .36, Math.max(150, height * .18))
+    : (narrow
+      ? Math.min(height * .4, Math.max(222, height * .29))
+      : Math.min(height * .32, 148));
+  let bottom = height - (cinemaActive() ? Math.max(90, height * .1) : (narrow ? 218 : 72));
+  // Extremely small embedded viewers cannot honor every overlay reservation.
+  // Retain a useful stage around the center rather than returning an inverted
+  // rectangle and throwing the subjects off-screen.
+  if (right - left < 180) { left = 24; right = width - 24; }
+  if (bottom - top < 160) {
+    top = Math.max(48, height * .24);
+    bottom = Math.min(height - 48, height * .76);
+  }
+  return {left, right, top, bottom};
+}
+
+// A cylindrical map has no privileged left edge. Cut it at the largest empty
+// longitude between observed civilizations, producing the shortest span that
+// contains their anchors instead of sometimes fitting almost two worlds.
+function unwrapObservedPoints(anchors) {
+  const points = anchors.map(anchor => ({
+    x:S * SQ3 * (anchor.pos[0] + anchor.pos[1] / 2),
+    y:S * 1.5 * anchor.pos[1],
+  }));
+  if (!mapWrapsX() || points.length < 2) return points;
+  const width = WW();
+  const wrapped = points.map((point, index) => ({
+    x:((point.x % width) + width) % width, index,
+  })).sort((a, b) => a.x - b.x);
+  let gapIndex = wrapped.length - 1;
+  let largestGap = wrapped[0].x + width - wrapped[wrapped.length - 1].x;
+  for (let index = 0; index < wrapped.length - 1; index++) {
+    const gap = wrapped[index + 1].x - wrapped[index].x;
+    if (gap > largestGap) { largestGap = gap; gapIndex = index; }
+  }
+  const start = wrapped[(gapIndex + 1) % wrapped.length].x;
+  return points.map(point => {
+    let x = ((point.x % width) + width) % width;
+    if (x < start) x += width;
+    return {x, y:point.y};
+  });
+}
+
+function setObservedPlayersView() {
+  let anchors = observedPlayerAnchors();
+  if (!anchors.length) {
+    const fallback = mainLandmassAnchor();
+    if (!fallback) return;
+    anchors = [fallback];
+  }
+  const points = unwrapObservedPoints(anchors);
+  const projected = points.map(point => ({
+    x:COSR * point.x - SINR * point.y,
+    y:SINR * point.x + COSR * point.y,
+  }));
+  const xs = projected.map(point => point.x), ys = projected.map(point => point.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const frame = observedFrameRect();
+  const padding = Math.min(72, (frame.right - frame.left) * .12,
+                           (frame.bottom - frame.top) * .16);
+  const usableWidth = Math.max(90, frame.right - frame.left - padding * 2);
+  const usableHeight = Math.max(90, frame.bottom - frame.top - padding * 2);
+  const spanX = maxX - minX, spanY = (maxY - minY) * YS;
+  const fitX = spanX > 0 ? usableWidth / spanX : Infinity;
+  const fitY = spanY > 0 ? usableHeight / spanY : Infinity;
+  const maximum = anchors.length === 1 ? (cinemaActive() ? 1 : 1.12)
+                                       : (cinemaActive() ? .76 : .82);
+  const scale = Math.max(.2, Math.min(maximum, fitX, fitY));
+  const desiredX = (frame.left + frame.right) / 2;
+  const desiredY = (frame.top + frame.bottom) / 2;
+  const desiredViewX = (desiredX - area.clientWidth / 2) / scale;
+  const desiredViewY = (desiredY - area.clientHeight / 2) / (scale * YS);
+  const cameraViewX = (minX + maxX) / 2 - desiredViewX;
+  const cameraViewY = (minY + maxY) / 2 - desiredViewY;
+
+  cameraFlight = null; cameraZoom = null; clearCameraInertia();
+  cam.scale = scale;
+  cam.x = COSR * cameraViewX + SINR * cameraViewY;
+  cam.y = clampCameraY(-SINR * cameraViewX + COSR * cameraViewY, scale);
 }
 function actionViewingAnchor(focus) {
   if (!state || !Array.isArray(focus)) return focus;
@@ -9840,7 +9928,7 @@ function mainLandmassAnchor() {
     }
     if (component.length > main.length) main = component;
   }
-  if (!main.length) return homeAnchor();
+  if (!main.length) return observedPlayerAnchors()[0] || null;
 
   // Circular longitude keeps a continent crossing the map seam together.
   // Prefer the centroid of major-civilization activity on that continent: it
@@ -9917,9 +10005,7 @@ function setDirector(on) {
 function focusPlayer(pid) {
   if (!state) return;
   takeCameraControl();
-  const anchor = state.cities.find(c => c.owner === pid && c.is_capital) ||
-                 state.cities.find(c => c.owner === pid) ||
-                 state.units.find(u => u.owner === pid);
+  const anchor = playerAnchor(pid);
   if (!anchor) return;
   centerWorld(anchor.pos);
   if (SPEC && anchor.pop !== undefined) { selCity = anchor; drawSide(); }
@@ -9943,10 +10029,6 @@ area.addEventListener("wheel", ev => {
 }, { passive: false });
 document.getElementById("zin").onclick = () => { takeCameraControl(true); zoomAt(1.35); };
 document.getElementById("zout").onclick = () => { takeCameraControl(true); zoomAt(1 / 1.35); };
-document.getElementById("zhome").onclick = () => {
-  takeCameraControl();
-  centerHome();
-};
 
 // ---------------------------------------------------------------- input
 let dragState = null, dragMoved = false, rdrag = null, rdragTo = null;
@@ -10615,7 +10697,6 @@ async function startNewSimulation(mode, useDefaults = false) {
       body: JSON.stringify(payload) });
     if (next.error) throw new Error(next.error);
     render(next);
-    if (SPEC) centerMainLandmass(); else centerHome();
     setPace({paused: false});
     reportSpecStatus();
     scheduleSpec(state);
