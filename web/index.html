@@ -6612,6 +6612,13 @@ function draw() {
   const contested = (a, b) =>
     a !== b && a !== null && a !== undefined && b !== null && b !== undefined &&
     atWar.has(Math.min(a, b) + ":" + Math.max(a, b));
+  // Strategic view is explicitly the empire-reading view. Keep its frontier
+  // close to one useful screen-space weight at survey zoom, where an ordinary
+  // world-space stroke otherwise shrinks into the tile grid and route network.
+  // Its ribbon also sits a little farther inside the owning tiles so both
+  // civilizations keep a visible colour at a shared boundary.
+  const borderK = beau ? 1 : UI_K();
+  const borderInset = beau ? 1.5 : 2.4 * borderK;
   const borderSegs = new Map();
   const frontSegs = [];
   for (const t of tiles) {
@@ -6622,8 +6629,8 @@ function draw() {
       const n = nbrTile(t.pos, DIRS[i]);
       if (n && n.owner === t.owner) continue;
       const [c1, c2] = EDGE_CORNERS[i];
-      const [ax, ay] = corner(x, y, S - 1.5, c1);
-      const [bx, by] = corner(x, y, S - 1.5, c2);
+      const [ax, ay] = corner(x, y, S - borderInset, c1);
+      const [bx, by] = corner(x, y, S - borderInset, c2);
       let segs = borderSegs.get(t.owner);
       if (!segs) { segs = []; borderSegs.set(t.owner, segs); }
       segs.push([ax, ay, bx, by]);
@@ -6641,9 +6648,17 @@ function draw() {
   // into desert; whichever of the pair the ground steals, the other still
   // draws the line.
   for (const [owner, segs] of borderSegs) {
-    const passes = [[6.0, 0.25, pcol(owner)],   // soft glow
-                    [4.2, 0.9,  pcol2(owner)],  // casing
-                    [1.8, 0.95, pcol(owner)]];  // core
+    // Flat strategic terrain has a dark hex grid, roads, and compact symbols
+    // competing for the same pixels. A near-black keyline gives its border a
+    // stable silhouette before the two jersey colours identify the owner.
+    // Painted views retain their softer ribbon; terrain remains the subject.
+    const passes = beau
+      ? [[6.0, 0.25, pcol(owner)],   // soft glow
+         [4.2, 0.9,  pcol2(owner)],  // casing
+         [1.8, 0.95, pcol(owner)]]   // core
+      : [[7.2 * borderK, 0.78, "#090d12"],
+         [5.2 * borderK, 1.0,  pcol2(owner)],
+         [2.2 * borderK, 1.0,  pcol(owner)]];
     for (const [w, a, c] of passes) {
       cx.strokeStyle = c; cx.lineWidth = w; cx.globalAlpha = a;
       cx.beginPath();
@@ -6663,10 +6678,11 @@ function draw() {
       cx.stroke();
     };
     // A front holds its on-screen weight as the map zooms out, the way unit
-    // plates and status badges do. Ordinary borders deliberately do not — there
-    // are hundreds of them and scaling every one would smother the map — but
-    // there are only ever a few fronts, and survey zoom is exactly the range
-    // where you want to see the shape of a war rather than hunt for it.
+    // plates and status badges do. Painted-view borders deliberately do not —
+    // there are hundreds of them and scaling every one would smother the
+    // landscape — but there are only ever a few fronts, and survey zoom is
+    // exactly the range where you want to see the shape of a war rather than
+    // hunt for it. Strategic borders use their own bounded treatment above.
     const fk = UI_K();
     strokeFront(8.5 * fk, "#e0402f", 0.24, []);
     strokeFront(2.6 * fk, "#ff8452", 0.92, [5 * fk, 4 * fk]);
