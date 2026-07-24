@@ -7,6 +7,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const PROMOTION_MIN_MAPS: usize = 20;
 const Z_95: f64 = 1.959_963_984_540_054;
+/// Split a 5% two-sided error budget equally between promotion and retention.
+const ANYTIME_TAIL_ALPHA: f64 = 0.025;
+/// Fixed, pre-declared bets for a finite mixture e-process. At the parity null
+/// every paired-map score is in [0, 1], so each factor
+/// `1 + lambda * (score - 0.5)` is nonnegative and has expectation at most one
+/// for the challenger-side test. Negating the bet tests the incumbent side.
+const BET_LAMBDAS: [f64; 10] = [0.05, 0.10, 0.20, 0.35, 0.50, 0.70, 0.90, 1.15, 1.45, 1.80];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PromotionVerdict {
@@ -25,7 +32,18 @@ struct PairedInference {
     elo: f64,
     elo_low: f64,
     elo_high: f64,
+    anytime: AnytimeEvidence,
     verdict: PromotionVerdict,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AnytimeEvidence {
+    challenger_peak_e: f64,
+    incumbent_peak_e: f64,
+    challenger_p: f64,
+    incumbent_p: f64,
+    challenger_crossed_at: Option<usize>,
+    incumbent_crossed_at: Option<usize>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -54,6 +72,67 @@ fn game_score(winner: Option<usize>, seats: &[&str], challenger: &str) -> f64 {
         .map_or(0.5, |name| if *name == challenger { 1.0 } else { 0.0 })
 }
 
+fn log_mean_exp(values: &[f64]) -> f64 {
+    let largest = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    largest
+        + values
+            .iter()
+            .map(|value| (*value - largest).exp())
+            .sum::<f64>()
+            .ln()
+        - (values.len() as f64).ln()
+}
+
+/// Anytime-valid evidence against parity from a finite mixture of betting
+/// martingales. The process starts with one unit of wealth; Ville's inequality
+/// makes `1 / peak wealth` a valid upper bound on the probability of ever
+/// observing at least this much evidence under the null, even if the evaluator
+/// is rerun with longer prefixes and stopped when a result looks favorable.
+///
+/// Monitoring begins only at `PROMOTION_MIN_MAPS`, so a lucky sub-minimum prefix
+/// cannot earn a permanent promotion before the representativeness floor.
+fn anytime_evidence(scores: &[f64]) -> AnytimeEvidence {
+    let mut challenger_log_wealth = [0.0; BET_LAMBDAS.len()];
+    let mut incumbent_log_wealth = [0.0; BET_LAMBDAS.len()];
+    let mut challenger_peak_log_e = 0.0_f64;
+    let mut incumbent_peak_log_e = 0.0_f64;
+    let mut challenger_crossed_at = None;
+    let mut incumbent_crossed_at = None;
+    let crossing_log_e = -(ANYTIME_TAIL_ALPHA.ln());
+
+    for (index, raw_score) in scores.iter().enumerate() {
+        debug_assert!((0.0..=1.0).contains(raw_score));
+        let edge = raw_score.clamp(0.0, 1.0) - 0.5;
+        for (bet, lambda) in BET_LAMBDAS.iter().enumerate() {
+            challenger_log_wealth[bet] += (1.0 + lambda * edge).ln();
+            incumbent_log_wealth[bet] += (1.0 - lambda * edge).ln();
+        }
+        let maps = index + 1;
+        if maps < PROMOTION_MIN_MAPS {
+            continue;
+        }
+        let challenger_log_e = log_mean_exp(&challenger_log_wealth);
+        let incumbent_log_e = log_mean_exp(&incumbent_log_wealth);
+        challenger_peak_log_e = challenger_peak_log_e.max(challenger_log_e);
+        incumbent_peak_log_e = incumbent_peak_log_e.max(incumbent_log_e);
+        if challenger_crossed_at.is_none() && challenger_log_e >= crossing_log_e {
+            challenger_crossed_at = Some(maps);
+        }
+        if incumbent_crossed_at.is_none() && incumbent_log_e >= crossing_log_e {
+            incumbent_crossed_at = Some(maps);
+        }
+    }
+
+    AnytimeEvidence {
+        challenger_peak_e: challenger_peak_log_e.min(f64::MAX.ln()).exp(),
+        incumbent_peak_e: incumbent_peak_log_e.min(f64::MAX.ln()).exp(),
+        challenger_p: (-challenger_peak_log_e).exp().min(1.0),
+        incumbent_p: (-incumbent_peak_log_e).exp().min(1.0),
+        challenger_crossed_at,
+        incumbent_crossed_at,
+    }
+}
+
 /// A conservative Wilson score interval with one observation per mirrored map.
 ///
 /// Pair scores can be fractional because a split scores 0.5 and a game without
@@ -62,6 +141,7 @@ fn game_score(winner: Option<usize>, seats: &[&str], challenger: &str) -> f64 {
 /// never falsely counted as independent evidence.
 fn paired_inference(scores: &[f64]) -> PairedInference {
     let maps = scores.len();
+    let anytime = anytime_evidence(scores);
     if maps == 0 {
         return PairedInference {
             maps,
@@ -71,6 +151,7 @@ fn paired_inference(scores: &[f64]) -> PairedInference {
             elo: 0.0,
             elo_low: elo_edge(0.0),
             elo_high: elo_edge(1.0),
+            anytime,
             verdict: PromotionVerdict::Insufficient,
         };
     }
@@ -83,11 +164,17 @@ fn paired_inference(scores: &[f64]) -> PairedInference {
     let radius = Z_95 * ((score * (1.0 - score) / n + z2 / (4.0 * n * n)).sqrt()) / denominator;
     let low = (center - radius).clamp(0.0, 1.0);
     let high = (center + radius).clamp(0.0, 1.0);
+    let challenger_evidence = anytime.challenger_p <= ANYTIME_TAIL_ALPHA;
+    let incumbent_evidence = anytime.incumbent_p <= ANYTIME_TAIL_ALPHA;
     let verdict = if maps < PROMOTION_MIN_MAPS {
         PromotionVerdict::Insufficient
-    } else if low > 0.5 {
+    } else if challenger_evidence && incumbent_evidence {
+        // Strong evidence in both directions means the run is nonstationary
+        // or its map order is pathological, not that either AI is promotable.
+        PromotionVerdict::Inconclusive
+    } else if challenger_evidence && low > 0.5 {
         PromotionVerdict::Promote
-    } else if high < 0.5 {
+    } else if incumbent_evidence && high < 0.5 {
         PromotionVerdict::Retain
     } else {
         PromotionVerdict::Inconclusive
@@ -101,6 +188,7 @@ fn paired_inference(scores: &[f64]) -> PairedInference {
         elo: elo_edge(score),
         elo_low: elo_edge(low),
         elo_high: elo_edge(high),
+        anytime,
         verdict,
     }
 }
@@ -522,22 +610,41 @@ fn main() {
         "paired direction: {a}-favored {}, neutral {}, {b}-favored {}; exact two-sided sign p={sign_p:.4} ({directional_verdict})",
         directions.challenger_favored, directions.neutral, directions.incumbent_favored
     );
+    let challenger_crossing = inference
+        .anytime
+        .challenger_crossed_at
+        .map_or("not crossed".to_string(), |map| {
+            format!("crossed at map {map}")
+        });
+    let incumbent_crossing = inference
+        .anytime
+        .incumbent_crossed_at
+        .map_or("not crossed".to_string(), |map| {
+            format!("crossed at map {map}")
+        });
+    println!(
+        "anytime-valid betting evidence (2.5% per direction after {PROMOTION_MIN_MAPS} maps): {a} peak e={:.3e}, p<={:.4} ({challenger_crossing}); {b} peak e={:.3e}, p<={:.4} ({incumbent_crossing})",
+        inference.anytime.challenger_peak_e,
+        inference.anytime.challenger_p,
+        inference.anytime.incumbent_peak_e,
+        inference.anytime.incumbent_p,
+    );
     match inference.verdict {
         PromotionVerdict::Insufficient => println!(
             "promotion gate: INSUFFICIENT — {} independent maps; require at least {PROMOTION_MIN_MAPS}",
             inference.maps
         ),
         PromotionVerdict::Promote => println!(
-            "promotion gate: PASS — {a}'s 95% lower bound is above parity after {} maps",
-            inference.maps
+            "promotion gate: PASS — {a}'s effect interval and anytime-valid evidence both clear parity after {} maps",
+            inference.maps,
         ),
         PromotionVerdict::Retain => println!(
-            "promotion gate: RETAIN {b} — {a}'s 95% upper bound is below parity after {} maps",
-            inference.maps
+            "promotion gate: RETAIN {b} — {b}'s effect interval and anytime-valid evidence both clear parity after {} maps",
+            inference.maps,
         ),
         PromotionVerdict::Inconclusive => println!(
-            "promotion gate: INCONCLUSIVE — the 95% interval overlaps parity after {} maps",
-            inference.maps
+            "promotion gate: INCONCLUSIVE — effect size or anytime-valid evidence has not cleared parity after {} maps",
+            inference.maps,
         ),
     }
     println!("AI          seat-win% score cities pop tech civic dist build military gold");
@@ -652,6 +759,11 @@ mod tests {
         let scores = vec![1.0; 30];
         let result = paired_inference(&scores);
         assert!(result.low > 0.5);
+        assert!(result.anytime.challenger_p <= ANYTIME_TAIL_ALPHA);
+        assert_eq!(
+            result.anytime.challenger_crossed_at,
+            Some(PROMOTION_MIN_MAPS)
+        );
         assert_eq!(result.verdict, PromotionVerdict::Promote);
     }
 
@@ -659,6 +771,8 @@ mod tests {
     fn minimum_map_gate_overrides_an_early_clean_sweep() {
         let result = paired_inference(&vec![1.0; PROMOTION_MIN_MAPS - 1]);
         assert!(result.low > 0.5);
+        assert_eq!(result.anytime.challenger_peak_e, 1.0);
+        assert_eq!(result.anytime.challenger_p, 1.0);
         assert_eq!(result.verdict, PromotionVerdict::Insufficient);
     }
 
@@ -666,6 +780,7 @@ mod tests {
     fn decisive_incumbent_edge_retains_it() {
         let result = paired_inference(&vec![0.0; 30]);
         assert!(result.high < 0.5);
+        assert!(result.anytime.incumbent_p <= ANYTIME_TAIL_ALPHA);
         assert_eq!(result.verdict, PromotionVerdict::Retain);
     }
 
@@ -676,6 +791,46 @@ mod tests {
             .collect();
         let result = paired_inference(&scores);
         assert!(result.low < 0.5 && result.high > 0.5);
+        assert_eq!(result.anytime.challenger_p, 1.0);
+        assert_eq!(result.anytime.incumbent_p, 1.0);
+        assert_eq!(result.verdict, PromotionVerdict::Inconclusive);
+    }
+
+    #[test]
+    fn neutral_maps_neither_spend_nor_create_betting_evidence() {
+        let result = paired_inference(&vec![0.5; 100]);
+        assert_eq!(result.anytime.challenger_peak_e, 1.0);
+        assert_eq!(result.anytime.incumbent_peak_e, 1.0);
+        assert_eq!(result.anytime.challenger_p, 1.0);
+        assert_eq!(result.anytime.incumbent_p, 1.0);
+        assert_eq!(result.verdict, PromotionVerdict::Inconclusive);
+    }
+
+    #[test]
+    fn repeated_draw_mixed_edges_accumulate_bounded_score_evidence() {
+        let result = paired_inference(&vec![0.75; 80]);
+        assert!(result.anytime.challenger_p <= ANYTIME_TAIL_ALPHA);
+        assert_eq!(result.anytime.incumbent_p, 1.0);
+        assert_eq!(result.verdict, PromotionVerdict::Promote);
+    }
+
+    #[test]
+    fn subminimum_lucky_prefix_cannot_bank_a_later_promotion() {
+        let mut scores = vec![1.0; PROMOTION_MIN_MAPS / 2];
+        scores.extend(vec![0.0; PROMOTION_MIN_MAPS / 2]);
+        let result = paired_inference(&scores);
+        assert_eq!(result.anytime.challenger_crossed_at, None);
+        assert_eq!(result.anytime.challenger_p, 1.0);
+        assert_eq!(result.verdict, PromotionVerdict::Inconclusive);
+    }
+
+    #[test]
+    fn contradictory_anytime_crossings_flag_nonstationarity() {
+        let mut scores = vec![1.0; 30];
+        scores.extend(vec![0.0; 100]);
+        let result = paired_inference(&scores);
+        assert!(result.anytime.challenger_p <= ANYTIME_TAIL_ALPHA);
+        assert!(result.anytime.incumbent_p <= ANYTIME_TAIL_ALPHA);
         assert_eq!(result.verdict, PromotionVerdict::Inconclusive);
     }
 

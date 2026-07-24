@@ -454,3 +454,41 @@ Promotion policy is unchanged: it still requires the minimum map count and an
 effect-size lower bound above parity. The exact sign test is an orthogonal
 diagnostic for distinguishing a repeated paired direction from a noisy point
 estimate, not a license to promote on a small or practically tiny edge.
+
+## 2026-07-24 — anytime-valid promotion evidence
+
+The Wilson/Elo interval is a fixed-sample effect estimate. It remains useful,
+but repeatedly increasing `--pairs`, inspecting the result, and stopping on a
+favorable look invalidates a fixed-sample significance rule. That is exactly
+how AI development works: promising candidates receive more maps, weak ones
+stop early. The promotion gate now adds an anytime-valid betting e-process,
+following the bounded-mean confidence-sequence construction of
+[Waudby-Smith and Ramdas](https://arxiv.org/abs/2010.09686) and the
+time-uniform framework of
+[Howard et al.](https://arxiv.org/abs/1810.08240).
+
+Each mirrored map remains one bounded observation in `[0, 1]`, including
+quarter scores from win/draw combinations. A pre-declared finite mixture of
+positive bets tests a challenger edge; the symmetric negative bets test an
+incumbent edge. The evaluator reports peak e-values and Ville bounds
+`p <= 1 / peak_e`. Monitoring starts only at the existing 20-map floor, and a
+5% two-sided budget is split into 2.5% per direction. Promotion or retention
+now requires both:
+
+1. the current conservative Wilson effect interval clears 50%; and
+2. the corresponding anytime p-bound is at most 0.025.
+
+This protects arbitrary repeated looks at longer prefixes of the same seeded
+candidate run. It does not excuse testing many candidate implementations and
+publishing only the winner; candidate search still needs pre-declared
+development/holdout seeds. If both directional e-processes cross, the run is
+reported inconclusive because that pattern signals nonstationarity or a
+pathological map order. Neutral maps multiply wealth by one, so they neither
+manufacture nor erase directional evidence.
+
+End-to-end replay (`advanced basic --pairs 20 --turns 90 --seed 24000`) gave
+Advanced 25/40 game wins across 6 favored, 13 neutral, and 1 Basic-favored
+map. The fixed-sample outputs were 62.5% (Wilson 40.9%..80.0%, +89 Elo) and
+exact sign p=0.1250. The new process reported peak e=3.651, anytime p<=0.2739,
+no crossing, and `INCONCLUSIVE`—all three views correctly reject promotion
+from a suggestive but small 20-map result.
