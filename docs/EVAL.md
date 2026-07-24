@@ -285,3 +285,37 @@ which a learned component beats the scripted agent head-to-head, and it
 states the design rule plainly: give the net the decisions whose
 consequences it can actually observe, and let search or scripting own the
 ones it cannot.
+
+## 2026-07-24 — threat-aware macro routing
+
+`StrategicAi` had silently regressed behind its scripted parent. On 25 mirrored
+duel maps (`ai_eval strategic advanced --pairs 25 --seed 10000 --turns 180`),
+the original search layer won only **14/50 (28%)**. It still produced more
+Science and Production, but `advanced` won 32 religious games while the search
+agent finished 22 seats committed to Science. The cause was structural:
+30-turn rollouts modeled every rival as `BasicAi`, fallback evaluation used
+score share, and the next macro review could be 40 turns away from a sudden
+victory threat.
+
+The corrected router now:
+
+- rolls candidate lanes against `AdvancedAi`, so counterfactual opponents
+  exert the same victory pressure as the real benchmark;
+- interrupts periodic search on public 0–100 victory-race progress, with the
+  adaptive planner's 78% / 15-point margin and earlier whole-civilization
+  religious warning;
+- preserves invested Astrology/Holy Site/Prophet paths while a slot remains;
+- treats an enabled duel religious race as mandatory victory geometry: only
+  one foreign conversion is needed, so it commits while a Prophet is available
+  and stays committed after founding;
+- reports final explicit-target counts in `ai_eval`, making routing failures
+  visible beside wins and economic diagnostics.
+
+Same-seed result: **32/50 (64%)**, up 36 percentage points, with 30 religious
+wins. A disjoint 25-map holdout (`--seed 12000`) reproduced it at **31/50
+(62%)**. The duel prior is disabled in multiplayer: on 12 mirrored four-player
+maps (`--seed 11000`), the generalized changes raised game wins from **8/24
+(33.3%)** on unchanged mainline to **10/24 (41.7%)**, while StrategicAi kept
+its Production and Science advantages. These are promotion signals, not a
+claim of universal strength; the four-player sample should grow with the
+league archive.

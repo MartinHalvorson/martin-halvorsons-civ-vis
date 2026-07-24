@@ -39,13 +39,18 @@ struct Metrics {
     support_units: f64,
     missionaries: f64,
     victories: BTreeMap<String, usize>,
+    targets: BTreeMap<String, usize>,
 }
 
 impl Metrics {
-    fn record(&mut self, g: &Game, pid: usize, won: bool) {
+    fn record(&mut self, g: &Game, pid: usize, won: bool, target: Option<&str>) {
         let cities = g.player_city_ids(pid);
         self.games += 1;
         self.wins += won as usize;
+        *self
+            .targets
+            .entry(target.unwrap_or("adaptive").to_string())
+            .or_default() += 1;
         if won {
             *self
                 .victories
@@ -200,10 +205,11 @@ fn main() {
             // taking the evaluation down; only a lobby without the score
             // victory can produce one.
             for (pid, name) in seats.iter().enumerate() {
+                let target = ais[pid].plan_report().and_then(|plan| plan.victory_target);
                 totals
                     .get_mut(*name)
                     .unwrap()
-                    .record(&g, pid, g.winner == Some(pid));
+                    .record(&g, pid, g.winner == Some(pid), target);
             }
         }
     }
@@ -288,5 +294,9 @@ fn main() {
     println!("\nVictory types:");
     for name in [a, b] {
         println!("  {name:<11} {:?}", totals[name].victories);
+    }
+    println!("\nFinal explicit targets:");
+    for name in [a, b] {
+        println!("  {name:<11} {:?}", totals[name].targets);
     }
 }

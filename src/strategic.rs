@@ -2,13 +2,16 @@
 //!
 //! Every `review_every` turns the agent simulates committing to each victory
 //! lane for `horizon` rounds (itself as a lane-targeted AdvancedAi, rivals as
-//! fast scripted AIs) and adopts the lane with the best projected position —
-//! macro search applied to victory routing, generalizing the war-decision
+//! AdvancedAi opponents) and adopts the lane with the best projected position
+//! — macro search applied to victory routing, generalizing the war-decision
 //! rollouts `NeuralAi` proved. Positions are judged by the trained value net
-//! when `evolved/valuenet.json` exists, otherwise by score share.
-use crate::ai::{AdvancedAi, Ai, BasicAi, PlanReport, VictoryTarget, Weights};
+//! when `evolved/valuenet.json` exists, otherwise by score share. Public
+//! victory threats interrupt the periodic search before they can end the game,
+//! while irreversible Prophet investment and duel victory geometry supply
+//! priors that a short economic rollout cannot discover in time.
+use crate::ai::{AdvancedAi, Ai, PlanReport, VictoryTarget, Weights};
 use crate::evolve::features;
-use crate::game::{Action, Game};
+use crate::game::{Action, Game, Item};
 use crate::valuenet::ValueNet;
 
 pub struct StrategicAi {
@@ -75,6 +78,260 @@ impl StrategicAi {
         }
     }
 
+    fn target_enabled(g: &Game, target: VictoryTarget) -> bool {
+        match target {
+            VictoryTarget::Science => g.victory_conditions.science,
+            VictoryTarget::Culture => g.victory_conditions.culture,
+            VictoryTarget::Religion => g.victory_conditions.religious,
+            VictoryTarget::Diplomacy => g.victory_conditions.diplomatic,
+            VictoryTarget::Domination => g.victory_conditions.domination,
+            VictoryTarget::Score => g.victory_conditions.score,
+        }
+    }
+
+    /// Prophet slots are an irreversible global race. Once the opening book
+    /// has invested in Astrology, a Holy Site, or Prophet points, a 30-turn
+    /// score projection must not throw that option away while a slot remains.
+    fn viable_religious_commitment(g: &Game, pid: usize) -> bool {
+        let player = &g.players[pid];
+        if !g.victory_conditions.religious || player.religion.is_some() {
+            return false;
+        }
+        if player.prophet_pending {
+            return true;
+        }
+        let claimed = g.religions_founded()
+            + g.players
+                .iter()
+                .filter(|candidate| candidate.prophet_pending)
+                .count();
+        if claimed >= g.max_religions() {
+            return false;
+        }
+        let cities = g.player_city_ids(pid);
+        let holy_site = cities.iter().any(|city| {
+            g.cities[city].districts.contains_key("holy_site")
+                || matches!(
+                    g.cities[city].queue.first(),
+                    Some(Item::District { district, .. }) if district == "holy_site"
+                )
+        });
+        holy_site
+            || player.techs.contains("astrology")
+            || player.research.as_deref() == Some("astrology")
+            || player.gpp.get("prophet").copied().unwrap_or(0.0) > 0.0
+    }
+
+    /// A rival founding first does not close the religious race when this
+    /// empire can still claim another prophet slot and place a Holy Site.
+    fn religious_option_open(g: &Game, pid: usize) -> bool {
+        let player = &g.players[pid];
+        if !g.victory_conditions.religious || player.religion.is_some() {
+            return false;
+        }
+        let claimed = g.religions_founded()
+            + g.players
+                .iter()
+                .filter(|candidate| candidate.prophet_pending)
+                .count();
+        let cities = g.player_city_ids(pid);
+        claimed < g.max_religions()
+            && cities.len() >= 2
+            && cities.iter().any(|city| {
+                g.cities[city].districts.contains_key("holy_site")
+                    || matches!(
+                        g.cities[city].queue.first(),
+                        Some(Item::District { district, .. }) if district == "holy_site"
+                    )
+                    || !g.district_sites(*city, "holy_site").is_empty()
+            })
+    }
+
+    /// In a duel, Religious Victory needs only one foreign conversion. The
+    /// prophet race is therefore a must-contest game-ending objective, not an
+    /// optional yield specialization. Multiplayer keeps the normal search.
+    fn duel_religious_race(g: &Game, pid: usize) -> bool {
+        if !g.victory_conditions.religious {
+            return false;
+        }
+        let living = g
+            .players
+            .iter()
+            .filter(|player| player.alive && !player.is_minor && !player.is_barbarian)
+            .count();
+        if living != 2 {
+            return false;
+        }
+        if g.players[pid].religion.is_some() || g.players[pid].prophet_pending {
+            return true;
+        }
+        let claimed = g.religions_founded()
+            + g.players
+                .iter()
+                .filter(|candidate| candidate.prophet_pending)
+                .count();
+        claimed < g.max_religions()
+    }
+
+    /// Public victory-screen progress distilled to the same 0..100 scale for
+    /// every lane. This deliberately scores only concrete endgame progress;
+    /// the rollouts remain responsible for comparing ordinary development.
+    fn victory_progress(g: &Game, pid: usize, target: VictoryTarget) -> i32 {
+        let player = &g.players[pid];
+        let starting_majors: Vec<usize> = g
+            .players
+            .iter()
+            .filter(|candidate| !candidate.is_minor && !candidate.is_barbarian)
+            .map(|candidate| candidate.id)
+            .collect();
+        let living_majors: Vec<usize> = starting_majors
+            .iter()
+            .copied()
+            .filter(|candidate| g.players[*candidate].alive)
+            .collect();
+        match target {
+            VictoryTarget::Science => {
+                if player.science_projects.contains("exoplanet_expedition") {
+                    75 + (25.0 * player.exoplanet_distance / 50.0).clamp(0.0, 25.0) as i32
+                } else if player.science_projects.contains("launch_mars_colony") {
+                    65
+                } else if player.science_projects.contains("launch_moon_landing") {
+                    45
+                } else if player.science_projects.contains("launch_earth_satellite") {
+                    25
+                } else {
+                    0
+                }
+            }
+            VictoryTarget::Culture => {
+                let target = living_majors
+                    .iter()
+                    .filter(|other| **other != pid)
+                    .map(|other| g.domestic_tourists(*other))
+                    .max()
+                    .unwrap_or(1)
+                    .max(1);
+                (100 * g.foreign_tourists(pid) / target).clamp(0, 100) as i32
+            }
+            VictoryTarget::Religion => player.religion.as_ref().map_or(0, |religion| {
+                let converted = living_majors
+                    .iter()
+                    .filter(|other| {
+                        let cities = g.player_city_ids(**other);
+                        let following = cities
+                            .iter()
+                            .filter(|city| {
+                                g.city_religion(&g.cities[city]) == Some(religion.as_str())
+                            })
+                            .count();
+                        !cities.is_empty() && following * 2 > cities.len()
+                    })
+                    .count();
+                (100 * converted / living_majors.len().max(1)) as i32
+            }),
+            VictoryTarget::Diplomacy => (player.dvp * 5).clamp(0, 100) as i32,
+            VictoryTarget::Domination => {
+                let foreign_capitals = starting_majors
+                    .iter()
+                    .filter(|owner| **owner != pid)
+                    .count();
+                let controlled = g
+                    .cities
+                    .values()
+                    .filter(|city| {
+                        city.is_capital && city.original_owner != pid && city.owner == pid
+                    })
+                    .count();
+                (100 * controlled)
+                    .checked_div(foreign_capitals)
+                    .unwrap_or(0) as i32
+            }
+            VictoryTarget::Score => {
+                let leading = living_majors
+                    .iter()
+                    .map(|candidate| g.score(*candidate))
+                    .max();
+                if g.max_turns > 0
+                    && g.turn.saturating_mul(4) >= g.max_turns.saturating_mul(3)
+                    && leading == Some(g.score(pid))
+                {
+                    (40 + 60 * g.turn.min(g.max_turns) / g.max_turns) as i32
+                } else {
+                    0
+                }
+            }
+        }
+    }
+
+    /// A short economic rollout must not choose a prosperous losing line.
+    /// Interrupt it when public race state says a rival can end the game
+    /// before the next review. Religious progress advances in whole-civ jumps,
+    /// so it warns with two holdouts left and becomes unconditional at match
+    /// point; continuous races use the same 78% / 15-point urgency margin as
+    /// AdvancedAi's adaptive planner.
+    fn urgent_counter_target(&self, g: &Game, pid: usize) -> Option<VictoryTarget> {
+        let own_progress = VictoryTarget::ALL
+            .into_iter()
+            .filter(|target| Self::target_enabled(g, *target))
+            .map(|target| Self::victory_progress(g, pid, target))
+            .max()
+            .unwrap_or(0);
+        let mut threat: Option<(i32, usize, VictoryTarget)> = None;
+        for rival in g.players.iter().filter(|player| {
+            player.id != pid && player.alive && !player.is_minor && !player.is_barbarian
+        }) {
+            for target in VictoryTarget::ALL {
+                if !Self::target_enabled(g, target) {
+                    continue;
+                }
+                let progress = Self::victory_progress(g, rival.id, target);
+                let candidate = (progress, usize::MAX - rival.id, target);
+                if threat.as_ref().is_none_or(|best| {
+                    candidate.0 > best.0 || (candidate.0 == best.0 && candidate.1 > best.1)
+                }) {
+                    threat = Some(candidate);
+                }
+            }
+        }
+        let (progress, _, target) = threat?;
+        if target == VictoryTarget::Religion {
+            let living = g
+                .players
+                .iter()
+                .filter(|player| player.alive && !player.is_minor && !player.is_barbarian)
+                .count()
+                .max(1) as i32;
+            let match_point = 100 * living.saturating_sub(1) / living;
+            let early_warning = (100 * living.saturating_sub(2) / living)
+                .max(50)
+                .min(match_point);
+            if progress < early_warning || (progress < match_point && progress < own_progress + 15)
+            {
+                return None;
+            }
+            return Some(if g.players[pid].religion.is_some() {
+                VictoryTarget::Religion
+            } else if Self::viable_religious_commitment(g, pid)
+                || Self::religious_option_open(g, pid)
+            {
+                VictoryTarget::Religion
+            } else {
+                VictoryTarget::Domination
+            });
+        }
+        if progress < 78 || progress < own_progress + 15 {
+            return None;
+        }
+        Some(match target {
+            VictoryTarget::Culture => VictoryTarget::Culture,
+            VictoryTarget::Diplomacy => VictoryTarget::Diplomacy,
+            VictoryTarget::Science | VictoryTarget::Domination | VictoryTarget::Score => {
+                VictoryTarget::Domination
+            }
+            VictoryTarget::Religion => unreachable!(),
+        })
+    }
+
     /// Projected value of committing to `target` for `horizon` rounds.
     fn rollout(&self, g: &Game, pid: usize, target: VictoryTarget) -> f64 {
         let mut sim = g.clone();
@@ -88,7 +345,11 @@ impl StrategicAi {
                         target,
                     )) as Box<dyn Ai>
                 } else {
-                    Box::new(BasicAi::new()) as Box<dyn Ai>
+                    // The counterfactual must preserve the opponent class the
+                    // strategic layer is trying to beat. BasicAi understates
+                    // victory pressure (especially religion), so a locally
+                    // attractive Science rollout can be globally losing.
+                    Box::new(AdvancedAi::new()) as Box<dyn Ai>
                 }
             })
             .collect();
@@ -110,6 +371,15 @@ impl StrategicAi {
     /// Evaluate every victory lane and return the best. Deterministic:
     /// rollouts are seed-free clones and ties keep declaration order.
     pub fn review(&self, g: &Game, pid: usize) -> VictoryTarget {
+        if Self::duel_religious_race(g, pid) {
+            return VictoryTarget::Religion;
+        }
+        if let Some(counter) = self.urgent_counter_target(g, pid) {
+            return counter;
+        }
+        if Self::viable_religious_commitment(g, pid) {
+            return VictoryTarget::Religion;
+        }
         let mut best: Option<(f64, VictoryTarget)> = None;
         for target in VictoryTarget::ALL {
             let value = self.rollout(g, pid, target);
@@ -125,9 +395,14 @@ impl StrategicAi {
 impl Ai for StrategicAi {
     fn take_turn(&mut self, g: &mut Game, pid: usize) {
         let major = !g.players[pid].is_minor && !g.players[pid].is_barbarian;
-        if major && g.winner.is_none() && g.turn >= self.next_review {
+        let counter = major.then(|| self.urgent_counter_target(g, pid)).flatten();
+        let interrupted = counter.is_some_and(|target| self.inner.victory_target() != Some(target));
+        if major && g.winner.is_none() && (g.turn >= self.next_review || interrupted) {
             self.next_review = g.turn + self.review_every;
-            let target = self.review(g, pid);
+            // Public victory threats are cheap to inspect every turn and may
+            // end the game before the next expensive six-lane review. Reuse
+            // the already-computed counter rather than running rollouts.
+            let target = counter.unwrap_or_else(|| self.review(g, pid));
             if self.inner.victory_target() != Some(target) {
                 self.inner.retarget(target);
             }
@@ -147,8 +422,22 @@ impl Ai for StrategicAi {
 #[cfg(test)]
 mod tests {
     use super::StrategicAi;
-    use crate::ai::{run_game, Ai, BasicAi};
-    use crate::game::Game;
+    use crate::ai::{run_game, Ai, BasicAi, VictoryTarget};
+    use crate::game::{Action, Game};
+
+    fn found_capitals(game: &mut Game, players: usize) {
+        for pid in 0..players {
+            let settler = game
+                .player_unit_ids(pid)
+                .into_iter()
+                .find(|unit| game.units[unit].kind == "settler")
+                .unwrap();
+            game.current = pid;
+            game.apply(pid, &Action::FoundCity { unit: settler })
+                .unwrap();
+        }
+        game.current = 0;
+    }
 
     /// The review must pick a lane deterministically and commit it to the
     /// wrapped agent; a tiny horizon keeps the six rollouts fast.
@@ -172,6 +461,103 @@ mod tests {
         assert_eq!(strategic.current_target(), None);
         strategic.take_turn(&mut g, 0);
         assert_eq!(strategic.current_target(), Some(first));
+    }
+
+    #[test]
+    fn religious_match_point_interrupts_the_economic_rollouts() {
+        let mut game = Game::new_full(2, 24, 16, 22, 180, 0, false);
+        found_capitals(&mut game, 2);
+        game.players[0].religion = Some("Home Faith".to_string());
+        game.players[1].religion = Some("Rival Faith".to_string());
+        for (owner, religion) in [(0, "Home Faith"), (1, "Rival Faith")] {
+            let capital = game.player_city_ids(owner)[0];
+            game.cities
+                .get_mut(&capital)
+                .unwrap()
+                .pressure
+                .insert(religion.to_string(), 1_000.0);
+        }
+
+        let strategic = StrategicAi::new();
+        assert_eq!(
+            strategic.urgent_counter_target(&game, 0),
+            Some(VictoryTarget::Religion)
+        );
+        assert_eq!(strategic.review(&game, 0), VictoryTarget::Religion);
+
+        game.players[0].religion = None;
+        assert_eq!(
+            strategic.urgent_counter_target(&game, 0),
+            Some(VictoryTarget::Domination)
+        );
+    }
+
+    #[test]
+    fn strategic_review_preserves_a_viable_prophet_investment() {
+        let mut game = Game::new_full(3, 24, 16, 24, 180, 0, false);
+        found_capitals(&mut game, 3);
+        game.players[0].research = Some("astrology".to_string());
+
+        assert!(StrategicAi::viable_religious_commitment(&game, 0));
+        assert_eq!(StrategicAi::new().review(&game, 0), VictoryTarget::Religion);
+
+        game.victory_conditions.religious = false;
+        assert!(!StrategicAi::viable_religious_commitment(&game, 0));
+    }
+
+    #[test]
+    fn duel_treats_the_prophet_race_as_a_mandatory_objective() {
+        let mut game = Game::new_full(2, 24, 16, 26, 180, 0, false);
+        found_capitals(&mut game, 2);
+        let strategic = StrategicAi::new();
+
+        assert!(StrategicAi::duel_religious_race(&game, 0));
+        assert_eq!(strategic.review(&game, 0), VictoryTarget::Religion);
+
+        game.victory_conditions.religious = false;
+        assert!(!StrategicAi::duel_religious_race(&game, 0));
+    }
+
+    #[test]
+    fn imminent_victory_interrupts_before_the_periodic_review() {
+        let mut game = Game::new_full(2, 24, 16, 25, 180, 0, false);
+        found_capitals(&mut game, 2);
+        game.players[0].religion = Some("Home Faith".to_string());
+        game.players[1].religion = Some("Rival Faith".to_string());
+        for (owner, religion) in [(0, "Home Faith"), (1, "Rival Faith")] {
+            let capital = game.player_city_ids(owner)[0];
+            game.cities
+                .get_mut(&capital)
+                .unwrap()
+                .pressure
+                .insert(religion.to_string(), 1_000.0);
+        }
+
+        let mut strategic = StrategicAi::new();
+        strategic.inner.retarget(VictoryTarget::Science);
+        strategic.next_review = game.turn + 100;
+        strategic.take_turn(&mut game, 0);
+
+        assert_eq!(strategic.current_target(), Some(VictoryTarget::Religion));
+        assert!(strategic.next_review < game.turn + 100);
+    }
+
+    #[test]
+    fn imminent_space_race_routes_to_denial() {
+        let mut game = Game::new_full(3, 24, 16, 23, 300, 0, false);
+        found_capitals(&mut game, 3);
+        game.players[2].science_projects.extend([
+            "launch_earth_satellite".to_string(),
+            "launch_moon_landing".to_string(),
+            "launch_mars_colony".to_string(),
+            "exoplanet_expedition".to_string(),
+        ]);
+        game.players[2].exoplanet_distance = 42.0;
+
+        assert_eq!(
+            StrategicAi::new().urgent_counter_target(&game, 0),
+            Some(VictoryTarget::Domination)
+        );
     }
 
     /// Full smoke game: a strategic seat finishes a real game without
