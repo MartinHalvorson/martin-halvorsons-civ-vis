@@ -3,7 +3,7 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::sync::Arc;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashSet, VecDeque};
 
 use crate::rng::Rng;
 use crate::rules::{
@@ -21458,10 +21458,19 @@ impl Game {
         // targets, so the consistent hex-distance heuristic bounds the search
         // to roughly the corridor of the route itself, however long the
         // detour. Tuple ordering gives deterministic tie-breaking.
+        // Same A*, same tie-breaking, but the frontier's bookkeeping is two
+        // dense vectors indexed by the map's own tile numbering rather than
+        // hash maps keyed by a hex coordinate; and the whole search asks the
+        // unit how it moves once instead of at every neighbour it considers.
+        const UNREACHED: i32 = i32::MAX;
+        const NO_PARENT: u32 = u32::MAX;
+        let _memo = self.query_memo();
+        let tile_count = self.map.tiles.len();
+        let start_index = self.map.tiles.index_of(start)?;
         let mut frontier = BinaryHeap::with_capacity(128);
-        let mut distance: HashMap<Pos, i32> = HashMap::with_capacity(128);
-        let mut parent: HashMap<Pos, Pos> = HashMap::with_capacity(128);
-        distance.insert(start, 0);
+        let mut distance: Vec<i32> = vec![UNREACHED; tile_count];
+        let mut parent: Vec<u32> = vec![NO_PARENT; tile_count];
+        distance[start_index] = 0;
         // On equal f-scores, prefer the node furthest along the route. This
         // avoids breadth-first expansion of an entire open plain/ocean before
         // following one of several equally short paths to the destination.
@@ -21469,11 +21478,14 @@ impl Game {
 
         let mut goal = None;
         while let Some(Reverse((_, Reverse(traveled), cur))) = frontier.pop() {
-            if traveled != distance[&cur] {
+            let Some(cur_index) = self.map.tiles.index_of(cur) else {
+                continue;
+            };
+            if traveled != distance[cur_index] {
                 continue;
             }
             if self.wdist(cur, to) <= range {
-                goal = Some(cur);
+                goal = Some(cur_index);
                 break;
             }
             for n in self.nbrs(cur) {
@@ -21485,21 +21497,28 @@ impl Game {
                 if !enterable {
                     continue;
                 }
+                let Some(index) = self.map.tiles.index_of(n) else {
+                    continue;
+                };
                 let next_distance = traveled + 1;
-                if distance
-                    .get(&n)
-                    .map(|d| next_distance >= *d)
-                    .unwrap_or(false)
-                {
+                if next_distance >= distance[index] {
                     continue;
                 }
-                distance.insert(n, next_distance);
-                parent.insert(n, cur);
+                distance[index] = next_distance;
+                parent[index] = cur_index as u32;
                 let estimate = next_distance + (self.wdist(n, to) - range).max(0);
                 frontier.push(Reverse((estimate, Reverse(next_distance), n)));
             }
         }
-        Self::unwind_route(start, goal?, &parent)
+        let mut step = goal?;
+        while parent[step] != start_index as u32 {
+            let previous = parent[step];
+            if previous == NO_PARENT {
+                return None;
+            }
+            step = previous as usize;
+        }
+        Some(self.map.tiles.values().as_slice()[step].pos)
     }
 
     /// Terrain/domain legality for future route segments. Dynamic unit
@@ -21692,14 +21711,6 @@ impl Game {
             step = previous as usize;
         }
         Some(self.map.tiles.values().as_slice()[step].pos)
-    }
-
-    fn unwind_route(start: Pos, goal: Pos, parent: &HashMap<Pos, Pos>) -> Option<Pos> {
-        let mut step = goal;
-        while parent.get(&step).copied()? != start {
-            step = parent.get(&step).copied()?;
-        }
-        Some(step)
     }
 
     fn flow(&self, uid: u32, start: Pos, moves: f64) -> BTreeMap<Pos, f64> {
@@ -26643,7 +26654,7 @@ impl Game {
         };
         for uid in unit_order_ids {
             let u = self.units[&uid].clone();
-            let spec = self.rules.units[u.kind.as_str()].clone();
+            let spec = &self.rules.units[u.kind.as_str()];
             let embarked = self.is_embarked(&u);
             if self.noncombat_action_blocked_by_zoc(uid) {
                 continue;

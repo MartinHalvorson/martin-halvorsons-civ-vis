@@ -5189,7 +5189,8 @@ impl BasicAi {
             return acted;
         }
         let upos = g.units[&uid].pos;
-        let spec = g.rules.units[g.units[&uid].kind.as_str()].clone();
+        let rules = std::sync::Arc::clone(&g.rules);
+        let spec = &rules.units[g.units[&uid].kind.as_str()];
         let doctrine = Self::unit_doctrine(g, uid);
         let adjacent_enemy_settler = g.nbrs(upos).into_iter().any(|position| {
             g.units_at(position).into_iter().any(|other| {
