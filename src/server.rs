@@ -1,5 +1,5 @@
 //! Zero-dependency local HTTP server for the human-vs-AI browser GUI.
-//! Endpoints: GET / (page), GET /state, GET /save, GET /rules, GET /pedia,
+//! Endpoints: GET / (page), GET /cinematic3d.js, GET /state, GET /save, GET /rules, GET /pedia,
 //! POST /action, POST /step, POST /autoplay, POST /view,
 //! POST /spectator-status, POST /new, POST /supervisor-new.
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,6 +21,7 @@ use crate::setup::{
 use crate::Pos;
 
 const EMBEDDED_INDEX: &str = include_str!("../web/index.html");
+const EMBEDDED_CINEMATIC_3D: &str = include_str!("../web/cinematic3d.js");
 const EMBEDDED_TERRAIN_ATLAS: &[u8] = include_bytes!("../web/assets/terrain-atlas.png");
 const EMBEDDED_FEATURE_ATLAS: &[u8] = include_bytes!("../web/assets/feature-atlas.png");
 const EMBEDDED_ENVIRONMENT_FEATURE_ATLAS: &[u8] =
@@ -1350,6 +1351,11 @@ fn index_html() -> Vec<u8> {
     EMBEDDED_INDEX.as_bytes().to_vec()
 }
 
+fn cinematic_3d_js() -> Vec<u8> {
+    std::fs::read("web/cinematic3d.js")
+        .unwrap_or_else(|_| EMBEDDED_CINEMATIC_3D.as_bytes().to_vec())
+}
+
 fn terrain_atlas() -> Vec<u8> {
     std::fs::read("web/assets/terrain-atlas.png")
         .unwrap_or_else(|_| EMBEDDED_TERRAIN_ATLAS.to_vec())
@@ -1640,6 +1646,14 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
         ("GET", "/") | ("GET", "/index.html") => {
             respond(stream, "200 OK", "text/html; charset=utf-8", &index_html());
         }
+        ("GET", "/cinematic3d.js") => {
+            respond(
+                stream,
+                "200 OK",
+                "text/javascript; charset=utf-8",
+                &cinematic_3d_js(),
+            );
+        }
         ("GET", "/assets/terrain-atlas.png") => {
             respond(stream, "200 OK", "image/png", &terrain_atlas());
         }
@@ -1904,7 +1918,7 @@ fn handle(stream: &mut TcpStream, sh: &Shared) {
 mod tests {
     use super::{
         chronicle_world_events, new_game_params, request_path, seat_delay_ms, ChronicleSnapshot,
-        ChronicleState, Params, Session, EMBEDDED_INDEX,
+        ChronicleState, Params, Session, EMBEDDED_CINEMATIC_3D, EMBEDDED_INDEX,
     };
     use crate::game::{Action, VictoryConditions};
     use crate::setup::{GameSpeed, MapScript};
@@ -2356,8 +2370,58 @@ mod tests {
         assert!(EMBEDDED_INDEX.contains("cinema-finale"));
         assert!(EMBEDDED_INDEX.contains("DEFAULT_CINEMA_YS = 0.64"));
         assert!(EMBEDDED_INDEX.contains("function drawUnitFormationBadge"));
+        assert!(EMBEDDED_INDEX.contains("<script src=\"/cinematic3d.js\"></script>"));
+        assert!(EMBEDDED_INDEX.contains("globalThis.Cinematic3D?.supports(family)"));
+        assert!(EMBEDDED_INDEX.contains("Cinematic3D.draw({"));
         assert!(EMBEDDED_INDEX.contains("specular glints travel"));
         assert!(EMBEDDED_INDEX.contains("cx.lineDashOffset = dash.length"));
+    }
+
+    #[test]
+    fn cinematic_3d_module_covers_every_unit_renderer_family() {
+        for family in [
+            "embarked",
+            "naval",
+            "air",
+            "rotor",
+            "balloon",
+            "drone",
+            "robot",
+            "armor",
+            "gun",
+            "siege",
+            "mounted",
+            "religious",
+            "civilian",
+            "infantry",
+        ] {
+            assert!(
+                EMBEDDED_CINEMATIC_3D.contains(&format!("\"{family}\"")),
+                "cinematic 3D model family {family} is missing"
+            );
+        }
+        for behavior in [
+            "class Scene",
+            "this.items.sort((a, b) => a.depth - b.depth)",
+            "const direct = Math.max(0, dot(normal, this.light))",
+            "function human(scene, options",
+            "function drawMounted(scene, o)",
+            "function drawArmor(scene, o)",
+            "function drawRobot(scene, o)",
+            "function drawGun(scene, o)",
+            "function drawSiege(scene, o)",
+            "function drawNaval(scene, o, embarked = false)",
+            "function drawAir(scene, o)",
+            "function drawRotor(scene, o)",
+            "function drawBalloon(scene, o)",
+            "function drawDrone(scene, o)",
+            "global.Cinematic3D = Object.freeze",
+        ] {
+            assert!(
+                EMBEDDED_CINEMATIC_3D.contains(behavior),
+                "cinematic 3D behavior {behavior} is missing"
+            );
+        }
     }
 
     #[test]
