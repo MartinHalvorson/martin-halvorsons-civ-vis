@@ -1367,6 +1367,7 @@
     </div>
   </div>
 </div>
+<script src="/cinematic3d.js"></script>
 <script>
 "use strict";
 const SIDEBAR_SECTION_STATE_KEY = "civvis-sidebar-sections-v1";
@@ -4974,9 +4975,19 @@ function unitVisualFamily(u) {
   if (CIVILIAN_UNITS.has(k)) return "civilian";
   return "infantry";
 }
+function cinematicDepthSubject(u, now) {
+  if (u.cinematic_depth || u.hp === 0) return true;
+  if (cinematicSubjectUnitId() === u.id) return true;
+  if (u.pos && cinematicBattleRole(u)) return true;
+  if (anim.lunges.has(u.id)) return true;
+  return !!u.pos && anim.battles.some(battle =>
+    now >= battle.t0 - 520 && now <= battle.endsAt &&
+    (battle.attackerId === u.id || key(battle.target) === key(u.pos)));
+}
 function drawUnitChar(u, x, y, now, moving) {
   const fc = facing.get(u.id) || 1;
   const col = pcol(u.owner), dark = "#10151d", skin = "#e8c49b";
+  const k = u.type;
   const family = unitVisualFamily(u);
   const phase = now / 1000 + Number(u.id || 0) * 1.7;
   const bob = moving ? 0 : Math.sin(phase * (family === "naval" ? 2.1 : 1.4)) *
@@ -4990,14 +5001,30 @@ function drawUnitChar(u, x, y, now, moving) {
   cx.save();
   cx.translate(x, y);
   const closeScale = cinemaActive() && cam.scale >= 1.08 ? 1.1 : 1;
-  cx.scale(fc * closeScale, closeScale);
+  cx.scale(closeScale, closeScale);
+  // Close battle shots graduate from the compact vector token to a genuinely
+  // projected model: mesh faces are depth-sorted and lit, while the limbs,
+  // turrets, rotors and weapons receive this same move/attack phase. Every
+  // `unitVisualFamily` is implemented by the module; this guard preserves the
+  // zero-dependency vector fallback if an old cached page or constrained
+  // browser cannot load it.
+  const depthModel = cinemaActive() && MODE.fx && cam.scale >= 1.18 &&
+    (cinematicDepthSubject(u, now) || cam.scale >= 1.58) &&
+    !u.survey_count && globalThis.Cinematic3D?.supports(family);
+  if (depthModel && Cinematic3D.draw({
+      ctx:cx, family, type:k, color:col, skin, facing:fc,
+      time:now, seed:Number(u.id || 0), moving, action, scale:1.04,
+    })) {
+    cx.restore();
+    return;
+  }
+  cx.scale(fc, 1);
   if (cinemaActive()) {
     cx.shadowColor = "#02050888";
     cx.shadowBlur = 2.4;
     cx.shadowOffsetY = 1.4;
   }
   cx.lineWidth = 1.4; cx.strokeStyle = dark;
-  const k = u.type;
   if (family === "embarked") {
     // Embarked land units use a shared transport silhouette. Keeping their
     // land character here makes cavalry and civilians look like they are
@@ -5349,6 +5376,7 @@ function drawUnitChar(u, x, y, now, moving) {
 // scale in their silhouette and remain single models.
 function drawUnitCompany(u, x, y, now, moving) {
   const family = unitVisualFamily(u);
+  const depthFeatured = cinematicDepthSubject(u, now);
   const company = cinemaActive() && cam.scale >= 1.2 &&
     ["infantry", "mounted", "religious"].includes(family) && !u.survey_count;
   if (company) {
@@ -5356,7 +5384,8 @@ function drawUnitCompany(u, x, y, now, moving) {
       cx.save();
       cx.translate(x + ox, y + oy);
       cx.scale(scale, scale);
-      drawUnitChar({...u, id:Number(u.id || 0) + 100000 + i}, 0, 0,
+      drawUnitChar({...u, id:Number(u.id || 0) + 100000 + i,
+                    cinematic_depth:depthFeatured}, 0, 0,
                    now + i * 83, moving);
       cx.restore();
     }
