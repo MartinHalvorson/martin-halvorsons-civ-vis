@@ -354,6 +354,10 @@
   .victory-civ-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--civ); box-shadow: 0 0 5px color-mix(in srgb, var(--civ) 70%, transparent); }
   .victory-civ { overflow: hidden; color: #e6ede9; font-size: 10px; font-weight: 750; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
   .victory-value { color: #c2d0ca; font-size: 10px; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .victory-value small {
+    margin-right: 1px; color: #81948c; font-size: 6.5px; font-weight: 900;
+    letter-spacing: .04em; text-transform: uppercase;
+  }
   .victory-meter { height: 3px; margin: 0 0 0 9px; border-radius: 3px; }
   .diplomacy-ribbon { min-width: max-content; display: flex; align-items: stretch; gap: 4px; padding-bottom: 1px; }
   .diplomacy-card {
@@ -7935,6 +7939,26 @@ function victoryValue(victory, metric) {
   return compactStat(metric.points || 0);
 }
 
+// Science and culture split their meters into two ideas. Name the number in
+// the top tracker so a bare fraction does not leave the viewer guessing which
+// half it describes. Culture's target is already the actual victory threshold:
+// one more visiting tourist than the largest rival domestic-tourist total.
+function victoryTrackerValue(victory, metric) {
+  const labelled = (label, value) => `<small>${label}</small> ${value}`;
+  if (victory === "science") {
+    const launches = +metric.project_target || 4;
+    const done = +metric.projects || 0;
+    return done >= launches
+      ? labelled("Travel", `${compactStat(metric.distance)}/${compactStat(metric.distance_target)}ly`)
+      : labelled("Launches", `${done}/${launches}`);
+  }
+  if (victory === "culture") {
+    return labelled("Tourism",
+      `${compactStat(metric.tourists || 0)}/${compactStat(metric.target || 1)}`);
+  }
+  return victoryValue(victory, metric);
+}
+
 function victoryDescription(victory, metric) {
   if (victory === "science") {
     const tree = `${metric.techs || 0} of ${metric.tech_total || 0} technologies researched`;
@@ -8009,7 +8033,7 @@ function playerHudOverview() {
         const progress = Math.max(0, Math.min(100, +metric.progress || 0));
         return `<div class="victory-entry" style="--civ:${pcol(player.id)}" title="#${index + 1} ${player.civ}: ${victoryDescription(track.id, metric)}">` +
           `<div class="victory-line"><span class="victory-civ-dot"></span>` +
-          `<span class="victory-civ">${player.civ}</span><span class="victory-value">${victoryValue(track.id, metric)}</span></div>` +
+          `<span class="victory-civ">${player.civ}</span><span class="victory-value">${victoryTrackerValue(track.id, metric)}</span></div>` +
           victoryMeter(track.id, metric, progress) + `</div>`;
       }).join("") + `</div></section>`;
   }).join("");
