@@ -303,7 +303,8 @@ mod tests {
         let (gold, science) = (g.players[0].gold, g.players[0].research_progress);
         let culture = g.players[0].civic_progress;
         let faith = g.players[0].faith;
-        for _ in 0..(g.players.len() + 1) {
+        let world_turn = g.players.iter().filter(|player| player.alive).count() + 1;
+        for _ in 0..world_turn {
             let current = g.current;
             let _ = g.apply(current, &Action::EndTurn);
         }
@@ -314,7 +315,7 @@ mod tests {
         assert_eq!(g.players[0].faith, faith);
 
         // The waiting government takes power on the second turn.
-        for _ in 0..(g.players.len() + 1) {
+        for _ in 0..world_turn {
             let current = g.current;
             let _ = g.apply(current, &Action::EndTurn);
         }
@@ -475,7 +476,8 @@ mod tests {
         );
         g.apply(a, &Action::DeclareWar { player: b }).unwrap();
         // Run a full world turn so the upkeep pass sees the new stance.
-        for _ in 0..(g.players.len() + 1) {
+        let world_turn = g.players.iter().filter(|player| player.alive).count() + 1;
+        for _ in 0..world_turn {
             let current = g.current;
             let _ = g.apply(current, &Action::EndTurn);
         }
@@ -493,7 +495,7 @@ mod tests {
         );
         // Repeating the pass says nothing new.
         let before = g.events_for(a).len();
-        for _ in 0..(g.players.len() + 1) {
+        for _ in 0..world_turn {
             let current = g.current;
             let _ = g.apply(current, &Action::EndTurn);
         }
@@ -1223,8 +1225,8 @@ mod tests {
             },
         )
         .unwrap();
-        // Urban Planning's +1 Production, scaled by the Happy amenity band.
-        assert!((g.city_yields(cid).production - base_prod - 1.0 * 1.1).abs() < 1e-9);
+        // Urban Planning adds exactly 1 Production while the capital is Content.
+        assert!((g.city_yields(cid).production - base_prod - 1.0).abs() < 1e-9);
         // second economic card cannot fit (no wildcard slots in chiefdom)
         assert!(g
             .apply(
@@ -1272,7 +1274,8 @@ mod tests {
         .unwrap();
         assert!(g.in_anarchy(0));
         assert!(g.players[0].government.is_none());
-        for _ in 0..(2 * (g.players.len() + 1)) {
+        let world_turn = g.players.iter().filter(|player| player.alive).count() + 1;
+        for _ in 0..(2 * world_turn) {
             let current = g.current;
             let _ = g.apply(current, &Action::EndTurn);
         }
@@ -1637,11 +1640,11 @@ mod tests {
         g.apply(0, &Action::SendEnvoy { player: minor }).unwrap();
         assert_eq!(g.envoys_at(0, minor), 1);
         let after = g.city_yields(cap);
-        // Non-food envoy yields carry the Happy amenity band.
+        // The capital is Content, so non-food envoy yields are unscaled.
         let expected = if g.players[minor].civ == "Zanzibar" {
-            2.0 * 1.1
+            2.0
         } else {
-            1.1
+            1.0
         };
         let delta = after.total() - before.total();
         assert!(
@@ -1753,7 +1756,7 @@ mod tests {
             .buildings
             .push("shrine".to_string());
         let after = g.city_yields(cid).culture;
-        assert!((after - before - 2.0 * 1.1).abs() < 1e-9);
+        assert!((after - before - 2.0).abs() < 1e-9);
         // missionary spread converts a foreign city
         let religion = g.players[0].religion.clone().unwrap();
         let s1 = g
@@ -1852,7 +1855,7 @@ mod tests {
         round(&mut g);
         assert_eq!(g.players[0].gp_claimed.get("scientist"), Some(&1));
         assert_eq!(g.players[0].boosted_techs, boosts_before);
-        assert!((g.city_yields(cid).science - science_before - 1.0 * 1.1).abs() < 1e-9);
+        assert!((g.city_yields(cid).science - science_before - 1.0).abs() < 1e-9);
         // The global market advances to the next named Scientist rather than
         // fabricating a generic doubled threshold.
         assert_eq!(

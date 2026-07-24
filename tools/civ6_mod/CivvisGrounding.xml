@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Script-only context: the engine loads the same-named CivvisGrounding.lua
+     alongside it, and this mod draws nothing.
+
+     The element must be written open-and-close. A self-closing <Context/> is
+     well-formed XML but the UI loader does not bind a script to it, so the mod
+     applies cleanly, logs no error, and silently never runs. Every shipped and
+     workshop context in this install spells it this way. -->
+<Context>
+</Context>

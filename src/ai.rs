@@ -1305,7 +1305,10 @@ impl BasicAi {
 impl Ai for BasicAi {
     fn take_turn(&mut self, g: &mut Game, pid: usize) {
         self.minor = g.players[pid].is_minor;
-        self.barb = g.players[pid].is_barbarian;
+        // Free Cities are diplomatically hostile like barbarians, but unlike
+        // camps they keep developing their inherited cities and training
+        // defenders through the ordinary minor-civilization production AI.
+        self.barb = g.players[pid].is_barbarian && !g.players[pid].is_free_city;
         self.resolve_city_dispositions(g, pid, false, false);
         if !self.barb {
             if self.minor {

@@ -1585,6 +1585,33 @@ const NATURAL_WONDER_ATLAS = new Image();
 let NATURAL_WONDER_ATLAS_READY = false;
 NATURAL_WONDER_ATLAS.onload = () => { NATURAL_WONDER_ATLAS_READY = true; if (state) draw(); };
 NATURAL_WONDER_ATLAS.src = "/assets/natural-wonder-atlas.png";
+// World Wonders occupy one ordered atlas cell apiece. Keep this list in the
+// ruleset's era order: the first monuments read as ancient masonry and the last
+// row as the long-span, high-silhouette landmarks of the modern world. Three
+// cells at the end of the 4 x 14 atlas are deliberately empty.
+const WORLD_WONDER_IDS = [
+  "great_bath", "etemenanki", "hanging_gardens", "pyramids",
+  "stonehenge", "temple_artemis", "apadana", "colosseum",
+  "colossus", "great_library", "great_lighthouse", "jebel_barkal",
+  "machu_picchu", "mahabodhi_temple", "mausoleum_at_halicarnassus", "oracle",
+  "petra", "statue_of_zeus", "terracotta_army", "alhambra",
+  "angkor_wat", "chichen_itza", "hagia_sophia", "huey_teocalli",
+  "kilwa_kisiwani", "kotoku_in", "meenakshi_temple", "mont_st_michel",
+  "university_of_sankore", "casa_de_contratacion", "forbidden_city", "great_zimbabwe",
+  "orszaghaz", "oxford_university", "potala_palace", "st_basils_cathedral",
+  "taj_mahal", "torre_de_belem", "venetian_arsenal", "big_ben",
+  "bolshoi_theatre", "hermitage", "ruhr_valley", "statue_of_liberty",
+  "biosphere", "broadway", "cristo_redentor", "eiffel_tower",
+  "estadio_do_maracana", "golden_gate_bridge", "amundsen_scott_research_station",
+  "sydney_opera_house", "panama_canal"
+];
+const WORLD_WONDER_CELL = Object.fromEntries(
+  WORLD_WONDER_IDS.map((wonder, index) => [wonder, [index % 4, Math.floor(index / 4)]])
+);
+const WORLD_WONDER_ATLAS = new Image();
+let WORLD_WONDER_ATLAS_READY = false;
+WORLD_WONDER_ATLAS.onload = () => { WORLD_WONDER_ATLAS_READY = true; if (state) draw(); };
+WORLD_WONDER_ATLAS.src = "/assets/world-wonder-atlas.png";
 const MOUNTAIN_ATLAS = new Image();
 let MOUNTAIN_ATLAS_READY = false;
 MOUNTAIN_ATLAS.onload = () => { MOUNTAIN_ATLAS_READY = true; if (state) draw(); };
@@ -5818,8 +5845,37 @@ function drawDistrict(t, x, y) {
   }
 }
 
-// A wonder is the rarest thing that ever lands on a tile and it was drawing a
-// gold coin with a W on it. It gets a lit monument on a plinth instead.
+// The authored atlas keeps every completed World Wonder recognizable in the
+// one view meant to dwell on the landscape. These are upright billboards: the
+// ground has already been rotated and squashed by hexXY, while the architecture
+// keeps its height and receives a world-sun contact shadow. A two-pixel source
+// inset prevents texture filtering from borrowing a sliver of the next cell.
+function drawWorldWonderSprite(wonder, x, y) {
+  const cell = WORLD_WONDER_CELL[wonder];
+  if (!MODE.atmosphere || !WORLD_WONDER_ATLAS_READY || !cell) return false;
+  const columns = 4, rows = 14;
+  const cw = WORLD_WONDER_ATLAS.naturalWidth / columns;
+  const ch = WORLD_WONDER_ATLAS.naturalHeight / rows;
+  const inset = 2;
+  const size = S * 2.15;
+  cx.save();
+  cx.fillStyle = "rgba(0,0,0,.38)";
+  cx.beginPath();
+  cx.ellipse(x + SHX * S * .42, y + S * .19 + SHY * S * .34,
+             S * .7, S * .15, Math.atan2(SHY, SHX), 0, Math.PI * 2);
+  cx.fill();
+  cx.imageSmoothingEnabled = true;
+  cx.imageSmoothingQuality = "high";
+  cx.drawImage(WORLD_WONDER_ATLAS,
+               cell[0] * cw + inset, cell[1] * ch + inset,
+               cw - inset * 2, ch - inset * 2,
+               x - size / 2, y - size + S * .42, size, size);
+  cx.restore();
+  return true;
+}
+
+// Balanced and strategic views retain a compact, high-contrast monument. It is
+// also the resilient fallback while the cinematic atlas is still loading.
 function drawWonder(x, y) {
   cx.save();
   cx.lineJoin = "round";
@@ -6952,7 +7008,7 @@ function draw() {
       }
     }
     if (t.district) drawDistrict(t, x, y);
-    if (t.wonder) drawWonder(x, y);
+    if (t.wonder && !drawWorldWonderSprite(t.wonder, x, y)) drawWonder(x, y);
     if (SHOW_YIELDS && !t.district && !t.wonder) drawTileYields(t, x, y, workedSet.has(k));
   }
   // --- settler lens

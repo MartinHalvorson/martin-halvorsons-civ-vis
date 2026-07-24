@@ -433,7 +433,10 @@ mod tests {
         assert_eq!(game.map.tiles.len(), (size.width * size.height) as usize);
         assert_eq!(game.players.iter().filter(|p| !p.is_minor).count(), players);
         assert_eq!(
-            game.players.iter().filter(|p| p.is_minor).count(),
+            game.players
+                .iter()
+                .filter(|p| p.is_minor && !p.is_barbarian)
+                .count(),
             size.default_city_states
         );
         let wonders: BTreeSet<&str> = game

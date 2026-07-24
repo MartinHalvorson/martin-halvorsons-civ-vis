@@ -383,12 +383,19 @@ def runtime_matches(snapshot: str) -> bool:
 
 
 def promoted_runtime_id() -> str | None:
-    """Return the immutable source identity of the currently promoted binary."""
+    """Return the immutable identity of the currently promoted binary image.
+
+    Two commits can have the same runtime-input snapshot while still produce
+    different executables because the build embeds ``CIVVIS_COMMIT`` for the
+    live ``/status`` endpoint. Using the source snapshot here made the
+    supervisor skip the checkpoint restart for that newer promoted image and
+    left production reporting the previous commit until the game ended.
+    """
     try:
         metadata = json.loads(RUNTIME_METADATA.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    identity = metadata.get("source_snapshot")
+    identity = metadata.get("binary_sha256")
     return identity if isinstance(identity, str) and identity else None
 
 
@@ -1356,8 +1363,8 @@ def main() -> int:
                 log(f"a game already owns port {args.port}; taking it over")
             else:
                 log(f"port {args.port} is held by PID {listener}, which is not a game")
-    # An adopted binary cannot be proven current, so replace it at the first
-    # natural victory boundary after a verified runtime is available.
+    # An adopted binary cannot be proven current, so replace it from a safe
+    # checkpoint as soon as a verified runtime is available.
     running_runtime_id: str | None = None
     save_path = checkpoint_path(args.port)
     unavailable_since: float | None = None

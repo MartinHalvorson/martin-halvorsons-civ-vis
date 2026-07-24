@@ -65,7 +65,7 @@ fn named_scientists_grant_exact_buildings_science_and_era_boosts() {
     assert_eq!(game.players[0].boosted_techs, initial_boosts);
     assert!(
         (game.city_yields(city).science - initial_science
-            - (game.rules.buildings["library"].yields.science + 1.0) * 1.1)
+            - (game.rules.buildings["library"].yields.science + 1.0))
             .abs()
             < 1e-9
     );
@@ -78,7 +78,7 @@ fn named_scientists_grant_exact_buildings_science_and_era_boosts() {
     assert_eq!(game.players[0].boosted_techs, initial_boosts);
     assert!(
         (game.city_yields(city).science - before_newton
-            - (game.rules.buildings["university"].yields.science + 2.0) * 1.1)
+            - (game.rules.buildings["university"].yields.science + 2.0))
             .abs()
             < 1e-9
     );
@@ -97,7 +97,7 @@ fn named_scientists_grant_exact_buildings_science_and_era_boosts() {
     let boosts_before_einstein = game.players[0].boosted_techs.clone();
 
     assert_eq!(recruit_current_scientist(&mut game), "albert_einstein");
-    assert!((game.city_yields(city).science - before_einstein - 4.0 * 1.1).abs() < 1e-9);
+    assert!((game.city_yields(city).science - before_einstein - 4.0).abs() < 1e-9);
     let new_boosts: Vec<&String> = game.players[0]
         .boosted_techs
         .difference(&boosts_before_einstein)
@@ -111,7 +111,7 @@ fn named_scientists_grant_exact_buildings_science_and_era_boosts() {
         .unwrap()
         .pillaged_buildings
         .insert("research_lab".to_string());
-    assert!((active_science - game.city_yields(city).science - 7.0 * 1.1).abs() < 1e-9);
+    assert!((active_science - game.city_yields(city).science - 7.0).abs() < 1e-9);
     game.cities
         .get_mut(&city)
         .unwrap()
@@ -151,7 +151,7 @@ fn great_scientist_yield_bonuses_apply_to_unique_building_families() {
     game.players[0]
         .counters
         .remove("great_person:university_science");
-    assert!((with_bonuses - game.city_yields(city).science - 3.0 * 1.1).abs() < 1e-9);
+    assert!((with_bonuses - game.city_yields(city).science - 3.0).abs() < 1e-9);
 }
 
 #[test]
@@ -196,7 +196,7 @@ fn named_engineers_apply_exact_charges_wonder_gates_and_workshop_culture() {
     let culture_before = game.city_yields(city).culture;
     let boosts_before = game.players[0].boosted_techs.clone();
     assert_eq!(recruit_current_engineer(&mut game), "leonardo_da_vinci");
-    assert!((game.city_yields(city).culture - culture_before - 3.0 * 1.1).abs() < 1e-9);
+    assert!((game.city_yields(city).culture - culture_before - 3.0).abs() < 1e-9);
     let new_boosts: Vec<&String> = game.players[0]
         .boosted_techs
         .difference(&boosts_before)
@@ -397,10 +397,10 @@ fn named_merchants_annex_tiles_and_apply_exact_trade_and_oil_effects() {
         "the free Trader must obey civilian stacking around the activation city"
     );
     assert!(
-        (game.city_yields(foreign_city).gold - foreign_origin_gold - 2.0 * 1.1).abs() < 1e-9
+        (game.city_yields(foreign_city).gold - foreign_origin_gold - 2.0).abs() < 1e-9
     );
     assert!(
-        (game.city_yields(merchant_city).gold - merchant_destination_gold - 2.0 * 1.1).abs()
+        (game.city_yields(merchant_city).gold - merchant_destination_gold - 2.0).abs()
             < 1e-9
     );
 
@@ -441,7 +441,7 @@ fn named_merchants_annex_tiles_and_apply_exact_trade_and_oil_effects() {
     assert_eq!(game.trade_capacity(0), capacity_before_rockefeller);
     assert_eq!(game.players[0].gold, gold_before_rockefeller);
     assert!(
-        (game.city_yields(merchant_city).gold - rockefeller_route_gold - 4.0 * 1.1).abs() < 1e-9
+        (game.city_yields(merchant_city).gold - rockefeller_route_gold - 4.0).abs() < 1e-9
     );
     assert_eq!(
         game.trade_route_yields(0, foreign_city).gold - game.route_yields(foreign_city, false).gold,
@@ -570,8 +570,8 @@ fn named_admirals_apply_exact_unit_trade_building_and_flanking_effects() {
             - traders,
         1
     );
-    assert!((game.city_yields(foreign_city).gold - origin_gold - 2.0 * 1.1).abs() < 1e-9);
-    assert!((game.city_yields(admiral_city).gold - destination_gold - 2.0 * 1.1).abs() < 1e-9);
+    assert!((game.city_yields(foreign_city).gold - origin_gold - 2.0).abs() < 1e-9);
+    assert!((game.city_yields(admiral_city).gold - destination_gold - 2.0).abs() < 1e-9);
 
     let target = game
         .map

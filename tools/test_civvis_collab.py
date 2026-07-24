@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -242,6 +243,150 @@ class PolicyTests(unittest.TestCase):
         ]
         self.assertEqual(
             collab.required_check_gate_errors(runs, "2026-07-23T22:36:00Z"), []
+        )
+
+
+class ShipTests(unittest.TestCase):
+    def test_current_pr_names_the_branch_for_repo_scoped_gh(self):
+        branch = "agent/m/a/task-20260723T210500Z-a31f"
+        with (
+            patch.object(collab, "git", return_value=branch),
+            patch.object(collab, "gh_json", return_value={"number": 9}) as gh,
+        ):
+            self.assertEqual(collab.current_pr(Path.cwd()), {"number": 9})
+        self.assertEqual(gh.call_args.args[0][2], branch)
+
+    def test_pr_head_waits_for_the_pr_view_to_observe_the_pushed_ref(self):
+        branch = "agent/m/a/task-20260723T210500Z-a31f"
+        with (
+            patch.object(
+                collab,
+                "current_pr",
+                side_effect=[{"headRefOid": "old"}, {"headRefOid": "new"}],
+            ),
+            patch.object(collab, "remote_heads", return_value={branch: "new"}),
+            patch.object(collab.time, "sleep"),
+        ):
+            result = collab.wait_for_pr_head(
+                Path.cwd(),
+                branch,
+                "new",
+                deadline=collab.time.monotonic() + 1,
+                poll_seconds=0,
+            )
+        self.assertEqual(result["headRefOid"], "new")
+
+    def test_ship_requires_a_finished_summary_and_every_checkbox(self):
+        draft = {
+            "state": "OPEN",
+            "headRefName": "agent/m/a/task-20260723T210500Z-a31f",
+            "body": """## What changed
+
+Draft claim; implementation is in progress.
+
+## Validation
+
+- [ ] Tests
+""",
+        }
+        errors = collab.ship_pr_errors(draft, draft["headRefName"])
+        self.assertTrue(any("checkbox" in error for error in errors))
+        self.assertTrue(any("What changed" in error for error in errors))
+
+    def test_ship_accepts_a_documented_validated_feature(self):
+        finished = {
+            "state": "OPEN",
+            "headRefName": "agent/m/a/task-20260723T210500Z-a31f",
+            "body": """## What changed
+
+Added the fast shipping path.
+
+## Validation
+
+- [x] Tests
+""",
+        }
+        self.assertEqual(
+            collab.ship_pr_errors(finished, finished["headRefName"]), []
+        )
+
+    def test_required_checks_use_the_newest_run_for_each_name(self):
+        rows = [
+            {
+                "name": "cargo-test",
+                "startedAt": "2026-07-23T22:30:00Z",
+                "status": "COMPLETED",
+                "conclusion": "FAILURE",
+            },
+            {
+                "name": "cargo-test",
+                "startedAt": "2026-07-23T22:35:00Z",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            },
+            {
+                "name": "collaboration-policy",
+                "startedAt": "2026-07-23T22:35:01Z",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            },
+        ]
+        self.assertEqual(collab.required_check_state(rows), ("success", []))
+
+    def test_ready_transition_does_not_reuse_an_old_draft_policy_check(self):
+        rows = [
+            {
+                "name": "cargo-test",
+                "startedAt": "2026-07-23T22:35:00Z",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            },
+            {
+                "name": "collaboration-policy",
+                "startedAt": "2026-07-23T22:34:00Z",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            },
+        ]
+        self.assertEqual(
+            collab.required_check_state(
+                rows,
+                minimum_started={"collaboration-policy": "2026-07-23T22:35:00Z"},
+            ),
+            ("pending", ["collaboration-policy"]),
+        )
+
+    def test_pending_and_failed_checks_are_distinct(self):
+        pending = [
+            {
+                "name": "cargo-test",
+                "startedAt": "2026-07-23T22:35:00Z",
+                "status": "IN_PROGRESS",
+                "conclusion": "",
+            }
+        ]
+        self.assertEqual(
+            collab.required_check_state(pending),
+            ("pending", ["cargo-test", "collaboration-policy"]),
+        )
+        failed = pending + [
+            {
+                "name": "collaboration-policy",
+                "startedAt": "2026-07-23T22:35:01Z",
+                "status": "COMPLETED",
+                "conclusion": "FAILURE",
+            }
+        ]
+        self.assertEqual(
+            collab.required_check_state(failed),
+            ("failed", ["collaboration-policy"]),
+        )
+
+    def test_exact_live_revision_is_accepted_without_git_lookup(self):
+        self.assertTrue(
+            collab.deployed_commit_covers(
+                Path.cwd(), "abc1234", "abc1234567890"
+            )
         )
 
 

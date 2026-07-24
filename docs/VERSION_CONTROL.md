@@ -218,6 +218,29 @@ Also run the soak validation required by `CONTRIBUTING.md` for engine changes.
 Record exact commands and results in the PR. CI is a required independent gate,
 not a substitute for focused local tests.
 
+### Ship completed work immediately
+
+After the feature works and the PR body accurately records its summary and
+completed validation, do not leave it in draft for a person or another agent to
+notice later. Run this from the task worktree:
+
+```bash
+python3 tools/civvis_collab.py ship
+```
+
+`ship` is the completion boundary. It pushes the finished commit, marks the PR
+ready, waits for `cargo-test` and `collaboration-policy`, and squash-merges as
+soon as both are green. If another feature reaches `main` while CI is running,
+it merges that new trunk into the task, reruns `cargo test --release --locked`,
+pushes the updated head, and waits for the new green result. It never invents a
+summary, checks validation boxes, resolves conflicts, or accepts a failed gate.
+
+On a host running the production spectator, `ship` then watches `/status` until
+the merged revision is actually serving. Other hosts stop after confirming the
+merge. The normal target is therefore roughly one CI run (currently about five
+minutes) from the final push to `main`, followed by the spectator's background
+build and checkpointed live cutover.
+
 Use squash merge only. The squash commit is the atomic unit integrated into
 `main`; intermediate checkpoints and merge-from-main commits remain out of the
 trunk history. Delete the remote branch after merge. Then remove the worktree
@@ -244,7 +267,8 @@ ruleset:
 - block force-pushes and branch deletion;
 - allow squash merge only;
 - automatically delete merged branches;
-- optionally enable auto-merge after the required gates pass.
+- enable auto-merge after the required gates pass (the `ship` command also
+  waits and merges explicitly, so it works before that owner setting is fixed).
 
 Both `cargo-test` and `collaboration-policy` are required checks. The latter
 rejects ambiguous branch names, missing or mismatched machine/agent identity,

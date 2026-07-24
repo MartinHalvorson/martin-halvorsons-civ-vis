@@ -398,7 +398,9 @@ fn obs_impl(g: &Game, pid: usize, omniscient: bool, interactive: bool) -> Value 
                 })),
                 "opinion_of_me": round1(g.agenda_opinion(o.id, pid)),
                 "alive": o.alive,
-                "is_minor": o.is_minor, "is_barbarian": o.is_barbarian,
+                "is_minor": o.is_minor,
+                "is_barbarian": o.is_barbarian,
+                "is_free_city": o.is_free_city,
                 "cs_type": if o.is_minor && !o.is_barbarian {
                     Some(Game::cs_type(&o.civ))
                 } else {
@@ -937,7 +939,10 @@ fn live_city_json(g: &Game, pid: usize, city: &City, omniscient: bool) -> Value 
             .map(|tile| json!([tile.0, tile.1])).collect::<Vec<_>>(),
         "yields": yields_json(&yields),
         "housing": g.city_housing(city),
+        "amenities": g.city_amenities(city),
+        "amenities_required": Game::city_amenities_required(city),
         "amenity_surplus": g.city_amenity_surplus(city),
+        "happiness": g.city_happiness(city),
         "power_demand": g.city_power_demand(city),
         "power_supply": g.city_power_supply(city),
         "powered": g.city_is_powered(city),
@@ -948,6 +953,9 @@ fn live_city_json(g: &Game, pid: usize, city: &City, omniscient: bool) -> Value 
             .map(|item| g.item_cost_for_city(city.owner, city.id, item)),
         "can_strike": g.city_can_strike(city),
         "loyalty": round1(city.loyalty),
+        "loyalty_per_turn": round1(g.city_loyalty_per_turn(city)),
+        "loyalty_state": Game::loyalty_state(city.loyalty),
+        "free_city": g.players[city.owner].is_free_city,
         "governor": g.players[city.owner].governors.contains(&city.id),
         "citizens": {
             "focus": citizens.strategy.focus,
@@ -1014,7 +1022,16 @@ mod tests {
 
     #[test]
     fn observation_exposes_compact_hud_and_victory_race_metrics() {
-        let game = Game::new_full(2, 20, 14, 81_004, 120, 1, false);
+        let mut game = Game::new_full(2, 20, 14, 81_004, 120, 1, false);
+        let capital_position = game
+            .player_unit_ids(0)
+            .into_iter()
+            .find_map(|unit| {
+                let unit = &game.units[&unit];
+                (unit.kind == "settler").then_some(unit.pos)
+            })
+            .unwrap();
+        game.found_city_for(0, capital_position, None);
         let observed = observation_spectator(&game, 0);
         assert_eq!(observed["max_turns"], serde_json::json!(120));
 
@@ -1030,6 +1047,42 @@ mod tests {
         );
         assert!(player["suzerain_count"].is_number());
         assert!(player["wonder_count"].is_number());
+
+        let free_cities = observed["players"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|player| player["is_free_city"] == serde_json::json!(true))
+            .unwrap();
+        assert_eq!(free_cities["alive"], serde_json::json!(false));
+
+        let city_id = game.player_city_ids(0)[0];
+        let source_city = &game.cities[&city_id];
+        let city = observed["cities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|city| city["id"] == serde_json::json!(city_id))
+            .unwrap();
+        assert_eq!(
+            city["amenities"],
+            serde_json::json!(game.city_amenities(source_city))
+        );
+        assert_eq!(
+            city["amenities_required"],
+            serde_json::json!(Game::city_amenities_required(source_city))
+        );
+        assert_eq!(
+            city["amenity_surplus"],
+            serde_json::json!(game.city_amenity_surplus(source_city))
+        );
+        assert_eq!(
+            city["happiness"],
+            serde_json::json!(game.city_happiness(source_city))
+        );
+        assert!(city["loyalty_per_turn"].is_number());
+        assert!(city["loyalty_state"].is_string());
+        assert_eq!(city["free_city"], serde_json::json!(false));
 
         let victories = player["victories"].as_object().unwrap();
         for victory in [
