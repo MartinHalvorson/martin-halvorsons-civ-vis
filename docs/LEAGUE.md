@@ -39,9 +39,10 @@ record, birth round, status.
 ## Rating: Glicko-2, rounds as rating periods
 
 Each round schedules `--games` tables of `--players` by dealing shuffled
-passes over the active roster, so everyone plays a near-equal amount. A
-finished game decomposes into pairwise win/loss results by placement
-(winner first, then score), and the whole round updates at once as one
+passes over the active roster, so everyone plays a near-equal amount. A batch
+league game decomposes into pairwise results by placement: equal engine scores
+are draws, while a declared victory always outranks score. The whole round
+updates at once as one
 Glicko-2 rating period (start 1500, RD 350, vol 0.06, tau 0.5; the
 implementation reproduces the worked example in Glickman's paper — see
 `league::tests`). Glicko-2 rather than Elo because the roster churns:
@@ -53,6 +54,15 @@ ratings (there is a test for byte-identical leagues at different job
 counts). A live server rating one finished game uses the same code with
 idle ageing switched off — see "Watching players in the game HUD".
 
+The league audits its own forecasts rather than assuming a lower RD means
+well-calibrated probabilities. Every non-self pair records a symmetric
+pre-game expectation that includes both players' RDs, then accumulates Brier
+score and log loss against the actual win/draw/loss. Cumulative figures appear
+in `league.json` and the standings; `calibration.csv` records both the current
+period and cumulative metrics. Lower is better for both. Old snapshots begin
+with an empty audit and measure forward, because reconstructing predictions
+from final ratings would leak future results.
+
 ## Civ-specific ratings
 
 Not every civ wants to play the same way, so besides its overall rating
@@ -60,9 +70,12 @@ every strategy keeps a **per-civ Glicko table** (`civ_elo`): its skill
 specifically when drawing Rome, Egypt, ... (civs are fixed per seat in
 `Game::new`, so every league game feeds both tables). Opponents are
 measured by their global rating, which keeps civ numbers on the overall
-scale. Civ tables are sparse — they update only in periods actually
-played — and a table needs 5 games before it outranks the global rating
-for display and seating.
+scale. Civ tables are sparse — they update only in periods actually played —
+and a new table uses the strategy's current global rating as its prior, with
+an additional 200 RD for the unknown strategy×civilization effect. A table
+needs 5 games before it outranks the global rating for display and seating.
+This avoids pretending an established 1800 strategy is a fresh 1500 player
+merely because it drew a civilization it has not played before.
 
 - `civvis league --civ Rome` — who plays Rome best, ranked by Rome elo.
 - `civvis league --civs` — each civ's current champion strategy.
@@ -92,8 +105,9 @@ not have entered it, and ageing them per game would pin the roster at
 maximum uncertainty within an afternoon. The roster is re-read from disk
 at the moment of recording and seats are matched by strategy *name*, so
 a game long enough to outlive a concurrent update writes its result on
-top rather than reverting it. Results also append to `matches.csv` and
-`ratings.csv` beside `league.json`.
+top rather than reverting it. Results also append to `matches.csv`,
+`ratings.csv`, and `calibration.csv` beside `league.json`. The live-server API
+supplies a strict placement list, so only batch rounds can retain score ties.
 
 A snapshot of a finished league lives in the repo at `data/league/`
 (see its README for provenance), so any checkout — including other
@@ -111,13 +125,16 @@ league instead.
 
 Every `--evolve-every` rounds (default 4):
 
-- **Breed** `max(1, --pop / 4)` offspring. Parents are drawn from the
-  top-rated half of genome-carrying strategies; a child is a uniform
+- **Breed** `max(1, --pop / 4)` offspring. Parents are drawn from the top
+  half of genome-carrying strategies by conservative 95% skill
+  (`rating - 1.96 × RD`), so a noisy newcomer does not displace a proven
+  parent on point estimate alone. A child is a uniform
   crossover of its parents' weights plus bounded mutation (the same
   operators `civvis evolve` uses), and mostly inherits a parent's victory
   lane (with some exploration). Offspring enter at 1500 ± 350 and must
   earn their place.
-- **Retire** the lowest-rated strategies until the active roster is back
+- **Retire** strategies with the lowest optimistic 95% bound
+  (`rating + 1.96 × RD`) until the active roster is back
   under `--pop`, but only with evidence: never anchors, never anyone with
   fewer than 20 games or RD above 110. Retired strategies keep their
   history in the roster; only scheduling stops.
@@ -133,6 +150,8 @@ hundreds of rounds even after every founder has been replaced.
   of truth; delete it to start a fresh league.
 - `ratings.csv` — per-round rating history of active strategies (for
   plotting progress over time).
+- `calibration.csv` — per-round and cumulative pairwise prediction count,
+  Brier score, and log loss.
 - `matches.csv` — every game: round, seed, end turn, victory type,
   placements.
 

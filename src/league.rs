@@ -36,6 +36,12 @@ const BASE_VOL: f64 = 0.06;
 /// System constant: how much volatility can move per period. 0.5 is the
 /// conservative end of Glickman's recommended 0.3..1.2.
 const TAU: f64 = 0.5;
+/// Selection uses a two-sided 95% confidence bound rather than treating a
+/// noisy point estimate as settled skill.
+const SELECTION_Z: f64 = 1.96;
+/// A civilization-specific rating starts at the strategy's global strength,
+/// with extra uncertainty for the unmeasured strategy x civilization effect.
+const CIV_EFFECT_RD: f64 = 200.0;
 /// Retirement needs evidence: this many games and the deviation below this
 /// bound, so an unlucky newcomer is never culled on noise.
 const MIN_GAMES_TO_RETIRE: u32 = 20;
@@ -83,6 +89,40 @@ impl Default for CivRating {
 /// A civ table needs this many games before its number outranks the
 /// global rating for display and seating decisions.
 pub const CIV_ELO_MIN_GAMES: u32 = 5;
+
+/// Online calibration audit for the rating system's pairwise predictions.
+/// Sums, rather than rounded averages, keep the checkpoint lossless.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Calibration {
+    pub comparisons: u64,
+    pub brier_sum: f64,
+    pub log_loss_sum: f64,
+}
+
+impl Calibration {
+    fn record(&mut self, predicted: f64, actual: f64) {
+        let predicted = predicted.clamp(1e-12, 1.0 - 1e-12);
+        self.comparisons = self.comparisons.saturating_add(1);
+        self.brier_sum += (predicted - actual) * (predicted - actual);
+        self.log_loss_sum -= actual * predicted.ln() + (1.0 - actual) * (1.0 - predicted).ln();
+    }
+
+    pub fn brier(&self) -> f64 {
+        self.brier_sum / self.comparisons.max(1) as f64
+    }
+
+    pub fn log_loss(&self) -> f64 {
+        self.log_loss_sum / self.comparisons.max(1) as f64
+    }
+
+    fn since(&self, earlier: &Calibration) -> Calibration {
+        Calibration {
+            comparisons: self.comparisons.saturating_sub(earlier.comparisons),
+            brier_sum: self.brier_sum - earlier.brier_sum,
+            log_loss_sum: self.log_loss_sum - earlier.log_loss_sum,
+        }
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Strategy {
@@ -151,6 +191,10 @@ impl Strategy {
 pub struct League {
     pub round: u32,
     pub strategies: Vec<Strategy>,
+    /// Predictive quality accumulated from games rated by this build. Older
+    /// snapshots load with an empty audit and begin measuring forward.
+    #[serde(default)]
+    pub calibration: Calibration,
 }
 
 impl League {
@@ -228,6 +272,33 @@ fn g(phi: f64) -> f64 {
 
 fn expect(mu: f64, mu_j: f64, phi_j: f64) -> f64 {
     1.0 / (1.0 + (-g(phi_j) * (mu - mu_j)).exp())
+}
+
+/// Symmetric pre-game expectation used to audit predictions. Glicko's update
+/// equation conditions on the opponent's RD; a matchup forecast must include
+/// uncertainty in both players or swapping their order would change it.
+fn matchup_expectation(a: Glicko, b: Glicko) -> f64 {
+    let combined_phi = (a.phi * a.phi + b.phi * b.phi).sqrt();
+    1.0 / (1.0 + (-g(combined_phi) * (a.mu - b.mu)).exp())
+}
+
+fn civ_prior(global: Glicko) -> CivRating {
+    let effect_phi = CIV_EFFECT_RD / SCALE;
+    CivRating {
+        rating: BASE_RATING + SCALE * global.mu,
+        rd: (SCALE * (global.phi * global.phi + effect_phi * effect_phi).sqrt()).min(BASE_RD),
+        vol: global.sigma,
+        games: 0,
+        wins: 0,
+    }
+}
+
+fn lower_confidence(s: &Strategy) -> f64 {
+    s.rating - SELECTION_Z * s.rd
+}
+
+fn upper_confidence(s: &Strategy) -> f64 {
+    s.rating + SELECTION_Z * s.rd
 }
 
 /// One rating period for one player. `results` are (opponent, score) with
@@ -484,6 +555,7 @@ fn seed_league(dir: &str) -> League {
     let mut league = League {
         round: 0,
         strategies,
+        calibration: Calibration::default(),
     };
     ensure_usernames(&mut league);
     save_league(dir, &league);
@@ -550,6 +622,12 @@ struct Outcome {
     placements: Vec<usize>,
     /// Civ each placement played, aligned with `placements`.
     civs: Vec<String>,
+    /// Competition ranks aligned with `placements`; equal scores share a rank
+    /// unless one seat is the engine-declared winner.
+    ranks: Vec<u32>,
+    /// Whether each placement won an engine-declared victory. A score tie in
+    /// a game with no winner is a draw, not a win for the lower seat id.
+    won: Vec<bool>,
     seed: u64,
     turn: u32,
     victory: String,
@@ -594,11 +672,27 @@ fn play_round(league: &League, tables: &[Vec<usize>], cfg: &LeagueCfg, round: u3
             // would have been chosen on anyway.
             let mut ranked: Vec<usize> = (0..cfg.players_per_game).collect();
             ranked.sort_by_key(|pid| (game.winner != Some(*pid), -game.score(*pid), *pid));
+            let mut ranks = Vec::with_capacity(ranked.len());
+            for (place, pid) in ranked.iter().copied().enumerate() {
+                let same_as_previous = place > 0
+                    && (game.winner == Some(pid)) == (game.winner == Some(ranked[place - 1]))
+                    && game.score(pid) == game.score(ranked[place - 1]);
+                ranks.push(if same_as_previous {
+                    ranks[place - 1]
+                } else {
+                    place as u32
+                });
+            }
             Outcome {
                 placements: ranked.iter().map(|pid| tables[gi][*pid]).collect(),
                 civs: ranked
                     .iter()
                     .map(|pid| game.players[*pid].civ.clone())
+                    .collect(),
+                ranks,
+                won: ranked
+                    .iter()
+                    .map(|pid| game.winner == Some(*pid))
                     .collect(),
                 seed,
                 turn: game.turn,
@@ -627,30 +721,42 @@ fn apply_round(league: &mut League, outcomes: &[Outcome], age_idle: bool) {
                 if p[i] == p[j] {
                     continue; // a strategy cannot rate itself
                 }
-                results.entry(p[i]).or_default().push((pre[p[j]], 1.0));
-                results.entry(p[j]).or_default().push((pre[p[i]], 0.0));
+                let score_i = match outcome.ranks[i].cmp(&outcome.ranks[j]) {
+                    std::cmp::Ordering::Less => 1.0,
+                    std::cmp::Ordering::Equal => 0.5,
+                    std::cmp::Ordering::Greater => 0.0,
+                };
+                results.entry(p[i]).or_default().push((pre[p[j]], score_i));
+                results
+                    .entry(p[j])
+                    .or_default()
+                    .push((pre[p[i]], 1.0 - score_i));
                 civ_results
                     .entry((p[i], outcome.civs[i].as_str()))
                     .or_default()
-                    .push((pre[p[j]], 1.0));
+                    .push((pre[p[j]], score_i));
                 civ_results
                     .entry((p[j], outcome.civs[j].as_str()))
                     .or_default()
-                    .push((pre[p[i]], 0.0));
+                    .push((pre[p[i]], 1.0 - score_i));
+                league
+                    .calibration
+                    .record(matchup_expectation(pre[p[i]], pre[p[j]]), score_i);
             }
         }
         for (rank, s) in p.iter().enumerate() {
             let strategy = &mut league.strategies[*s];
             strategy.games += 1;
-            if rank == 0 {
+            if outcome.won[rank] {
                 strategy.wins += 1;
             }
+            let prior = civ_prior(pre[*s]);
             let on_civ = strategy
                 .civ_elo
                 .entry(outcome.civs[rank].clone())
-                .or_default();
+                .or_insert(prior);
             on_civ.games += 1;
-            if rank == 0 {
+            if outcome.won[rank] {
                 on_civ.wins += 1;
             }
         }
@@ -717,6 +823,10 @@ pub fn record_game(
     let outcome = Outcome {
         placements: seats?,
         civs: placements.iter().map(|(_, civ)| civ.clone()).collect(),
+        // The live-server API supplies a strict placement list. Engine-run
+        // league rounds retain score ties in `Outcome::ranks`.
+        ranks: (0..placements.len() as u32).collect(),
+        won: (0..placements.len()).map(|place| place == 0).collect(),
         seed,
         turn,
         victory: victory.to_string(),
@@ -726,7 +836,9 @@ pub fn record_game(
         .map(|(name, civ)| format!("{name}@{civ}"))
         .collect();
     let round = league.round;
+    let calibration_before = league.calibration.clone();
     apply_round(&mut league, &[outcome], false);
+    let period_calibration = league.calibration.since(&calibration_before);
     league.round += 1;
     append_csv(
         dir,
@@ -753,6 +865,7 @@ pub fn record_game(
         "round,name,rating,rd,vol,games,wins",
         &rating_lines,
     );
+    append_calibration(dir, league.round, &period_calibration, &league.calibration);
     save_league(dir, &league);
     Some(league)
 }
@@ -768,10 +881,13 @@ fn evolve_league(league: &mut League, cfg: &LeagueCfg, rng: &mut Rng) -> (Vec<St
         .filter(|i| genome_of(&league.strategies[*i].kind).is_some())
         .collect();
     parents.sort_by(|a, b| {
-        league.strategies[*b]
-            .rating
-            .partial_cmp(&league.strategies[*a].rating)
-            .unwrap()
+        lower_confidence(&league.strategies[*b])
+            .total_cmp(&lower_confidence(&league.strategies[*a]))
+            .then_with(|| {
+                league.strategies[*b]
+                    .rating
+                    .total_cmp(&league.strategies[*a].rating)
+            })
     });
     let pool = (parents.len() / 2).max(1).min(parents.len());
     let mut born = Vec::new();
@@ -837,10 +953,13 @@ fn evolve_league(league: &mut League, cfg: &LeagueCfg, rng: &mut Rng) -> (Vec<St
                 !s.anchor && s.games >= MIN_GAMES_TO_RETIRE && s.rd <= MAX_RD_TO_RETIRE
             })
             .min_by(|a, b| {
-                league.strategies[*a]
-                    .rating
-                    .partial_cmp(&league.strategies[*b].rating)
-                    .unwrap()
+                upper_confidence(&league.strategies[*a])
+                    .total_cmp(&upper_confidence(&league.strategies[*b]))
+                    .then_with(|| {
+                        league.strategies[*a]
+                            .rating
+                            .total_cmp(&league.strategies[*b].rating)
+                    })
             });
         match candidate {
             Some(i) => {
@@ -1003,6 +1122,23 @@ fn append_csv(dir: &str, file: &str, header: &str, lines: &[String]) {
     }
 }
 
+fn append_calibration(dir: &str, round: u32, period: &Calibration, cumulative: &Calibration) {
+    append_csv(
+        dir,
+        "calibration.csv",
+        "round,comparisons,brier,log_loss,cumulative_comparisons,cumulative_brier,cumulative_log_loss",
+        &[format!(
+            "{round},{},{:.6},{:.6},{},{:.6},{:.6}",
+            period.comparisons,
+            period.brier(),
+            period.log_loss(),
+            cumulative.comparisons,
+            cumulative.brier(),
+            cumulative.log_loss(),
+        )],
+    );
+}
+
 pub fn standings(league: &League) -> String {
     let mut order: Vec<&Strategy> = league.strategies.iter().collect();
     order.sort_by(|a, b| {
@@ -1011,6 +1147,14 @@ pub fn standings(league: &League) -> String {
             .then(b.rating.partial_cmp(&a.rating).unwrap())
     });
     let mut out = format!("League players after round {}:\n", league.round);
+    if league.calibration.comparisons > 0 {
+        out.push_str(&format!(
+            "Prediction calibration: {} pairwise results, Brier {:.4}, log loss {:.4}\n",
+            league.calibration.comparisons,
+            league.calibration.brier(),
+            league.calibration.log_loss(),
+        ));
+    }
     for (rank, s) in order.iter().enumerate() {
         let status = if s.retired {
             "retired"
@@ -1063,7 +1207,9 @@ pub fn run_league(cfg: &LeagueCfg) -> League {
                 )
             })
             .collect();
+        let calibration_before = league.calibration.clone();
         apply_round(&mut league, &outcomes, true);
+        let period_calibration = league.calibration.since(&calibration_before);
         league.round += 1;
         let mut news = (Vec::new(), Vec::new());
         if cfg.evolve_every > 0 && league.round % cfg.evolve_every == 0 {
@@ -1091,6 +1237,12 @@ pub fn run_league(cfg: &LeagueCfg) -> League {
             "ratings.csv",
             "round,name,rating,rd,vol,games,wins",
             &rating_lines,
+        );
+        append_calibration(
+            &cfg.dir,
+            league.round,
+            &period_calibration,
+            &league.calibration,
         );
         save_league(&cfg.dir, &league);
         if cfg.verbose {
@@ -1177,6 +1329,66 @@ mod tests {
     }
 
     #[test]
+    fn matchup_predictions_are_symmetric_and_include_both_deviations() {
+        let a = Glicko {
+            mu: 1.0,
+            phi: 40.0 / SCALE,
+            sigma: BASE_VOL,
+        };
+        let b = Glicko {
+            mu: -0.5,
+            phi: 250.0 / SCALE,
+            sigma: BASE_VOL,
+        };
+        let ab = matchup_expectation(a, b);
+        let ba = matchup_expectation(b, a);
+        assert!((ab + ba - 1.0).abs() < 1e-12);
+        assert!(ab > 0.5 && ab < 1.0);
+    }
+
+    #[test]
+    fn a_new_civ_table_uses_global_skill_as_an_uncertain_prior() {
+        let global = Glicko {
+            mu: (1800.0 - BASE_RATING) / SCALE,
+            phi: 50.0 / SCALE,
+            sigma: BASE_VOL,
+        };
+        let prior = civ_prior(global);
+        assert!((prior.rating - 1800.0).abs() < 1e-9);
+        assert!(prior.rd > 200.0 && prior.rd < BASE_RD);
+        assert_eq!((prior.games, prior.wins), (0, 0));
+    }
+
+    #[test]
+    fn equal_scores_are_glicko_draws_and_not_seat_order_wins() {
+        let builtin = |ai: &str| StrategyKind::Builtin { ai: ai.into() };
+        let mut league = League {
+            round: 0,
+            strategies: vec![
+                Strategy::new("a", builtin("advanced"), 0),
+                Strategy::new("b", builtin("basic"), 0),
+            ],
+            calibration: Calibration::default(),
+        };
+        let outcome = Outcome {
+            placements: vec![0, 1],
+            civs: vec!["Rome".into(), "Egypt".into()],
+            ranks: vec![0, 0],
+            won: vec![false, false],
+            seed: 0,
+            turn: 50,
+            victory: String::new(),
+        };
+        apply_round(&mut league, &[outcome], true);
+        assert!((league.strategies[0].rating - BASE_RATING).abs() < 1e-9);
+        assert!((league.strategies[1].rating - BASE_RATING).abs() < 1e-9);
+        assert_eq!(league.strategies[0].wins + league.strategies[1].wins, 0);
+        assert_eq!(league.calibration.comparisons, 1);
+        assert!(league.calibration.brier() < 1e-12);
+        assert!((league.calibration.log_loss() - std::f64::consts::LN_2).abs() < 1e-12);
+    }
+
+    #[test]
     fn winners_gain_and_losers_lose() {
         let mut league = League {
             round: 0,
@@ -1184,10 +1396,13 @@ mod tests {
                 Strategy::new("a", StrategyKind::Builtin { ai: "basic".into() }, 0),
                 Strategy::new("b", StrategyKind::Builtin { ai: "basic".into() }, 0),
             ],
+            calibration: Calibration::default(),
         };
         let outcomes = vec![Outcome {
             placements: vec![0, 1],
             civs: vec!["Rome".into(), "Egypt".into()],
+            ranks: vec![0, 1],
+            won: vec![true, false],
             seed: 0,
             turn: 10,
             victory: "score".into(),
@@ -1219,11 +1434,14 @@ mod tests {
                 Strategy::new("b", builtin("basic"), 0),
                 Strategy::new("bench", builtin("random"), 0),
             ],
+            calibration: Calibration::default(),
         };
         let bench_before = (league.strategies[2].rating, league.strategies[2].rd);
         let outcomes = vec![Outcome {
             placements: vec![0, 1],
             civs: vec!["Rome".into(), "Egypt".into()],
+            ranks: vec![0, 1],
+            won: vec![true, false],
             seed: 3,
             turn: 90,
             victory: "science".into(),
@@ -1256,6 +1474,7 @@ mod tests {
                 Strategy::new("a", builtin("advanced"), 0),
                 Strategy::new("b", builtin("basic"), 0),
             ],
+            calibration: Calibration::default(),
         };
         seeded.strategies[1].rating = 1600.0;
         save_league(dir, &seeded);
@@ -1275,6 +1494,7 @@ mod tests {
         assert_eq!(second.round, 14);
         assert_eq!(second.strategies[0].games, 2);
         assert!(second.strategies[0].rating > first.strategies[0].rating);
+        assert_eq!(second.calibration.comparisons, 2);
         assert_eq!(
             load_league(dir).unwrap().strategies[0].rating,
             second.strategies[0].rating
@@ -1282,6 +1502,9 @@ mod tests {
         let matches = fs::read_to_string(Path::new(dir).join("matches.csv")).unwrap();
         assert_eq!(matches.lines().count(), 3, "header plus one row per game");
         assert!(matches.contains("a@Rome|b@Egypt"));
+        let calibration = fs::read_to_string(Path::new(dir).join("calibration.csv")).unwrap();
+        assert_eq!(calibration.lines().count(), 3);
+        assert!(calibration.starts_with("round,comparisons,brier,log_loss,"));
 
         // A name the roster no longer carries leaves the table untouched.
         let unknown = vec![
@@ -1291,6 +1514,14 @@ mod tests {
         assert!(record_game(dir, &unknown, 7, 140, "score").is_none());
         assert_eq!(load_league(dir).unwrap().round, 14);
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn older_league_snapshots_begin_with_an_empty_calibration_audit() {
+        let old = r#"{"round":7,"strategies":[]}"#;
+        let league: League = serde_json::from_str(old).unwrap();
+        assert_eq!(league.round, 7);
+        assert_eq!(league.calibration.comparisons, 0);
     }
 
     /// Seating by civ prefers each civ's settled specialist and never
@@ -1310,6 +1541,7 @@ mod tests {
                     0,
                 ),
             ],
+            calibration: Calibration::default(),
         };
         league.strategies[0].rating = 1650.0; // globally stronger
         league.strategies[1].rating = 1450.0;
@@ -1356,6 +1588,7 @@ mod tests {
         let mut league = League {
             round: 8,
             strategies: Vec::new(),
+            calibration: Calibration::default(),
         };
         for i in 0..6 {
             let mut s = Strategy::new(
@@ -1421,6 +1654,90 @@ mod tests {
         assert!(league.active().len() <= cfg.max_pop.max(7));
     }
 
+    #[test]
+    fn breeding_uses_conservative_skill_instead_of_noisy_point_rating() {
+        let mut league = League {
+            round: 4,
+            strategies: Vec::new(),
+            calibration: Calibration::default(),
+        };
+        for (name, rating, rd) in [
+            ("noisy-leader", 1900.0, 200.0),
+            ("proven-first", 1800.0, 30.0),
+            ("proven-second", 1700.0, 30.0),
+            ("settled-fourth", 1600.0, 30.0),
+        ] {
+            let mut s = Strategy::new(
+                name,
+                StrategyKind::Advanced {
+                    weights: Weights::default(),
+                    target: None,
+                },
+                0,
+            );
+            s.rating = rating;
+            s.rd = rd;
+            league.strategies.push(s);
+        }
+        ensure_usernames(&mut league);
+        let cfg = LeagueCfg {
+            max_pop: 4,
+            ..LeagueCfg::default()
+        };
+        let mut rng = Rng::new(9);
+        let (born, _) = evolve_league(&mut league, &cfg, &mut rng);
+        let child = league
+            .strategies
+            .iter()
+            .find(|s| born.contains(&s.username))
+            .unwrap();
+        assert!(child
+            .parents
+            .iter()
+            .all(|p| p == "proven-first" || p == "proven-second"));
+    }
+
+    #[test]
+    fn retirement_uses_the_lowest_upper_confidence_bound() {
+        let mut league = League {
+            round: 4,
+            strategies: Vec::new(),
+            calibration: Calibration::default(),
+        };
+        for (name, rating, rd, anchor) in [
+            ("raw-low-but-uncertain", 1400.0, 100.0, false),
+            ("confidently-low", 1450.0, 20.0, false),
+            ("reference", 1700.0, 30.0, true),
+        ] {
+            let mut s = Strategy::new(
+                name,
+                StrategyKind::Builtin {
+                    ai: "random".into(),
+                },
+                0,
+            );
+            s.rating = rating;
+            s.rd = rd;
+            s.games = MIN_GAMES_TO_RETIRE;
+            s.anchor = anchor;
+            league.strategies.push(s);
+        }
+        ensure_usernames(&mut league);
+        let cfg = LeagueCfg {
+            max_pop: 2,
+            ..LeagueCfg::default()
+        };
+        let mut rng = Rng::new(4);
+        let (_, retired) = evolve_league(&mut league, &cfg, &mut rng);
+        let retired_names: Vec<&str> = league
+            .strategies
+            .iter()
+            .filter(|s| retired.contains(&s.username))
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(retired_names, vec!["confidently-low"]);
+    }
+
     /// Usernames are themed to the lane, unique, stable for founders, and
     /// deterministically backfilled onto rosters saved before the field
     /// existed (the same league always regrows the same handles).
@@ -1455,6 +1772,7 @@ mod tests {
                     4,
                 ),
             ],
+            calibration: Calibration::default(),
         };
         ensure_usernames(&mut league);
         assert_eq!(league.strategies[0].username, "JackOfAllTrades");
