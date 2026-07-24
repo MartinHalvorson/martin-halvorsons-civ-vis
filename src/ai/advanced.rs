@@ -8691,7 +8691,8 @@ impl AdvancedAi {
         plan: &StrategicPlan,
     ) -> bool {
         let unit = g.units[&uid].clone();
-        let spec = g.rules.units[unit.kind.as_str()].clone();
+        let rules = std::sync::Arc::clone(&g.rules);
+        let spec = &rules.units[unit.kind.as_str()];
         let doctrine = BasicAi::unit_doctrine(g, uid);
         let decline_settlers = self.counts(g, pid).settlers > 0
             || !self.base.has_practical_settle_site(g, pid);
