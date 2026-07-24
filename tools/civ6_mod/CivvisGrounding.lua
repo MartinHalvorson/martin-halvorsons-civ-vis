@@ -231,8 +231,25 @@ local function playerRecord(playerId)
 	rec.score = try(function() return player:GetScore(); end, 0);
 	rec.gold = try(function() return player:GetTreasury():GetGoldBalance(); end, 0);
 	rec.faith = try(function() return player:GetReligion():GetFaithBalance(); end, 0);
-	rec.techs = try(function() return player:GetTechs():GetNumTechsResearched(); end, 0);
-	rec.civics = try(function() return player:GetCulture():GetNumCivicsCompleted(); end, 0);
+	-- Counted by asking about each entry rather than by a summary getter.
+	-- `GetNumTechsResearched` exists on some rulesets and not this one; when it
+	-- is missing the guarded read yields its fallback, so every player reports
+	-- zero techs on every turn -- a flat line that looks like real data and
+	-- would silently invalidate any tech-pace comparison.
+	rec.techs = try(function()
+		local techs, n = player:GetTechs(), 0;
+		for row in GameInfo.Technologies() do
+			if techs:HasTech(row.Index) then n = n + 1; end
+		end
+		return n;
+	end, -1);
+	rec.civics = try(function()
+		local culture, n = player:GetCulture(), 0;
+		for row in GameInfo.Civics() do
+			if culture:HasCivic(row.Index) then n = n + 1; end
+		end
+		return n;
+	end, -1);
 	rec.era = try(function() return player:GetEras():GetEra(); end, -1);
 
 	rec.researching = try(function()

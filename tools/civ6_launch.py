@@ -159,12 +159,66 @@ def start(timeout_s: float) -> int:
     return 0
 
 
+# Main-menu items, as fractions of the screen. The menu is laid out relative to
+# the render target, so fractions survive a resolution change where pixels do
+# not. "Play Now" starts a game on default settings, which is what an
+# unattended run wants: no settings screen to drive.
+MENU = {
+    "single_player": (0.473, 0.441),
+    "play_now": (0.528, 0.619),
+    "begin_game": (0.392, 0.782),
+}
+
+
+def screen_size() -> tuple[int, int]:
+    out = run(["osascript", "-e", 'tell application "Finder" to get bounds of window of desktop']).stdout
+    parts = [p.strip() for p in out.split(",")]
+    if len(parts) == 4 and parts[2].isdigit() and parts[3].isdigit():
+        return int(parts[2]), int(parts[3])
+    return 1728, 1117
+
+
+def click_menu(item: str) -> None:
+    w, h = screen_size()
+    fx, fy = MENU[item]
+    click(int(w * fx), int(h * fy))
+
+
+def play_now(begin_wait_s: float = 300.0) -> bool:
+    """Start a default game from the main menu and get past the leader intro.
+
+    The intro screen is a hard stop: it waits on a BEGIN GAME click forever,
+    and while it waits the mod has loaded but no turn has begun -- so a harness
+    that only watches for turn data sees a hang with no cause.
+    """
+    time.sleep(6.0)
+    click_menu("single_player")
+    time.sleep(3.0)
+    click_menu("play_now")
+
+    # The leader intro appears once the map is generated; the mod's first line
+    # is the signal that the in-game UI (and so the intro) is up.
+    log = env.logs_dir() / "Automation.log"
+    deadline = time.time() + begin_wait_s
+    while time.time() < deadline:
+        if log.is_file() and "CIVVISJSON" in log.read_text(errors="replace"):
+            time.sleep(4.0)
+            click_menu("begin_game")
+            return True
+        if not env.game_pids():
+            return False
+        time.sleep(4.0)
+    return False
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--stop", action="store_true")
     ap.add_argument("--start", action="store_true")
     ap.add_argument("--restart", action="store_true")
     ap.add_argument("--timeout", type=float, default=360.0)
+    ap.add_argument("--play-now", action="store_true",
+                    help="after starting, begin a default game (unattended)")
     args = ap.parse_args(argv)
 
     if not (args.stop or args.start or args.restart):
@@ -177,7 +231,14 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print("stopped")
     if args.start or args.restart:
-        return start(args.timeout)
+        code = start(args.timeout)
+        if code or not args.play_now:
+            return code
+        print("starting a game...")
+        if not play_now():
+            print("could not get into a game", file=sys.stderr)
+            return 4
+        print("game started")
     return 0
 
 
