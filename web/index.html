@@ -72,25 +72,55 @@
   body.cinema-mode #side { width: 0; min-width: 0; opacity: 0; pointer-events: none; }
   body.cinema-mode #maparea::before { opacity: 1; }
   .side-head {
-    flex: 0 0 auto; min-height: 88px; padding: 16px 18px 15px; border-bottom: 1px solid var(--line-soft);
-    background: linear-gradient(180deg, #172825e8, #101d1be8);
+    position: relative; flex: 0 0 auto; min-height: 102px; padding: 17px 18px 16px;
+    border-bottom: 1px solid #415348;
+    background:
+      radial-gradient(circle at 9% 16%, #d7b66a13, transparent 27%),
+      linear-gradient(118deg, #192b27f5 0%, #101e1be8 70%, #0c1715f2 100%);
+    box-shadow: inset 0 -1px #07100db8;
   }
-  .brand { display: flex; align-items: center; gap: 10px; }
+  .side-head::after {
+    content: ""; position: absolute; right: 18px; bottom: -1px; width: 72px; height: 1px;
+    background: linear-gradient(90deg, transparent, #d7b66a8c);
+  }
+  .brand { display: flex; align-items: center; gap: 14px; }
   .brand-mark {
-    flex: 0 0 auto; width: 52px; height: 52px; display: grid; place-items: center; border-radius: 50%;
-    background: radial-gradient(circle at 35% 30%, #f8dfa1, #c49c4b 62%, #74541e);
-    border: 1px solid #f1d48e; box-shadow: 0 0 0 3px #1a2924, 0 7px 18px #0008;
+    position: relative; isolation: isolate; flex: 0 0 auto; width: 62px; height: 62px;
+    display: grid; place-items: center; border-radius: 19px;
+    background:
+      radial-gradient(circle at 35% 26%, #284137 0%, #142720 48%, #091510 100%);
+    border: 1px solid #d7b66a70;
+    box-shadow: inset 0 1px #fff1c91f, inset 0 0 0 4px #07110f61, 0 11px 24px #0008;
   }
-  .brand-mark svg { width: 38px; height: 38px; fill: none; stroke: #223027; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.55; }
-  .brand-copy { min-width: 0; }
+  .brand-mark::before {
+    content: ""; position: absolute; z-index: -1; inset: 8px; border-radius: 50%;
+    background: #091611; box-shadow: 0 0 20px #d7b66a17;
+  }
+  .brand-mark svg { width: 50px; height: 50px; overflow: visible; }
+  .brand-mark .globe-sea { fill: #0d2019; stroke: #e8ca7f; stroke-width: 1.35; }
+  .brand-mark .globe-grid {
+    fill: none; stroke: #d9bd7750; stroke-width: .7; stroke-linecap: round;
+  }
+  .brand-mark .globe-land {
+    fill: url(#brand-land); stroke: #ffe3a280; stroke-width: .35;
+    stroke-linejoin: round;
+  }
+  .brand-mark .globe-glint { fill: #fff0c7; }
+  .brand-copy { min-width: 0; padding-top: 1px; }
   h1 {
-    color: var(--gold-bright); font: 600 19px/1.05 Georgia, "Times New Roman", serif;
-    letter-spacing: .2em; text-transform: uppercase;
+    width: max-content; color: var(--gold-bright);
+    font: 600 24px/.95 "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    letter-spacing: .09em; text-transform: lowercase;
+    background: linear-gradient(100deg, #f6dfaa 8%, #d7b66a 66%, #a9823b);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    text-shadow: 0 4px 16px #0008;
   }
   .tagline {
-    max-width: 225px; margin-top: 5px; color: var(--muted); font-size: 9px;
-    letter-spacing: .1em; line-height: 1.35; text-transform: uppercase;
+    max-width: 220px; margin-top: 8px; color: #a7b7b0; font-size: 8.5px;
+    font-weight: 700; letter-spacing: .115em; line-height: 1.42; text-transform: uppercase;
   }
+  .tagline span { display: block; white-space: nowrap; }
+  .tagline span + span { color: #798d85; }
   /* The deck is a column: the fixed panels take the height they need and the
      two chronicles share whatever is left, so a tall screen reads more
      history rather than more empty parchment. Below the point where the
@@ -260,7 +290,7 @@
     font-size: 8px; font-weight: 900; letter-spacing: .15em; line-height: 1;
     text-transform: uppercase; white-space: nowrap;
   }
-  .hud-section-heading span:last-child { overflow: hidden; color: #71857e; letter-spacing: .08em; text-overflow: ellipsis; }
+  .hud-section-heading .hud-heading-context { overflow: hidden; color: #71857e; letter-spacing: .08em; text-overflow: ellipsis; }
   .hud-rail {
     min-width: 0; min-height: 0; flex: 1; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
     scrollbar-color: #476057 transparent; scrollbar-width: thin;
@@ -787,11 +817,12 @@
   .tip-adj-count { display: inline-block; min-width: 20px; color: var(--muted); }
   .tip-adj-part { color: var(--muted); }
   .minimap-frame {
-    position: absolute; z-index: 6; right: 16px; bottom: 20px; padding: 6px; border-radius: 12px;
+    position: absolute; z-index: 6; right: 16px; bottom: 20px; width: 212px; height: 170px;
+    display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 6px; border-radius: 12px;
     background: #091310e6; border: 1px solid #40584f; box-shadow: 0 14px 35px #0008;
   }
   .minimap-label { display: flex; justify-content: space-between; padding: 1px 3px 5px; color: var(--muted); font-size: 8px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
-  #mini { border-radius: 7px; background: #07110f; cursor: pointer; }
+  #mini { width: 100%; height: 100%; min-height: 0; flex: 1; border-radius: 7px; background: #07110f; cursor: pointer; }
   #err {
     position: absolute; z-index: 20; left: 50%; bottom: 85px; transform: translateX(-50%);
     display: none; padding: 9px 14px; color: #ffc0bd; background: #3b1e1de8;
@@ -1060,7 +1091,7 @@
     #side { position: fixed; inset: 132px auto 8px 8px; width: min(390px, calc(100% - 16px)); min-width: 0; height: auto; border: 1px solid #40584f; border-radius: 16px; }
     body.sidebar-hidden #side { width: min(390px, calc(100% - 16px)); transform: translateX(calc(-100% - 16px)); opacity: 0; }
     #playerhud { grid-template-columns: 82px minmax(0, .9fr) minmax(0, 1.1fr); }
-    .minimap-frame { display: none; }
+    .minimap-frame { right: 8px; bottom: 62px; width: 174px; height: 138px; }
     #zoomctl { left: 12px; bottom: 12px; }
     #ubar { min-width: 0; width: calc(100% - 28px); bottom: 18px; }
     #trade { inset: 2% 8px; }
@@ -1119,7 +1150,7 @@
     font-size: 7px; font-weight: 900; letter-spacing: .15em; line-height: 1;
     text-transform: uppercase; white-space: nowrap; text-shadow: 0 2px 5px #000;
   }
-  .ribbon-heading span:last-child {
+  .ribbon-heading .ribbon-heading-context {
     overflow: hidden; color: #71857e; letter-spacing: .07em; text-overflow: ellipsis;
   }
   #playerhud .diplomacy-ribbon {
@@ -1202,6 +1233,42 @@
     font-size: 9px; line-height: 1.25; cursor: pointer;
   }
   .overlay-option input { flex: 0 0 auto; margin: 0; }
+  .overlay-layout-help { margin-top: 9px; }
+  .overlay-layout-reset { width: 100%; margin: 9px 0 0; }
+
+  /* The three map overlays are work surfaces, not fixed decoration. Their
+     compact grips leave the useful controls alone while making mouse, pen,
+     touch, and keyboard placement explicit. The corner handle is authored
+     instead of relying on CSS resize so it works on touch screens and so both
+     position and size can be restored on the next visit. */
+  .widget-drag-handle {
+    min-width: 0; display: inline-flex; align-items: center; gap: 4px; overflow: hidden;
+    color: inherit; cursor: grab; touch-action: none; user-select: none;
+  }
+  .widget-drag-handle:active { cursor: grabbing; }
+  .widget-drag-handle::before {
+    content: "\22ee"; flex: 0 0 auto; color: #d7b66aa6; font-size: 11px;
+    letter-spacing: 0; line-height: .7;
+  }
+  .widget-drag-handle:focus-visible, .widget-resize-handle:focus-visible,
+  .widget-reset:focus-visible { outline: 1px solid var(--gold); outline-offset: 1px; }
+  .widget-reset {
+    width: 17px; height: 17px; flex: 0 0 17px; display: grid; place-items: center;
+    margin: 0; padding: 0; border: 0; border-radius: 5px; color: #8fa39b;
+    background: transparent; box-shadow: none; font-size: 11px; line-height: 1;
+  }
+  .widget-reset:hover { color: var(--gold-bright); background: #ffffff0b; transform: none; box-shadow: none; }
+  .widget-resize-handle {
+    position: absolute; z-index: 5; right: 1px; bottom: 1px; width: 19px; height: 19px;
+    margin: 0; padding: 0; border: 0; border-radius: 0 0 9px 0; cursor: nwse-resize;
+    touch-action: none; background:
+      linear-gradient(135deg, transparent 0 48%, #d7b66a00 48% 56%, #d7b66a99 57% 62%, transparent 63% 70%, #d7b66a66 71% 76%, transparent 77%);
+    box-shadow: none; opacity: .72;
+  }
+  .widget-resize-handle:hover { transform: none; box-shadow: none; opacity: 1; }
+  .layout-widget-active { z-index: 17 !important; }
+  body.hud-layout-active { cursor: grabbing; user-select: none; }
+  body.hud-layout-active.layout-resizing { cursor: nwse-resize; }
 
   body.overlay-players-hidden #playerhud,
   body.overlay-victory-hidden #victoryhud,
@@ -1275,8 +1342,8 @@
     <button id="cinema-fullscreen" title="Enter fullscreen" aria-label="Enter fullscreen">⛶</button>
     <button id="cinema-exit" title="Exit cinema mode (C)" aria-label="Exit cinema mode">✕</button>
   </div>
-  <aside id="victoryhud" aria-label="Turn and victory race"></aside>
-  <aside id="playerhud" aria-label="Player standings"></aside>
+  <aside id="victoryhud" data-layout-widget="victory" aria-label="Turn and victory race"></aside>
+  <aside id="playerhud" data-layout-widget="players" aria-label="Player standings"></aside>
   <div id="zoomctl">
     <button id="paneltoggle" class="icon" title="Toggle command deck" aria-label="Toggle command deck">☰</button>
     <button id="zin" title="Zoom in" aria-label="Zoom in">＋</button>
@@ -1287,9 +1354,10 @@
   <div id="modeline"></div>
   <div id="err"></div>
   <div id="winner" role="status" aria-live="assertive"></div>
-  <div class="minimap-frame">
-    <div class="minimap-label"><span>World map</span><span>click to travel</span></div>
+  <div class="minimap-frame" data-layout-widget="minimap">
+    <div class="minimap-label"><span class="widget-drag-handle" data-widget-drag tabindex="0" role="button" aria-label="Move world map; use arrow keys or drag" title="Drag to move · arrow keys also move">World map</span><span>click to travel</span><button class="widget-reset" data-widget-reset type="button" aria-label="Reset world map position and size" title="Reset position and size">↺</button></div>
     <canvas id="mini" width="200" height="140"></canvas>
+    <button class="widget-resize-handle" data-widget-resize type="button" aria-label="Resize world map; use arrow keys or drag" title="Drag to resize · arrow keys also resize"></button>
   </div>
   <div id="pedia" role="dialog" aria-modal="true" aria-labelledby="pediatitle">
     <div id="pediahead">
@@ -1333,15 +1401,33 @@
   <div class="side-head">
     <div class="brand">
       <div class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 32 32" focusable="false">
-          <circle cx="16" cy="16" r="12"></circle>
-          <ellipse cx="16" cy="16" rx="5.5" ry="12"></ellipse>
-          <path d="M5.2 16h21.6M7.7 10h16.6M7.7 22h16.6"></path>
+        <svg viewBox="0 0 48 48" focusable="false">
+          <defs>
+            <linearGradient id="brand-land" x1="9" y1="7" x2="39" y2="42" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#f3d994"/>
+              <stop offset=".52" stop-color="#d3ae5c"/>
+              <stop offset="1" stop-color="#8f6b2d"/>
+            </linearGradient>
+            <clipPath id="brand-earth-clip"><circle cx="24" cy="24" r="20"/></clipPath>
+          </defs>
+          <circle class="globe-sea" cx="24" cy="24" r="20.5"/>
+          <g class="globe-grid" clip-path="url(#brand-earth-clip)">
+            <path d="M3.5 24h41M7.1 14.2c4.8 2.8 10.6 4.3 16.9 4.3s12.1-1.5 16.9-4.3M7.1 33.8c4.8-2.8 10.6-4.3 16.9-4.3s12.1 1.5 16.9 4.3"/>
+            <path d="M24 3.5c-5.2 5.3-8 12.2-8 20.5s2.8 15.2 8 20.5M24 3.5c5.2 5.3 8 12.2 8 20.5s-2.8 15.2-8 20.5"/>
+          </g>
+          <g class="globe-land" clip-path="url(#brand-earth-clip)">
+            <path d="M7.1 13.9l4.8-5.1 6.6-2.1 5.7 1.5 2.8 3.4-2.7 3-3.6.7-2.1 3.2-3.9 1.3-1.5 3.6-3.4-1.7-2.6-4.4z"/>
+            <path d="M17.2 22.4l4.5.7 4 3.5 1.5 4.5-2.4 3.8-1.2 5.9-2.8 3.3-1.9-6.1-2.5-4.7-1.9-5.5 2.7-5.4z"/>
+            <path d="M27.5 10.2l5-2.6 6.9 3 3.6 4.9-1.1 4.2-4.7.7-2.7 3.1-3.6-.6-2.2-3.6-3.6-2.2.8-3.1 1.6-3.8z"/>
+            <path d="M28.6 23.5l5.3-.5 4.6 3.2-1 5.5-3.1 2.5-.9 5.2-3.8 3.8-2.4-5.6-2.8-4.2.9-5.1 3.2-4.8z"/>
+            <path d="M38.1 36.4l4.5-.3 2.2 2.5-2.4 3.4-4.6-.8-1.3-2.8 1.6-2z"/>
+          </g>
+          <circle class="globe-glint" cx="36.8" cy="10.7" r="1.15"/>
         </svg>
       </div>
       <div class="brand-copy">
-        <h1>CIVVIS</h1>
-        <div class="tagline">A Civ VI Simulator for AI Strategy Development</div>
+        <h1>civvis</h1>
+        <div class="tagline"><span>A Civilization VI simulator</span><span>for AI strategy development</span></div>
       </div>
     </div>
   </div>
@@ -1425,6 +1511,8 @@
             <label class="overlay-option"><input type="checkbox" data-overlay="mode" checked>Map mode status</label>
             <label class="overlay-option"><input type="checkbox" data-overlay="tooltips" checked>Tile tooltips</label>
           </div>
+          <div class="small overlay-layout-help">Drag a ⋮ heading to move an overlay; drag its gold corner to resize. Your layout saves automatically.</div>
+          <button class="ghost overlay-layout-reset" id="reset-overlay-layout" type="button">Reset overlay positions &amp; sizes</button>
         </div>
       </div>
       <div class="utility-group observer-settings" id="observer-settings">
@@ -2639,7 +2727,211 @@ let cameraFollowUnitId = null, cameraFollowManual = false, cameraFollowScale = 1
 const cv = document.getElementById("map"), cx = cv.getContext("2d");
 const mini = document.getElementById("mini"), mx2 = mini.getContext("2d");
 const area = document.getElementById("maparea");
+const HUD_LAYOUT_STORAGE_KEY = "civvis-hud-layout-v1";
+const HUD_WIDGETS = {
+  players: {element:document.getElementById("playerhud"), minWidth:180, minHeight:96},
+  victory: {element:document.getElementById("victoryhud"), minWidth:150, minHeight:88},
+  minimap: {element:document.querySelector(".minimap-frame"), minWidth:130, minHeight:96},
+};
+let HUD_LAYOUT = {};
+let hudLayoutGesture = null;
+let miniLayoutFrame = 0;
+try {
+  const saved = JSON.parse(localStorage.getItem(HUD_LAYOUT_STORAGE_KEY) || "{}");
+  if (saved && typeof saved === "object") HUD_LAYOUT = saved;
+} catch (_) { HUD_LAYOUT = {}; }
+
+function hudWidgetMetrics(element) {
+  const areaRect = area.getBoundingClientRect();
+  const rect = element.getBoundingClientRect();
+  return {x:rect.left - areaRect.left, y:rect.top - areaRect.top,
+          width:rect.width, height:rect.height};
+}
+
+function clampHudWidget(config, metrics) {
+  const margin = 4;
+  const maxWidth = Math.max(1, area.clientWidth - margin * 2);
+  const maxHeight = Math.max(1, area.clientHeight - margin * 2);
+  const minWidth = Math.min(config.minWidth, maxWidth);
+  const minHeight = Math.min(config.minHeight, maxHeight);
+  const width = Math.max(minWidth, Math.min(maxWidth, Number(metrics.width) || minWidth));
+  const height = Math.max(minHeight, Math.min(maxHeight, Number(metrics.height) || minHeight));
+  const maxX = Math.max(margin, area.clientWidth - margin - width);
+  const maxY = Math.max(margin, area.clientHeight - margin - height);
+  return {
+    x:Math.max(margin, Math.min(maxX, Number(metrics.x) || 0)),
+    y:Math.max(margin, Math.min(maxY, Number(metrics.y) || 0)),
+    width, height,
+  };
+}
+
+function serializeHudWidget(metrics) {
+  const margin = 4;
+  const travelX = Math.max(0, area.clientWidth - margin * 2 - metrics.width);
+  const travelY = Math.max(0, area.clientHeight - margin * 2 - metrics.height);
+  return {
+    xRatio:travelX ? (metrics.x - margin) / travelX : 0,
+    yRatio:travelY ? (metrics.y - margin) / travelY : 0,
+    width:Math.round(metrics.width), height:Math.round(metrics.height),
+  };
+}
+
+function metricsFromSaved(config, saved) {
+  const margin = 4;
+  const width = Number(saved.width) || config.minWidth;
+  const height = Number(saved.height) || config.minHeight;
+  const travelX = Math.max(0, area.clientWidth - margin * 2 - width);
+  const travelY = Math.max(0, area.clientHeight - margin * 2 - height);
+  const xRatio = Math.max(0, Math.min(1, Number(saved.xRatio) || 0));
+  const yRatio = Math.max(0, Math.min(1, Number(saved.yRatio) || 0));
+  return clampHudWidget(config, {
+    x:margin + travelX * xRatio, y:margin + travelY * yRatio, width, height,
+  });
+}
+
+function saveHudLayout() {
+  try { localStorage.setItem(HUD_LAYOUT_STORAGE_KEY, JSON.stringify(HUD_LAYOUT)); }
+  catch (_) {}
+}
+
+function refreshMiniForLayout() {
+  syncMiniCanvas();
+  if (!state || miniLayoutFrame) return;
+  miniLayoutFrame = requestAnimationFrame(() => {
+    miniLayoutFrame = 0;
+    syncMiniCanvas();
+    drawMini();
+  });
+}
+
+function applyHudWidgetMetrics(name, metrics, persist = false) {
+  const config = HUD_WIDGETS[name];
+  if (!config?.element) return;
+  const next = clampHudWidget(config, metrics);
+  const style = config.element.style;
+  style.left = `${next.x}px`; style.top = `${next.y}px`;
+  style.right = "auto"; style.bottom = "auto";
+  style.width = `${next.width}px`; style.height = `${next.height}px`;
+  style.maxWidth = "none"; style.maxHeight = "none"; style.transform = "none";
+  config.element.classList.add("layout-widget-custom");
+  HUD_LAYOUT[name] = serializeHudWidget(next);
+  if (name === "players") {
+    area.style.setProperty("--player-hud-width", `${next.width}px`);
+    area.style.setProperty("--player-hud-height", `${next.height}px`);
+  }
+  if (persist) saveHudLayout();
+  if (name === "minimap") refreshMiniForLayout();
+}
+
+function applySavedHudLayouts() {
+  for (const [name, config] of Object.entries(HUD_WIDGETS)) {
+    const saved = HUD_LAYOUT[name];
+    if (saved && typeof saved === "object")
+      applyHudWidgetMetrics(name, metricsFromSaved(config, saved));
+  }
+}
+
+function resetHudWidget(name, persist = true) {
+  const config = HUD_WIDGETS[name];
+  if (!config?.element) return;
+  delete HUD_LAYOUT[name];
+  for (const property of ["left", "top", "right", "bottom", "width", "height",
+                          "max-width", "max-height", "transform"])
+    config.element.style.removeProperty(property);
+  config.element.classList.remove("layout-widget-custom", "layout-widget-active");
+  if (name === "players" && state) drawPlayerHud();
+  if (persist) saveHudLayout();
+  if (name === "minimap") requestAnimationFrame(refreshMiniForLayout);
+}
+
+function resetAllHudWidgets() {
+  for (const name of Object.keys(HUD_WIDGETS)) resetHudWidget(name, false);
+  saveHudLayout();
+}
+
+function beginHudLayoutGesture(event, name, mode) {
+  if (event.button !== 0 && event.pointerType !== "touch") return;
+  const config = HUD_WIDGETS[name];
+  if (!config?.element) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const start = hudWidgetMetrics(config.element);
+  hudLayoutGesture = {
+    name, mode, pointerId:event.pointerId, startX:event.clientX, startY:event.clientY,
+    start, moved:false,
+  };
+  try { event.target.setPointerCapture?.(event.pointerId); } catch (_) {}
+  config.element.classList.add("layout-widget-active");
+  document.body.classList.add("hud-layout-active");
+  document.body.classList.toggle("layout-resizing", mode === "resize");
+}
+
+function finishHudLayoutGesture(event) {
+  if (!hudLayoutGesture || (event && event.pointerId !== hudLayoutGesture.pointerId)) return;
+  const gesture = hudLayoutGesture;
+  hudLayoutGesture = null;
+  HUD_WIDGETS[gesture.name].element.classList.remove("layout-widget-active");
+  document.body.classList.remove("hud-layout-active", "layout-resizing");
+  if (gesture.moved) saveHudLayout();
+  // Live spectator updates can arrive several times during one gesture. The
+  // renderer leaves the active handle attached until release, then catches the
+  // panel up with the newest world state here.
+  if (state && gesture.name !== "minimap") drawPlayerHud();
+}
+
+window.addEventListener("pointermove", event => {
+  const gesture = hudLayoutGesture;
+  if (!gesture || event.pointerId !== gesture.pointerId) return;
+  event.preventDefault();
+  const dx = event.clientX - gesture.startX, dy = event.clientY - gesture.startY;
+  if (Math.abs(dx) + Math.abs(dy) > 1) gesture.moved = true;
+  if (!gesture.moved) return;
+  const next = {...gesture.start};
+  if (gesture.mode === "move") { next.x += dx; next.y += dy; }
+  else { next.width += dx; next.height += dy; }
+  applyHudWidgetMetrics(gesture.name, next);
+}, {passive:false});
+window.addEventListener("pointerup", finishHudLayoutGesture);
+window.addEventListener("pointercancel", finishHudLayoutGesture);
+
+for (const [name, config] of Object.entries(HUD_WIDGETS)) {
+  const element = config.element;
+  if (!element) continue;
+  element.addEventListener("pointerdown", event => {
+    if (event.target.closest?.("[data-widget-resize]"))
+      beginHudLayoutGesture(event, name, "resize");
+    else if (event.target.closest?.("[data-widget-drag]"))
+      beginHudLayoutGesture(event, name, "move");
+  });
+  element.addEventListener("click", event => {
+    if (!event.target.closest?.("[data-widget-reset]")) return;
+    event.preventDefault(); event.stopPropagation(); resetHudWidget(name);
+  });
+  element.addEventListener("keydown", event => {
+    if (!event.key.startsWith("Arrow")) return;
+    const resizeHandle = event.target.closest?.("[data-widget-resize]");
+    const dragHandle = event.target.closest?.("[data-widget-drag]");
+    if (!resizeHandle && !dragHandle) return;
+    event.preventDefault(); event.stopPropagation();
+    const step = event.shiftKey ? 10 : 2;
+    const next = hudWidgetMetrics(element);
+    if (resizeHandle) {
+      if (event.key === "ArrowLeft") next.width -= step;
+      if (event.key === "ArrowRight") next.width += step;
+      if (event.key === "ArrowUp") next.height -= step;
+      if (event.key === "ArrowDown") next.height += step;
+    } else {
+      if (event.key === "ArrowLeft") next.x -= step;
+      if (event.key === "ArrowRight") next.x += step;
+      if (event.key === "ArrowUp") next.y -= step;
+      if (event.key === "ArrowDown") next.y += step;
+    }
+    applyHudWidgetMetrics(name, next, true);
+  });
+}
+document.getElementById("reset-overlay-layout").addEventListener("click", resetAllHudWidgets);
 let DPR = window.devicePixelRatio || 1;
+applySavedHudLayouts();
 
 // The map tilt is represented by its vertical projection: 1 is directly
 // overhead and smaller values lower the camera toward the horizon. Keep the
@@ -2776,11 +3068,21 @@ function hash2(q, r) {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
+function syncMiniCanvas() {
+  const width = Math.max(1, Math.round(mini.clientWidth || 200));
+  const height = Math.max(1, Math.round(mini.clientHeight || 140));
+  const backingWidth = Math.max(1, Math.round(width * DPR));
+  const backingHeight = Math.max(1, Math.round(height * DPR));
+  if (mini.width !== backingWidth) mini.width = backingWidth;
+  if (mini.height !== backingHeight) mini.height = backingHeight;
+  return {width, height};
+}
+
 function resize() {
   DPR = window.devicePixelRatio || 1;   // native-resolution backing store (4K crisp)
   cv.width = area.clientWidth * DPR; cv.height = area.clientHeight * DPR;
-  mini.width = 200 * DPR; mini.height = 140 * DPR;
-  mini.style.width = "200px"; mini.style.height = "140px";
+  applySavedHudLayouts();
+  syncMiniCanvas();
   if (SPEC && DIRECTOR) cam.y = clampCameraY(cam.y);
   draw(); if (state) drawMini();
 }
@@ -7824,10 +8126,11 @@ function drawAtmosphere(now) {
 function drawMini() {
   if (!state) return;
   const tiles = state.map.tiles;
+  const {width:miniWidth, height:miniHeight} = syncMiniCanvas();
   mx2.setTransform(DPR, 0, 0, DPR, 0, 0);
-  mx2.fillStyle = "#000"; mx2.fillRect(0, 0, 200, 140);
-  const cs = Math.min(192 / (state.map.width + 1),
-                      132 / (state.map.height + 1));
+  mx2.fillStyle = "#000"; mx2.fillRect(0, 0, miniWidth, miniHeight);
+  const cs = Math.min(Math.max(1, miniWidth - 8) / (state.map.width + 1),
+                      Math.max(1, miniHeight - 8) / (state.map.height + 1));
   const off = 4;
   const visible = new Set(state.visible.map(key));
   for (const t of tiles) {
@@ -7883,8 +8186,8 @@ function drawMini() {
 }
 mini.addEventListener("click", ev => {
   const r = mini.getBoundingClientRect();
-  const cs = Math.min(192 / (state.map.width + 1),
-                      132 / (state.map.height + 1));
+  const cs = Math.min(Math.max(1, r.width - 8) / (state.map.width + 1),
+                      Math.max(1, r.height - 8) / (state.map.height + 1));
   const col = (ev.clientX - r.left - 4) / cs, row = (ev.clientY - r.top - 4) / cs;
   takeCameraControl();
   let x = S * SQ3 * col;
@@ -8060,10 +8363,13 @@ function playerHudOverview() {
     `<div class="turn-line"><span>Turn</span><strong>${state.turn}</strong></div>` +
     `<i><em>${identity.civ}</em><small>${actingLabel}</small></i></section>` +
     `<section class="hud-region victory-region" aria-labelledby="victory-race-title">` +
-    `<div class="hud-section-heading"><span id="victory-race-title">Victory race</span><span>Top 3 by path</span></div>` +
+    `<div class="hud-section-heading"><span class="widget-drag-handle" data-widget-drag tabindex="0" role="button" ` +
+    `aria-label="Move victory race; use arrow keys or drag" title="Drag to move · arrow keys also move" id="victory-race-title">Victory race</span>` +
+    `<span class="hud-heading-context">Top 3 by path</span><button class="widget-reset" data-widget-reset type="button" aria-label="Reset victory race position and size" title="Reset position and size">↺</button></div>` +
     `<div class="hud-rail" tabindex="0" aria-label="Victory paths; scroll horizontally for every path">` +
     `<div class="victory-ribbon" style="--victory-columns:${victoryCount};--victory-min-width:${victoryMinWidth}px">` +
-    `${victoryTracks}</div></div></section>`;
+    `${victoryTracks}</div></div></section>` +
+    `<button class="widget-resize-handle" data-widget-resize type="button" aria-label="Resize victory race; use arrow keys or drag" title="Drag to resize · arrow keys also resize"></button>`;
 
   return overview;
 }
@@ -8139,7 +8445,7 @@ function drawPlayerHud() {
   // without the next simulation frame snapping the HUD back to the leader.
   const victoryScroll = victoryHud.querySelector(".hud-rail")?.scrollLeft || 0;
   const overview = playerHudOverview();
-  if (overview !== victoryHudHtml) {
+  if (overview !== victoryHudHtml && hudLayoutGesture?.name !== "victory") {
     victoryHudHtml = overview;
     victoryHud.innerHTML = overview;
     const rail = victoryHud.querySelector(".hud-rail");
@@ -8152,12 +8458,16 @@ function drawPlayerHud() {
   const rows = Math.max(1, majors.length);
   const requestedHeight = 20 + rows * 36;
   const mapArea = document.getElementById("maparea");
-  mapArea.style.setProperty("--player-hud-width", "330px");
-  mapArea.style.setProperty("--player-hud-height", `${requestedHeight}px`);
+  if (!HUD_LAYOUT.players) {
+    mapArea.style.setProperty("--player-hud-width", "330px");
+    mapArea.style.setProperty("--player-hud-height", `${requestedHeight}px`);
+  }
   const rankById = new Map(majors.map((p, index) => [p.id, index + 1]));
   const html =
-    `<div class="ribbon-heading"><span id="world-leaders-title">World leaders</span>` +
-    `<span>${majors.length} civilizations · score order</span></div>` +
+    `<div class="ribbon-heading"><span class="widget-drag-handle" data-widget-drag tabindex="0" role="button" ` +
+    `aria-label="Move player standings; use arrow keys or drag" title="Drag to move · arrow keys also move" id="world-leaders-title">World leaders</span>` +
+    `<span class="ribbon-heading-context">${majors.length} civilizations · score order</span>` +
+    `<button class="widget-reset" data-widget-reset type="button" aria-label="Reset player standings position and size" title="Reset position and size">↺</button></div>` +
     `<div class="diplomacy-ribbon" role="list" aria-labelledby="world-leaders-title" ` +
     `style="--hud-rows:${rows}">` + majors.map(p => {
       const y = p.yields || {};
@@ -8229,8 +8539,9 @@ function drawPlayerHud() {
           `<span class="ribbon-stat ${kind}" title="${label}"><b>${ribbonStat(value)}</b><em>${shortLabel}</em></span>`
         ).join("") + `</button></div>` +
         (expanded ? civDossier(p, rank, relation) : "");
-    }).join("") + `</div>`;
-  if (html === hudHtml) return;
+    }).join("") + `</div>` +
+    `<button class="widget-resize-handle" data-widget-resize type="button" aria-label="Resize player standings; use arrow keys or drag" title="Drag to resize · arrow keys also resize"></button>`;
+  if (html === hudHtml || hudLayoutGesture?.name === "players") return;
   hudHtml = html;
   hud.innerHTML = html;
 }
