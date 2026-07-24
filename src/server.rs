@@ -2406,6 +2406,7 @@ mod tests {
             "const direct = Math.max(0, dot(normal, this.light))",
             "function human(scene, options",
             "function drawMounted(scene, o)",
+            "function drawChariot(scene, o)",
             "function drawArmor(scene, o)",
             "function drawRobot(scene, o)",
             "function drawGun(scene, o)",
@@ -2415,6 +2416,9 @@ mod tests {
             "function drawRotor(scene, o)",
             "function drawBalloon(scene, o)",
             "function drawDrone(scene, o)",
+            "function drawConvoy(scene, o)",
+            "type === \"slinger\"",
+            "type === \"scout\"",
             "global.Cinematic3D = Object.freeze",
         ] {
             assert!(

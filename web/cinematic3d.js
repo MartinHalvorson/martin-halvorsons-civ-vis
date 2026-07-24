@@ -21,6 +21,7 @@
   const SPEAR = new Set(["spearman", "pikeman", "hoplite", "pike_and_shot", "at_crew", "modern_at"]);
   const BOW = new Set(["slinger", "archer", "crossbowman", "pitati_archer",
     "crouching_tiger", "skirmisher", "saka_horse_archer", "maryannu_chariot_archer"]);
+  const CHARIOTS = new Set(["heavy_chariot", "war_cart", "maryannu_chariot_archer"]);
   const MODERN_SHIPS = new Set(["ironclad", "battleship", "destroyer", "aircraft_carrier",
     "missile_cruiser"]);
   const SUBMARINES = new Set(["submarine", "nuclear_submarine"]);
@@ -281,13 +282,23 @@
       if (action > .58) scene.glow(p([15 - recoil, -4.7, 15.4]), 4.2 * size,
         "#ffcc6b", (action - .58) * 2);
     } else if (BOW.has(type)) {
-      const pull = action * 2.6;
-      const top = p([8, -2, 19]), mid = p([5 - pull, -3.5, 13.5]), bot = p([8, -2, 8]);
-      scene.tube(top, p([10, -2, 16]), .28 * size, "#8c653d", 5);
-      scene.tube(p([10, -2, 16]), bot, .28 * size, "#8c653d", 5);
-      scene.tube(top, mid, .12 * size, "#eadfbe", 4);
-      scene.tube(mid, bot, .12 * size, "#eadfbe", 4);
-      scene.tube(mid, p([15 - pull, -4, 13.5]), .17 * size, "#d9e1df", 5);
+      if (type === "slinger") {
+        const cast = action * 5.5;
+        scene.tube(p([4, -1, 13]), p([8 + cast, -3, 18 - action * 3]),
+          .14 * size, "#94704b", 5);
+        scene.tube(p([8 + cast, -3, 18 - action * 3]),
+          p([11 + cast, -3.5, 16 - action * 3]), .14 * size, "#94704b", 5);
+        scene.ellipsoid(p([11.5 + cast, -3.5, 16 - action * 3]),
+          [1.3 * size, 1.1 * size, 1.2 * size], "#697076", 6, 2);
+      } else {
+        const pull = action * 2.6;
+        const top = p([8, -2, 19]), mid = p([5 - pull, -3.5, 13.5]), bot = p([8, -2, 8]);
+        scene.tube(top, p([10, -2, 16]), .28 * size, "#8c653d", 5);
+        scene.tube(p([10, -2, 16]), bot, .28 * size, "#8c653d", 5);
+        scene.tube(top, mid, .12 * size, "#eadfbe", 4);
+        scene.tube(mid, bot, .12 * size, "#eadfbe", 4);
+        scene.tube(mid, p([15 - pull, -4, 13.5]), .17 * size, "#d9e1df", 5);
+      }
     } else if (options.family === "religious") {
       scene.tube(p([5, 0, 5]), p([7 + action * 2, -1, 22 + action * 2]),
         .45 * size, type === "inquisitor" ? "#d95b3e" : "#c7a84b", 7);
@@ -313,6 +324,12 @@
     } else if (type === "naturalist") {
       scene.tube(p([4, 0, 7]), p([8, -1, 20]), .36 * size, "#355b38", 6);
       scene.ellipsoid(p([8, -1, 21]), [2 * size, 1.4 * size, 1 * size], "#c8dcc1", 6, 2);
+    } else if (type === "scout") {
+      scene.tube(p([5, .5, 5]), p([7, -.5, 22]), .34 * size, "#6e4d31", 6);
+      scene.polygon([p([-4.4, 1.8, 15]), p([4.4, 1.8, 15]), p([2.8, 2, 7]),
+        p([-3.5, 2, 8])], tint(options.color, .58), .45 * size);
+      scene.box(p([-4.7, 1.6, 11.5]), [3.4 * size, 2.2 * size, 5.6 * size],
+        "#71543b");
     } else if (type === "trader" || type === "settler") {
       scene.box(p([-6, .8, 7]), [6 * size, 4 * size, 5 * size], "#a77e4d");
       scene.tube(p([-8, 1, 4]), p([-8, 1, 1]), 1.2 * size, "#41362a", 7);
@@ -320,7 +337,31 @@
     }
   }
 
+  function drawChariot(scene, o) {
+    const stride = o.moving ? Math.sin(o.time * 10 + o.seed) * 2.2 : 0;
+    scene.shadow(15, 4.8);
+    for (const y of [-4.8, 4.8])
+      scene.tube([-4, y, 3.5], [-4, y + .6, 3.5], 3.8, "#4b3727", 9);
+    scene.box([-2, 0, 6], [11, 8, 5], tint(o.color, .7));
+    scene.polygon([[-8, -4, 8], [3, -4, 8], [4, -4, 13], [-7, -4, 13]],
+      o.color, .7);
+    for (const side of [-1, 1]) {
+      const y = side * 4.4;
+      scene.ellipsoid([8, y, 7.5], [7.5, 2.8, 4.2], "#765333", 8, 3);
+      scene.tube([12, y, 8], [15, y, 13], 1.7, "#765333", 7);
+      scene.ellipsoid([15.5, y, 14], [2.8, 2.2, 2.3], "#765333", 7, 3);
+      for (const x of [4, 11]) {
+        scene.tube([x, y, 5.5], [x + stride * .35, y, 2.5], .62, "#553a27", 6);
+        scene.tube([x + stride * .35, y, 2.5], [x + stride, y, .4], .5,
+          "#443024", 6);
+      }
+      scene.tube([1, side * 2.7, 8], [13, y, 9], .24, "#9b7b52", 5);
+    }
+    human(scene, {...o, civilian:false}, [-3, 0, 8], .64);
+  }
+
   function drawMounted(scene, o) {
+    if (CHARIOTS.has(o.type)) return drawChariot(scene, o);
     const stride = o.moving ? Math.sin(o.time * 9 + o.seed) : 0;
     scene.shadow(12, 4.2);
     scene.ellipsoid([0, 0, 8], [10.5, 4.2, 5.4], "#765333", 9, 4);
@@ -388,6 +429,18 @@
     }
     human(scene, {...o, type:"infantry", action:o.action * .4}, [-7, 5, 0], .55);
     if (o.action > .62) scene.glow([18 - recoil, 0, 15], 5, "#ffc76a", o.action);
+  }
+
+  function drawConvoy(scene, o) {
+    const bounce = o.moving ? Math.abs(Math.sin(o.time * 9 + o.seed)) * .55 : 0;
+    scene.shadow(13, 4.4);
+    for (const x of [-7, 6]) for (const y of [-4.6, 4.6])
+      scene.tube([x, y - .5, 2.8], [x, y + .5, 2.8], 2.5, "#303940", 8);
+    scene.box([-2, 0, 6 + bounce], [21, 8.5, 5], "#4f5e55");
+    scene.box([-6, 0, 10 + bounce], [10, 8, 6], "#7c765b");
+    scene.wedge([7, 0, 9 + bounce], [7, 8, 7], o.color, 1);
+    scene.glow([10, -4.2, 9 + bounce], 1.8, "#fff1aa", .5);
+    scene.box([-6, -4.4, 10 + bounce], [5, .7, 3.4], "#d9dccb");
   }
 
   function drawSiege(scene, o) {
@@ -508,7 +561,8 @@
     };
     const scene = new Scene(o.ctx, {scale:o.scale || 1.04, facing:o.facing,
       bank:o.family === "air" ? Math.sin(o.time * 2.2 + o.seed) * .45 : 0});
-    if (o.family === "mounted") drawMounted(scene, o);
+    if (o.type === "supply_convoy" && o.family !== "embarked") drawConvoy(scene, o);
+    else if (o.family === "mounted") drawMounted(scene, o);
     else if (o.family === "armor") drawArmor(scene, o);
     else if (o.family === "robot") drawRobot(scene, o);
     else if (o.family === "gun") drawGun(scene, o);
