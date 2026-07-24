@@ -431,3 +431,26 @@ not promotion over Advanced: the 30-map confidence interval still overlaps
 parity. The exact 25-map duel regression remains **32/50 (64%, +100 Elo)**
 with 30 religious wins, as expected because its mandatory religious route
 bypasses the economic rollout horizon.
+
+## 2026-07-24 — exact paired-map direction test
+
+The Wilson interval answers the practical effect-size question conservatively,
+but it deliberately assumes maximum variance and therefore cannot use the fact
+that many mirrored maps split. `ai_eval` now also reports an exact two-sided
+sign test over independent map directions: challenger-favored, neutral, and
+incumbent-favored. Neutral maps remain in the paired score and Elo interval,
+but contribute no direction evidence. The binomial tail is evaluated in log
+space, so large evaluation runs remain numerically stable.
+
+The two statistics answer different questions and neither replaces the other.
+On the established 25-map duel set, Strategic has 8 favored maps, 16 neutral
+maps, and 1 Advanced-favored map: exact **p=0.0391**, a significant directional
+edge, while the 64% effect estimate still has a 44.5%..79.8% Wilson interval.
+Conversely, the selected 40-round multiplayer search aggregates to 4 favored,
+23 neutral, and 3 Advanced-favored maps across its three blocks; its direction
+test is correctly inconclusive even though its point estimate is 51.7%.
+
+Promotion policy is unchanged: it still requires the minimum map count and an
+effect-size lower bound above parity. The exact sign test is an orthogonal
+diagnostic for distinguishing a repeated paired direction from a noisy point
+estimate, not a license to promote on a small or practically tiny edge.

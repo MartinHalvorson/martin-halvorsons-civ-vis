@@ -36,6 +36,13 @@ struct PairOutcomes {
     mixed_with_draw: usize,
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct DirectionalOutcomes {
+    challenger_favored: usize,
+    neutral: usize,
+    incumbent_favored: usize,
+}
+
 fn elo_edge(score: f64) -> f64 {
     let bounded = score.clamp(1e-6, 1.0 - 1e-6);
     400.0 * (bounded / (1.0 - bounded)).log10()
@@ -109,6 +116,47 @@ fn pair_outcomes(scores: &[f64]) -> PairOutcomes {
             outcomes.neutral += 1;
         } else {
             outcomes.mixed_with_draw += 1;
+        }
+    }
+    outcomes
+}
+
+/// Exact two-sided sign-test probability under equally likely directions.
+/// Neutral mirrored maps are deliberately excluded: they contain effect-size
+/// information but no evidence about which AI is directionally stronger.
+fn exact_sign_p(a_favored: usize, b_favored: usize) -> f64 {
+    let n = a_favored + b_favored;
+    if n == 0 {
+        return 1.0;
+    }
+    let tail = a_favored.min(b_favored);
+    let n_f = n as f64;
+    let mut log_choose = 0.0;
+    let mut log_terms = Vec::with_capacity(tail + 1);
+    for k in 0..=tail {
+        log_terms.push(log_choose - n_f * std::f64::consts::LN_2);
+        if k < tail {
+            log_choose += ((n - k) as f64).ln() - ((k + 1) as f64).ln();
+        }
+    }
+    let largest = log_terms.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let lower_tail = largest.exp()
+        * log_terms
+            .iter()
+            .map(|term| (*term - largest).exp())
+            .sum::<f64>();
+    (2.0 * lower_tail).min(1.0)
+}
+
+fn directional_outcomes(scores: &[f64]) -> DirectionalOutcomes {
+    let mut outcomes = DirectionalOutcomes::default();
+    for score in scores {
+        if *score > 0.5 + f64::EPSILON {
+            outcomes.challenger_favored += 1;
+        } else if *score < 0.5 - f64::EPSILON {
+            outcomes.incumbent_favored += 1;
+        } else {
+            outcomes.neutral += 1;
         }
     }
     outcomes
@@ -447,6 +495,7 @@ fn main() {
     println!();
     let inference = paired_inference(&pair_scores);
     let outcomes = pair_outcomes(&pair_scores);
+    let directions = directional_outcomes(&pair_scores);
     println!(
         "paired-map score for {a}: {:.1}% (95% Wilson CI {:.1}%..{:.1}%), Elo-equivalent {:+.0} (CI {:+.0}..{:+.0})",
         100.0 * inference.score,
@@ -459,6 +508,19 @@ fn main() {
     println!(
         "paired outcomes: {a} sweeps {}, neutral splits/draws {}, {b} sweeps {}, draw-mixed {}",
         outcomes.a_sweeps, outcomes.neutral, outcomes.b_sweeps, outcomes.mixed_with_draw
+    );
+    let sign_p = exact_sign_p(directions.challenger_favored, directions.incumbent_favored);
+    let directional_verdict =
+        if sign_p < 0.05 && directions.challenger_favored > directions.incumbent_favored {
+            format!("SIGNIFICANT {a} DIRECTION")
+        } else if sign_p < 0.05 && directions.incumbent_favored > directions.challenger_favored {
+            format!("SIGNIFICANT {b} DIRECTION")
+        } else {
+            "INCONCLUSIVE DIRECTION".to_string()
+        };
+    println!(
+        "paired direction: {a}-favored {}, neutral {}, {b}-favored {}; exact two-sided sign p={sign_p:.4} ({directional_verdict})",
+        directions.challenger_favored, directions.neutral, directions.incumbent_favored
     );
     match inference.verdict {
         PromotionVerdict::Insufficient => println!(
@@ -684,5 +746,42 @@ mod tests {
         assert_eq!(traced.score(0), plain.score(0));
         assert_eq!(traced.score(1), plain.score(1));
         assert!(traces.iter().all(|trace| trace.observations > 0));
+    }
+
+    #[test]
+    fn exact_sign_test_detects_replicated_map_direction() {
+        let mut scores = vec![1.0; 8];
+        scores.extend(vec![0.5; 16]);
+        scores.push(0.0);
+        let outcomes = directional_outcomes(&scores);
+        assert_eq!(
+            outcomes,
+            DirectionalOutcomes {
+                challenger_favored: 8,
+                neutral: 16,
+                incumbent_favored: 1,
+            }
+        );
+        assert!((exact_sign_p(8, 1) - 0.039_062_5).abs() < 1e-12);
+        assert_eq!(exact_sign_p(1, 8), exact_sign_p(8, 1));
+    }
+
+    #[test]
+    fn sign_test_keeps_neutral_and_balanced_maps_inconclusive() {
+        assert_eq!(directional_outcomes(&[0.5; 20]).neutral, 20);
+        assert_eq!(exact_sign_p(0, 0), 1.0);
+        assert_eq!(exact_sign_p(4, 4), 1.0);
+    }
+
+    #[test]
+    fn draw_mixed_maps_still_have_a_direction() {
+        assert_eq!(
+            directional_outcomes(&[0.75, 0.25, 0.5]),
+            DirectionalOutcomes {
+                challenger_favored: 1,
+                neutral: 1,
+                incumbent_favored: 1,
+            }
+        );
     }
 }
