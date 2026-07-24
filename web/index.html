@@ -85,42 +85,40 @@
   }
   .brand { display: flex; align-items: center; gap: 14px; }
   .brand-mark {
-    position: relative; isolation: isolate; flex: 0 0 auto; width: 62px; height: 62px;
-    display: grid; place-items: center; border-radius: 19px;
-    background:
-      radial-gradient(circle at 35% 26%, #284137 0%, #142720 48%, #091510 100%);
-    border: 1px solid #d7b66a70;
-    box-shadow: inset 0 1px #fff1c91f, inset 0 0 0 4px #07110f61, 0 11px 24px #0008;
+    position: relative; isolation: isolate; flex: 0 0 auto; width: 64px; height: 64px;
+    display: grid; place-items: center; border-radius: 50%; background: #07130f;
+    border: 1px solid #e0c1768f;
+    box-shadow: 0 0 0 4px #0b1915, 0 10px 25px #0009, 0 0 24px #d7b66a17;
   }
   .brand-mark::before {
-    content: ""; position: absolute; z-index: -1; inset: 8px; border-radius: 50%;
-    background: #091611; box-shadow: 0 0 20px #d7b66a17;
+    content: ""; position: absolute; z-index: -1; inset: 2px; border-radius: 50%;
+    box-shadow: inset 0 1px #fff1c924;
   }
-  .brand-mark svg { width: 50px; height: 50px; overflow: visible; }
-  .brand-mark .globe-sea { fill: #0d2019; stroke: #e8ca7f; stroke-width: 1.35; }
+  .brand-mark svg { width: 58px; height: 58px; overflow: visible; }
+  .brand-mark .globe-sea { fill: url(#brand-sea); stroke: #e8ca7f; stroke-width: 1; }
   .brand-mark .globe-grid {
-    fill: none; stroke: #d9bd7750; stroke-width: .7; stroke-linecap: round;
+    fill: none; stroke: #d9bd773b; stroke-width: .55; stroke-linecap: round;
   }
   .brand-mark .globe-land {
-    fill: url(#brand-land); stroke: #ffe3a280; stroke-width: .35;
+    fill: url(#brand-land); fill-rule: evenodd; stroke: #ffe8ad; stroke-width: .28;
     stroke-linejoin: round;
   }
-  .brand-mark .globe-glint { fill: #fff0c7; }
+  .brand-mark .globe-shine { fill: none; stroke: #fff9df; stroke-opacity: .14; stroke-width: 1.1; }
   .brand-copy { min-width: 0; padding-top: 1px; }
   h1 {
     width: max-content; color: var(--gold-bright);
-    font: 600 24px/.95 "Iowan Old Style", "Palatino Linotype", Georgia, serif;
-    letter-spacing: .09em; text-transform: lowercase;
+    font: 650 24px/.95 "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    letter-spacing: .12em; text-transform: uppercase;
     background: linear-gradient(100deg, #f6dfaa 8%, #d7b66a 66%, #a9823b);
     -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
     text-shadow: 0 4px 16px #0008;
   }
   .tagline {
-    max-width: 220px; margin-top: 8px; color: #a7b7b0; font-size: 8.5px;
-    font-weight: 700; letter-spacing: .115em; line-height: 1.42; text-transform: uppercase;
+    max-width: 220px; margin-top: 8px; color: #d3ddd8; font-size: 10px;
+    font-weight: 650; letter-spacing: .025em; line-height: 1.38;
   }
   .tagline span { display: block; white-space: nowrap; }
-  .tagline span + span { color: #798d85; }
+  .tagline span + span { color: #a6b7af; }
   /* The deck is a column: the fixed panels take the height they need and the
      two chronicles share whatever is left, so a tall screen reads more
      history rather than more empty parchment. Below the point where the
@@ -134,7 +132,11 @@
   }
   .side-scroll::-webkit-scrollbar { width: 7px; }
   .side-scroll::-webkit-scrollbar-thumb { background: #385148; border-radius: 9px; }
-  .side-footer { flex: 0 0 auto; padding: 12px 14px 14px; border-top: 1px solid var(--line); background: #0b1513f2; box-shadow: 0 -12px 30px #0005; }
+  .side-actions {
+    flex: 0 0 auto; margin-bottom: 10px; padding: 7px; border: 1px solid #334c43;
+    border-radius: 13px; background: linear-gradient(135deg, #14241f, #0c1714);
+    box-shadow: inset 0 1px #ffffff08, 0 8px 22px #0003;
+  }
 
   .sec {
     position: relative; padding: 13px 14px; border-radius: 0 0 13px 13px;
@@ -148,7 +150,6 @@
     letter-spacing: .18em; text-transform: uppercase;
   }
   .sidebar-section { flex: 0 0 auto; margin: 0 0 10px; }
-  .side-scroll > .restart-settings-action { flex: 0 0 auto; min-height: 44px; margin: 0 0 10px; }
   #eventsec[open], #warsec[open] { display: flex; flex-direction: column; min-height: 0; }
   /* Share the spare height three to two, and never shrink — a shrunk section
      would push its own content past its box and over the panel below instead
@@ -935,7 +936,7 @@
   .war-moment.earlier { color: var(--faint); font-style: italic; }
   .war-card.ended.conquest { border-left-color: #8a4740; background: #150d0c; }
   .war-card.ended.conquest .war-clash { color: #e08b7d; }
-  .spec-controls { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; }
+  .spec-controls { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, 36px); gap: 7px; }
   .spec-controls button { margin: 0; }
   #specdirector.active { color: var(--gold-bright); border-color: #b88f45; box-shadow: 0 0 16px #d7b66a24; }
   .speed-row, .view-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; margin-top: 9px; }
@@ -951,6 +952,8 @@
   #newgame-options button { margin: 0; }
   .sim-actions { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
   .sim-actions button { min-height: 52px; padding: 6px 8px; line-height: 1.2; }
+  .sim-actions #restart-sim { font-weight: 700; }
+  .sim-actions #restart-sim .sub { display: none; }
   .sim-actions .sub { display: block; margin-top: 3px; color: var(--muted); font-size: 8px; font-weight: 600; letter-spacing: .04em; }
   .victory-options { grid-column: 1 / -1; padding: 9px 10px 10px; border: 1px solid var(--line-soft); border-radius: 9px; background: #09131080; }
   .victory-options h2 { margin-bottom: 8px; }
@@ -1047,7 +1050,9 @@
   .deal-action button { width: 100%; margin: 0; padding: 8px 10px; }
   .mutual-gain { margin-top: 6px; color: #86b997; font-size: 8px; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .trade-empty { grid-column: 1 / -1; padding: 54px 20px; color: var(--muted); text-align: center; border: 1px dashed #34493f; border-radius: 14px; }
-  .footer-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+  .footer-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+  .footer-actions button { margin: 0; }
+  #autoplaybtn { grid-column: 1 / -1; }
   #tradebtn { min-width: 112px; margin: 0; }
 
   #capture-choice {
@@ -1403,35 +1408,48 @@
       <div class="brand-mark" aria-hidden="true">
         <svg viewBox="0 0 48 48" focusable="false">
           <defs>
+            <radialGradient id="brand-sea" cx="30%" cy="25%">
+              <stop stop-color="#244237"/>
+              <stop offset=".65" stop-color="#10251e"/>
+              <stop offset="1" stop-color="#07140f"/>
+            </radialGradient>
             <linearGradient id="brand-land" x1="9" y1="7" x2="39" y2="42" gradientUnits="userSpaceOnUse">
-              <stop stop-color="#f3d994"/>
-              <stop offset=".52" stop-color="#d3ae5c"/>
-              <stop offset="1" stop-color="#8f6b2d"/>
+              <stop stop-color="#f8dda0"/>
+              <stop offset=".52" stop-color="#d1aa55"/>
+              <stop offset="1" stop-color="#896522"/>
             </linearGradient>
-            <clipPath id="brand-earth-clip"><circle cx="24" cy="24" r="20"/></clipPath>
+            <clipPath id="brand-earth-clip"><circle cx="24" cy="24" r="20.15"/></clipPath>
           </defs>
           <circle class="globe-sea" cx="24" cy="24" r="20.5"/>
           <g class="globe-grid" clip-path="url(#brand-earth-clip)">
-            <path d="M3.5 24h41M7.1 14.2c4.8 2.8 10.6 4.3 16.9 4.3s12.1-1.5 16.9-4.3M7.1 33.8c4.8-2.8 10.6-4.3 16.9-4.3s12.1 1.5 16.9 4.3"/>
-            <path d="M24 3.5c-5.2 5.3-8 12.2-8 20.5s2.8 15.2 8 20.5M24 3.5c5.2 5.3 8 12.2 8 20.5s-2.8 15.2-8 20.5"/>
+            <path d="M3.85 24h40.3M24 3.85c-5.2 5.3-8 12.2-8 20.15s2.8 14.85 8 20.15M24 3.85c5.2 5.3 8 12.2 8 20.15s-2.8 14.85-8 20.15"/>
           </g>
-          <g class="globe-land" clip-path="url(#brand-earth-clip)">
-            <path d="M7.1 13.9l4.8-5.1 6.6-2.1 5.7 1.5 2.8 3.4-2.7 3-3.6.7-2.1 3.2-3.9 1.3-1.5 3.6-3.4-1.7-2.6-4.4z"/>
-            <path d="M17.2 22.4l4.5.7 4 3.5 1.5 4.5-2.4 3.8-1.2 5.9-2.8 3.3-1.9-6.1-2.5-4.7-1.9-5.5 2.7-5.4z"/>
-            <path d="M27.5 10.2l5-2.6 6.9 3 3.6 4.9-1.1 4.2-4.7.7-2.7 3.1-3.6-.6-2.2-3.6-3.6-2.2.8-3.1 1.6-3.8z"/>
-            <path d="M28.6 23.5l5.3-.5 4.6 3.2-1 5.5-3.1 2.5-.9 5.2-3.8 3.8-2.4-5.6-2.8-4.2.9-5.1 3.2-4.8z"/>
-            <path d="M38.1 36.4l4.5-.3 2.2 2.5-2.4 3.4-4.6-.8-1.3-2.8 1.6-2z"/>
-          </g>
-          <circle class="globe-glint" cx="36.8" cy="10.7" r="1.15"/>
+          <path class="globe-land" clip-path="url(#brand-earth-clip)" d="M19.14,43.26L18.83,43.28L20.68,43.87L23.54,44.14L29.48,43.39L27.59,43.83L23.71,44.15L19.91,43.73L18.66,43.25ZM15.93,41.73L16.53,42.00L14.72,41.35ZM17.01,41.53L17.22,41.68L16.65,41.59ZM42.93,29.67L42.10,32.01L41.12,33.78L42.96,29.23ZM12.36,23.88L12.07,23.84L12.18,23.62L12.40,23.62ZM10.01,19.96L10.59,20.17L10.90,20.60L10.33,20.55L10.09,20.79L9.56,20.52L9.51,20.28L9.96,20.38L9.81,19.99ZM8.84,18.61L9.65,19.81L8.91,19.69L9.10,19.54L8.44,18.53L7.81,18.59L8.42,18.32ZM34.28,14.30L34.42,14.82L33.70,14.61L33.67,14.44ZM32.52,13.62L32.89,14.22L32.72,14.33L32.32,13.73ZM32.47,13.33L32.50,13.57L32.24,13.33L32.32,13.08ZM15.34,11.94L15.64,12.02L15.40,12.13ZM17.40,11.02L17.15,11.24L17.73,11.47L17.49,12.20L17.28,12.13L17.38,11.87L17.03,12.08L16.96,11.85L16.35,11.78L17.66,10.80ZM27.85,10.85L27.23,11.01L27.14,10.46L27.45,10.11L27.87,10.24ZM30.96,9.61L31.00,9.82L30.65,9.61ZM27.93,9.19L27.86,9.47L28.22,9.40L28.20,9.84L29.48,10.58L29.50,11.12L28.25,11.40L28.62,11.02L28.19,10.90L28.37,10.80L28.18,10.49L28.45,10.34L27.57,9.68L27.59,9.22ZM16.80,6.90L16.68,7.39L16.05,7.36ZM25.47,7.58L25.67,7.85L24.99,8.22L24.35,8.13L24.49,8.03L24.16,7.93L24.41,7.83L24.10,7.78ZM17.22,6.08L17.06,6.03L17.45,5.87ZM17.58,6.15L17.08,6.58L18.08,6.30L17.47,6.74L15.54,7.21L14.25,7.86L13.90,8.33L14.31,9.12L13.67,10.15L16.64,7.69L17.16,8.19L16.81,8.87L17.65,8.47L17.31,9.45L17.76,9.98L17.69,10.65L16.60,11.04L15.48,10.86L14.06,11.61L15.53,11.17L15.14,12.00L15.65,12.19L16.02,11.91L16.00,12.23L14.54,12.74L14.53,12.44L15.00,12.27L13.68,12.52L13.36,13.12L12.49,13.22L11.54,14.18L11.80,13.59L11.31,14.70L9.69,15.70L9.00,17.76L9.04,15.98L8.82,16.07L8.74,15.76L8.34,15.63L8.03,15.95L7.68,15.54L7.17,15.82L6.20,17.62L5.98,18.94L6.07,19.26L6.53,19.21L6.91,18.57L7.44,18.59L6.59,20.38L7.23,20.58L7.44,20.93L7.09,22.33L7.41,23.28L7.81,23.10L8.34,23.60L8.87,22.86L9.67,22.56L9.52,23.73L9.67,23.09L10.09,22.75L10.44,23.39L11.28,23.72L12.12,23.63L11.87,23.69L11.95,23.87L13.34,25.48L14.29,25.67L15.09,26.30L15.50,27.20L15.26,27.70L15.93,27.92L15.94,28.26L16.18,28.06L17.14,28.47L17.25,28.87L18.80,29.03L20.44,29.98L20.50,31.16L19.36,32.42L19.27,33.91L18.87,35.10L18.58,35.38L16.96,35.80L16.84,36.82L15.99,38.16L15.43,38.21L14.79,37.90L15.47,38.57L15.43,38.95L14.48,38.95L14.77,39.38L14.21,39.36L14.77,39.75L14.57,39.89L14.74,40.19L14.50,40.24L15.09,40.63L15.12,41.16L15.58,41.47L15.28,41.48L15.45,41.63L14.38,41.12L13.30,40.16L13.02,39.68L13.27,39.80L11.96,38.11L10.39,33.00L8.85,31.53L7.34,28.42L7.27,27.94L7.56,27.33L7.31,26.71L8.13,25.24L8.04,23.63L7.78,23.34L7.45,23.85L7.00,23.27L6.70,22.62L6.61,21.35L6.10,20.89L5.85,19.90L5.59,19.96L5.49,19.71L5.27,18.17L6.87,13.63L5.50,16.70L6.16,14.83L7.50,12.47L9.62,9.90L11.57,8.15L13.94,6.54L16.33,5.36L18.77,4.54L17.25,5.06L17.44,5.10L16.29,5.98L16.80,5.86L16.55,6.14L16.97,6.11L16.64,6.34L18.12,5.70ZM18.15,5.16L17.70,5.45L18.20,5.32L17.18,5.88L16.87,5.96L16.63,5.70ZM18.87,5.71L18.72,5.81L19.25,5.71L18.87,5.97L19.24,5.93L19.33,6.51L18.94,6.73L19.25,7.19L18.65,7.51L18.47,7.19L18.24,7.82L18.05,7.96L17.83,7.66L17.76,8.09L17.40,7.78L17.41,7.34L17.04,7.27L18.25,6.91L18.47,6.30L17.94,6.05L19.09,5.64ZM18.46,5.64L18.15,5.68L18.90,5.49ZM19.23,4.98L18.58,5.04L19.42,4.90ZM30.60,5.58L30.05,5.56L28.55,4.75ZM19.78,5.11L19.49,5.36L19.82,5.54L19.13,5.48ZM27.38,4.17L27.19,4.11L31.33,5.23L33.00,5.97L36.09,7.88L37.50,9.04L39.97,11.72L41.02,13.21L42.68,16.45L42.19,15.45L42.22,15.88L41.99,15.94L41.73,15.56L41.62,15.86L40.72,15.05L41.92,16.85L41.86,15.82L42.54,16.80L42.89,18.06L42.88,19.81L42.29,21.19L41.84,19.84L40.51,17.79L39.34,16.60L39.18,16.12L39.29,16.77L38.73,16.15L40.48,18.45L40.94,19.54L42.24,21.19L42.51,21.90L43.13,20.88L43.19,23.79L41.97,27.87L42.01,29.39L41.56,31.16L40.38,32.66L40.07,33.81L38.85,35.47L37.37,36.94L35.62,37.70L35.45,37.58L35.75,36.94L35.58,35.82L35.81,34.42L35.52,32.88L36.37,30.88L36.06,29.07L35.21,27.86L35.48,26.38L35.08,25.84L34.32,26.12L33.81,25.48L31.86,26.22L30.98,26.14L30.04,26.49L29.53,26.35L28.35,25.56L27.49,24.33L26.87,23.90L26.50,23.01L26.87,22.50L26.95,21.81L26.61,20.50L27.31,18.97L28.65,17.66L28.60,16.79L29.18,16.24L29.34,15.69L30.39,15.80L31.21,15.26L33.45,14.82L33.69,15.88L36.11,16.66L36.29,15.73L37.98,16.01L38.23,15.68L38.77,15.72L38.80,15.50L38.16,13.86L37.73,14.20L36.85,14.27L36.12,13.50L36.30,12.85L36.61,12.81L36.77,12.43L37.60,12.50L37.84,12.18L36.49,11.40L36.30,10.76L36.06,11.21L36.48,11.45L36.33,11.77L35.89,11.33L35.45,11.30L35.80,12.54L36.26,12.92L36.03,13.29L35.65,13.12L35.48,13.25L35.64,13.45L35.36,13.35L35.95,13.96L36.08,14.55L35.73,14.48L34.55,13.11L32.69,12.18L32.83,12.67L34.60,13.61L34.24,13.59L34.44,14.36L34.00,13.76L32.03,12.70L31.69,13.13L30.93,13.24L31.05,13.59L30.62,13.91L30.67,14.63L30.28,15.32L29.69,15.37L29.48,15.62L29.10,15.33L28.47,15.39L27.96,13.50L28.26,13.26L29.74,13.25L29.65,12.48L28.64,11.79L29.28,11.75L29.10,11.44L29.73,11.28L30.00,10.43L30.54,10.24L30.05,9.35L30.26,9.15L30.95,10.05L31.52,10.03L32.31,9.47L31.88,8.94L32.29,8.96L31.71,8.50L32.16,8.15L31.51,8.37L31.13,8.22L30.60,7.71L30.53,7.24L30.17,7.11L30.27,7.88L30.95,8.43L31.35,9.41L31.04,9.66L29.92,8.76L29.82,9.07L29.36,9.06L28.73,8.31L29.04,7.68L28.85,6.54L29.20,6.15L30.88,6.39L31.35,6.67L30.79,6.78L31.84,7.17L31.49,6.94L31.83,6.98L31.41,6.58L31.63,6.60L30.85,6.21L31.56,6.43L31.13,5.91L31.43,5.83L30.92,5.61L31.50,5.62L29.86,5.04L32.07,5.75ZM38.56,11.86L39.36,12.88L39.76,12.96L38.98,11.65L37.96,11.00L37.88,10.61L37.33,10.26L37.62,11.10ZM26.47,5.15L27.08,5.52L26.10,5.22ZM26.59,5.01L26.85,5.10L26.28,5.09ZM20.81,4.96L20.23,5.02L21.17,4.76ZM22.34,4.80L20.32,5.39L19.75,5.26L21.39,4.72ZM23.92,4.89L24.18,4.98L23.67,5.04L24.68,5.14L24.30,5.29L24.53,6.15L24.14,6.32L24.29,6.52L24.02,6.49L24.38,6.79L23.94,6.65L23.84,6.87L24.32,6.89L21.86,7.75L20.83,8.90L20.12,8.66L20.08,7.47L20.98,6.78L20.52,6.79L21.02,6.66L20.75,6.42L21.21,5.79L20.66,5.60L20.72,5.44L22.24,4.97Z"/>
+          <ellipse class="globe-shine" cx="18" cy="14" rx="12" ry="8"/>
         </svg>
       </div>
       <div class="brand-copy">
-        <h1>civvis</h1>
+        <h1>CIVVIS</h1>
         <div class="tagline"><span>A Civilization VI simulator</span><span>for AI strategy development</span></div>
       </div>
     </div>
   </div>
   <div class="side-scroll">
+    <div class="side-actions" aria-label="Simulation controls">
+      <div class="footer-actions" id="humanfooter">
+        <button class="primary" id="endturn">End turn · Enter</button>
+        <button id="tradebtn" title="Compare all mutually acceptable offers (D)">⚖ Quick Deals · D</button>
+        <button id="autoplaybtn" title="Let the agent play your seat (A · hold Shift for ten turns)">▶▶ Auto-play · A</button>
+      </div>
+      <div id="specbar" style="display:none">
+        <div class="spec-controls">
+          <button class="primary" id="specpause">⏸ Pause</button>
+          <button class="icon" id="specdirector" title="Camera locked (click for auto-focus)" aria-label="Toggle camera auto-focus">○</button>
+          <button class="icon" id="speccinema" title="Enter cinema presentation" aria-label="Enter cinema presentation">▰</button>
+          <button class="icon" id="specstep" title="Advance one civilization" aria-label="Step once">›</button>
+        </div>
+      </div>
+    </div>
     <details class="sidebar-section" data-section="game-settings">
       <summary class="section-label">
         <span class="section-title"><span class="section-icon" aria-hidden="true">⚙</span><span>Game settings</span></span>
@@ -1477,7 +1495,7 @@
           </div>
         </div>
         <div class="sim-actions">
-          <button class="primary" id="restart-sim" title="Restart with the same settings and build">Restart sim<span class="sub">same settings<br>same build</span></button>
+          <button id="restart-sim" title="Restart with the same settings and build">Restart sim<span class="sub">same settings<br>same build</span></button>
           <button id="fresh-sim" title="Start with the same settings on the most recent build">New sim<span class="sub">same settings<br>most recent build</span></button>
           <button id="default-settings" title="Start with default settings on the most recent build">New sim<span class="sub">default settings<br>most recent build</span></button>
         </div>
@@ -1595,22 +1613,6 @@
       </summary>
       <div class="sec"><div id="citypanel"></div></div>
     </details>
-
-  </div>
-  <div class="side-footer">
-    <div class="footer-actions" id="humanfooter">
-      <button class="primary" id="endturn">End turn · Enter</button>
-      <button id="tradebtn" title="Compare all mutually acceptable offers (D)">⚖ Quick Deals · D</button>
-      <button id="autoplaybtn" title="Let the agent play your seat (A · hold Shift for ten turns)">▶▶ Auto-play · A</button>
-    </div>
-    <div id="specbar" style="display:none">
-      <div class="spec-controls">
-        <button class="primary" id="specpause">⏸ Pause</button>
-        <button class="icon" id="specdirector" title="Camera locked (click for auto-focus)" aria-label="Toggle camera auto-focus">○</button>
-        <button class="icon" id="speccinema" title="Enter cinema presentation" aria-label="Enter cinema presentation">▰</button>
-        <button class="icon" id="specstep" title="Advance one civilization" aria-label="Step once">›</button>
-      </div>
-    </div>
   </div>
 </div>
 <script src="/cinematic3d.js"></script>
