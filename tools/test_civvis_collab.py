@@ -245,6 +245,16 @@ class PolicyTests(unittest.TestCase):
             collab.required_check_gate_errors(runs, "2026-07-23T22:36:00Z"), []
         )
 
+    def test_personal_repository_protection_omits_organization_only_fields(self):
+        payload = collab.personal_repository_protection_payload()
+        reviews = payload["required_pull_request_reviews"]
+        self.assertNotIn("bypass_pull_request_allowances", reviews)
+        self.assertNotIn("dismissal_restrictions", reviews)
+        self.assertNotIn("required_signatures", payload)
+        self.assertEqual(reviews["required_approving_review_count"], 0)
+        self.assertTrue(payload["required_status_checks"]["strict"])
+        self.assertFalse(payload["allow_force_pushes"])
+
 
 class ShipTests(unittest.TestCase):
     def test_current_pr_names_the_branch_for_repo_scoped_gh(self):

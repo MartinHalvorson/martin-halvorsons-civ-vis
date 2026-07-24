@@ -983,10 +983,37 @@ def gh_api_write(method: str, path: str, payload: Dict[str, Any]) -> Any:
         check=False,
     )
     if result.returncode:
+        detail = "\n".join(
+            value.strip() for value in (result.stdout, result.stderr) if value.strip()
+        )
         raise CommandError(
-            f"GitHub {method} {path} failed ({result.returncode}): {result.stderr.strip()}"
+            f"GitHub {method} {path} failed ({result.returncode}): {detail}"
         )
     return json.loads(result.stdout or "null")
+
+
+def personal_repository_protection_payload() -> Dict[str, Any]:
+    """Return branch protection accepted for a user-owned GitHub repository."""
+    return {
+        "required_status_checks": {
+            "strict": True,
+            "contexts": ["cargo-test", "collaboration-policy"],
+        },
+        "enforce_admins": True,
+        "required_pull_request_reviews": {
+            "dismiss_stale_reviews": False,
+            "require_code_owner_reviews": False,
+            "required_approving_review_count": 0,
+            "require_last_push_approval": False,
+        },
+        "restrictions": None,
+        "required_conversation_resolution": True,
+        "required_linear_history": True,
+        "allow_force_pushes": False,
+        "allow_deletions": False,
+        "block_creations": False,
+        "lock_branch": False,
+    }
 
 
 def enforce_github_command(args: argparse.Namespace) -> int:
@@ -1014,28 +1041,7 @@ def enforce_github_command(args: argparse.Namespace) -> int:
     gh_api_write(
         "PUT",
         f"repos/{REPOSITORY}/branches/{DEFAULT_BRANCH}/protection",
-        {
-            "required_status_checks": {
-                "strict": True,
-                "contexts": ["cargo-test", "collaboration-policy"],
-            },
-            "enforce_admins": True,
-            "required_pull_request_reviews": {
-                "dismiss_stale_reviews": False,
-                "require_code_owner_reviews": False,
-                "required_approving_review_count": 0,
-                "require_last_push_approval": False,
-                "bypass_pull_request_allowances": {"users": [], "teams": [], "apps": []},
-            },
-            "restrictions": None,
-            "required_conversation_resolution": True,
-            "required_linear_history": True,
-            "allow_force_pushes": False,
-            "allow_deletions": False,
-            "block_creations": False,
-            "required_signatures": False,
-            "lock_branch": False,
-        },
+        personal_repository_protection_payload(),
     )
     print("GitHub enforcement applied: PR-only current green main, squash-only, no force/delete")
     return audit_command(argparse.Namespace(json=False))
@@ -1063,8 +1069,14 @@ def audit_repo(root: Path) -> Dict[str, List[str]]:
         protection_code, protection = gh_api_optional(
             f"repos/{REPOSITORY}/branches/{DEFAULT_BRANCH}/protection"
         )
-        if not active and protection_code:
+        is_admin = bool((repo.get("permissions") or {}).get("admin"))
+        if not active and protection_code and is_admin:
             errors.append("no active GitHub ruleset or branch protection protects main")
+        elif not active and protection_code:
+            warnings.append(
+                "non-admin GitHub account cannot inspect main branch protection; "
+                "rerun the audit with owner credentials for authoritative verification"
+            )
         else:
             ok.append("GitHub protects main")
         if protection:
