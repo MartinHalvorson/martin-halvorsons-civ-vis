@@ -563,6 +563,36 @@ class SourceSnapshotTests(unittest.TestCase):
         self.assertTrue(supervisor.runtime_replacement_pending(None, "current"))
         self.assertFalse(supervisor.runtime_replacement_pending("previous", None))
 
+    def test_promoted_identity_changes_for_a_new_binary_with_the_same_source_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            metadata_path = Path(directory) / "build.json"
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "source_snapshot": "same-runtime-inputs",
+                        "binary_sha256": "first-binary",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(supervisor, "RUNTIME_METADATA", metadata_path):
+                self.assertEqual(supervisor.promoted_runtime_id(), "first-binary")
+                metadata_path.write_text(
+                    json.dumps(
+                        {
+                            "source_snapshot": "same-runtime-inputs",
+                            "binary_sha256": "second-binary",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                self.assertEqual(supervisor.promoted_runtime_id(), "second-binary")
+                self.assertTrue(
+                    supervisor.runtime_replacement_pending(
+                        "first-binary", supervisor.promoted_runtime_id()
+                    )
+                )
+
     def test_boundary_uses_verified_runtime_instead_of_retrying_broken_source(self):
         with tempfile.TemporaryDirectory() as directory:
             runtime = Path(directory) / "civvis"
@@ -1133,6 +1163,7 @@ class RecoveryTests(unittest.TestCase):
                 patch.object(supervisor, "parse_args", return_value=args),
                 patch.object(supervisor, "RUNTIME_BINARY", runtime),
                 patch.object(supervisor, "checkpoint_path", return_value=checkpoint),
+                patch.object(supervisor, "pid_listening_on", return_value=None),
                 patch.object(supervisor, "start_server", return_value=process) as start,
                 patch.object(supervisor, "wait_for_server", return_value=state),
                 patch.object(supervisor, "read_state", side_effect=KeyboardInterrupt),
@@ -1502,4 +1533,3 @@ class LeagueRosterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
