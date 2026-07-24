@@ -370,3 +370,32 @@ The duel specialization is unchanged on its exact 25-map regression set:
 **32/50 (64%, +100 Elo)** with 30 religious wins. Two broader value-shaping
 experiments were rejected before this design: a victory-progress blend fell to
 11/40, and generic commitment hysteresis fell to 15/40 on the first seed block.
+
+## 2026-07-24 — full-game plan tracing
+
+`ai_eval` now observes the reported victory target after every major-player AI
+turn. It reports target exposure, switches per seat-game, the dominant target
+over the whole game (final target breaks ties), and seat outcomes conditioned
+on that dominant target. Bots without a `PlanReport` are explicitly
+`unreported`; an Advanced/Strategic agent with no explicit target is
+`adaptive`. This fixes a measurement problem in the earlier experiments: a
+final target says nothing about how most of the game was played.
+
+Fresh four-player holdout (`strategic advanced --pairs 20 --players 4
+--turns 180 --width 24 --height 16 --seed 17000`):
+
+| Result | Strategic | Advanced |
+|---|---:|---:|
+| Game wins | 19/40 (47.5%) | 21/40 (52.5%) |
+| Paired-map Elo | -17 (95% CI -165..+131) | reference |
+| Seat win rate | 23.8% | 26.2% |
+| Target switches / seat-game | 2.27 | 0.00 |
+| Adaptive exposure | 43.9% | 100.0% |
+
+Strategic's final labels counted 31 domination seats, but only 10 seats were
+domination-dominant over the full game. Those seats won 1/10; the 18
+religion-dominant seats won 9/18. This is diagnostic association, not a causal
+estimate—the router selects targets from the position, so hard positions can
+select a particular lane. It is nevertheless a concrete ablation lead: test a
+stricter proactive domination commitment while retaining urgent victory
+denial, then accept it only on paired holdout maps.

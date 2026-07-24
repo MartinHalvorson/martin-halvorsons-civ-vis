@@ -1,7 +1,7 @@
 //! Paired, seat-balanced head-to-head evaluator for built-in AIs.
-use civvis::ai::{run_game, Ai};
+use civvis::ai::Ai;
 use civvis::elo::{builtin_ai, BUILTIN_AIS};
-use civvis::game::{default_difficulty, Game, GameOptions};
+use civvis::game::{default_difficulty, Action, Game, GameOptions};
 use civvis::rules::Rules;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -114,6 +114,77 @@ fn pair_outcomes(scores: &[f64]) -> PairOutcomes {
     outcomes
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct PlanTrace {
+    observations: usize,
+    switches: usize,
+    targets: BTreeMap<String, usize>,
+    last_target: Option<String>,
+}
+
+impl PlanTrace {
+    fn observe(&mut self, target: &str) {
+        if self
+            .last_target
+            .as_deref()
+            .is_some_and(|previous| previous != target)
+        {
+            self.switches += 1;
+        }
+        self.observations += 1;
+        *self.targets.entry(target.to_string()).or_default() += 1;
+        self.last_target = Some(target.to_string());
+    }
+
+    /// Target used on the most observed player-turns. A tie keeps the final
+    /// target, matching the tournament's dominant-strategy attribution.
+    fn dominant_target(&self) -> &str {
+        let most = self.targets.values().copied().max().unwrap_or(0);
+        if self
+            .last_target
+            .as_ref()
+            .is_some_and(|target| self.targets.get(target) == Some(&most))
+        {
+            return self.last_target.as_deref().unwrap();
+        }
+        self.targets
+            .iter()
+            .find(|(_, turns)| **turns == most)
+            .map_or("unreported", |(target, _)| target.as_str())
+    }
+}
+
+fn plan_target(ai: &dyn Ai) -> &'static str {
+    ai.plan_report().map_or("unreported", |plan| {
+        plan.victory_target.unwrap_or("adaptive")
+    })
+}
+
+fn run_traced_game(
+    game: &mut Game,
+    ais: &mut [Box<dyn Ai>],
+    traced_players: usize,
+) -> Vec<PlanTrace> {
+    let mut traces: Vec<PlanTrace> = (0..traced_players).map(|_| PlanTrace::default()).collect();
+    while game.winner.is_none() && game.turn <= game.max_turns {
+        let pid = game.current;
+        ais[pid].take_turn(game, pid);
+        if pid < traced_players {
+            traces[pid].observe(plan_target(ais[pid].as_ref()));
+        }
+        if game.winner.is_none() && game.current == pid {
+            let _ = game.apply(pid, &Action::EndTurn);
+        }
+    }
+    traces
+}
+
+#[derive(Default)]
+struct TargetOutcome {
+    games: usize,
+    wins: usize,
+}
+
 #[derive(Default)]
 struct Metrics {
     games: usize,
@@ -148,18 +219,36 @@ struct Metrics {
     support_units: f64,
     missionaries: f64,
     victories: BTreeMap<String, usize>,
-    targets: BTreeMap<String, usize>,
+    final_targets: BTreeMap<String, usize>,
+    dominant_targets: BTreeMap<String, usize>,
+    target_outcomes: BTreeMap<String, TargetOutcome>,
+    plan_turns: BTreeMap<String, usize>,
+    plan_observations: usize,
+    plan_switches: usize,
 }
 
 impl Metrics {
-    fn record(&mut self, g: &Game, pid: usize, won: bool, target: Option<&str>) {
+    fn record(&mut self, g: &Game, pid: usize, won: bool, final_target: &str, trace: &PlanTrace) {
         let cities = g.player_city_ids(pid);
         self.games += 1;
         self.wins += won as usize;
         *self
-            .targets
-            .entry(target.unwrap_or("adaptive").to_string())
+            .final_targets
+            .entry(final_target.to_string())
             .or_default() += 1;
+        let dominant_target = trace.dominant_target().to_string();
+        *self
+            .dominant_targets
+            .entry(dominant_target.clone())
+            .or_default() += 1;
+        let outcome = self.target_outcomes.entry(dominant_target).or_default();
+        outcome.games += 1;
+        outcome.wins += won as usize;
+        self.plan_observations += trace.observations;
+        self.plan_switches += trace.switches;
+        for (target, turns) in &trace.targets {
+            *self.plan_turns.entry(target.clone()).or_default() += turns;
+        }
         if won {
             *self
                 .victories
@@ -231,6 +320,18 @@ impl Metrics {
             }
         }
     }
+}
+
+fn target_shares(metrics: &Metrics) -> String {
+    metrics
+        .plan_turns
+        .iter()
+        .map(|(target, turns)| {
+            let share = 100.0 * *turns as f64 / metrics.plan_observations.max(1) as f64;
+            format!("{target} {share:.1}%")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn text(args: &[String], flag: &str, default: &str) -> String {
@@ -310,17 +411,20 @@ fn main() {
                     builtin_ai(name, game_seed + p.id as u64)
                 })
                 .collect();
-            run_game(&mut g, &mut ais);
+            let traces = run_traced_game(&mut g, &mut ais, players);
             total_turns += g.turn as u64;
             pair_score += game_score(g.winner, &seats, a);
             // Legacy per-seat win metrics count a game nobody won as zero
             // wins. The paired promotion score above records it as a draw.
             for (pid, name) in seats.iter().enumerate() {
-                let target = ais[pid].plan_report().and_then(|plan| plan.victory_target);
-                totals
-                    .get_mut(*name)
-                    .unwrap()
-                    .record(&g, pid, g.winner == Some(pid), target);
+                let target = plan_target(ais[pid].as_ref());
+                totals.get_mut(*name).unwrap().record(
+                    &g,
+                    pid,
+                    g.winner == Some(pid),
+                    target,
+                    &traces[pid],
+                );
             }
         }
         pair_scores.push(pair_score / 2.0);
@@ -440,9 +544,30 @@ fn main() {
     for name in [a, b] {
         println!("  {name:<11} {:?}", totals[name].victories);
     }
-    println!("\nFinal explicit targets:");
+    println!("\nPlan commitment by observed player-turn:");
     for name in [a, b] {
-        println!("  {name:<11} {:?}", totals[name].targets);
+        let metrics = &totals[name];
+        println!(
+            "  {name:<11} switches/game {:.2}; {}",
+            metrics.plan_switches as f64 / metrics.games.max(1) as f64,
+            target_shares(metrics)
+        );
+    }
+    println!("\nFinal plan targets:");
+    for name in [a, b] {
+        println!("  {name:<11} {:?}", totals[name].final_targets);
+    }
+    println!("\nDominant plan targets and seat outcomes:");
+    for name in [a, b] {
+        println!("  {name:<11} {:?}", totals[name].dominant_targets);
+        for (target, outcome) in &totals[name].target_outcomes {
+            println!(
+                "    {target:<11} {}/{} wins ({:.1}%)",
+                outcome.wins,
+                outcome.games,
+                100.0 * outcome.wins as f64 / outcome.games.max(1) as f64
+            );
+        }
     }
 }
 
@@ -518,5 +643,46 @@ mod tests {
         assert_eq!(game_score(Some(1), &seats, "challenger"), 0.0);
         assert_eq!(game_score(None, &seats, "challenger"), 0.5);
         assert_eq!(game_score(Some(2), &seats, "challenger"), 0.5);
+    }
+
+    #[test]
+    fn plan_trace_counts_exposure_and_switches() {
+        let mut trace = PlanTrace::default();
+        for target in ["adaptive", "religion", "religion", "adaptive"] {
+            trace.observe(target);
+        }
+        assert_eq!(trace.observations, 4);
+        assert_eq!(trace.switches, 2);
+        assert_eq!(trace.targets["adaptive"], 2);
+        assert_eq!(trace.targets["religion"], 2);
+        assert_eq!(trace.dominant_target(), "adaptive");
+    }
+
+    #[test]
+    fn empty_plan_trace_is_explicitly_unreported() {
+        assert_eq!(PlanTrace::default().dominant_target(), "unreported");
+    }
+
+    #[test]
+    fn traced_loop_preserves_headless_game_result() {
+        let make_game = || Game::new(2, 16, 12, 9123, 30, 0);
+        let mut plain = make_game();
+        let mut traced = make_game();
+        let mut plain_ais: Vec<Box<dyn Ai>> = (0..plain.players.len())
+            .map(|pid| builtin_ai("basic", pid as u64 + 1))
+            .collect();
+        let mut traced_ais: Vec<Box<dyn Ai>> = (0..traced.players.len())
+            .map(|pid| builtin_ai("basic", pid as u64 + 1))
+            .collect();
+
+        civvis::ai::run_game(&mut plain, &mut plain_ais);
+        let traces = run_traced_game(&mut traced, &mut traced_ais, 2);
+
+        assert_eq!(traced.winner, plain.winner);
+        assert_eq!(traced.victory_type, plain.victory_type);
+        assert_eq!(traced.turn, plain.turn);
+        assert_eq!(traced.score(0), plain.score(0));
+        assert_eq!(traced.score(1), plain.score(1));
+        assert!(traces.iter().all(|trace| trace.observations > 0));
     }
 }
