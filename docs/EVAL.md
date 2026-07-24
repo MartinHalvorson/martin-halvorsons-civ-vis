@@ -575,9 +575,10 @@ exporter can now label that exact distribution:
 
 ```bash
 civvis selfplay --counterfactual --scalar-only --ai strategic_score \
+  --counterfactual-roots 2 \
   --games 100 --players 4 --turns 500 --every 40 --seed 40000 \
   --out counterfactual-selfplay
-python tools/train_valuenet.py counterfactual-selfplay/dataset.csv model.json
+python tools/train_valuenet.py --dir counterfactual-selfplay
 ```
 
 Counterfactual mode begins at Strategic's first review turn (30), then samples
@@ -618,3 +619,28 @@ strategic_score --pairs 2 --players 4 --turns 90 --seed 39200`) split every
 map, every win, and terminal score exactly 50/50. All aggregate economy,
 military, victory, plan-exposure, switch-count, and final-target diagnostics
 were digit-for-digit identical between treatment and control.
+
+### Bounded source trajectories
+
+A high-fidelity pilot exposed a second multiplicative cost: an unlimited
+full-500-turn source game continues paying every Strategic review even after
+enough endpoint branches have already been labeled. Twelve standard-map games
+at `--jobs 12` were still using roughly eight worker-equivalents after 30
+minutes and had not reached deterministic writeout, so that naive run was
+stopped rather than scaled.
+
+`--counterfactual-roots N` now stops each *source trajectory* immediately after
+its Nth scheduled root. It never truncates a retained branch: each endpoint is
+still continued independently to a real winner under the full turn limit. A
+value of zero preserves unlimited sampling. Two roots capture the evaluator
+states at approximately turns 70 and 110 while avoiding all later source-game
+reviews; this is the recommended first-pass corpus design for maximizing
+independent games per unit of compute. Later-state corpora should use a
+separately predeclared larger root budget and remain a distinct calibration
+stratum rather than silently changing the sampling distribution.
+
+The bounded operational smoke (`--counterfactual-roots 1 --turns 90 --seed
+39300`) stopped the source exactly at turn 30 with no source-game winner, while
+still writing seven terminally labeled rows—adaptive plus all six lanes—and
+advertising one root and a 7×3 label shape in metadata. This distinguishes the
+intended early source stop from incomplete branch labels.
