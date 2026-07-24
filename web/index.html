@@ -69,7 +69,13 @@
     border-right: 1px solid #355047; box-shadow: 16px 0 55px #0008;
   }
   body.sidebar-hidden #side { width: 0; min-width: 0; opacity: 0; pointer-events: none; }
-  body.cinema-mode #side { width: 0; min-width: 0; opacity: 0; pointer-events: none; }
+  body.cinema-mode #side {
+    display: none; width: 0; min-width: 0; border: 0; box-shadow: none;
+    opacity: 0; pointer-events: none;
+  }
+  body.cinema-mode #maparea, #maparea:fullscreen {
+    flex: 0 0 100vw; width: 100vw; height: 100vh;
+  }
   body.cinema-mode #maparea::before { opacity: 1; }
   .side-head {
     flex: 0 0 auto; min-height: 88px; padding: 16px 18px 15px; border-bottom: 1px solid var(--line-soft);
@@ -485,6 +491,7 @@
     position: absolute; inset: -8%; z-index: 2; display: block; overflow: hidden;
     pointer-events: none; opacity: .3;
   }
+  body.cinema-mode.render-ultra #cinema-atmosphere { opacity: .36; }
   body.cinema-mode #cinema-atmosphere::before {
     content: ""; position: absolute; inset: -8%;
     background:
@@ -521,6 +528,7 @@
     mix-blend-mode: screen; will-change: opacity;
     animation: cinema-light-breathe 12s ease-in-out infinite alternate;
   }
+  body.cinema-mode.render-ultra #cinema-lighting::before { opacity: .8; }
   body.cinema-mode #cinema-lighting::after {
     content: ""; position: absolute; inset: 0;
     background:
@@ -546,6 +554,28 @@
   }
   body.cinema-storm #cinema-lighting {
     background: linear-gradient(150deg, #07121135, #1b252142 48%, #07100f52);
+  }
+  /* On a wide-gamut OLED, keep the grade in Display P3 instead of squeezing
+     its amber light and blue-green shadows back into sRGB. Browsers without a
+     P3 output pipeline simply retain the authored sRGB grade above. */
+  @supports (color: color(display-p3 1 1 1)) {
+    @media (color-gamut: p3) {
+      body.cinema-tone-dawn #cinema-lighting {
+        background: linear-gradient(112deg, color(display-p3 .83 .32 .12 / .18) 0%,
+          color(display-p3 .88 .63 .25 / .09) 27%, transparent 58%,
+          color(display-p3 .12 .39 .35 / .12) 100%);
+      }
+      body.cinema-tone-dusk #cinema-lighting {
+        background: linear-gradient(118deg, color(display-p3 .72 .20 .08 / .22) 0%,
+          color(display-p3 .82 .48 .13 / .15) 31%, transparent 64%,
+          color(display-p3 .08 .20 .28 / .2) 100%);
+      }
+      body.cinema-tone-night #cinema-lighting {
+        background: radial-gradient(ellipse at 72% 18%,
+          color(display-p3 .25 .62 .69 / .09) 0%, transparent 34%),
+          linear-gradient(145deg, #020b16, #031016 45%, #000204 100%);
+      }
+    }
   }
   @keyframes cinema-light-breathe {
     from { opacity: .55; }
@@ -1266,6 +1296,13 @@
           <option value="balanced">Balanced · painted terrain</option>
           <option value="strategic">Strategic · flat and fast</option>
         </select>
+        <div class="view-row"><span>Cinematic quality</span>
+          <select id="qualitysel" aria-label="Cinematic render quality">
+            <option value="ultra">Ultra 4K · native / 60 fps</option>
+            <option value="adaptive">Adaptive · native / measured</option>
+          </select>
+        </div>
+        <div class="speed-note" id="render-resolution">Detecting native display…</div>
         <label class="setting-row"><span><input type="checkbox" id="yieldchk"> Show yields per tile</span><kbd>Y</kbd></label>
         <label class="setting-row"><span><input type="checkbox" id="artifactchk"> Show artifact sites &amp; shipwrecks</span></label>
       </div>
@@ -1590,6 +1627,28 @@ const VIEW_MODES = {
   balanced:  { relief:true,  painted:true,  atmosphere:false, fx:1, idle:90 },
   cinematic: { relief:true,  painted:true,  atmosphere:true,  fx:2, idle:33 },
 };
+// Both quality levels render at the monitor's physical pixel density. Ultra is
+// the enthusiast path: it supersamples cached terrain, keeps twice as many
+// material variants, and targets the display's 60 Hz cadence in Cinema. This
+// project is normally shown on a high-end 4K screen, so Ultra is the default;
+// Adaptive remains available for machines that share a frame budget with a
+// large simulation.
+const RENDER_QUALITY_MODES = new Set(["adaptive", "ultra"]);
+let RENDER_QUALITY = (() => {
+  const q = new URLSearchParams(location.search).get("quality");
+  if (RENDER_QUALITY_MODES.has(q)) return q;
+  const stored = localStorage.getItem("civvis-render-quality-v1");
+  return RENDER_QUALITY_MODES.has(stored) ? stored : "ultra";
+})();
+const ultraCinematic = () => VIEW === "cinematic" && RENDER_QUALITY === "ultra";
+function setRenderQuality(quality) {
+  if (!RENDER_QUALITY_MODES.has(quality)) return;
+  RENDER_QUALITY = quality;
+  localStorage.setItem("civvis-render-quality-v1", quality);
+  TILE_ART.clear();
+  document.body.classList.toggle("render-ultra", ultraCinematic());
+  resize();
+}
 // The style used to be stored under `civvis-view`, where "cinematic" meant what
 // is now called balanced. Read the old key once through that rename so nobody
 // is silently upgraded into the expensive style by opening the page.
@@ -1609,6 +1668,7 @@ function setView(v) {
   localStorage.setItem("civvis-view-v3", v);
   syncTiltForView();
   applyCinemaMode();
+  document.body.classList.toggle("render-ultra", ultraCinematic());
   TILE_ART.clear();            // relief and grading are baked into the sprites
   if (state) { draw(); drawMini(); }
 }
@@ -2333,10 +2393,34 @@ let cameraFlight = null, cameraZoom = null;
 let cameraInertia = {vx:0, vy:0, vrot:0, vtilt:0};
 let cameraMotionLast = performance.now();
 let cameraFollowUnitId = null, cameraFollowManual = false, cameraFollowScale = 1.18;
-const cv = document.getElementById("map"), cx = cv.getContext("2d");
-const mini = document.getElementById("mini"), mx2 = mini.getContext("2d");
+function displayContext(canvas, alpha) {
+  try {
+    return canvas.getContext("2d", {alpha, colorSpace:"display-p3"}) ||
+           canvas.getContext("2d", {alpha});
+  } catch (_) {
+    return canvas.getContext("2d", {alpha});
+  }
+}
+const cv = document.getElementById("map"), cx = displayContext(cv, false);
+const mini = document.getElementById("mini"), mx2 = displayContext(mini, false);
 const area = document.getElementById("maparea");
 let DPR = window.devicePixelRatio || 1;
+
+function renderGamut() {
+  return cx.getContextAttributes?.().colorSpace === "display-p3" ? "Display P3" : "sRGB";
+}
+function updateRenderResolution() {
+  const label = document.getElementById("render-resolution");
+  const physical = `${cv.width.toLocaleString()} × ${cv.height.toLocaleString()}`;
+  const native4K = cv.width >= 3800 && cv.height >= 2100;
+  const tier = native4K ? "Native 4K" : "Native canvas";
+  const cadence = ultraCinematic() ? "60 fps target" : "adaptive cadence";
+  if (label) label.textContent = `${tier} · ${physical} · ${renderGamut()} · ${cadence}`;
+  const brand = document.querySelector(".cinema-frame-brand span");
+  if (brand) brand.textContent = `${native4K ? "Native 4K" : physical} · ${renderGamut()}`;
+  const fullscreen = document.getElementById("cinema-fullscreen");
+  if (fullscreen) fullscreen.title = `Enter fullscreen · ${physical} native render`;
+}
 
 // The map tilt is represented by its vertical projection: 1 is directly
 // overhead and smaller values lower the camera toward the horizon. Keep the
@@ -2474,14 +2558,25 @@ function hash2(q, r) {
 }
 
 function resize() {
-  DPR = window.devicePixelRatio || 1;   // native-resolution backing store (4K crisp)
-  cv.width = area.clientWidth * DPR; cv.height = area.clientHeight * DPR;
-  mini.width = 200 * DPR; mini.height = 140 * DPR;
+  DPR = window.devicePixelRatio || 1;   // never capped: CSS pixels map to physical display pixels
+  cv.width = Math.max(1, Math.round(area.clientWidth * DPR));
+  cv.height = Math.max(1, Math.round(area.clientHeight * DPR));
+  mini.width = Math.round(200 * DPR); mini.height = Math.round(140 * DPR);
   mini.style.width = "200px"; mini.style.height = "140px";
+  cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = "high";
+  mx2.imageSmoothingEnabled = true; mx2.imageSmoothingQuality = "high";
+  document.body.classList.toggle("render-ultra", ultraCinematic());
+  updateRenderResolution();
   if (SPEC && DIRECTOR) cam.y = clampCameraY(cam.y);
   draw(); if (state) drawMini();
 }
-window.addEventListener("resize", resize);
+let canvasResizeFrame = 0;
+function scheduleCanvasResize() {
+  cancelAnimationFrame(canvasResizeFrame);
+  canvasResizeFrame = requestAnimationFrame(resize);
+}
+window.addEventListener("resize", scheduleCanvasResize);
+if (window.ResizeObserver) new ResizeObserver(scheduleCanvasResize).observe(area);
 
 function screenToWorld(sx, sy) {
   const vx = (sx - area.clientWidth / 2) / cam.scale;
@@ -3710,15 +3805,23 @@ function shade(hex, f) {
 // The dabs are allowed to overlap compatible neighboring faces below, making
 // grass into a field and ocean into a body of water instead of a tile set.
 const BIOME_STAMPS = {}, BIOME_PATTERNS = {};
+// Ultra keeps transition paint and repeating biome material above output
+// resolution even when a 4K display is using a 2x desktop scale. The pattern's
+// inverse transform preserves its world-space size; only its raster density
+// changes.
+const terrainRasterScale = () => ultraCinematic()
+  ? Math.min(3, Math.max(2, Math.ceil(DPR))) : 1;
 function biomePattern(terrain) {
-  if (BIOME_PATTERNS[terrain]) return BIOME_PATTERNS[terrain];
+  const raster = terrainRasterScale();
+  const cacheKey = `${terrain}:${raster}`;
+  if (BIOME_PATTERNS[cacheKey]) return BIOME_PATTERNS[cacheKey];
   if (!ATLAS_READY) return null;
   const [col, row] = ATLAS_CELL[terrain];
   const cw = TERRAIN_ATLAS.naturalWidth / 4;
   const ch = TERRAIN_ATLAS.naturalHeight / 2;
   const inset = 2, D = 224;
   const c = document.createElement("canvas");
-  c.width = c.height = D * 2;
+  c.width = c.height = D * 2 * raster;
   const g = c.getContext("2d");
   g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high";
   // Mirror the photographic swatch at every repeat edge. Repetition is broad
@@ -3726,20 +3829,25 @@ function biomePattern(terrain) {
   // instead of introducing a new square seam every few tiles.
   const paint = (dx, dy, flipX, flipY) => {
     g.save();
-    g.translate(dx + (flipX ? D : 0), dy + (flipY ? D : 0));
+    g.translate((dx + (flipX ? D : 0)) * raster,
+                (dy + (flipY ? D : 0)) * raster);
     g.scale(flipX ? -1 : 1, flipY ? -1 : 1);
     g.drawImage(TERRAIN_ATLAS, col * cw + inset, row * ch + inset,
-                cw - inset * 2, ch - inset * 2, 0, 0, D, D);
+                cw - inset * 2, ch - inset * 2, 0, 0, D * raster, D * raster);
     g.restore();
   };
   paint(0, 0, false, false); paint(D, 0, true, false);
   paint(0, D, false, true); paint(D, D, true, true);
-  BIOME_PATTERNS[terrain] = cx.createPattern(c, "repeat");
-  return BIOME_PATTERNS[terrain];
+  const pattern = cx.createPattern(c, "repeat");
+  if (pattern?.setTransform && window.DOMMatrix)
+    pattern.setTransform(new DOMMatrix().scale(1 / raster));
+  BIOME_PATTERNS[cacheKey] = pattern;
+  return pattern;
 }
 
 function biomeStamp(terrain, variant) {
-  const id = terrain + variant;
+  const raster = terrainRasterScale();
+  const id = `${terrain}:${variant}:${raster}`;
   if (BIOME_STAMPS[id]) return BIOME_STAMPS[id];
   if (!ATLAS_READY) return null;
   const [col, row] = ATLAS_CELL[terrain];
@@ -3748,7 +3856,7 @@ function biomeStamp(terrain, variant) {
   const crop = Math.min(cw, ch) * 0.72;
   const sx = col * cw + 1 + ((variant * 0.37) % 1) * Math.max(2, cw - crop - 2);
   const sy = row * ch + 1 + ((variant * 0.61) % 1) * Math.max(2, ch - crop - 2);
-  const D = 112;
+  const D = 112 * raster;
   const c = document.createElement("canvas");
   c.width = c.height = D;
   const g = c.getContext("2d");
@@ -3833,14 +3941,17 @@ function openSea(t) {
 //   the same corner of the screen no matter which way its slope now faced.
 const TILE_ART = new Map();
 let TILE_ART_RES = 0, TILE_ART_MODE = "";
-const ART_VARIANTS = 8;
 const ART_PAD = 5;
 const SUNX = Math.cos(SUN), SUNY = Math.sin(SUN);
 // Bake resolution follows the zoom, in whole steps so a pinch does not thrash
-// the cache. Zoomed out, a tile is forty pixels and 1x is plenty; at maximum
-// zoom it is a couple of hundred and the material has to hold up.
+// the cache. Ultra deliberately oversamples rather than stopping at the old 3x
+// ceiling: at a Retina-style 4K scale an establishing shot bakes at 3x, and a
+// close shot can climb to 6x before the canvas downsamples it onto the display.
 function artRes() {
-  return Math.min(3, Math.max(1, Math.round(cam.scale * DPR * 0.85)));
+  const ultra = ultraCinematic();
+  const target = cam.scale * DPR * (ultra ? 1.35 : 0.85);
+  return Math.min(ultra ? 6 : 3,
+    Math.max(1, ultra ? Math.ceil(target) : Math.round(target)));
 }
 function planeHexPath(g, s) {
   g.beginPath();
@@ -4012,8 +4123,9 @@ function bakeTileArt(g, terrain, hills, variant, R) {
 }
 function tileArt(terrain, hills, variant) {
   const res = artRes();
-  if (res !== TILE_ART_RES || TILE_ART_MODE !== VIEW) {
-    TILE_ART.clear(); TILE_ART_RES = res; TILE_ART_MODE = VIEW;
+  const mode = `${VIEW}:${RENDER_QUALITY}`;
+  if (res !== TILE_ART_RES || TILE_ART_MODE !== mode) {
+    TILE_ART.clear(); TILE_ART_RES = res; TILE_ART_MODE = mode;
   }
   const id = terrain + (hills ? "^" : "-") + variant;
   const had = TILE_ART.get(id);
@@ -4028,8 +4140,10 @@ function tileArt(terrain, hills, variant) {
   TILE_ART.set(id, c);
   return c;
 }
-const artVariant = t =>
-  Math.floor(hash2(t.pos[0] * 7 + 1, t.pos[1] * 13 + 5) * ART_VARIANTS) % ART_VARIANTS;
+const artVariant = t => {
+  const variants = ultraCinematic() ? 16 : 8;
+  return Math.floor(hash2(t.pos[0] * 7 + 1, t.pos[1] * 13 + 5) * variants) % variants;
+};
 
 function drawAtlasFeatureCell(atlas, columns, rows, cell, t, x, y, options = {}) {
   const cw = atlas.naturalWidth / columns, ch = atlas.naturalHeight / rows;
@@ -9373,6 +9487,11 @@ document.getElementById("default-settings").onclick = () => startNewSimulation("
   vs.onchange = () => setView(vs.value);
 }
 {
+  const quality = document.getElementById("qualitysel");
+  quality.value = RENDER_QUALITY;
+  quality.onchange = () => setRenderQuality(quality.value);
+}
+{
   const cinema = document.getElementById("cinemachk");
   cinema.checked = CINEMA;
   cinema.onchange = () => setCinemaMode(cinema.checked);
@@ -9417,6 +9536,10 @@ boot();
 let lastIdleDraw = 0, drawCost = 8;
 function animTick(now) {
   requestAnimationFrame(animTick);
+  // Moving a window between monitors can change devicePixelRatio without a
+  // conventional layout resize. Rebuild immediately so the canvas never stays
+  // at the previous screen's backing resolution.
+  if (Math.abs((window.devicePixelRatio || 1) - DPR) > .001) resize();
   if (!state) return;
   updateDirectorStory(now);
   const userCameraMoving = advanceUserCameraMotion(now);
@@ -9432,11 +9555,13 @@ function animTick(now) {
   // for a repaint thirty times a second so its weather and water keep moving,
   // which is right on a machine that can afford it and ruinous on one that
   // cannot — and the machine running the exhibition is usually also running the
-  // game. Measured cost decides: a frame that takes 60ms gets asked for every
-  // 130ms rather than every 33, so the view degrades to a slower picture
-  // instead of to a stalled one.
-  const floor = active ? (SPEC ? 32 : 16) : MODE.idle;
-  const cadence = Math.max(floor, drawCost * 1.15);
+  // game. Ultra spends the available enthusiast-GPU budget on a 60 Hz target,
+  // including the otherwise-idle sunlight and water pass. It still respects
+  // measured frame cost, so a pathological scene degrades cleanly instead of
+  // queuing work faster than the machine can paint it.
+  const ultra = ultraCinematic();
+  const floor = active ? (SPEC ? (ultra ? 16 : 32) : 16) : (ultra ? 16 : MODE.idle);
+  const cadence = Math.max(floor, drawCost * (ultra ? 1.04 : 1.15));
   if ((active || MODE.idle) && now - lastIdleDraw > cadence) {
     lastIdleDraw = now;
     const t0 = performance.now();

@@ -2183,11 +2183,15 @@ mod tests {
         assert!(!EMBEDDED_INDEX.contains("e.important && now - e.at < 6000"));
         assert!(EMBEDDED_INDEX.contains("const CAP = 60, FRESH = 12"));
         assert!(EMBEDDED_INDEX.contains("SERVER_EVENT_VALUES"));
-        assert!(EMBEDDED_INDEX.contains("const floor = active ? (SPEC ? 32 : 16) : MODE.idle"));
+        assert!(EMBEDDED_INDEX.contains(
+            "const floor = active ? (SPEC ? (ultra ? 16 : 32) : 16) : (ultra ? 16 : MODE.idle)"
+        ));
         // The repaint rate answers to what a frame actually costs, so the
         // expensive style degrades to a slower picture rather than a stalled one
         // on a box that is also running the game.
-        assert!(EMBEDDED_INDEX.contains("Math.max(floor, drawCost * 1.15)"));
+        assert!(EMBEDDED_INDEX.contains(
+            "Math.max(floor, drawCost * (ultra ? 1.04 : 1.15))"
+        ));
         // Three map styles, and the browser must be able to name each of them.
         // The idle repaint rate is a property of the style rather than a
         // constant now: strategic never repaints on its own, balanced ticks
@@ -2267,6 +2271,47 @@ mod tests {
         assert!(side_rule.contains("order: -1"));
         assert!(EMBEDDED_INDEX.contains("<strong>${state.turn}</strong>"));
         assert!(!EMBEDDED_INDEX.contains("${state.turn}/${maxTurns}"));
+    }
+
+    #[test]
+    fn browser_ultra_quality_renders_at_native_4k_density() {
+        // Native means the map backing store follows physical display pixels;
+        // neither 4K nor a Retina desktop scale is silently capped.
+        assert!(EMBEDDED_INDEX.contains("id=\"qualitysel\""));
+        assert!(EMBEDDED_INDEX.contains(
+            "<option value=\"ultra\">Ultra 4K · native / 60 fps</option>"
+        ));
+        assert!(EMBEDDED_INDEX.contains("id=\"render-resolution\""));
+        assert!(EMBEDDED_INDEX.contains(
+            "return RENDER_QUALITY_MODES.has(stored) ? stored : \"ultra\""
+        ));
+        assert!(EMBEDDED_INDEX.contains("colorSpace:\"display-p3\""));
+        assert!(EMBEDDED_INDEX.contains(
+            "Math.round(area.clientWidth * DPR)"
+        ));
+        assert!(EMBEDDED_INDEX.contains(
+            "Math.round(area.clientHeight * DPR)"
+        ));
+        assert!(EMBEDDED_INDEX.contains(
+            "new ResizeObserver(scheduleCanvasResize).observe(area)"
+        ));
+        assert!(EMBEDDED_INDEX.contains(
+            "body.cinema-mode #maparea, #maparea:fullscreen"
+        ));
+        assert!(EMBEDDED_INDEX.contains(
+            "Math.abs((window.devicePixelRatio || 1) - DPR) > .001"
+        ));
+
+        // Ultra raises material density as well as the final canvas size, so a
+        // 4K output is not merely a larger upscale of the old tile cache.
+        assert!(EMBEDDED_INDEX.contains("const terrainRasterScale = () => ultraCinematic()"));
+        assert!(EMBEDDED_INDEX.contains("Math.min(ultra ? 6 : 3"));
+        assert!(EMBEDDED_INDEX.contains("const variants = ultraCinematic() ? 16 : 8"));
+        assert!(EMBEDDED_INDEX.contains("pattern.setTransform(new DOMMatrix().scale(1 / raster))"));
+        assert!(EMBEDDED_INDEX.contains("native4K ? \"Native 4K\""));
+        assert!(!EMBEDDED_INDEX.contains(
+            "Math.min(3, Math.max(1, Math.round(cam.scale * DPR * 0.85)))"
+        ));
     }
 
     #[test]
