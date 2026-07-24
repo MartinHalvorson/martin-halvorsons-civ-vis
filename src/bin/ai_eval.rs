@@ -5,6 +5,115 @@ use civvis::game::{default_difficulty, Game, GameOptions};
 use civvis::rules::Rules;
 use std::collections::{BTreeMap, BTreeSet};
 
+const PROMOTION_MIN_MAPS: usize = 20;
+const Z_95: f64 = 1.959_963_984_540_054;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PromotionVerdict {
+    Insufficient,
+    Promote,
+    Retain,
+    Inconclusive,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PairedInference {
+    maps: usize,
+    score: f64,
+    low: f64,
+    high: f64,
+    elo: f64,
+    elo_low: f64,
+    elo_high: f64,
+    verdict: PromotionVerdict,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct PairOutcomes {
+    a_sweeps: usize,
+    neutral: usize,
+    b_sweeps: usize,
+    mixed_with_draw: usize,
+}
+
+fn elo_edge(score: f64) -> f64 {
+    let bounded = score.clamp(1e-6, 1.0 - 1e-6);
+    400.0 * (bounded / (1.0 - bounded)).log10()
+}
+
+fn game_score(winner: Option<usize>, seats: &[&str], challenger: &str) -> f64 {
+    winner
+        .and_then(|pid| seats.get(pid))
+        .map_or(0.5, |name| if *name == challenger { 1.0 } else { 0.0 })
+}
+
+/// A conservative Wilson score interval with one observation per mirrored map.
+///
+/// Pair scores can be fractional because a split scores 0.5 and a game without
+/// a winner is a draw. Treating each bounded map score as one Bernoulli-equivalent
+/// observation uses the maximum variance for that mean, so the swapped games are
+/// never falsely counted as independent evidence.
+fn paired_inference(scores: &[f64]) -> PairedInference {
+    let maps = scores.len();
+    if maps == 0 {
+        return PairedInference {
+            maps,
+            score: 0.5,
+            low: 0.0,
+            high: 1.0,
+            elo: 0.0,
+            elo_low: elo_edge(0.0),
+            elo_high: elo_edge(1.0),
+            verdict: PromotionVerdict::Insufficient,
+        };
+    }
+
+    let score = scores.iter().sum::<f64>() / maps as f64;
+    let n = maps as f64;
+    let z2 = Z_95 * Z_95;
+    let denominator = 1.0 + z2 / n;
+    let center = (score + z2 / (2.0 * n)) / denominator;
+    let radius = Z_95 * ((score * (1.0 - score) / n + z2 / (4.0 * n * n)).sqrt()) / denominator;
+    let low = (center - radius).clamp(0.0, 1.0);
+    let high = (center + radius).clamp(0.0, 1.0);
+    let verdict = if maps < PROMOTION_MIN_MAPS {
+        PromotionVerdict::Insufficient
+    } else if low > 0.5 {
+        PromotionVerdict::Promote
+    } else if high < 0.5 {
+        PromotionVerdict::Retain
+    } else {
+        PromotionVerdict::Inconclusive
+    };
+
+    PairedInference {
+        maps,
+        score,
+        low,
+        high,
+        elo: elo_edge(score),
+        elo_low: elo_edge(low),
+        elo_high: elo_edge(high),
+        verdict,
+    }
+}
+
+fn pair_outcomes(scores: &[f64]) -> PairOutcomes {
+    let mut outcomes = PairOutcomes::default();
+    for score in scores {
+        if (*score - 1.0).abs() < f64::EPSILON {
+            outcomes.a_sweeps += 1;
+        } else if score.abs() < f64::EPSILON {
+            outcomes.b_sweeps += 1;
+        } else if (*score - 0.5).abs() < f64::EPSILON {
+            outcomes.neutral += 1;
+        } else {
+            outcomes.mixed_with_draw += 1;
+        }
+    }
+    outcomes
+}
+
 #[derive(Default)]
 struct Metrics {
     games: usize,
@@ -173,9 +282,11 @@ fn main() {
         .map(|name| (name.to_string(), Metrics::default()))
         .collect();
     let mut total_turns = 0_u64;
+    let mut pair_scores = Vec::with_capacity(pairs);
 
     for pair in 0..pairs {
         let game_seed = seed + pair as u64;
+        let mut pair_score = 0.0;
         for swap in 0..2 {
             let seats: Vec<&str> = (0..players)
                 .map(|pid| if (pid + swap) % 2 == 0 { a } else { b })
@@ -201,9 +312,9 @@ fn main() {
                 .collect();
             run_game(&mut g, &mut ais);
             total_turns += g.turn as u64;
-            // A game nobody won scores as a loss for every seat rather than
-            // taking the evaluation down; only a lobby without the score
-            // victory can produce one.
+            pair_score += game_score(g.winner, &seats, a);
+            // Legacy per-seat win metrics count a game nobody won as zero
+            // wins. The paired promotion score above records it as a draw.
             for (pid, name) in seats.iter().enumerate() {
                 let target = ais[pid].plan_report().and_then(|plan| plan.victory_target);
                 totals
@@ -212,6 +323,7 @@ fn main() {
                     .record(&g, pid, g.winner == Some(pid), target);
             }
         }
+        pair_scores.push(pair_score / 2.0);
     }
 
     println!(
@@ -229,6 +341,39 @@ fn main() {
         );
     }
     println!();
+    let inference = paired_inference(&pair_scores);
+    let outcomes = pair_outcomes(&pair_scores);
+    println!(
+        "paired-map score for {a}: {:.1}% (95% Wilson CI {:.1}%..{:.1}%), Elo-equivalent {:+.0} (CI {:+.0}..{:+.0})",
+        100.0 * inference.score,
+        100.0 * inference.low,
+        100.0 * inference.high,
+        inference.elo,
+        inference.elo_low,
+        inference.elo_high,
+    );
+    println!(
+        "paired outcomes: {a} sweeps {}, neutral splits/draws {}, {b} sweeps {}, draw-mixed {}",
+        outcomes.a_sweeps, outcomes.neutral, outcomes.b_sweeps, outcomes.mixed_with_draw
+    );
+    match inference.verdict {
+        PromotionVerdict::Insufficient => println!(
+            "promotion gate: INSUFFICIENT — {} independent maps; require at least {PROMOTION_MIN_MAPS}",
+            inference.maps
+        ),
+        PromotionVerdict::Promote => println!(
+            "promotion gate: PASS — {a}'s 95% lower bound is above parity after {} maps",
+            inference.maps
+        ),
+        PromotionVerdict::Retain => println!(
+            "promotion gate: RETAIN {b} — {a}'s 95% upper bound is below parity after {} maps",
+            inference.maps
+        ),
+        PromotionVerdict::Inconclusive => println!(
+            "promotion gate: INCONCLUSIVE — the 95% interval overlaps parity after {} maps",
+            inference.maps
+        ),
+    }
     println!("AI          seat-win% score cities pop tech civic dist build military gold");
     for name in [a, b] {
         let m = &totals[name];
@@ -298,5 +443,80 @@ fn main() {
     println!("\nFinal explicit targets:");
     for name in [a, b] {
         println!("  {name:<11} {:?}", totals[name].targets);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn confidence_uses_mirrored_maps_as_independent_observations() {
+        let one_map = paired_inference(&[1.0]);
+        let two_maps = paired_inference(&[1.0, 1.0]);
+        assert_eq!(one_map.maps, 1);
+        assert!(one_map.low < two_maps.low);
+        assert!(one_map.high <= 1.0);
+        assert_eq!(one_map.verdict, PromotionVerdict::Insufficient);
+    }
+
+    #[test]
+    fn strong_replicated_edge_passes_promotion_gate() {
+        let scores = vec![1.0; 30];
+        let result = paired_inference(&scores);
+        assert!(result.low > 0.5);
+        assert_eq!(result.verdict, PromotionVerdict::Promote);
+    }
+
+    #[test]
+    fn minimum_map_gate_overrides_an_early_clean_sweep() {
+        let result = paired_inference(&vec![1.0; PROMOTION_MIN_MAPS - 1]);
+        assert!(result.low > 0.5);
+        assert_eq!(result.verdict, PromotionVerdict::Insufficient);
+    }
+
+    #[test]
+    fn decisive_incumbent_edge_retains_it() {
+        let result = paired_inference(&vec![0.0; 30]);
+        assert!(result.high < 0.5);
+        assert_eq!(result.verdict, PromotionVerdict::Retain);
+    }
+
+    #[test]
+    fn balanced_maps_are_inconclusive() {
+        let scores: Vec<f64> = (0..40)
+            .map(|index| if index % 2 == 0 { 1.0 } else { 0.0 })
+            .collect();
+        let result = paired_inference(&scores);
+        assert!(result.low < 0.5 && result.high > 0.5);
+        assert_eq!(result.verdict, PromotionVerdict::Inconclusive);
+    }
+
+    #[test]
+    fn elo_equivalent_is_symmetric_around_parity() {
+        assert!((elo_edge(0.64) + elo_edge(0.36)).abs() < 1e-9);
+        assert_eq!(elo_edge(0.5), 0.0);
+    }
+
+    #[test]
+    fn pair_outcome_counts_keep_draw_mixed_maps_visible() {
+        assert_eq!(
+            pair_outcomes(&[1.0, 0.5, 0.0, 0.25, 0.75]),
+            PairOutcomes {
+                a_sweeps: 1,
+                neutral: 1,
+                b_sweeps: 1,
+                mixed_with_draw: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn games_without_a_head_to_head_winner_are_draws() {
+        let seats = ["challenger", "incumbent"];
+        assert_eq!(game_score(Some(0), &seats, "challenger"), 1.0);
+        assert_eq!(game_score(Some(1), &seats, "challenger"), 0.0);
+        assert_eq!(game_score(None, &seats, "challenger"), 0.5);
+        assert_eq!(game_score(Some(2), &seats, "challenger"), 0.5);
     }
 }
