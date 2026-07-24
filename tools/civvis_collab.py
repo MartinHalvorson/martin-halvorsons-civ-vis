@@ -384,6 +384,29 @@ def current_pr(repo: Path) -> Dict[str, Any]:
     )
 
 
+def wait_for_pr_head(
+    repo: Path,
+    branch: str,
+    local_head: str,
+    *,
+    deadline: float,
+    poll_seconds: float,
+) -> Dict[str, Any]:
+    """Wait through GitHub's brief branch-ref to PR-view consistency gap."""
+    while True:
+        pr = current_pr(repo)
+        if str(pr.get("headRefOid") or "") == local_head:
+            return pr
+        remote_head = remote_heads(repo).get(branch, "")
+        if remote_head != local_head:
+            raise CommandError(
+                "the PR head changed outside this task's one-writer worktree"
+            )
+        if time.monotonic() >= deadline:
+            raise CommandError("timed out waiting for GitHub to observe the pushed PR head")
+        time.sleep(max(0.1, poll_seconds))
+
+
 def merge_current_main(repo: Path) -> bool:
     """Integrate a newly advanced main and independently revalidate the result."""
     fetch_main(repo)
@@ -498,9 +521,13 @@ def ship_task(args: argparse.Namespace) -> int:
         git(root, "push", "origin", f"HEAD:{branch}")
         local_head = git(root, "rev-parse", "HEAD")
 
-        pr = current_pr(root)
-        if str(pr.get("headRefOid") or "") != local_head:
-            raise CommandError("the PR head changed outside this task's one-writer worktree")
+        pr = wait_for_pr_head(
+            root,
+            branch,
+            local_head,
+            deadline=deadline,
+            poll_seconds=args.poll_seconds,
+        )
         errors = ship_pr_errors(pr, branch)
         if errors:
             raise CommandError("; ".join(errors))

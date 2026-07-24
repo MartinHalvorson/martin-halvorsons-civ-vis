@@ -256,6 +256,26 @@ class ShipTests(unittest.TestCase):
             self.assertEqual(collab.current_pr(Path.cwd()), {"number": 9})
         self.assertEqual(gh.call_args.args[0][2], branch)
 
+    def test_pr_head_waits_for_the_pr_view_to_observe_the_pushed_ref(self):
+        branch = "agent/m/a/task-20260723T210500Z-a31f"
+        with (
+            patch.object(
+                collab,
+                "current_pr",
+                side_effect=[{"headRefOid": "old"}, {"headRefOid": "new"}],
+            ),
+            patch.object(collab, "remote_heads", return_value={branch: "new"}),
+            patch.object(collab.time, "sleep"),
+        ):
+            result = collab.wait_for_pr_head(
+                Path.cwd(),
+                branch,
+                "new",
+                deadline=collab.time.monotonic() + 1,
+                poll_seconds=0,
+            )
+        self.assertEqual(result["headRefOid"], "new")
+
     def test_ship_requires_a_finished_summary_and_every_checkbox(self):
         draft = {
             "state": "OPEN",
