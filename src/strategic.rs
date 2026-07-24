@@ -42,7 +42,7 @@ impl StrategicAi {
             weights,
             net: ValueNet::load("evolved"),
             review_every: 40,
-            horizon: 30,
+            horizon: 40,
             // The opening book plays itself; the first lane choice lands
             // once the empire exists enough for lanes to differ.
             next_review: 30,
@@ -471,6 +471,11 @@ mod tests {
                 .unwrap();
         }
         game.current = 0;
+    }
+
+    #[test]
+    fn default_macro_search_looks_forty_rounds_ahead() {
+        assert_eq!(StrategicAi::new().horizon, 40);
     }
 
     /// The review must pick a lane deterministically and commit it to the

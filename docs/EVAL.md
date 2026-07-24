@@ -399,3 +399,35 @@ estimate—the router selects targets from the position, so hard positions can
 select a particular lane. It is nevertheless a concrete ablation lead: test a
 stricter proactive domination commitment while retaining urgent victory
 denial, then accept it only on paired holdout maps.
+
+## 2026-07-24 — deeper Strategic counterfactuals
+
+The plan trace made poor domination-conditioned outcomes visible, but paired
+ablation showed that the label was not the cause. On the first 10-map block
+(`--seed 17000`), raising only domination's commitment margin changed no
+outcomes (9/20 wins), and removing proactive multiplayer domination made the
+result worse (8/20). Filtering an unwinnable non-founder religious lane and a
+founded-religion near-tie prior were also outcome-neutral at 9/20. These
+variants were rejected rather than accumulated.
+
+The useful intervention was to give every counterfactual enough time to reveal
+more of its real consequences. The default rollout horizon was tested at 30,
+40, and 45 rounds on three disjoint 10-map blocks, always with the same maps
+across arms:
+
+| Seed block | 30 rounds | 40 rounds | 45 rounds |
+|---|---:|---:|---:|
+| 17000 | 9/20 | **11/20** | 10/20 |
+| 18000 | 8/20 | **9/20** | 12/20 |
+| 19000 | 7/20 | **11/20** | 10/20 |
+| Combined | 24/60 (40.0%) | **31/60 (51.7%)** | 32/60 (53.3%) |
+
+Forty rounds improves every independent block, moving the paired-map estimate
+from 40.0% (-70 Elo, 95% CI 24.6%..57.7%) to 51.7% (+12 Elo, 95% CI
+34.6%..68.3%). Forty-five rounds gains only one additional game across all 60
+while requiring more search and finishing later in the simultaneous third
+block, so 40 is the efficient frontier. This is a replicated strength gain,
+not promotion over Advanced: the 30-map confidence interval still overlaps
+parity. The exact 25-map duel regression remains **32/50 (64%, +100 Elo)**
+with 30 religious wins, as expected because its mandatory religious route
+bypasses the economic rollout horizon.
