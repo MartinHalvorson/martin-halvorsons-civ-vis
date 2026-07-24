@@ -3,6 +3,14 @@
 These rules apply to every human and automated coding agent in this repository.
 Read [docs/VERSION_CONTROL.md](docs/VERSION_CONTROL.md) before changing files.
 
+After cloning on every computer, install the repository guard once:
+
+```bash
+python3 tools/civvis_collab.py install-hooks
+```
+
+The launcher refreshes it on every task. Never bypass it with `--no-verify`.
+
 Start every task with the repository launcher; it creates the isolated
 worktree, globally unique branch, checkpoint, and draft ownership PR:
 
@@ -56,6 +64,18 @@ python3 tools/civvis_collab.py start <task-slug> --machine <machine-id> \
   branches and PRs.
 - Before marking a PR ready, merge the latest `origin/main`, run the validation
   required by `CONTRIBUTING.md`, and record the results in the PR.
+- A finished feature is not finished at a local commit or draft PR. Once the
+  implementation works, the worktree is clean, the PR summary is final, and
+  every validation checkbox is accurate, run:
+
+  ```bash
+  python3 tools/civvis_collab.py ship
+  ```
+
+  Stay with the command until it reports the squash merge and, on a production
+  spectator host, the live revision. If it stops on a conflict, failed check,
+  or permission boundary, resolve or report that concrete blocker; never leave
+  completed work waiting silently in a draft PR.
 - Merge only through a green PR using squash merge. Delete the remote task
   branch after merge and remove the local worktree.
 - If a conflict is semantic or ownership is unclear, stop and coordinate. Do

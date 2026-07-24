@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Test the policy engine
-        run: python3 -m unittest tools/test_civvis_collab.py
+        run: python3 -m unittest tools/test_civvis_collab.py tools/test_civvis_push_guard.py
       - name: Validate branch, ownership, overlap, and commits
         if: github.event_name == 'pull_request'
         env:

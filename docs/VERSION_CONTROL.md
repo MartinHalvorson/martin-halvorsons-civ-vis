@@ -21,6 +21,28 @@ from sharing uncommitted state. Unique branches prevent computers from pushing
 over each other. Draft PRs reveal likely file overlap. Required CI and a single
 trunk serialize integration.
 
+## Bootstrap every clone
+
+Immediately after cloning CIVVIS on any current or future computer, install the
+repository-managed pre-push guard:
+
+```bash
+python3 tools/civvis_collab.py install-hooks
+```
+
+It is installed in Git's common hooks directory, so it covers every linked
+worktree in that clone. The task launcher refreshes it automatically before its
+first push, and `audit` reports a missing or stale copy as an error. Never use
+`git push --no-verify`.
+
+The guard rejects all pushes or deletions of `main`, new development branches
+that do not use the fleet naming convention, and non-fast-forward updates to a
+task branch. It permits tags and non-`main` branch deletion so completed and
+legacy branches can be cleaned up. This is a local safety boundary, not a
+replacement for GitHub branch protection: a user can bypass a hook, and a new
+clone has no hook until it is installed. The repository-owner ruleset remains
+the authoritative enforcement boundary.
+
 ## Identities and names
 
 Give each computer a stable, short machine ID such as `martin-mbp` or
@@ -196,6 +218,29 @@ Also run the soak validation required by `CONTRIBUTING.md` for engine changes.
 Record exact commands and results in the PR. CI is a required independent gate,
 not a substitute for focused local tests.
 
+### Ship completed work immediately
+
+After the feature works and the PR body accurately records its summary and
+completed validation, do not leave it in draft for a person or another agent to
+notice later. Run this from the task worktree:
+
+```bash
+python3 tools/civvis_collab.py ship
+```
+
+`ship` is the completion boundary. It pushes the finished commit, marks the PR
+ready, waits for `cargo-test` and `collaboration-policy`, and squash-merges as
+soon as both are green. If another feature reaches `main` while CI is running,
+it merges that new trunk into the task, reruns `cargo test --release --locked`,
+pushes the updated head, and waits for the new green result. It never invents a
+summary, checks validation boxes, resolves conflicts, or accepts a failed gate.
+
+On a host running the production spectator, `ship` then watches `/status` until
+the merged revision is actually serving. Other hosts stop after confirming the
+merge. The normal target is therefore roughly one CI run (currently about five
+minutes) from the final push to `main`, followed by the spectator's background
+build and checkpointed live cutover.
+
 Use squash merge only. The squash commit is the atomic unit integrated into
 `main`; intermediate checkpoints and merge-from-main commits remain out of the
 trunk history. Delete the remote branch after merge. Then remove the worktree
@@ -222,7 +267,8 @@ ruleset:
 - block force-pushes and branch deletion;
 - allow squash merge only;
 - automatically delete merged branches;
-- optionally enable auto-merge after the required gates pass.
+- enable auto-merge after the required gates pass (the `ship` command also
+  waits and merges explicitly, so it works before that owner setting is fixed).
 
 Both `cargo-test` and `collaboration-policy` are required checks. The latter
 rejects ambiguous branch names, missing or mismatched machine/agent identity,

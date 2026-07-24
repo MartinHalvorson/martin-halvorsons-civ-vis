@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -27,6 +28,7 @@ import urllib.request
 
 REPOSITORY = "MartinHalvorson/CIVVIS"
 DEFAULT_BRANCH = "main"
+REQUIRED_CHECKS = ("cargo-test", "collaboration-policy")
 BRANCH_RE = re.compile(
     r"^agent/(?P<machine>[a-z0-9][a-z0-9-]{0,31})/"
     r"(?P<agent>[a-z0-9][a-z0-9-]{0,31})/"
@@ -35,6 +37,7 @@ BRANCH_RE = re.compile(
 )
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 TASK_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
+PUSH_GUARD_MARKER = "CIVVIS managed pre-push guard v1"
 FIELD_LABELS = {
     "machine": "Machine ID",
     "agent": "Agent/session ID",
@@ -281,6 +284,319 @@ def gh_json(args: Sequence[str], *, cwd: Optional[Path] = None) -> Any:
     return json.loads(result.stdout or "null")
 
 
+def required_check_state(
+    rows: Sequence[Dict[str, Any]],
+    *,
+    required: Iterable[str] = REQUIRED_CHECKS,
+    minimum_started: Optional[Dict[str, str]] = None,
+) -> Tuple[str, List[str]]:
+    """Summarize the newest check run for every required workflow.
+
+    GitHub can retain several runs with the same name on one PR head after a
+    body edit or draft/ready transition. Only the newest eligible run is the
+    current gate. ``minimum_started`` lets ``ship`` wait for the policy run
+    caused by its own ready-for-review transition instead of accepting an
+    older green draft check in the few seconds before the new run appears.
+    """
+    missing_or_pending: List[str] = []
+    failed: List[str] = []
+    thresholds = minimum_started or {}
+    for name in required:
+        candidates = [
+            row
+            for row in rows
+            if str(row.get("name") or row.get("context") or "") == name
+            and str(row.get("startedAt") or row.get("started_at") or "")
+            >= thresholds.get(name, "")
+        ]
+        if not candidates:
+            missing_or_pending.append(name)
+            continue
+        latest = max(
+            candidates,
+            key=lambda row: str(
+                row.get("startedAt")
+                or row.get("started_at")
+                or row.get("completedAt")
+                or row.get("completed_at")
+                or ""
+            ),
+        )
+        status = str(latest.get("status") or "").lower()
+        conclusion = str(
+            latest.get("conclusion") or latest.get("state") or ""
+        ).lower()
+        if status and status != "completed":
+            missing_or_pending.append(name)
+        elif conclusion not in {"success", "successful"}:
+            failed.append(name)
+    if failed:
+        return "failed", failed
+    if missing_or_pending:
+        return "pending", missing_or_pending
+    return "success", []
+
+
+def ship_pr_errors(pr: Dict[str, Any], branch: str) -> List[str]:
+    """Return reasons a task PR is not yet an honest finished feature."""
+    errors: List[str] = []
+    if str(pr.get("state") or "").upper() != "OPEN":
+        errors.append("the current branch PR is not open")
+    if str(pr.get("headRefName") or "") != branch:
+        errors.append("the current branch does not own the discovered PR")
+    body = str(pr.get("body") or "")
+    if re.search(r"^\s*- \[ \]", body, re.MULTILINE):
+        errors.append("complete every PR validation checkbox before shipping")
+    summary = re.search(
+        r"^## What changed\s*(.*?)(?=^## |\Z)",
+        body,
+        re.MULTILINE | re.DOTALL,
+    )
+    summary_text = summary.group(1).strip() if summary else ""
+    if not summary_text or "implementation is in progress" in summary_text.lower():
+        errors.append("replace the draft 'What changed' text with the finished summary")
+    return errors
+
+
+def ref_contains(repo: Path, ancestor: str, descendant: str = "HEAD") -> bool:
+    return run(
+        ("git", "-C", str(repo), "merge-base", "--is-ancestor", ancestor, descendant),
+        check=False,
+    ).returncode == 0
+
+
+def current_pr(repo: Path) -> Dict[str, Any]:
+    branch = git(repo, "symbolic-ref", "--quiet", "--short", "HEAD")
+    return dict(
+        gh_json(
+            (
+                "pr",
+                "view",
+                branch,
+                "--repo",
+                REPOSITORY,
+                "--json",
+                "number,url,state,isDraft,body,headRefName,headRefOid,baseRefOid,"
+                "mergeStateStatus,statusCheckRollup,title",
+            ),
+            cwd=repo,
+        )
+    )
+
+
+def wait_for_pr_head(
+    repo: Path,
+    branch: str,
+    local_head: str,
+    *,
+    deadline: float,
+    poll_seconds: float,
+) -> Dict[str, Any]:
+    """Wait through GitHub's brief branch-ref to PR-view consistency gap."""
+    while True:
+        pr = current_pr(repo)
+        if str(pr.get("headRefOid") or "") == local_head:
+            return pr
+        remote_head = remote_heads(repo).get(branch, "")
+        if remote_head != local_head:
+            raise CommandError(
+                "the PR head changed outside this task's one-writer worktree"
+            )
+        if time.monotonic() >= deadline:
+            raise CommandError("timed out waiting for GitHub to observe the pushed PR head")
+        time.sleep(max(0.1, poll_seconds))
+
+
+def merge_current_main(repo: Path) -> bool:
+    """Integrate a newly advanced main and independently revalidate the result."""
+    fetch_main(repo)
+    if ref_contains(repo, "origin/main"):
+        return False
+    print("main advanced; merging it and rerunning the required local test")
+    merged = run(
+        ("git", "-C", str(repo), "merge", "--no-edit", "origin/main"),
+        check=False,
+    )
+    if merged.returncode:
+        detail = (merged.stderr or merged.stdout or "merge conflict").strip()
+        raise CommandError(
+            "latest main did not merge cleanly; resolve this task worktree, "
+            f"revalidate it, and run ship again: {detail}"
+        )
+    git(repo, "diff", "--check", "origin/main...")
+    run(
+        ("cargo", "test", "--release", "--locked"),
+        cwd=repo,
+        capture=False,
+    )
+    return True
+
+
+def local_deploy_root(repo: Path) -> Optional[Path]:
+    common = common_git_dir(repo)
+    root = common.parent
+    return root if (root / "target" / "spectator" / "build.json").is_file() else None
+
+
+def live_status_commit(url: str, timeout: float = 5.0) -> str:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            payload = json.load(response)
+    except (OSError, ValueError, urllib.error.URLError):
+        return ""
+    return str(payload.get("commit") or "") if isinstance(payload, dict) else ""
+
+
+def deployed_commit_covers(repo: Path, deployed: str, merged_sha: str) -> bool:
+    if not deployed:
+        return False
+    if merged_sha.startswith(deployed) or deployed.startswith(merged_sha):
+        return True
+    resolved = git(repo, "rev-parse", "--verify", deployed, check=False)
+    return bool(resolved) and ref_contains(repo, merged_sha, resolved)
+
+
+def wait_for_local_live_build(
+    repo: Path,
+    merged_sha: str,
+    *,
+    url: str,
+    timeout_seconds: float,
+    poll_seconds: float,
+) -> bool:
+    if local_deploy_root(repo) is None or timeout_seconds <= 0:
+        print("no local production spectator detected; merge is complete")
+        return False
+    print(f"waiting for the production spectator at {url} to run {merged_sha[:7]}")
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        deployed = live_status_commit(url)
+        if deployed_commit_covers(repo, deployed, merged_sha):
+            print(f"production spectator is live on {deployed}")
+            return True
+        time.sleep(max(0.1, poll_seconds))
+        fetch_main(repo)
+    print(
+        "production spectator did not confirm the merged revision before the "
+        "live-build timeout"
+    )
+    return False
+
+
+def ship_task(args: argparse.Namespace) -> int:
+    """Push a finished task, wait for green CI, squash-merge, and verify live."""
+    root = repo_root()
+    if not shutil.which("gh"):
+        raise CommandError("GitHub CLI 'gh' is required to ship a task")
+    run(("gh", "auth", "status"), cwd=root)
+    branch = git(root, "symbolic-ref", "--quiet", "--short", "HEAD", check=False)
+    if not BRANCH_RE.fullmatch(branch):
+        raise CommandError("ship must run from this task's conforming agent branch")
+    if git(root, "status", "--porcelain"):
+        raise CommandError("commit the finished feature and leave the worktree clean first")
+
+    install_push_guard(root)
+    fetch_main(root)
+    if run(
+        ("git", "-C", str(root), "diff", "--quiet", "origin/main...HEAD"),
+        check=False,
+    ).returncode == 0:
+        raise CommandError("the task has no file changes relative to main")
+
+    pr = current_pr(root)
+    errors = ship_pr_errors(pr, branch)
+    if errors:
+        raise CommandError("; ".join(errors))
+
+    deadline = time.monotonic() + max(1.0, args.timeout_seconds)
+    ready_thresholds: Dict[str, str] = {}
+    while True:
+        if time.monotonic() >= deadline:
+            raise CommandError("timed out waiting for the task to reach main")
+
+        merged_main = merge_current_main(root)
+        if merged_main and git(root, "status", "--porcelain"):
+            raise CommandError("main integration left unexpected worktree changes")
+        git(root, "diff", "--check", "origin/main...")
+        git(root, "push", "origin", f"HEAD:{branch}")
+        local_head = git(root, "rev-parse", "HEAD")
+
+        pr = wait_for_pr_head(
+            root,
+            branch,
+            local_head,
+            deadline=deadline,
+            poll_seconds=args.poll_seconds,
+        )
+        errors = ship_pr_errors(pr, branch)
+        if errors:
+            raise CommandError("; ".join(errors))
+        if pr.get("isDraft"):
+            # Permit a small clock skew while still excluding earlier draft
+            # policy runs from the ready-for-review gate.
+            threshold = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=5)
+            ready_thresholds["collaboration-policy"] = threshold.isoformat().replace(
+                "+00:00", "Z"
+            )
+            run(
+                ("gh", "pr", "ready", str(pr["number"]), "--repo", REPOSITORY),
+                cwd=root,
+            )
+            print(f"PR #{pr['number']} is ready; waiting for required checks")
+
+        while True:
+            if time.monotonic() >= deadline:
+                raise CommandError("timed out waiting for required checks")
+            pr = current_pr(root)
+            if str(pr.get("state") or "").upper() != "OPEN":
+                raise CommandError("the PR closed before ship completed")
+            if str(pr.get("headRefOid") or "") != local_head:
+                raise CommandError("the PR head changed outside this task's one-writer worktree")
+
+            fetch_main(root)
+            if not ref_contains(root, "origin/main"):
+                print("main advanced while CI was running; updating this task")
+                ready_thresholds.clear()
+                break
+
+            state, names = required_check_state(
+                pr.get("statusCheckRollup") or [], minimum_started=ready_thresholds
+            )
+            if state == "failed":
+                raise CommandError("required checks failed: " + ", ".join(names))
+            if state == "success":
+                merge_result = gh_api_write(
+                    "PUT",
+                    f"repos/{REPOSITORY}/pulls/{pr['number']}/merge",
+                    {"merge_method": "squash", "sha": local_head},
+                )
+                if not merge_result.get("merged"):
+                    raise CommandError(
+                        "GitHub refused the green squash merge: "
+                        + str(merge_result.get("message") or "unknown reason")
+                    )
+                merged_sha = str(merge_result.get("sha") or "")
+                print(f"PR #{pr['number']} squash-merged as {merged_sha[:7]}")
+                deletion = run(
+                    ("git", "-C", str(root), "push", "origin", "--delete", branch),
+                    check=False,
+                )
+                if deletion.returncode:
+                    print("remote branch was already deleted or could not be deleted")
+                fetch_main(root)
+                wait_for_local_live_build(
+                    root,
+                    merged_sha,
+                    url=args.live_url,
+                    timeout_seconds=args.live_timeout_seconds,
+                    poll_seconds=args.poll_seconds,
+                )
+                return 0
+
+            print("waiting on: " + ", ".join(names))
+            time.sleep(max(0.1, args.poll_seconds))
+
+
 def existing_pr_claims(repo: Path) -> List[Dict[str, Any]]:
     rows = gh_json(
         (
@@ -329,7 +645,7 @@ def associated_pr_number(sha: str) -> Optional[int]:
 def required_check_gate_errors(
     check_runs: Sequence[Dict[str, Any]],
     merged_at: str,
-    required: Iterable[str] = ("cargo-test", "collaboration-policy"),
+    required: Iterable[str] = REQUIRED_CHECKS,
 ) -> List[str]:
     """Report required checks that were not successful before a PR merged."""
     merge_time = dt.datetime.fromisoformat(merged_at.replace("Z", "+00:00"))
@@ -460,6 +776,81 @@ def fetch_main(repo: Path) -> None:
     raise last_error
 
 
+def common_git_dir(repo: Path) -> Path:
+    raw = Path(git(repo, "rev-parse", "--git-common-dir"))
+    return raw.resolve() if raw.is_absolute() else (repo / raw).resolve()
+
+
+def push_guard_paths(repo: Path) -> Tuple[Path, Path]:
+    source = repo / "tools" / "civvis_push_guard.py"
+    target = common_git_dir(repo) / "hooks" / "pre-push"
+    return source, target
+
+
+def install_push_guard(repo: Path) -> Path:
+    source, target = push_guard_paths(repo)
+    if not source.is_file():
+        raise CommandError(f"versioned push guard is missing: {source}")
+    source_bytes = source.read_bytes()
+    if target.is_symlink():
+        raise CommandError(f"refusing to replace symlinked pre-push hook: {target}")
+    if target.exists():
+        existing = target.read_bytes()
+        if existing != source_bytes and PUSH_GUARD_MARKER.encode() not in existing:
+            raise CommandError(
+                f"refusing to overwrite unmanaged pre-push hook: {target}; "
+                "preserve and resolve that hook explicitly before retrying"
+            )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(
+        f".{target.name}.civvis-{os.getpid()}-{secrets.token_hex(4)}"
+    )
+    try:
+        with temporary.open("xb") as handle:
+            handle.write(source_bytes)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if os.name != "nt":
+            temporary.chmod(
+                temporary.stat().st_mode
+                | stat.S_IXUSR
+                | stat.S_IXGRP
+                | stat.S_IXOTH
+            )
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return target
+
+
+def push_guard_error(repo: Path) -> Optional[str]:
+    source, target = push_guard_paths(repo)
+    if not source.is_file():
+        return f"versioned push guard is missing: {source}"
+    if target.is_symlink():
+        return f"local pre-push guard must not be a symlink: {target}"
+    if not target.is_file():
+        return (
+            "local pre-push guard is not installed; run "
+            "python3 tools/civvis_collab.py install-hooks"
+        )
+    if target.read_bytes() != source.read_bytes():
+        return (
+            "local pre-push guard is outdated or unmanaged; run "
+            "python3 tools/civvis_collab.py install-hooks"
+        )
+    if os.name != "nt" and not os.access(target, os.X_OK):
+        return f"local pre-push guard is not executable: {target}"
+    return None
+
+
+def install_hooks_command(args: argparse.Namespace) -> int:
+    del args
+    target = install_push_guard(repo_root())
+    print(f"installed CIVVIS pre-push guard: {target}")
+    return 0
+
+
 def start_task(args: argparse.Namespace) -> int:
     root = repo_root()
     if not shutil.which("gh"):
@@ -520,6 +911,8 @@ def start_task(args: argparse.Namespace) -> int:
         ("rerere.autoupdate", "false"),
     ):
         git(root, "config", key, value)
+
+    install_push_guard(root)
 
     fetch_main(root)
     git(root, "worktree", "add", "-b", branch, str(worktree), "origin/main")
@@ -786,6 +1179,12 @@ def audit_repo(root: Path) -> Dict[str, List[str]]:
             warnings.append(f"legacy/nonconforming {label} worktree branch {branch}: {path}")
     ok.append(f"inspected {len(worktrees)} local worktree registration(s)")
 
+    hook_error = push_guard_error(root)
+    if hook_error:
+        errors.append(hook_error)
+    else:
+        ok.append("shared local pre-push guard is installed and current")
+
     if sys.platform == "darwin":
         agents = Path.home() / "Library" / "LaunchAgents"
         active = sorted(agents.glob("*civvis*autosync*.plist")) if agents.exists() else []
@@ -930,6 +1329,21 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--dry-run", action="store_true")
     start.set_defaults(func=start_task)
 
+    ship = sub.add_parser(
+        "ship",
+        help="push a finished task, wait for green CI, merge it, and verify live",
+    )
+    ship.add_argument("--timeout-seconds", type=float, default=1200.0)
+    ship.add_argument("--poll-seconds", type=float, default=10.0)
+    ship.add_argument("--live-timeout-seconds", type=float, default=600.0)
+    ship.add_argument(
+        "--live-url",
+        default=os.environ.get(
+            "CIVVIS_LIVE_STATUS_URL", "http://127.0.0.1:8766/status"
+        ),
+    )
+    ship.set_defaults(func=ship_task)
+
     check_pr = sub.add_parser("check-pr", help="validate the current GitHub pull request event")
     check_pr.add_argument("--event", default=os.environ.get("GITHUB_EVENT_PATH", ""))
     check_pr.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY", REPOSITORY))
@@ -941,6 +1355,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     enforce = sub.add_parser("enforce-github", help="apply repository and main protection settings")
     enforce.set_defaults(func=enforce_github_command)
+
+    install_hooks = sub.add_parser(
+        "install-hooks", help="install the shared local pre-push guard for this clone"
+    )
+    install_hooks.set_defaults(func=install_hooks_command)
 
     monitor = sub.add_parser("monitor", help="run recurring fleet audits")
     monitor.add_argument("--duration-minutes", type=int, default=180)
