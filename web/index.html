@@ -377,7 +377,8 @@
   @container (max-width: 96px) { .victory-heading.with-cap b { display: none; } }
   .victory-list { display: flex; flex-direction: column; gap: 3px; }
   .victory-entry { min-width: 0; }
-  /* The rows are already printed in rank order, so the leading "#1/#2/#3"
+  .victory-entry[hidden] { display: none; }
+  /* The rows are already printed in rank order, so a leading rank number
      spent 13px per line restating the order. In a narrower victory rail that width
      is worth more as civilization name, which is what actually truncates. */
   .victory-line { display: grid; grid-template-columns: 6px minmax(0, 1fr) auto; align-items: center; gap: 3px; min-width: 0; height: 13px; }
@@ -2819,6 +2820,10 @@ function applyHudWidgetMetrics(name, metrics, persist = false) {
     area.style.setProperty("--player-hud-width", `${next.width}px`);
     area.style.setProperty("--player-hud-height", `${next.height}px`);
   }
+  // Victory leaders stack vertically inside each path. Reveal another rank as
+  // soon as a resize makes room for a complete row, without replacing the
+  // resize handle that currently owns the pointer gesture.
+  if (name === "victory" && state) syncVictoryLeaderCapacity(config.element);
   if (persist) saveHudLayout();
   if (name === "minimap") refreshMiniForLayout();
 }
@@ -2839,7 +2844,7 @@ function resetHudWidget(name, persist = true) {
                           "max-width", "max-height", "transform"])
     config.element.style.removeProperty(property);
   config.element.classList.remove("layout-widget-custom", "layout-widget-active");
-  if (name === "players" && state) drawPlayerHud();
+  if ((name === "players" || name === "victory") && state) drawPlayerHud();
   if (persist) saveHudLayout();
   if (name === "minimap") requestAnimationFrame(refreshMiniForLayout);
 }
@@ -8298,6 +8303,53 @@ function victoryDescription(victory, metric) {
   return `${compactStat(metric.points || 0)} points · meter is relative to the score leader`;
 }
 
+const DEFAULT_VICTORY_LEADERS = 3;
+
+// Measure the space the rendered track actually has instead of coupling this
+// behavior to the widget's default 112px height. This keeps custom layouts,
+// keyboard resizing, compact viewports, and future style changes in sync. All
+// paths use the same capacity so every column advances from top 3 to top 4
+// together; science's slightly taller split meter sets the safe limit.
+function victoryLeaderCapacity(victoryHud) {
+  const rail = victoryHud?.querySelector(".hud-rail");
+  const tracks = [...(victoryHud?.querySelectorAll(".victory-track") || [])];
+  if (!rail || !tracks.length) return DEFAULT_VICTORY_LEADERS;
+  let capacity = Infinity;
+  for (const track of tracks) {
+    const list = track.querySelector(".victory-list");
+    const entries = [...(list?.querySelectorAll(".victory-entry") || [])];
+    if (!entries.length) { capacity = 0; continue; }
+    const floor = Math.min(DEFAULT_VICTORY_LEADERS, entries.length);
+    const trackStyle = getComputedStyle(track);
+    const listStyle = getComputedStyle(list);
+    const rowHeight = entries[0].getBoundingClientRect().height;
+    const gap = parseFloat(listStyle.rowGap) || 0;
+    const fixedHeight = list.getBoundingClientRect().top -
+      track.getBoundingClientRect().top + (parseFloat(trackStyle.paddingBottom) || 0);
+    const fits = rowHeight > 0
+      ? Math.floor((rail.clientHeight - fixedHeight + gap) / (rowHeight + gap))
+      : floor;
+    capacity = Math.min(capacity, Math.max(floor, fits));
+  }
+  const total = tracks[0].querySelectorAll(".victory-entry").length;
+  return Math.max(0, Math.min(total, Number.isFinite(capacity) ? capacity : total));
+}
+
+function syncVictoryLeaderCapacity(victoryHud = document.getElementById("victoryhud")) {
+  const tracks = [...(victoryHud?.querySelectorAll(".victory-track") || [])];
+  if (!tracks.length) return;
+  const capacity = victoryLeaderCapacity(victoryHud);
+  const total = tracks[0].querySelectorAll(".victory-entry").length;
+  for (const track of tracks) {
+    for (const [index, entry] of [...track.querySelectorAll(".victory-entry")].entries())
+      entry.hidden = index >= capacity;
+  }
+  const context = victoryHud.querySelector("[data-victory-capacity]");
+  if (context) context.textContent = capacity >= total
+    ? `All ${total} by path`
+    : `Top ${capacity} of ${total}`;
+}
+
 function playerHudOverview() {
   const actor = state.players[SPEC ? state.current : 0] || state.players[state.player];
   const viewer = state.players[state.player] || actor;
@@ -8327,14 +8379,13 @@ function playerHudOverview() {
       .sort((a, b) => {
         const am = victoryMetric(a, track.id), bm = victoryMetric(b, track.id);
         // Science progress only moves once the launches start, so for the
-        // whole first half of a game the three names shown were the score
+        // whole first half of a game the names shown were the score
         // leaders. The tree the meter draws breaks that tie instead; no
         // other race carries a technology count.
         return (+bm.progress || 0) - (+am.progress || 0)
           || (+bm.techs || 0) - (+am.techs || 0)
           || b.score - a.score || a.id - b.id;
-      })
-      .slice(0, 3);
+      });
     // Score is settled when the turns run out, so its heading says how many
     // of them are left to play.
     const cap = track.id === "score"
@@ -8365,7 +8416,7 @@ function playerHudOverview() {
     `<section class="hud-region victory-region" aria-labelledby="victory-race-title">` +
     `<div class="hud-section-heading"><span class="widget-drag-handle" data-widget-drag tabindex="0" role="button" ` +
     `aria-label="Move victory race; use arrow keys or drag" title="Drag to move · arrow keys also move" id="victory-race-title">Victory race</span>` +
-    `<span class="hud-heading-context">Top 3 by path</span><button class="widget-reset" data-widget-reset type="button" aria-label="Reset victory race position and size" title="Reset position and size">↺</button></div>` +
+    `<span class="hud-heading-context" data-victory-capacity>Leaders by path</span><button class="widget-reset" data-widget-reset type="button" aria-label="Reset victory race position and size" title="Reset position and size">↺</button></div>` +
     `<div class="hud-rail" tabindex="0" aria-label="Victory paths; scroll horizontally for every path">` +
     `<div class="victory-ribbon" style="--victory-columns:${victoryCount};--victory-min-width:${victoryMinWidth}px">` +
     `${victoryTracks}</div></div></section>` +
@@ -8451,6 +8502,7 @@ function drawPlayerHud() {
     const rail = victoryHud.querySelector(".hud-rail");
     if (rail) rail.scrollLeft = victoryScroll;
   }
+  syncVictoryLeaderCapacity(victoryHud);
   const acting = SPEC ? state.current : 0;
   const majors = state.players
     .filter(p => !p.is_minor && !p.is_barbarian)
@@ -8545,6 +8597,15 @@ function drawPlayerHud() {
   hudHtml = html;
   hud.innerHTML = html;
 }
+
+// CSS mode changes and showing a previously hidden overlay can resize the
+// widget without going through the drag handler. Keep those paths responsive
+// too; changing which rows are hidden does not change the widget's own box, so
+// this observer cannot feed itself.
+const victoryHudSizeObserver = typeof ResizeObserver === "function"
+  ? new ResizeObserver(() => { if (state) syncVictoryLeaderCapacity(); })
+  : null;
+victoryHudSizeObserver?.observe(document.getElementById("victoryhud"));
 
 function toggleCivDossier(id) {
   hudExpanded = hudExpanded === id ? null : id;
