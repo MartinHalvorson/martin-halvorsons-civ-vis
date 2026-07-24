@@ -38807,32 +38807,103 @@ impl Game {
     fn expand_borders(&mut self, cid: u32) {
         let city_pos = self.cities[&cid].pos;
         let owned = self.cities[&cid].owned_tiles.clone();
-        let mut best: Option<((f64, Pos), Pos)> = None;
+        let mut candidates = BTreeSet::new();
         for pos in &owned {
             for n in self.nbrs(*pos) {
                 let t = match self.map.get(n) {
                     Some(t) => t,
                     None => continue,
                 };
-                if t.owner_city.is_some() || self.wdist(n, city_pos) > 3 {
+                // Cultural expansion reaches two rings beyond the workable
+                // radius in Civ VI. Gold purchases remain capped at ring 3.
+                if t.owner_city.is_some() || self.wdist(n, city_pos) > 5 {
                     continue;
                 }
-                let tys = self.rules.tile_yields(t);
-                let val = tys.total() + if t.resource.is_some() { 2.0 } else { 0.0 };
-                let key = (val, n);
-                let better = match &best {
-                    None => true,
-                    Some((bk, _)) => key.0 > bk.0 || (key.0 == bk.0 && key.1 > bk.1),
-                };
-                if better {
-                    best = Some((key, n));
-                }
+                candidates.insert(n);
             }
         }
-        if let Some((_, n)) = best {
+
+        // The picker exhausts the nearest ring containing an available plot
+        // before considering the next one. This is a hard eligibility rule,
+        // not merely a small distance bonus: even a ring-2 mountain precedes
+        // a ring-3 resource.
+        let Some(nearest_ring) = candidates
+            .iter()
+            .map(|position| self.wdist(*position, city_pos))
+            .min()
+        else {
+            return;
+        };
+        let mut scored: Vec<(Pos, f64)> = candidates
+            .into_iter()
+            .filter(|position| self.wdist(*position, city_pos) == nearest_ring)
+            .map(|position| (position, self.border_influence_cost(cid, position)))
+            .collect();
+        let best_score = scored
+            .iter()
+            .map(|(_, score)| *score)
+            .min_by(f64::total_cmp)
+            .unwrap();
+        scored.retain(|(_, score)| *score == best_score);
+        // Stock chooses randomly among exactly tied influence scores. Sort
+        // first so a fixed game seed remains reproducible across save loads.
+        scored.sort_by_key(|(position, _)| *position);
+        let n = scored[self.rng.below(scored.len())].0;
+        {
             self.map.tiles.get_mut(&n).unwrap().owner_city = Some(cid);
             self.cities.get_mut(&cid).unwrap().owned_tiles.push(n);
         }
+    }
+
+    /// Lower is more attractive to Civ VI's cultural tile picker.
+    ///
+    /// These are the shipped `PLOT_INFLUENCE_*` values: resources and Natural
+    /// Wonders receive -105, water +25, existing improvements -5 (or +100 for
+    /// a Barbarian Camp), and each raw yield point -1. Terrain contributes its
+    /// database `InfluenceCost`. Nearby unclaimed strategic/luxury resources
+    /// and Natural Wonders provide the stock one-point surface-tension nudge.
+    fn border_influence_cost(&self, cid: u32, position: Pos) -> f64 {
+        let tile = &self.map.tiles[&position];
+        let mut cost = match tile.terrain.as_str() {
+            "grassland" | "plains" | "ocean" => 1.0,
+            "desert" | "tundra" | "snow" | "coast" | "lake" => 2.0,
+            "mountain" => 3.0,
+            _ => 2.0,
+        };
+        if self.rules.is_water(tile) {
+            cost += 25.0;
+        }
+        match tile.improvement.as_deref() {
+            Some("barbarian_camp") => cost += 100.0,
+            Some(_) => cost -= 5.0,
+            None => {}
+        }
+        if tile.resource.is_some() {
+            cost -= 105.0;
+        }
+        if self.tile_is_natural_wonder(tile) {
+            cost -= 105.0;
+        }
+        cost -= self.rules.tile_yields(tile).total();
+
+        let city_pos = self.cities[&cid].pos;
+        for neighbor in self.nbrs(position) {
+            let adjacent = &self.map.tiles[&neighbor];
+            if adjacent.owner_city.is_some() {
+                continue;
+            }
+            if self.tile_is_natural_wonder(adjacent) {
+                cost -= 1.0;
+            }
+            if self.wdist(neighbor, city_pos) <= 3
+                && adjacent.resource.as_ref().is_some_and(|resource| {
+                    self.rules.resources[resource.as_str()].class != "bonus"
+                })
+            {
+                cost -= 1.0;
+            }
+        }
+        cost
     }
 
     // ----------------------------------------------------- win handling
@@ -39609,6 +39680,177 @@ mod team_tests {
 
         let team_score = religion.team_score_rank_key(0).0;
         assert_eq!(team_score, religion.score(0) + religion.score(1));
+    }
+}
+
+#[cfg(test)]
+mod border_growth_tests {
+    use super::*;
+
+    fn controlled_game(seed: u64) -> (Game, u32, Pos) {
+        let mut game = Game::new_full(1, 24, 20, seed, 120, 0, false);
+        for unit in game.units.keys().copied().collect::<Vec<_>>() {
+            game.remove_unit(unit);
+        }
+        game.map.clear_rivers();
+        for tile in game.map.tiles.values_mut() {
+            tile.terrain = "plains".to_string();
+            tile.feature = None;
+            tile.hills = false;
+            tile.resource = None;
+            tile.improvement = None;
+            tile.pillaged = false;
+            tile.district = None;
+            tile.district_foundation = None;
+            tile.wonder = None;
+            tile.owner_city = None;
+        }
+        let center = *game
+            .map
+            .tiles
+            .keys()
+            .find(|position| game.wdisk(**position, 5).len() == 91)
+            .expect("controlled map has a complete five-tile city radius");
+        let city = game.found_city_for(0, center, None);
+        (game, city, center)
+    }
+
+    fn ring(game: &Game, center: Pos, radius: i32) -> Vec<Pos> {
+        game.wdisk(center, radius)
+            .into_iter()
+            .filter(|position| game.wdist(*position, center) == radius)
+            .collect()
+    }
+
+    fn claim(game: &mut Game, city: u32, position: Pos) {
+        if game.map.tiles[&position].owner_city == Some(city) {
+            return;
+        }
+        game.map.tiles.get_mut(&position).unwrap().owner_city = Some(city);
+        game.cities
+            .get_mut(&city)
+            .unwrap()
+            .owned_tiles
+            .push(position);
+    }
+
+    #[test]
+    fn nearest_available_ring_is_exhausted_before_a_resource_in_the_next_ring() {
+        let (mut game, city, center) = controlled_game(941_001);
+        let second_ring = ring(&game, center, 2);
+        let last_inner = second_ring[0];
+        for position in second_ring.into_iter().skip(1) {
+            claim(&mut game, city, position);
+        }
+        game.map.tiles.get_mut(&last_inner).unwrap().terrain = "mountain".to_string();
+
+        let third_ring_resource = ring(&game, center, 3)[0];
+        game.map
+            .tiles
+            .get_mut(&third_ring_resource)
+            .unwrap()
+            .resource = Some("diamonds".to_string());
+
+        game.expand_borders(city);
+
+        assert_eq!(game.map.tiles[&last_inner].owner_city, Some(city));
+        assert_eq!(game.map.tiles[&third_ring_resource].owner_city, None);
+    }
+
+    #[test]
+    fn natural_growth_can_claim_the_fifth_ring() {
+        let (mut game, city, center) = controlled_game(941_002);
+        for radius in 2..=4 {
+            for position in ring(&game, center, radius) {
+                claim(&mut game, city, position);
+            }
+        }
+        let before: BTreeSet<Pos> = game.cities[&city].owned_tiles.iter().copied().collect();
+
+        game.expand_borders(city);
+
+        let added: Vec<Pos> = game.cities[&city]
+            .owned_tiles
+            .iter()
+            .copied()
+            .filter(|position| !before.contains(position))
+            .collect();
+        assert_eq!(added.len(), 1);
+        assert_eq!(game.wdist(added[0], center), 5);
+
+        for position in ring(&game, center, 5) {
+            claim(&mut game, city, position);
+        }
+        let complete_five_ring_border = game.cities[&city].owned_tiles.len();
+        game.expand_borders(city);
+        assert_eq!(
+            game.cities[&city].owned_tiles.len(),
+            complete_five_ring_border,
+            "natural border growth must not enter ring 6"
+        );
+    }
+
+    #[test]
+    fn resource_influence_beats_a_richer_unresourced_tile_in_the_same_ring() {
+        let (mut game, city, center) = controlled_game(941_003);
+        let second_ring = ring(&game, center, 2);
+        let resource = second_ring[0];
+        let rich = second_ring[1];
+        {
+            let tile = game.map.tiles.get_mut(&resource).unwrap();
+            tile.terrain = "snow".to_string();
+            tile.resource = Some("iron".to_string());
+        }
+        {
+            let tile = game.map.tiles.get_mut(&rich).unwrap();
+            tile.terrain = "grassland".to_string();
+            tile.hills = true;
+            tile.feature = Some("forest".to_string());
+        }
+
+        game.expand_borders(city);
+
+        assert_eq!(game.map.tiles[&resource].owner_city, Some(city));
+        assert_eq!(game.map.tiles[&rich].owner_city, None);
+    }
+
+    #[test]
+    fn water_influence_penalty_keeps_barren_land_ahead_of_open_coast() {
+        let (mut game, city, center) = controlled_game(941_004);
+        let second_ring = ring(&game, center, 2);
+        for position in &second_ring {
+            game.map.tiles.get_mut(position).unwrap().terrain = "coast".to_string();
+        }
+        let barren_land = second_ring[0];
+        game.map.tiles.get_mut(&barren_land).unwrap().terrain = "desert".to_string();
+
+        game.expand_borders(city);
+
+        assert_eq!(game.map.tiles[&barren_land].owner_city, Some(city));
+    }
+
+    #[test]
+    fn natural_wonder_influence_beats_ordinary_tile_yields() {
+        let (mut game, city, center) = controlled_game(941_005);
+        let second_ring = ring(&game, center, 2);
+        let natural_wonder = second_ring[0];
+        let ordinary = second_ring[1];
+        {
+            let tile = game.map.tiles.get_mut(&natural_wonder).unwrap();
+            tile.terrain = "desert".to_string();
+            tile.feature = Some("uluru".to_string());
+        }
+        {
+            let tile = game.map.tiles.get_mut(&ordinary).unwrap();
+            tile.terrain = "grassland".to_string();
+            tile.hills = true;
+            tile.feature = Some("forest".to_string());
+        }
+
+        game.expand_borders(city);
+
+        assert_eq!(game.map.tiles[&natural_wonder].owner_city, Some(city));
+        assert_eq!(game.map.tiles[&ordinary].owner_city, None);
     }
 }
 
