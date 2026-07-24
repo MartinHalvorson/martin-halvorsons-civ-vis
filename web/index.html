@@ -1094,6 +1094,148 @@
     .ribbon-stat b { font-size: 9px; }
     body.cinema-mode #cinema-story { left: 18px; width: calc(100% - 36px); }
   }
+
+  /* The standings return to their original upper-right home, but a large
+     table uses two short columns instead of one tall stack. The requested
+     height is calculated from the player count in drawPlayerHud(); the
+     viewport cap guarantees that even a 10-player table stays below one
+     third of the map. */
+  #playerhud {
+    top: 10px; right: 12px; left: auto; width: min(var(--player-hud-width, 570px), 56%);
+    height: min(var(--player-hud-height, 200px), calc(33.333vh - 12px));
+    display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 5px;
+    overflow: visible; transform: none;
+    border: 1px solid #526a618f; border-radius: 12px;
+    background: linear-gradient(105deg, #091411ed, #0d1a17e8 58%, #091411ed);
+    box-shadow: 0 14px 38px #000a, inset 0 1px #ffffff0a;
+    backdrop-filter: blur(16px) saturate(130%);
+  }
+  .ribbon-heading {
+    min-height: 13px; display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; padding: 0 3px; overflow: hidden; color: #bdcbc5;
+    font-size: 7px; font-weight: 900; letter-spacing: .15em; line-height: 1;
+    text-transform: uppercase; white-space: nowrap; text-shadow: 0 2px 5px #000;
+  }
+  .ribbon-heading span:last-child {
+    overflow: hidden; color: #71857e; letter-spacing: .07em; text-overflow: ellipsis;
+  }
+  #playerhud .diplomacy-ribbon {
+    flex: 1; min-width: 0; min-height: 0; display: grid;
+    grid-template-columns: repeat(var(--hud-columns, 2), minmax(0, 1fr));
+    grid-template-rows: repeat(var(--hud-rows, 5), minmax(0, 1fr));
+    grid-auto-flow: column; align-items: stretch; gap: 2px 3px; padding: 0;
+  }
+  #playerhud .diplomacy-card {
+    width: auto; height: auto; min-height: 0; display: grid;
+    grid-template-columns: 25px minmax(58px, .72fr) minmax(108px, 1.28fr);
+    align-items: center; gap: 4px; margin: 0; padding: 2px 4px 2px 3px;
+    overflow: hidden; border-radius: 7px;
+  }
+  #playerhud .diplomacy-card:hover { transform: none; }
+  #playerhud .leader-medallion {
+    width: clamp(20px, 2.6vh, 25px); height: clamp(20px, 2.6vh, 25px);
+    border-width: 1px; box-shadow: 0 0 0 1px #07110f, 0 3px 8px #0008;
+    font-size: 10px;
+  }
+  #playerhud .diplomacy-name { font-size: 9px; line-height: 1.05; }
+  #playerhud .diplomacy-rank { margin-right: 3px; font-size: 8px; }
+  #playerhud .detail-caret { margin-left: 2px; font-size: 7px; }
+  #playerhud .diplomacy-leader {
+    display: block; margin-top: 1px; overflow: hidden; font-size: 6.5px;
+    line-height: 1.05; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #playerhud .diplomacy-elo { display: none; }
+  #playerhud .diplomacy-stats {
+    align-self: stretch; display: grid; grid-template-columns: repeat(5, minmax(16px, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 0;
+  }
+  #playerhud .ribbon-stat { min-height: 0; padding: 0; }
+  #playerhud .ribbon-stat b { font-size: 7.5px; line-height: 1; }
+  #playerhud .ribbon-stat em { margin-top: 1px; font-size: 4.5px; line-height: 1; }
+  #playerhud .civ-dossier {
+    position: absolute; z-index: 2; top: calc(100% + 6px); right: 0;
+    width: min(760px, calc(100vw - 28px)); max-height: calc(66.667vh - 24px);
+    margin: 0; overflow-y: auto; border-top: 1px solid #8ba79b; border-radius: 9px;
+    box-shadow: 0 18px 48px #000c;
+  }
+  #playerhud .diplomacy-card.expanded { border-radius: 7px; }
+
+  /* Victory progress remains a separate, independently hideable top strip.
+     Its right edge reserves exactly the space occupied by the standings. */
+  #victoryhud {
+    position: absolute; z-index: 7; top: 10px; left: 12px;
+    right: min(calc(var(--player-hud-width, 570px) + 20px), calc(56% + 20px));
+    height: 112px; display: grid; grid-template-columns: 88px minmax(0, 1fr);
+    align-items: stretch; gap: 5px; min-width: 0; max-width: 1000px; padding: 5px;
+    overflow: hidden; border: 1px solid #526a618f; border-radius: 12px;
+    background: linear-gradient(105deg, #091411ed, #0d1a17e6 54%, #0a1512ed);
+    box-shadow: 0 14px 38px #000a, inset 0 1px #ffffff0a;
+    backdrop-filter: blur(16px) saturate(130%); pointer-events: auto;
+  }
+
+  body.cinema-mode #playerhud { display: none !important; }
+  body.cinema-mode #victoryhud {
+    top: clamp(37px, 4.6vh, 54px); left: 50%; right: auto;
+    width: min(960px, calc(100% - 168px)); height: 82px;
+    grid-template-columns: 86px minmax(0, 1fr); transform: translateX(-50%);
+    border-color: #d8bd7948; border-radius: 3px 3px 14px 14px;
+    background:
+      linear-gradient(90deg, #d8bd7928, transparent 15%, transparent 85%, #d8bd7920) top / 100% 1px no-repeat,
+      linear-gradient(105deg, #050b09e8, #0b1713d4 52%, #050b09e8);
+    box-shadow: 0 20px 58px #000a, inset 0 1px #ffffff0b;
+    backdrop-filter: blur(22px) saturate(125%); opacity: .88;
+    transition: opacity .35s ease;
+  }
+  body.cinema-mode.cinema-idle #victoryhud { opacity: .62; }
+  body.cinema-mode #victoryhud .victory-track { min-height: 60px; padding-top: 4px; }
+  body.cinema-mode.cinema-intertitle #victoryhud,
+  body.cinema-mode.cinema-finale #victoryhud { opacity: 0 !important; pointer-events: none; }
+
+  .overlay-options { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
+  .overlay-options h2 { margin-bottom: 8px; }
+  .overlay-option-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 8px; }
+  .overlay-option {
+    min-width: 0; display: flex; align-items: center; gap: 6px; color: var(--muted);
+    font-size: 9px; line-height: 1.25; cursor: pointer;
+  }
+  .overlay-option input { flex: 0 0 auto; margin: 0; }
+
+  body.overlay-players-hidden #playerhud,
+  body.overlay-victory-hidden #victoryhud,
+  body.overlay-minimap-hidden .minimap-frame,
+  body.overlay-controls-hidden #zoomctl,
+  body.overlay-actions-hidden #ubar,
+  body.overlay-mode-hidden #modeline,
+  body.overlay-tooltips-hidden #tip { display: none !important; }
+
+  @media (max-width: 720px) {
+    #side { inset-block-start: 132px; }
+    #playerhud .diplomacy-card {
+      grid-template-columns: 23px minmax(48px, .8fr) minmax(88px, 1.2fr); gap: 3px;
+    }
+  }
+  @media (max-width: 620px) {
+    #playerhud { top: 8px; left: 8px; right: 8px; width: auto; padding: 4px; }
+    #victoryhud {
+      top: calc(min(var(--player-hud-height, 200px), calc(33.333vh - 12px)) + 14px);
+      left: 8px; right: 8px; width: auto; height: 104px;
+      grid-template-columns: 78px minmax(0, 1fr); padding: 4px;
+    }
+    body.cinema-mode #victoryhud {
+      top: 36px; left: 16px; right: auto; width: calc(100% - 32px);
+      grid-template-columns: 82px minmax(0, 1fr);
+    }
+    #playerhud .diplomacy-card {
+      grid-template-columns: 21px minmax(43px, .8fr) minmax(72px, 1.2fr); padding-inline: 2px;
+    }
+    #playerhud .ribbon-stat em { display: none; }
+    #playerhud .diplomacy-name { font-size: 8px; }
+  }
+  @media (max-height: 650px) {
+    #playerhud .diplomacy-leader, #playerhud .diplomacy-elo,
+    #playerhud .ribbon-stat em { display: none; }
+    #playerhud .leader-medallion { width: 20px; height: 20px; }
+  }
 </style>
 </head>
 <body>
@@ -1130,7 +1272,8 @@
     <button id="cinema-fullscreen" title="Enter fullscreen" aria-label="Enter fullscreen">⛶</button>
     <button id="cinema-exit" title="Exit cinema mode (C)" aria-label="Exit cinema mode">✕</button>
   </div>
-  <aside id="playerhud" aria-label="Player standings and victory race"></aside>
+  <aside id="victoryhud" aria-label="Turn and victory race"></aside>
+  <aside id="playerhud" aria-label="Player standings"></aside>
   <div id="zoomctl">
     <button id="paneltoggle" class="icon" title="Toggle command deck" aria-label="Toggle command deck">☰</button>
     <button id="zin" title="Zoom in" aria-label="Zoom in">＋</button>
@@ -1268,6 +1411,18 @@
         </select>
         <label class="setting-row"><span><input type="checkbox" id="yieldchk"> Show yields per tile</span><kbd>Y</kbd></label>
         <label class="setting-row"><span><input type="checkbox" id="artifactchk"> Show artifact sites &amp; shipwrecks</span></label>
+        <div class="overlay-options" role="group" aria-labelledby="overlay-options-title">
+          <h2 id="overlay-options-title">Map overlays</h2>
+          <div class="overlay-option-grid">
+            <label class="overlay-option"><input type="checkbox" data-overlay="players" checked>Player standings</label>
+            <label class="overlay-option"><input type="checkbox" data-overlay="victory" checked>Victory race</label>
+            <label class="overlay-option"><input type="checkbox" data-overlay="minimap" checked>World minimap</label>
+            <label class="overlay-option"><input type="checkbox" data-overlay="controls" checked>Map controls</label>
+            <label class="overlay-option"><input type="checkbox" data-overlay="actions" checked>Unit action bar</label>
+            <label class="overlay-option"><input type="checkbox" data-overlay="mode" checked>Map mode status</label>
+            <label class="overlay-option"><input type="checkbox" data-overlay="tooltips" checked>Tile tooltips</label>
+          </div>
+        </div>
       </div>
       <div class="utility-group observer-settings" id="observer-settings">
         <h2>Observation</h2>
@@ -1642,6 +1797,27 @@ function setView(v) {
 }
 let SHOW_YIELDS = localStorage.getItem("civvis-show-yields") === "1";
 let SHOW_ARTIFACT_SITES = localStorage.getItem("civvis-show-artifact-sites") === "1";
+const OVERLAY_STORAGE_KEY = "civvis-map-overlays-v1";
+const OVERLAY_NAMES = ["players", "victory", "minimap", "controls", "actions", "mode", "tooltips"];
+let OVERLAY_VISIBILITY = Object.fromEntries(OVERLAY_NAMES.map(name => [name, true]));
+try {
+  const savedOverlays = JSON.parse(localStorage.getItem(OVERLAY_STORAGE_KEY) || "{}");
+  for (const name of OVERLAY_NAMES) {
+    if (typeof savedOverlays[name] === "boolean") OVERLAY_VISIBILITY[name] = savedOverlays[name];
+  }
+} catch (error) {}
+function applyOverlayVisibility() {
+  for (const name of OVERLAY_NAMES) {
+    document.body.classList.toggle(`overlay-${name}-hidden`, !OVERLAY_VISIBILITY[name]);
+  }
+}
+function setOverlayVisibility(name, visible) {
+  if (!OVERLAY_NAMES.includes(name)) return;
+  OVERLAY_VISIBILITY[name] = visible;
+  applyOverlayVisibility();
+  localStorage.setItem(OVERLAY_STORAGE_KEY, JSON.stringify(OVERLAY_VISIBILITY));
+}
+applyOverlayVisibility();
 // Cinema is the default spectator composition. It never changes the strategic
 // map or player UI: it only enters after the server identifies this page as a
 // spectator, and every control returns on C/Escape.
@@ -7929,26 +8105,38 @@ function exactStat(value) {
 // replaced every card mid-click: a press that lands between mousedown and
 // mouseup on a detached button never becomes a click at all. Painting only on
 // a real change keeps both the follow and the dossier buttons pressable.
-let hudHtml = "";
+let hudHtml = "", victoryHudHtml = "";
 
 function drawPlayerHud() {
   const hud = document.getElementById("playerhud");
+  const victoryHud = document.getElementById("victoryhud");
   // State updates are frequent in spectator mode. Preserve each rail's exact
-  // reading position so a person can browse an off-screen path or player
+  // reading position so a person can browse an off-screen victory path
   // without the next simulation frame snapping the HUD back to the leader.
-  const railScroll = [...hud.querySelectorAll(".hud-rail")].map(rail => rail.scrollLeft);
+  const victoryScroll = victoryHud.querySelector(".hud-rail")?.scrollLeft || 0;
   const overview = playerHudOverview();
+  if (overview !== victoryHudHtml) {
+    victoryHudHtml = overview;
+    victoryHud.innerHTML = overview;
+    const rail = victoryHud.querySelector(".hud-rail");
+    if (rail) rail.scrollLeft = victoryScroll;
+  }
   const acting = SPEC ? state.current : 0;
   const majors = state.players
     .filter(p => !p.is_minor && !p.is_barbarian)
     .sort((a, b) => b.score - a.score || a.id - b.id);
+  const columns = majors.length > 5 ? 2 : 1;
+  const rows = Math.max(1, Math.ceil(majors.length / columns));
+  const requestedHeight = 20 + rows * 36;
+  const mapArea = document.getElementById("maparea");
+  mapArea.style.setProperty("--player-hud-width", columns === 1 ? "330px" : "570px");
+  mapArea.style.setProperty("--player-hud-height", `${requestedHeight}px`);
   const rankById = new Map(majors.map((p, index) => [p.id, index + 1]));
-  const html = overview +
-    `<section class="hud-region leader-region" aria-labelledby="world-leaders-title">` +
-    `<div class="hud-section-heading"><span id="world-leaders-title">World leaders</span>` +
-    `<span>${majors.length} civilizations · output · empire · score</span></div>` +
-    `<div class="hud-rail" tabindex="0" aria-label="Civilizations; scroll horizontally for every leader">` +
-    `<div class="diplomacy-ribbon">` + majors.map(p => {
+  const html =
+    `<div class="ribbon-heading"><span id="world-leaders-title">World leaders</span>` +
+    `<span>${majors.length} civilizations · score order</span></div>` +
+    `<div class="diplomacy-ribbon" role="list" aria-labelledby="world-leaders-title" ` +
+    `style="--hud-columns:${columns};--hud-rows:${rows}">` + majors.map(p => {
       const y = p.yields || {};
       const color = pcol(p.id);
       const leader = p.leader || "Unknown leader";
@@ -8005,7 +8193,7 @@ function drawPlayerHud() {
       ];
       const watchTitle = `Watch ${p.civ} through its fog of war · ${relationSummary}${agendaText}`;
       const expanded = hudExpanded === p.id;
-      return `<div class="diplomacy-card ${stateClass} ${expanded ? "expanded" : ""}" style="--civ:${color}">` +
+      return `<div class="diplomacy-card ${stateClass} ${expanded ? "expanded" : ""}" style="--civ:${color}" role="listitem">` +
         `<button class="leader-medallion" data-hud-action="watch" data-hud-civ="${p.id}" title="${watchTitle}" aria-label="Watch ${p.civ}">${initial}</button>` +
         `<button class="diplomacy-identity" data-hud-action="dossier" data-hud-civ="${p.id}" aria-expanded="${expanded}" ` +
         `title="${expanded ? "Close" : "Open"} the ${p.civ} dossier · ${relationSummary}${agendaText}" ` +
@@ -8202,15 +8390,12 @@ function civDossier(p, rank, relation) {
     `<section class="dossier-section"><h4>Diplomacy</h4>${diplomacy}</section>` +
     `<section class="dossier-section"><h4>Empire ledger</h4>${ledger}</section>` +
     `</div></div>`;
-  [...hud.querySelectorAll(".hud-rail")].forEach((rail, index) => {
-    rail.scrollLeft = railScroll[index] || 0;
-  });
 }
 
 // A vertical wheel gesture over a one-row rail should browse that rail, not
 // disappear into a page that cannot scroll. Native horizontal trackpad input
 // is left untouched, and touch users retain normal swipe scrolling.
-document.getElementById("playerhud").addEventListener("wheel", event => {
+document.getElementById("victoryhud").addEventListener("wheel", event => {
   const rail = event.target.closest(".hud-rail");
   if (!rail || rail.scrollWidth <= rail.clientWidth || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
   rail.scrollLeft += event.deltaY;
@@ -10079,6 +10264,11 @@ document.getElementById("default-settings").onclick = () => startNewSimulation("
     localStorage.setItem("civvis-show-artifact-sites", SHOW_ARTIFACT_SITES ? "1" : "0");
     if (state) draw();
   };
+}
+for (const checkbox of document.querySelectorAll("[data-overlay]")) {
+  const name = checkbox.dataset.overlay;
+  checkbox.checked = OVERLAY_VISIBILITY[name] !== false;
+  checkbox.onchange = () => setOverlayVisibility(name, checkbox.checked);
 }
 
 setRot(parseFloat(localStorage.getItem("civvis-rot") || "0"));
