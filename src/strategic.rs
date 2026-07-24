@@ -41,10 +41,22 @@ impl StrategicAi {
     }
 
     pub fn with_weights(weights: Weights) -> StrategicAi {
+        let net = ValueNet::load("evolved");
+        Self::configured(weights, net)
+    }
+
+    /// Exact score-share control for paired value-evaluator experiments. It
+    /// keeps the same weights, rollout horizon, and lane policy as Strategic,
+    /// while refusing any model found in `evolved/`.
+    pub fn score_only_with_weights(weights: Weights) -> StrategicAi {
+        Self::configured(weights, None)
+    }
+
+    fn configured(weights: Weights, net: Option<ValueNet>) -> StrategicAi {
         StrategicAi {
             inner: AdvancedAi::with_weights(weights.clone()),
             weights,
-            net: ValueNet::load("evolved"),
+            net,
             review_every: 40,
             horizon: 40,
             // The opening book plays itself; the first lane choice lands
@@ -488,6 +500,13 @@ mod tests {
     #[test]
     fn default_macro_search_looks_forty_rounds_ahead() {
         assert_eq!(StrategicAi::new().horizon, 40);
+    }
+
+    #[test]
+    fn score_only_control_refuses_a_runtime_value_model() {
+        assert!(StrategicAi::score_only_with_weights(Default::default())
+            .net
+            .is_none());
     }
 
     #[test]
